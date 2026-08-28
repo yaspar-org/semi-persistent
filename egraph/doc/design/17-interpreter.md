@@ -110,8 +110,8 @@ checked global ground terms retain their source name.
 ```rust
 pub fn saturate_spec_in(rules, eg, model, spec, globals, scratch) -> SatResult {
     for i in 0..spec.limit {
-        if goal_holds(spec, eg) { return goal_result(i); }
         eg.rebuild();
+        if goal_holds(spec, eg) { return goal_result(i); }
         let index = IndexStore::build_with(eg, scratch);
         let stats = IndexStats::from_index(&index);
         let mut changes = 0;
@@ -123,7 +123,10 @@ pub fn saturate_spec_in(rules, eg, model, spec, globals, scratch) -> SatResult {
             return saturated_result(i + 1);
         }
     }
-    budget_result(spec.limit)
+    if spec.until.is_some() {
+        eg.rebuild();
+    }
+    budget_result(spec.limit, goal_holds(spec, eg))
 }
 ```
 
@@ -190,17 +193,19 @@ by the matching `(pop)`.
 `(run [ruleset] N :until (= a b))`, or `(!= a b)`, stops the run as
 soon as the goal holds. The goal's terms are ground, so they are built
 once, before the run; only their classes move afterwards, and the check
-is two `find`s. It runs **before** every iteration, including the first,
-so a goal that already holds costs zero iterations. `SatResult.goal_met`
-distinguishes stopping on the goal from reaching a fixpoint: the goal
-can be met with rules still firing.
+is two `find`s. Every observation follows rebuild, then occurs before rule
+matching, including in the first iteration, so a goal that already holds costs
+zero iterations. If the final permitted round changes the graph, one last
+rebuild and goal check occurs at budget exhaustion. `SatResult.goal_met`
+distinguishes stopping on the goal from reaching a fixpoint: the goal can be
+met with rules still firing.
 
 Building the goal's terms adds those nodes to the e-graph, which is
 observable: the same nodes a `(check …)` of the goal would add.
 
 For `:until (!= a b)`, "holds" means the two current representatives differ.
 It is not a maintained semantic disequality, and it commonly succeeds at
-iteration zero when the terms begin apart.
+iteration zero when the rebuilt terms begin apart.
 
 ## Statistics
 
@@ -219,7 +224,8 @@ interpreter arms counting when the program contains `print-stats`, so asking
 for stats is enough to get a nonzero work count.
 
 `wall_time_ms` measures the saturation call. Construction and any pre-run
-rebuild of `:until` goal terms occur before the timer starts.
+rebuild required by newly inserted `:until` goal terms occur before the timer
+starts. The driver's unconditional rebuilds are included.
 
 ## AC Completion Modes
 

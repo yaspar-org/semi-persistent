@@ -598,12 +598,16 @@ rest variables:
 ;; map F over each element of a set
 (rewrite (Or ..rest) (Or ..{(F x) for x in rest}))
 
-;; filter elements of a multiset
-(rewrite (Add ..rest) (Add ..{x for x in rest if (Positive x)}))
+;; retain multiset elements whose count exceeds an LHS-bound threshold
+(rewrite (Box (N limit) (Add marker:1 ..rest))
+         (Add ..{x:k for x:k in rest if (i64::< limit k)}))
 ```
 
 Set comprehensions use `..{...}`, sequence comprehensions use
-`..[...]`.
+`..[...]`. A filter must compute a concrete literal value, such as the result
+of a Rust literal-model primitive. It is not an e-graph query: an ordinary
+application such as `(Positive x)` is rejected. Bind graph conditions on the
+LHS with a rewrite guard or a general-rule conjunct.
 
 ## Push/Pop Scoping
 
@@ -670,9 +674,9 @@ which is how a search reports time-to-goal rather than time-to-budget:
 (run fast 50 :until (!= a b))
 ```
 
-The goal is checked before every iteration, including the first, so a
-goal that already holds costs no iterations. Its terms are built once,
-before the run: the same nodes a `(check …)` of the goal would add.
+The goal is checked after rebuild and before every iteration, including the
+first, so a goal that already holds costs no iterations. Its terms are built
+once, before the run: the same nodes a `(check …)` of the goal would add.
 
 ## Statistics
 

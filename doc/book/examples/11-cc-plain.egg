@@ -1,0 +1,21 @@
+;; EXPECT: check-failed
+;; ANCHOR: completion-example
+(sort E)
+(function add (E) E :assoc :comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function n () E)
+
+(union (add a b) c)
+(union (add a b d) n)
+
+;; Ordinary congruence follows a direct class reference.
+(function f (E) E)
+(check (= (f (add a b)) (f c)))
+
+;; Plain rebuild does not substitute the known sub-sum into the larger sum.
+(print-size)
+(check (= n (add c d)))
+;; ANCHOR_END: completion-example

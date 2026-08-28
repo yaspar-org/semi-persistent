@@ -1,0 +1,10 @@
+;; EXPECT: error
+;; Book chapter 8: a class containing only unextractable nodes cannot be extracted.
+
+;; ANCHOR: extraction-failure
+(sort E)
+(constructor hidden () E :unextractable)
+(let value (hidden))
+(check value)
+(extract value)
+;; ANCHOR_END: extraction-failure

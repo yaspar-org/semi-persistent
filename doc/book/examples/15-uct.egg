@@ -1,0 +1,17 @@
+;; EXPECT: ok
+
+(sort E)
+(function a () E)
+(function f (E) E)
+(function h (E E) E)
+
+(let cycle (f (a)))
+(union cycle (h (a) cycle))
+
+(let left (h (a) (h (f (a)) (f (a)))))
+(let right (h (a) (h (a) (f (a)))))
+
+;; ANCHOR: uct-query
+(antiunify left right :algorithm uct :playouts 10000 :cycles pair)
+(checkau left right :max_size 8 :algorithm uct :playouts 10000 :cycles pair)
+;; ANCHOR_END: uct-query

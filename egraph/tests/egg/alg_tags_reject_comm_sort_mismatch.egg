@@ -1,0 +1,7 @@
+;; EXPECT: sort-error
+;; Sorting the children of a commutative operator is type-correct only when both argument
+;; positions have the same sort. The return sort may still differ.
+(sort A)
+(sort B)
+(sort R)
+(function Bad (A B) R :comm)

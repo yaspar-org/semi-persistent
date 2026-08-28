@@ -6,7 +6,8 @@
 
 use crate::DenseId;
 use crate::ast::{
-    CmpOp, GlobalVarId, LitValVarId, MsetVarId, MultVarId, SeqVarId, SetVarId, Span, VarId,
+    CmpOp, GlobalVarId, LitValVarId, MsetVarId, MultVarId, RhsLocalMultVarId, RhsLocalVarId,
+    SeqVarId, SetVarId, Span, VarId,
 };
 use crate::compile::{Atom, FlatMult, FlatQuery};
 use crate::lit_model::LitModel;
@@ -606,7 +607,26 @@ pub struct ResolvedQuery<O, S, L> {
     pub atoms: Vec<RAtom<O, S, L>>,
     pub shape: MatchShape,
     pub var_sorts: Vec<Option<S>>,
+    pub seq_sorts: Vec<S>,
+    pub set_sorts: Vec<S>,
+    pub mset_sorts: Vec<S>,
     pub mult_intervals: Vec<(MultVarId, u64, u64)>,
+}
+
+struct RestSorts<S> {
+    seqs: Vec<S>,
+    sets: Vec<S>,
+    msets: Vec<S>,
+}
+
+impl<S> Default for RestSorts<S> {
+    fn default() -> Self {
+        Self {
+            seqs: Vec::new(),
+            sets: Vec::new(),
+            msets: Vec::new(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -706,6 +726,7 @@ where
 {
     let mut shape = MatchShape::default();
     let mut var_sorts: Vec<Option<S>> = Vec::new();
+    let mut rest_sorts = RestSorts::default();
     let mut resolved = Vec::with_capacity(fq.atoms.len());
 
     for atom in &fq.atoms {
@@ -716,6 +737,7 @@ where
             model,
             &mut var_sorts,
             &mut shape,
+            &mut rest_sorts,
             globals,
         )?);
     }
@@ -728,6 +750,9 @@ where
         atoms: resolved,
         shape,
         var_sorts,
+        seq_sorts: rest_sorts.seqs,
+        set_sorts: rest_sorts.sets,
+        mset_sorts: rest_sorts.msets,
         mult_intervals,
     })
 }
@@ -790,6 +815,37 @@ fn iv<S: Copy>(
     Ok(id)
 }
 
+fn bind_rest_sort<S: DenseId + Copy, const TRACK: bool>(
+    slots: &mut Vec<S>,
+    id: usize,
+    name: &str,
+    kind: &str,
+    actual: S,
+    sorts: &SortRegistry<S, TRACK>,
+    span: Span,
+) -> R<()> {
+    match slots.get(id).copied() {
+        Some(previous) if previous != actual => Err(err(
+            format!(
+                "{kind} rest variable '{name}' is used with element sorts '{}' and '{}'",
+                sorts.name(previous),
+                sorts.name(actual)
+            ),
+            span,
+        )),
+        Some(_) => Ok(()),
+        None => {
+            assert_eq!(
+                id,
+                slots.len(),
+                "rest variable IDs must be allocated densely"
+            );
+            slots.push(actual);
+            Ok(())
+        }
+    }
+}
+
 /// Resolve a child name to PatVar: global if in globals map, else local VarId.
 /// For local vars in concrete sort positions, auto-lifts to LitBind.
 fn resolve_child<O, S, L, const TRACK: bool>(
@@ -848,6 +904,7 @@ fn resolve_atom<O, S, L, M, const TRACK: bool>(
     model: &M,
     var_sorts: &mut Vec<Option<S>>,
     shape: &mut MatchShape,
+    rest_sorts: &mut RestSorts<S>,
     globals: &GlobalCtx<S, impl Copy>,
 ) -> R<Vec<RAtom<O, S, L>>>
 where
@@ -1099,10 +1156,20 @@ where
                 )?;
                 fids.push(pv);
             }
+            let pre = shape.intern_seq(rest).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.seqs,
+                pre.idx(),
+                rest,
+                "sequence",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::APrefix {
                 node: nid,
                 op: op_id,
-                pre: shape.intern_seq(rest).map_err(|m| err(m, *span))?,
+                pre,
                 fixed: fids,
             }])
         }
@@ -1133,11 +1200,21 @@ where
                 )?;
                 fids.push(pv);
             }
+            let suf = shape.intern_seq(rest).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.seqs,
+                suf.idx(),
+                rest,
+                "sequence",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::ASuffix {
                 node: nid,
                 op: op_id,
                 fixed: fids,
-                suf: shape.intern_seq(rest).map_err(|m| err(m, *span))?,
+                suf,
             }])
         }
         Atom::ABoth {
@@ -1168,12 +1245,32 @@ where
                 )?;
                 fids.push(pv);
             }
+            let pre = shape.intern_seq(pre).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.seqs,
+                pre.idx(),
+                shape.seq_name(pre),
+                "sequence",
+                s,
+                sorts,
+                *span,
+            )?;
+            let suf = shape.intern_seq(suf).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.seqs,
+                suf.idx(),
+                shape.seq_name(suf),
+                "sequence",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::ABoth {
                 node: nid,
                 op: op_id,
-                pre: shape.intern_seq(pre).map_err(|m| err(m, *span))?,
+                pre,
                 fixed: fids,
-                suf: shape.intern_seq(suf).map_err(|m| err(m, *span))?,
+                suf,
             }])
         }
 
@@ -1209,11 +1306,21 @@ where
             check_ac_mode(&info.kind, op, *span)?;
             unify_var(nid, info.return_sort, var_sorts, &shape.nodes, sorts, *span)?;
             let relems = resolve_ac_elems(elems, s, var_sorts, shape, sorts, *span, globals)?;
+            let rest_id = shape.intern_mset(rest).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.msets,
+                rest_id.idx(),
+                rest,
+                "multiset",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::ACSub {
                 node: nid,
                 op: op_id,
                 elems: relems,
-                rest: shape.intern_mset(rest).map_err(|m| err(m, *span))?,
+                rest: rest_id,
             }])
         }
         Atom::ACIExact {
@@ -1276,11 +1383,21 @@ where
                 )?;
                 eids.push(pv);
             }
+            let rest_id = shape.intern_set(rest).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.sets,
+                rest_id.idx(),
+                rest,
+                "set",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::ACISub {
                 node: nid,
                 op: op_id,
                 elems: eids,
-                rest: shape.intern_set(rest).map_err(|m| err(m, *span))?,
+                rest: rest_id,
             }])
         }
     }
@@ -1606,9 +1723,33 @@ fn collect_mult_intervals<O, S, V>(
 // Resolved RHS types
 // ---------------------------------------------------------------------------
 
+/// An e-node reference on a resolved RHS.
+///
+/// Query bindings index the immutable LHS match. Local bindings index the
+/// lexical environment allocated for RHS comprehensions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RhsNodeRef {
+    Query(VarId),
+    Local(crate::ast::RhsLocalVarId),
+}
+
+/// A multiplicity reference on a resolved RHS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RhsMultRef {
+    Query(MultVarId),
+    Local(crate::ast::RhsLocalMultVarId),
+}
+
+/// Storage required by all comprehension locals in one rule.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RhsLocalShape {
+    pub node_count: usize,
+    pub mult_count: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RRhsTerm<O, S, L> {
-    Var(VarId),
+    Var(RhsNodeRef),
     Lit {
         op: O,
         sort: S,
@@ -1633,7 +1774,7 @@ pub enum RRhsTerm<O, S, L> {
     /// Reconstruct a `@i64(k)` lit node from a bound AC multiplicity variable.
     MultVar {
         op: O,
-        var: MultVarId,
+        var: RhsMultRef,
     },
     FetchGlobal(GlobalVarId),
 }
@@ -1643,7 +1784,7 @@ pub enum RRhsTerm<O, S, L> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RPrimArg {
     LitVal(LitValVarId),
-    Mult(MultVarId),
+    Mult(RhsMultRef),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1660,21 +1801,21 @@ pub enum RRhsChild<O, S, L> {
     SpliceMset(MsetVarId),
     SetComp {
         body: Box<RRhsTerm<O, S, L>>,
-        var: VarId,
+        var: crate::ast::RhsLocalVarId,
         source: SetVarId,
         filter: Option<Box<RRhsTerm<O, S, L>>>,
     },
     MsetComp {
         body: Box<RRhsTerm<O, S, L>>,
         mult: ResolvedMultExpr,
-        var: VarId,
-        mult_var: MultVarId,
+        var: crate::ast::RhsLocalVarId,
+        mult_var: crate::ast::RhsLocalMultVarId,
         source: MsetVarId,
         filter: Option<Box<RRhsTerm<O, S, L>>>,
     },
     SeqComp {
         body: Box<RRhsTerm<O, S, L>>,
-        var: VarId,
+        var: crate::ast::RhsLocalVarId,
         source: SeqVarId,
         filter: Option<Box<RRhsTerm<O, S, L>>>,
     },
@@ -1689,7 +1830,7 @@ pub enum RRhsChild<O, S, L> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolvedMultExpr {
     Lit(u64),
-    Var(MultVarId),
+    Var(RhsMultRef),
     /// Checked u64 arithmetic over multiplicities (`(u64::- k 1)`). Interval-
     /// checked at rule install against the LHS multiplicity constraints, so a
     /// possible underflow or division by zero is rejected before the rule
@@ -1740,6 +1881,219 @@ impl MultPrimOp {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum RhsLocalBinding {
+    Node(RhsLocalVarId),
+    Mult(RhsLocalMultVarId),
+}
+
+/// Resolver state for an entire rule's RHS.
+///
+/// Query bindings are read-only. Comprehension locals live in lexical scopes,
+/// while their IDs come from rule-wide monotonic allocators so sibling
+/// comprehensions and actions can safely reuse source names.
+pub struct RhsResolveCtx<'a, S> {
+    pub query_shape: &'a MatchShape,
+    query_node_sorts: Vec<Option<S>>,
+    query_seq_sorts: &'a [S],
+    query_set_sorts: &'a [S],
+    query_mset_sorts: &'a [S],
+    local_node_scopes: Vec<HashMap<String, RhsLocalVarId>>,
+    local_mult_scopes: Vec<HashMap<String, RhsLocalMultVarId>>,
+    local_node_sorts: Vec<Option<S>>,
+    local_node_names: Vec<String>,
+    next_local_node: usize,
+    next_local_mult: usize,
+}
+
+impl<'a, S: DenseId> RhsResolveCtx<'a, S> {
+    pub fn new<O, L>(query: &'a ResolvedQuery<O, S, L>) -> Self {
+        assert_eq!(
+            query.shape.num_vars(),
+            query.var_sorts.len(),
+            "query node sorts must match the query shape"
+        );
+        assert_eq!(
+            query.shape.seqs.len(),
+            query.seq_sorts.len(),
+            "query sequence sorts must match the query shape"
+        );
+        assert_eq!(
+            query.shape.sets.len(),
+            query.set_sorts.len(),
+            "query set sorts must match the query shape"
+        );
+        assert_eq!(
+            query.shape.msets.len(),
+            query.mset_sorts.len(),
+            "query multiset sorts must match the query shape"
+        );
+        Self {
+            query_shape: &query.shape,
+            query_node_sorts: query.var_sorts.clone(),
+            query_seq_sorts: &query.seq_sorts,
+            query_set_sorts: &query.set_sorts,
+            query_mset_sorts: &query.mset_sorts,
+            local_node_scopes: Vec::new(),
+            local_mult_scopes: Vec::new(),
+            local_node_sorts: Vec::new(),
+            local_node_names: Vec::new(),
+            next_local_node: 0,
+            next_local_mult: 0,
+        }
+    }
+
+    fn seq_sort(&self, id: SeqVarId) -> S {
+        self.query_seq_sorts[id.idx()]
+    }
+
+    fn set_sort(&self, id: SetVarId) -> S {
+        self.query_set_sorts[id.idx()]
+    }
+
+    fn mset_sort(&self, id: MsetVarId) -> S {
+        self.query_mset_sorts[id.idx()]
+    }
+
+    pub fn local_shape(&self) -> RhsLocalShape {
+        RhsLocalShape {
+            node_count: self.next_local_node,
+            mult_count: self.next_local_mult,
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.local_node_scopes.push(HashMap::new());
+        self.local_mult_scopes.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.local_node_scopes
+            .pop()
+            .expect("RHS local node scope stack underflow");
+        self.local_mult_scopes
+            .pop()
+            .expect("RHS local multiplicity scope stack underflow");
+    }
+
+    fn scopes_are_empty(&self) -> bool {
+        self.local_node_scopes.is_empty() && self.local_mult_scopes.is_empty()
+    }
+
+    fn local_binding(&self, name: &str) -> Option<RhsLocalBinding> {
+        debug_assert_eq!(self.local_node_scopes.len(), self.local_mult_scopes.len());
+        for depth in (0..self.local_node_scopes.len()).rev() {
+            let node = self.local_node_scopes[depth].get(name).copied();
+            let mult = self.local_mult_scopes[depth].get(name).copied();
+            match (node, mult) {
+                (Some(id), None) => return Some(RhsLocalBinding::Node(id)),
+                (None, Some(id)) => return Some(RhsLocalBinding::Mult(id)),
+                (Some(_), Some(_)) => {
+                    unreachable!("one lexical scope cannot bind a name as two RHS-local kinds")
+                }
+                (None, None) => {}
+            }
+        }
+        None
+    }
+
+    fn alloc_node(&mut self, name: &str, sort: Option<S>, span: Span) -> R<RhsLocalVarId> {
+        let node_scope = self
+            .local_node_scopes
+            .last_mut()
+            .expect("RHS local node allocation requires an open scope");
+        let mult_scope = self
+            .local_mult_scopes
+            .last()
+            .expect("RHS local node allocation requires an open scope");
+        if node_scope.contains_key(name) || mult_scope.contains_key(name) {
+            return Err(err(
+                format!("comprehension binding '{name}' is declared twice in one scope"),
+                span,
+            ));
+        }
+        let raw = u16::try_from(self.next_local_node).map_err(|_| {
+            err(
+                format!(
+                    "too many RHS-local node variables in one rule: at most {}",
+                    u16::MAX as u32 + 1
+                ),
+                span,
+            )
+        })?;
+        let id = RhsLocalVarId::new(raw);
+        self.next_local_node += 1;
+        self.local_node_sorts.push(sort);
+        self.local_node_names.push(name.to_owned());
+        node_scope.insert(name.to_owned(), id);
+        Ok(id)
+    }
+
+    fn alloc_mult(&mut self, name: &str, span: Span) -> R<RhsLocalMultVarId> {
+        let node_scope = self
+            .local_node_scopes
+            .last()
+            .expect("RHS local multiplicity allocation requires an open scope");
+        let mult_scope = self
+            .local_mult_scopes
+            .last_mut()
+            .expect("RHS local multiplicity allocation requires an open scope");
+        if node_scope.contains_key(name) || mult_scope.contains_key(name) {
+            return Err(err(
+                format!("comprehension binding '{name}' is declared twice in one scope"),
+                span,
+            ));
+        }
+        let raw = u16::try_from(self.next_local_mult).map_err(|_| {
+            err(
+                format!(
+                    "too many RHS-local multiplicity variables in one rule: at most {}",
+                    u16::MAX as u32 + 1
+                ),
+                span,
+            )
+        })?;
+        let id = RhsLocalMultVarId::new(raw);
+        self.next_local_mult += 1;
+        mult_scope.insert(name.to_owned(), id);
+        Ok(id)
+    }
+
+    fn unify_node<const TRACK: bool>(
+        &mut self,
+        node: RhsNodeRef,
+        expected: S,
+        sorts: &SortRegistry<S, TRACK>,
+        span: Span,
+    ) -> R<()> {
+        let (slot, name): (&mut Option<S>, &str) = match node {
+            RhsNodeRef::Query(id) => (
+                &mut self.query_node_sorts[id.idx()],
+                self.query_shape.var_name(id),
+            ),
+            RhsNodeRef::Local(id) => (
+                &mut self.local_node_sorts[id.idx()],
+                &self.local_node_names[id.idx()],
+            ),
+        };
+        match *slot {
+            None => {
+                *slot = Some(expected);
+                Ok(())
+            }
+            Some(actual) if actual == expected => Ok(()),
+            Some(actual) => Err(err(
+                format!(
+                    "sort mismatch for variable '{name}': {} vs {}",
+                    sorts.name(actual),
+                    sorts.name(expected)
+                ),
+                span,
+            )),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Resolved actions
 // ---------------------------------------------------------------------------
@@ -1760,8 +2114,7 @@ pub fn resolve_action<O, S, L, M, const TRACK: bool>(
     ops: &OpRegistry<O, S, TRACK>,
     sorts: &SortRegistry<S, TRACK>,
     model: &M,
-    var_sorts: &mut Vec<Option<S>>,
-    shape: &mut MatchShape,
+    ctx: &mut RhsResolveCtx<'_, S>,
     globals: &GlobalCtx<S, impl Copy>,
 ) -> R<ResolvedAction<O, S, L>>
 where
@@ -1770,15 +2123,16 @@ where
     L: LitVal,
     M: LitModel<Value = L>,
 {
+    debug_assert!(ctx.scopes_are_empty());
     use crate::ast::Action;
-    match action {
+    let resolved = match action {
         Action::Union(a, b) => {
-            let ra = resolve_rhs(a, None, ops, sorts, model, var_sorts, shape, globals)?;
-            let rb = resolve_rhs(b, None, ops, sorts, model, var_sorts, shape, globals)?;
+            let ra = resolve_rhs(a, None, ops, sorts, model, ctx, globals)?;
+            let rb = resolve_rhs(b, None, ops, sorts, model, ctx, globals)?;
             Ok(ResolvedAction::Union(ra, rb))
         }
         Action::Insert(t) => {
-            let rt = resolve_rhs(t, None, ops, sorts, model, var_sorts, shape, globals)?;
+            let rt = resolve_rhs(t, None, ops, sorts, model, ctx, globals)?;
             Ok(ResolvedAction::Insert(rt))
         }
         Action::Set { func, args, value } => {
@@ -1789,9 +2143,7 @@ where
                     crate::registry::OpKind::Normal { arg_sorts } => arg_sorts.get(i).copied(),
                     _ => None,
                 };
-                rargs.push(resolve_rhs(
-                    a, expected, ops, sorts, model, var_sorts, shape, globals,
-                )?);
+                rargs.push(resolve_rhs(a, expected, ops, sorts, model, ctx, globals)?);
             }
             let rv = resolve_rhs(
                 value,
@@ -1799,8 +2151,7 @@ where
                 ops,
                 sorts,
                 model,
-                var_sorts,
-                shape,
+                ctx,
                 globals,
             )?;
             Ok(ResolvedAction::Set {
@@ -1809,7 +2160,9 @@ where
                 value: rv,
             })
         }
-    }
+    };
+    debug_assert!(ctx.scopes_are_empty());
+    resolved
 }
 
 // ---------------------------------------------------------------------------
@@ -1828,15 +2181,87 @@ pub fn resolve_rhs<
     ops: &OpRegistry<O, S, TRACK>,
     sorts: &SortRegistry<S, TRACK>,
     model: &M,
-    var_sorts: &mut Vec<Option<S>>,
-    shape: &mut MatchShape,
+    ctx: &mut RhsResolveCtx<'_, S>,
     globals: &GlobalCtx<S, impl Copy>,
 ) -> R<RRhsTerm<O, S, L>> {
     use crate::ast::RhsTerm;
     let span = term.span();
     match term {
         RhsTerm::Var(v, _) => {
-            // Global reference — sort-checked if expected sort known
+            // Lexical locals are authoritative even when an outer query
+            // binding or global has the same name.
+            if let Some(local) = ctx.local_binding(v) {
+                return match local {
+                    RhsLocalBinding::Node(id) => {
+                        let node = RhsNodeRef::Local(id);
+                        if let Some(s) = expected_sort {
+                            ctx.unify_node(node, s, sorts, span)?;
+                        }
+                        Ok(RRhsTerm::Var(node))
+                    }
+                    RhsLocalBinding::Mult(id) => {
+                        resolve_mult_term(v, RhsMultRef::Local(id), expected_sort, ops, sorts, span)
+                    }
+                };
+            }
+
+            // Query names also have one authoritative kind. A wrong-kind
+            // query binding must not fall through to a same-named global.
+            if let Some(&kind) = ctx.query_shape.kinds.get(v) {
+                return match kind {
+                    VarKind::Node => {
+                        let node = RhsNodeRef::Query(
+                            ctx.query_shape
+                                .find_var(v)
+                                .expect("query node kind must have a node id"),
+                        );
+                        if let Some(s) = expected_sort {
+                            ctx.unify_node(node, s, sorts, span)?;
+                        }
+                        Ok(RRhsTerm::Var(node))
+                    }
+                    VarKind::Mult => resolve_mult_term(
+                        v,
+                        RhsMultRef::Query(
+                            ctx.query_shape
+                                .find_mult(v)
+                                .expect("query multiplicity kind must have an id"),
+                        ),
+                        expected_sort,
+                        ops,
+                        sorts,
+                        span,
+                    ),
+                    VarKind::LitVal => {
+                        let Some(s) = expected_sort.filter(|s| sorts.is_concrete(*s)) else {
+                            return Err(err(
+                                format!(
+                                    "literal variable '{v}' requires a concrete literal position"
+                                ),
+                                span,
+                            ));
+                        };
+                        let lit_op = ops.lit_op_for_sort(s).ok_or_else(|| {
+                            err(format!("no lit op for sort '{}'", sorts.name(s)), span)
+                        })?;
+                        Ok(RRhsTerm::LitVar {
+                            op: lit_op,
+                            val: ctx
+                                .query_shape
+                                .find_lit_val(v)
+                                .expect("query literal-value kind must have an id"),
+                        })
+                    }
+                    other => Err(err(
+                        format!(
+                            "'{v}' is a {}, not an e-node or literal binding",
+                            other.label()
+                        ),
+                        span,
+                    )),
+                };
+            }
+
             if let Some((gid, gsort, _)) = globals.get(v.as_str()) {
                 if let Some(s) = expected_sort
                     && gsort != s
@@ -1852,51 +2277,8 @@ pub fn resolve_rhs<
                 }
                 return Ok(RRhsTerm::FetchGlobal(gid));
             }
-            // If expected sort is concrete, this must be a LitValVarId.
-            if let Some(s) = expected_sort
-                && sorts.is_concrete(s)
-            {
-                if shape.find_lit_val(v).is_none()
-                    && let Some(mv) = shape.find_mult(v)
-                {
-                    // A bound AC multiplicity used in a literal position,
-                    // e.g. `(Const k)` after `x:k` — readable only as i64.
-                    if sorts.name(s) != "i64" {
-                        return Err(err(
-                            format!(
-                                "multiplicity variable '{v}' can only fill an i64 \
-                                 literal position, found sort {}",
-                                sorts.name(s)
-                            ),
-                            span,
-                        ));
-                    }
-                    let lit_op = ops.lit_op_for_sort(s).ok_or_else(|| {
-                        err(format!("no lit op for sort '{}'", sorts.name(s)), span)
-                    })?;
-                    return Ok(RRhsTerm::MultVar {
-                        op: lit_op,
-                        var: mv,
-                    });
-                }
-                let lvid = shape
-                    .find_lit_val(v)
-                    .ok_or_else(|| err(format!("unbound literal variable '{v}'"), span))?;
-                let lit_op = ops
-                    .lit_op_for_sort(s)
-                    .ok_or_else(|| err(format!("no lit op for sort '{}'", sorts.name(s)), span))?;
-                return Ok(RRhsTerm::LitVar {
-                    op: lit_op,
-                    val: lvid,
-                });
-            }
-            let vid = shape
-                .find_var(v)
-                .ok_or_else(|| err(format!("unbound variable '{v}'"), span))?;
-            if let Some(s) = expected_sort {
-                unify_var(vid, s, var_sorts, &shape.nodes, sorts, span)?;
-            }
-            Ok(RRhsTerm::Var(vid))
+
+            Err(err(format!("unbound variable '{v}'"), span))
         }
         RhsTerm::Lit(text, _) => {
             let (sort_name, val) = model
@@ -1966,32 +2348,15 @@ pub fn resolve_rhs<
                             ));
                         }
                     };
-                    let vid = if let Some(lv) = shape.find_lit_val(var_name) {
-                        RPrimArg::LitVal(lv)
-                    } else if let Some(mv) = shape.find_mult(var_name) {
-                        // A bound AC multiplicity is a count; it is readable
-                        // only where the primitive expects an i64.
-                        if sorts.name(arg_sorts[i]) != "i64" {
-                            return Err(err(
-                                format!(
-                                    "multiplicity variable '{var_name}' can only feed an \
-                                     i64 argument; prim op '{op}' arg {i} expects {}",
-                                    sorts.name(arg_sorts[i])
-                                ),
-                                span,
-                            ));
-                        }
-                        RPrimArg::Mult(mv)
-                    } else {
-                        return Err(err(
-                            format!(
-                                "'{var_name}' is not a lit-val or multiplicity variable \
-                                 (bind via OpKind::Lit pattern or a `:k` annotation)"
-                            ),
-                            span,
-                        ));
-                    };
-                    args.push(vid);
+                    args.push(resolve_prim_arg(
+                        var_name,
+                        arg_sorts[i],
+                        op,
+                        i,
+                        ctx,
+                        sorts,
+                        span,
+                    )?);
                 }
                 return Ok(RRhsTerm::PrimApp {
                     op: op_id,
@@ -2027,16 +2392,132 @@ pub fn resolve_rhs<
                         span,
                     ));
                 }
+                if !variadic
+                    && matches!(
+                        c,
+                        crate::ast::RhsChild::Splice(..)
+                            | crate::ast::RhsChild::SetComp { .. }
+                            | crate::ast::RhsChild::MsetComp { .. }
+                            | crate::ast::RhsChild::SeqComp { .. }
+                    )
+                {
+                    return Err(err(
+                        format!(
+                            "RHS rest splices and comprehensions require a variadic \
+                             operator; '{op}' has fixed arity"
+                        ),
+                        span,
+                    ));
+                }
                 let cs = child_sorts.get(i).copied();
-                rchildren.push(resolve_rhs_child(
-                    c, cs, ops, sorts, model, var_sorts, shape, globals,
-                )?);
+                rchildren.push(resolve_rhs_child(c, cs, ops, sorts, model, ctx, globals)?);
             }
             Ok(RRhsTerm::App {
                 op: op_id,
                 children: rchildren,
             })
         }
+    }
+}
+
+fn resolve_mult_term<O, S: DenseId, L: LitVal, const TRACK: bool>(
+    name: &str,
+    mult: RhsMultRef,
+    expected_sort: Option<S>,
+    ops: &OpRegistry<O, S, TRACK>,
+    sorts: &SortRegistry<S, TRACK>,
+    span: Span,
+) -> R<RRhsTerm<O, S, L>>
+where
+    O: DenseId + Hash + Copy,
+{
+    let Some(sort) = expected_sort else {
+        return Err(err(
+            format!("multiplicity variable '{name}' requires an i64 literal position"),
+            span,
+        ));
+    };
+    if sorts.name(sort) != "i64" {
+        return Err(err(
+            format!(
+                "multiplicity variable '{name}' can only fill an i64 literal position, \
+                 found sort {}",
+                sorts.name(sort)
+            ),
+            span,
+        ));
+    }
+    let lit_op = ops
+        .lit_op_for_sort(sort)
+        .ok_or_else(|| err(format!("no lit op for sort '{}'", sorts.name(sort)), span))?;
+    Ok(RRhsTerm::MultVar {
+        op: lit_op,
+        var: mult,
+    })
+}
+
+fn resolve_prim_arg<S: DenseId + Copy, const TRACK: bool>(
+    name: &str,
+    expected_sort: S,
+    op: &str,
+    arg_index: usize,
+    ctx: &RhsResolveCtx<'_, S>,
+    sorts: &SortRegistry<S, TRACK>,
+    span: Span,
+) -> R<RPrimArg> {
+    let mult_arg = |mult| {
+        if sorts.name(expected_sort) != "i64" {
+            Err(err(
+                format!(
+                    "multiplicity variable '{name}' can only feed an i64 argument; \
+                     prim op '{op}' arg {arg_index} expects {}",
+                    sorts.name(expected_sort)
+                ),
+                span,
+            ))
+        } else {
+            Ok(RPrimArg::Mult(mult))
+        }
+    };
+
+    if let Some(local) = ctx.local_binding(name) {
+        return match local {
+            RhsLocalBinding::Mult(id) => mult_arg(RhsMultRef::Local(id)),
+            RhsLocalBinding::Node(_) => Err(err(
+                format!(
+                    "'{name}' resolves to an RHS-local node variable, not a literal-value \
+                     or multiplicity variable"
+                ),
+                span,
+            )),
+        };
+    }
+
+    match ctx.query_shape.kinds.get(name).copied() {
+        Some(VarKind::LitVal) => Ok(RPrimArg::LitVal(
+            ctx.query_shape
+                .find_lit_val(name)
+                .expect("query literal-value kind must have an id"),
+        )),
+        Some(VarKind::Mult) => mult_arg(RhsMultRef::Query(
+            ctx.query_shape
+                .find_mult(name)
+                .expect("query multiplicity kind must have an id"),
+        )),
+        Some(kind) => Err(err(
+            format!(
+                "'{name}' resolves to a {}, not a literal-value or multiplicity variable",
+                kind.label()
+            ),
+            span,
+        )),
+        None => Err(err(
+            format!(
+                "'{name}' is not a lit-val or multiplicity variable \
+                 (bind via OpKind::Lit pattern or a `:k` annotation)"
+            ),
+            span,
+        )),
     }
 }
 
@@ -2048,10 +2529,13 @@ fn arg_sorts_for_rhs<S: DenseId + Copy>(
 ) -> R<Vec<S>> {
     match kind {
         OpKind::Normal { arg_sorts } => {
-            // For RHS, allow sugar: don't check arity strictly if variadic children (splices/comps) present
+            check_arity(op, arg_sorts.len(), nchildren, span)?;
             Ok(arg_sorts.clone())
         }
-        OpKind::Commutative { arg_sorts } => Ok(arg_sorts.to_vec()),
+        OpKind::Commutative { arg_sorts } => {
+            check_arity(op, 2, nchildren, span)?;
+            Ok(arg_sorts.to_vec())
+        }
         OpKind::A { arg_sort, .. }
         | OpKind::MSet { arg_sort, .. }
         | OpKind::Set { arg_sort, .. } => {
@@ -2077,26 +2561,25 @@ fn resolve_rhs_child<
     ops: &OpRegistry<O, S, TRACK>,
     sorts: &SortRegistry<S, TRACK>,
     model: &M,
-    vs: &mut Vec<Option<S>>,
-    shape: &mut MatchShape,
+    ctx: &mut RhsResolveCtx<'_, S>,
     globals: &GlobalCtx<S, impl Copy>,
 ) -> R<RRhsChild<O, S, L>> {
     use crate::ast::RhsChild;
     match child {
         RhsChild::Term(t) => Ok(RRhsChild::Term(resolve_rhs(
-            t, sort, ops, sorts, model, vs, shape, globals,
+            t, sort, ops, sorts, model, ctx, globals,
         )?)),
         RhsChild::TermMult { term, mult, span } => {
             // Only a variadic op can absorb a repeated child; the App site
             // rejects the annotation under fixed-arity ops before recursing.
-            let body = resolve_rhs(term, sort, ops, sorts, model, vs, shape, globals)?;
-            let m = resolve_mult_expr(mult, *span, shape)?;
+            let body = resolve_rhs(term, sort, ops, sorts, model, ctx, globals)?;
+            let m = resolve_mult_expr(mult, *span, ctx)?;
             Ok(RRhsChild::TermMult {
                 body: Box::new(body),
                 mult: m,
             })
         }
-        RhsChild::Splice(name, span) => resolve_splice(name, *span, shape),
+        RhsChild::Splice(name, span) => resolve_splice(name, *span, sort, sorts, ctx),
         RhsChild::SetComp {
             body,
             var,
@@ -2105,31 +2588,28 @@ fn resolve_rhs_child<
             span,
             ..
         } => {
-            if shape.find_var(var).is_some() {
-                return Err(err(
-                    format!("comprehension variable '{}' shadows existing binding", var),
-                    *span,
-                ));
-            }
-            let vid = shape.intern_var(var).map_err(|m| err(m, *span))?;
-            if vid.idx() >= vs.len() {
-                vs.resize(vid.idx() + 1, None);
-            }
-            if let Some(s) = sort {
-                unify_var(vid, s, vs, &shape.nodes, sorts, *span)?;
-            }
-            let source_id = lookup_set(source, *span, shape)?;
-            let rbody = resolve_rhs(body, sort, ops, sorts, model, vs, shape, globals)?;
-            let rfilter = filter
-                .as_ref()
-                .map(|f| resolve_rhs(f, None, ops, sorts, model, vs, shape, globals).map(Box::new))
-                .transpose()?;
-            Ok(RRhsChild::SetComp {
-                body: Box::new(rbody),
-                var: vid,
-                source: source_id,
-                filter: rfilter,
-            })
+            let source_id = lookup_set(source, *span, ctx)?;
+            let source_sort = ctx.set_sort(source_id);
+            ctx.push_scope();
+            let resolved = (|| {
+                let vid = ctx.alloc_node(var, Some(source_sort), *span)?;
+                let rbody = resolve_rhs(body, sort, ops, sorts, model, ctx, globals)?;
+                let rfilter = filter
+                    .as_ref()
+                    .map(|f| {
+                        let resolved = resolve_rhs(f, None, ops, sorts, model, ctx, globals)?;
+                        require_literal_filter(resolved, f.span())
+                    })
+                    .transpose()?;
+                Ok(RRhsChild::SetComp {
+                    body: Box::new(rbody),
+                    var: vid,
+                    source: source_id,
+                    filter: rfilter,
+                })
+            })();
+            ctx.pop_scope();
+            resolved
         }
         RhsChild::MsetComp {
             body,
@@ -2141,35 +2621,32 @@ fn resolve_rhs_child<
             span,
             ..
         } => {
-            if shape.find_var(var).is_some() {
-                return Err(err(
-                    format!("comprehension variable '{}' shadows existing binding", var),
-                    *span,
-                ));
-            }
-            let vid = shape.intern_var(var).map_err(|m| err(m, *span))?;
-            if vid.idx() >= vs.len() {
-                vs.resize(vid.idx() + 1, None);
-            }
-            if let Some(s) = sort {
-                unify_var(vid, s, vs, &shape.nodes, sorts, *span)?;
-            }
-            let source_id = lookup_mset(source, *span, shape)?;
-            let mult_var_id = shape.intern_mult(mult_var).map_err(|m| err(m, *span))?;
-            let resolved_mult = resolve_mult_expr(mult, *span, shape)?;
-            let rbody = resolve_rhs(body, sort, ops, sorts, model, vs, shape, globals)?;
-            let rfilter = filter
-                .as_ref()
-                .map(|f| resolve_rhs(f, None, ops, sorts, model, vs, shape, globals).map(Box::new))
-                .transpose()?;
-            Ok(RRhsChild::MsetComp {
-                body: Box::new(rbody),
-                mult: resolved_mult,
-                var: vid,
-                mult_var: mult_var_id,
-                source: source_id,
-                filter: rfilter,
-            })
+            let source_id = lookup_mset(source, *span, ctx)?;
+            let source_sort = ctx.mset_sort(source_id);
+            ctx.push_scope();
+            let resolved = (|| {
+                let vid = ctx.alloc_node(var, Some(source_sort), *span)?;
+                let mult_var_id = ctx.alloc_mult(mult_var, *span)?;
+                let rbody = resolve_rhs(body, sort, ops, sorts, model, ctx, globals)?;
+                let resolved_mult = resolve_mult_expr(mult, *span, ctx)?;
+                let rfilter = filter
+                    .as_ref()
+                    .map(|f| {
+                        let resolved = resolve_rhs(f, None, ops, sorts, model, ctx, globals)?;
+                        require_literal_filter(resolved, f.span())
+                    })
+                    .transpose()?;
+                Ok(RRhsChild::MsetComp {
+                    body: Box::new(rbody),
+                    mult: resolved_mult,
+                    var: vid,
+                    mult_var: mult_var_id,
+                    source: source_id,
+                    filter: rfilter,
+                })
+            })();
+            ctx.pop_scope();
+            resolved
         }
         RhsChild::SeqComp {
             body,
@@ -2179,32 +2656,54 @@ fn resolve_rhs_child<
             span,
             ..
         } => {
-            if shape.find_var(var).is_some() {
-                return Err(err(
-                    format!("comprehension variable '{}' shadows existing binding", var),
-                    *span,
-                ));
-            }
-            let vid = shape.intern_var(var).map_err(|m| err(m, *span))?;
-            if vid.idx() >= vs.len() {
-                vs.resize(vid.idx() + 1, None);
-            }
-            if let Some(s) = sort {
-                unify_var(vid, s, vs, &shape.nodes, sorts, *span)?;
-            }
-            let source_id = lookup_seq(source, *span, shape)?;
-            let rbody = resolve_rhs(body, sort, ops, sorts, model, vs, shape, globals)?;
-            let rfilter = filter
-                .as_ref()
-                .map(|f| resolve_rhs(f, None, ops, sorts, model, vs, shape, globals).map(Box::new))
-                .transpose()?;
-            Ok(RRhsChild::SeqComp {
-                body: Box::new(rbody),
-                var: vid,
-                source: source_id,
-                filter: rfilter,
-            })
+            let source_id = lookup_seq(source, *span, ctx)?;
+            let source_sort = ctx.seq_sort(source_id);
+            ctx.push_scope();
+            let resolved = (|| {
+                let vid = ctx.alloc_node(var, Some(source_sort), *span)?;
+                let rbody = resolve_rhs(body, sort, ops, sorts, model, ctx, globals)?;
+                let rfilter = filter
+                    .as_ref()
+                    .map(|f| {
+                        let resolved = resolve_rhs(f, None, ops, sorts, model, ctx, globals)?;
+                        require_literal_filter(resolved, f.span())
+                    })
+                    .transpose()?;
+                Ok(RRhsChild::SeqComp {
+                    body: Box::new(rbody),
+                    var: vid,
+                    source: source_id,
+                    filter: rfilter,
+                })
+            })();
+            ctx.pop_scope();
+            resolved
         }
+    }
+}
+
+/// A comprehension filter is evaluated for a concrete truthy value. Ordinary
+/// e-node terms cannot provide one: `get_lit_val` reads a literal node, not an
+/// arbitrary e-class, and a normal application in this position would only
+/// mutate the graph before deterministically testing false.
+fn require_literal_filter<O, S, L>(
+    filter: RRhsTerm<O, S, L>,
+    span: Span,
+) -> R<Box<RRhsTerm<O, S, L>>> {
+    if matches!(
+        &filter,
+        RRhsTerm::Lit { .. }
+            | RRhsTerm::LitVar { .. }
+            | RRhsTerm::PrimApp { .. }
+            | RRhsTerm::MultVar { .. }
+    ) {
+        Ok(Box::new(filter))
+    } else {
+        Err(err(
+            "comprehension filter must evaluate to a concrete literal value; \
+             e-node terms are not graph-existence tests",
+            span,
+        ))
     }
 }
 
@@ -2212,67 +2711,171 @@ fn resolve_rhs_child<
 // Rest/mult variable lookup helpers
 // ---------------------------------------------------------------------------
 
-fn resolve_splice<O, S, L>(
+fn resolve_splice<O, S: DenseId + Copy, L, const TRACK: bool>(
     name: &str,
     span: Span,
-    shape: &mut MatchShape,
+    expected_sort: Option<S>,
+    sorts: &SortRegistry<S, TRACK>,
+    ctx: &RhsResolveCtx<'_, S>,
 ) -> R<RRhsChild<O, S, L>> {
-    if let Some(id) = shape.seqs.iter().position(|n| n == name) {
-        Ok(RRhsChild::SpliceSeq(SeqVarId::new(id as u16)))
-    } else if let Some(id) = shape.sets.iter().position(|n| n == name) {
-        Ok(RRhsChild::SpliceSet(SetVarId::new(id as u16)))
-    } else if let Some(id) = shape.msets.iter().position(|n| n == name) {
-        Ok(RRhsChild::SpliceMset(MsetVarId::new(id as u16)))
-    } else {
-        Err(err(format!("unknown rest variable '{name}'"), span))
+    if let Some(local) = ctx.local_binding(name) {
+        return Err(err(
+            format!(
+                "'{name}' resolves to an {}, not a rest variable",
+                local_binding_label(local)
+            ),
+            span,
+        ));
+    }
+    let (child, actual_sort) = match ctx.query_shape.kinds.get(name).copied() {
+        Some(VarKind::Seq) => {
+            let id = ctx
+                .query_shape
+                .find_seq(name)
+                .expect("query sequence kind must have an id");
+            (RRhsChild::SpliceSeq(id), ctx.seq_sort(id))
+        }
+        Some(VarKind::Set) => {
+            let id = ctx
+                .query_shape
+                .find_set(name)
+                .expect("query set kind must have an id");
+            (RRhsChild::SpliceSet(id), ctx.set_sort(id))
+        }
+        Some(VarKind::Mset) => {
+            let id = ctx
+                .query_shape
+                .find_mset(name)
+                .expect("query multiset kind must have an id");
+            (RRhsChild::SpliceMset(id), ctx.mset_sort(id))
+        }
+        Some(kind) => Err(err(
+            format!("'{name}' is a {}, not a rest variable", kind.label()),
+            span,
+        ))?,
+        None => Err(err(format!("unknown rest variable '{name}'"), span))?,
+    };
+    if let Some(expected_sort) = expected_sort
+        && actual_sort != expected_sort
+    {
+        return Err(err(
+            format!(
+                "rest variable '{name}' has element sort '{}' but this position expects '{}'",
+                sorts.name(actual_sort),
+                sorts.name(expected_sort)
+            ),
+            span,
+        ));
+    }
+    Ok(child)
+}
+
+fn local_binding_label(binding: RhsLocalBinding) -> &'static str {
+    match binding {
+        RhsLocalBinding::Node(_) => "RHS-local node variable",
+        RhsLocalBinding::Mult(_) => "RHS-local multiplicity variable",
     }
 }
 
-fn lookup_seq(name: &str, span: Span, shape: &mut MatchShape) -> R<SeqVarId> {
-    shape
-        .seqs
-        .iter()
-        .position(|n| n == name)
-        .map(|i| SeqVarId::new(i as u16))
-        .ok_or_else(|| err(format!("'{name}' is not a sequence rest variable"), span))
+fn lookup_seq<S: DenseId>(name: &str, span: Span, ctx: &RhsResolveCtx<'_, S>) -> R<SeqVarId> {
+    lookup_rest_kind(name, span, ctx, VarKind::Seq).map(|_| {
+        ctx.query_shape
+            .find_seq(name)
+            .expect("query sequence kind must have an id")
+    })
 }
 
-fn lookup_set(name: &str, span: Span, shape: &mut MatchShape) -> R<SetVarId> {
-    shape
-        .sets
-        .iter()
-        .position(|n| n == name)
-        .map(|i| SetVarId::new(i as u16))
-        .ok_or_else(|| err(format!("'{name}' is not a set rest variable"), span))
+fn lookup_set<S: DenseId>(name: &str, span: Span, ctx: &RhsResolveCtx<'_, S>) -> R<SetVarId> {
+    lookup_rest_kind(name, span, ctx, VarKind::Set).map(|_| {
+        ctx.query_shape
+            .find_set(name)
+            .expect("query set kind must have an id")
+    })
 }
 
-fn lookup_mset(name: &str, span: Span, shape: &mut MatchShape) -> R<MsetVarId> {
-    shape
-        .msets
-        .iter()
-        .position(|n| n == name)
-        .map(|i| MsetVarId::new(i as u16))
-        .ok_or_else(|| err(format!("'{name}' is not a multiset rest variable"), span))
+fn lookup_mset<S: DenseId>(name: &str, span: Span, ctx: &RhsResolveCtx<'_, S>) -> R<MsetVarId> {
+    lookup_rest_kind(name, span, ctx, VarKind::Mset).map(|_| {
+        ctx.query_shape
+            .find_mset(name)
+            .expect("query multiset kind must have an id")
+    })
 }
 
-fn lookup_mult_var(name: &str, span: Span, shape: &mut MatchShape) -> R<MultVarId> {
-    shape
-        .mults
-        .iter()
-        .position(|n| n == name)
-        .map(|i| MultVarId::new(i as u16))
-        .ok_or_else(|| err(format!("'{name}' is not a multiplicity variable"), span))
+fn lookup_rest_kind<S: DenseId>(
+    name: &str,
+    span: Span,
+    ctx: &RhsResolveCtx<'_, S>,
+    expected: VarKind,
+) -> R<()> {
+    if let Some(local) = ctx.local_binding(name) {
+        return Err(err(
+            format!(
+                "'{name}' resolves to an {}, not a {}",
+                local_binding_label(local),
+                expected.label()
+            ),
+            span,
+        ));
+    }
+    match ctx.query_shape.kinds.get(name).copied() {
+        Some(actual) if actual == expected => Ok(()),
+        Some(actual) => Err(err(
+            format!(
+                "'{name}' is a {}, not a {}",
+                actual.label(),
+                expected.label()
+            ),
+            span,
+        )),
+        None => Err(err(format!("'{name}' is not a {}", expected.label()), span)),
+    }
 }
 
-fn resolve_mult_expr(
+fn lookup_mult_ref<S: DenseId>(
+    name: &str,
+    span: Span,
+    ctx: &RhsResolveCtx<'_, S>,
+) -> R<RhsMultRef> {
+    if let Some(local) = ctx.local_binding(name) {
+        return match local {
+            RhsLocalBinding::Mult(id) => Ok(RhsMultRef::Local(id)),
+            RhsLocalBinding::Node(_) => Err(err(
+                format!(
+                    "'{name}' resolves to an RHS-local node variable, not a multiplicity variable"
+                ),
+                span,
+            )),
+        };
+    }
+    match ctx.query_shape.kinds.get(name).copied() {
+        Some(VarKind::Mult) => Ok(RhsMultRef::Query(
+            ctx.query_shape
+                .find_mult(name)
+                .expect("query multiplicity kind must have an id"),
+        )),
+        Some(kind) => Err(err(
+            format!(
+                "'{name}' is a {}, not a multiplicity variable",
+                kind.label()
+            ),
+            span,
+        )),
+        None => Err(err(
+            format!("'{name}' is not a multiplicity variable"),
+            span,
+        )),
+    }
+}
+
+fn resolve_mult_expr<S: DenseId>(
     expr: &crate::ast::MultExpr,
     span: Span,
-    shape: &mut MatchShape,
+    ctx: &RhsResolveCtx<'_, S>,
 ) -> R<ResolvedMultExpr> {
     match expr {
         crate::ast::MultExpr::Lit(n) => Ok(ResolvedMultExpr::Lit(*n)),
         crate::ast::MultExpr::Var(name) => {
-            lookup_mult_var(name, span, shape).map(ResolvedMultExpr::Var)
+            lookup_mult_ref(name, span, ctx).map(ResolvedMultExpr::Var)
         }
         crate::ast::MultExpr::Prim { op, args } => {
             let p = MultPrimOp::from_name(op).ok_or_else(|| {
@@ -2295,7 +2898,7 @@ fn resolve_mult_expr(
             }
             let rargs = args
                 .iter()
-                .map(|a| resolve_mult_expr(a, span, shape))
+                .map(|a| resolve_mult_expr(a, span, ctx))
                 .collect::<R<Vec<_>>>()?;
             Ok(ResolvedMultExpr::Prim { op: p, args: rargs })
         }
@@ -2330,10 +2933,15 @@ mod tests {
         ops.register("a", &[], e); // nullary
         ops.register("b", &[], e);
         ops.register("p", &[b], b); // for sort-mismatch tests
+        ops.register("to_b", &[e], b);
+        ops.register("box_b", &[b], e);
         ops.register_c("eq", [e, e], e);
         ops.register_a("concat", e, e, AssocDir::Right);
+        ops.register_a("bconcat", b, b, AssocDir::Right);
         ops.register_mset("add", e, e);
+        ops.register_mset("badd", b, b);
         ops.register_set("union", e, e);
+        ops.register_set("bunion", b, b);
         ops.register("ILit", &[ibig], e);
 
         (ops, sorts)
@@ -2575,11 +3183,35 @@ mod tests {
         let root_sort = rq.var_sorts[root_vid.idx()];
         let ri = rhs_src;
         let rhs = crate::test_helpers::parse_rhs(ri);
-        let mut vs = rq.var_sorts;
-        let mut shape = rq.shape;
-        resolve_rhs(
-            &rhs, root_sort, &ops, &sorts, &model, &mut vs, &mut shape, &globals,
-        )
+        let mut ctx = RhsResolveCtx::new(&rq);
+        resolve_rhs(&rhs, root_sort, &ops, &sorts, &model, &mut ctx, &globals)
+    }
+
+    fn resolve_rhs_with_locals(
+        lhs: &str,
+        rhs_src: &str,
+    ) -> Result<
+        (
+            ResolvedQuery<OpId, SortId, NiraLitVal>,
+            RRhsTerm<OpId, SortId, NiraLitVal>,
+            RhsLocalShape,
+        ),
+        ResolveError,
+    > {
+        let (ops, sorts) = setup();
+        let model = crate::literal::NiraModel;
+        let pat = parse_pattern(lhs);
+        let fq = flatten(&[pat], &ops).unwrap();
+        let globals: GlobalCtx<_, ()> = GlobalCtx::new();
+        let rq = resolve(&fq, &ops, &sorts, &model, &globals)?;
+        let root_vid = rq.shape.find_var(&fq.root_vars[0]).unwrap();
+        let root_sort = rq.var_sorts[root_vid.idx()];
+        let rhs = crate::test_helpers::parse_rhs(rhs_src);
+        let mut ctx = RhsResolveCtx::new(&rq);
+        let resolved = resolve_rhs(&rhs, root_sort, &ops, &sorts, &model, &mut ctx, &globals)?;
+        let locals = ctx.local_shape();
+        drop(ctx);
+        Ok((rq, resolved, locals))
     }
 
     #[test]
@@ -2637,6 +3269,80 @@ mod tests {
     }
 
     #[test]
+    fn rhs_splices_require_the_destination_element_sort() {
+        let cases = [
+            ("(concat x ..rest)", "(box_b (bconcat ..rest))"),
+            ("(union x ..rest)", "(box_b (bunion ..rest))"),
+            ("(add x:1 ..rest)", "(box_b (badd ..rest))"),
+        ];
+        for (lhs, rhs) in cases {
+            let error = do_resolve_rhs(lhs, rhs).unwrap_err();
+            assert!(
+                error.msg.contains("rest variable 'rest'")
+                    && error.msg.contains("element sort")
+                    && error.msg.contains("IExpr")
+                    && error.msg.contains("BExpr"),
+                "{lhs} -> {rhs}: unexpected error: {}",
+                error.msg
+            );
+        }
+    }
+
+    #[test]
+    fn rhs_comprehension_binders_use_the_source_element_sort() {
+        let valid = [
+            (
+                "(concat x ..rest)",
+                "(box_b (bconcat ..[(to_b e) for e in rest]))",
+            ),
+            (
+                "(union x ..rest)",
+                "(box_b (bunion ..{(to_b e) for e in rest}))",
+            ),
+            (
+                "(add x:1 ..rest)",
+                "(box_b (badd ..{(to_b e):k for e:k in rest}))",
+            ),
+        ];
+        for (lhs, rhs) in valid {
+            assert!(
+                do_resolve_rhs(lhs, rhs).is_ok(),
+                "{lhs} -> {rhs} should permit a typed mapping"
+            );
+        }
+
+        let invalid = [
+            ("(concat x ..rest)", "(box_b (bconcat ..[e for e in rest]))"),
+            ("(union x ..rest)", "(box_b (bunion ..{e for e in rest}))"),
+            ("(add x:1 ..rest)", "(box_b (badd ..{e:k for e:k in rest}))"),
+        ];
+        for (lhs, rhs) in invalid {
+            let error = do_resolve_rhs(lhs, rhs).unwrap_err();
+            assert!(
+                error.msg.contains("sort mismatch"),
+                "{lhs} -> {rhs}: unexpected error: {}",
+                error.msg
+            );
+        }
+    }
+
+    #[test]
+    fn lhs_rest_variable_has_one_element_sort() {
+        for patterns in [
+            ["(concat x ..rest)", "(bconcat y ..rest)"],
+            ["(union x ..rest)", "(bunion y ..rest)"],
+            ["(add x:1 ..rest)", "(badd y:1 ..rest)"],
+        ] {
+            let error = do_resolve_multi(&patterns).unwrap_err();
+            assert!(
+                error.msg.contains("rest variable 'rest'") && error.msg.contains("element sorts"),
+                "{patterns:?}: unexpected error: {}",
+                error.msg
+            );
+        }
+    }
+
+    #[test]
     fn rhs_set_comp() {
         let r = do_resolve_rhs("(union x ..rest)", "(union ..{(g e) for e in rest})");
         assert!(r.is_ok());
@@ -2669,10 +3375,10 @@ mod tests {
     }
 
     #[test]
-    fn rhs_set_comp_with_filter() {
+    fn rhs_set_comp_with_literal_filter() {
         let r = do_resolve_rhs(
             "(union x y ..rest)",
-            "(union ..{(g e) for e in rest if (f e x)})",
+            "(union ..{(g e) for e in rest if true})",
         );
         assert!(r.is_ok());
         match r.unwrap() {
@@ -2681,6 +3387,34 @@ mod tests {
                 _ => panic!("expected SetComp"),
             },
             _ => panic!("expected App"),
+        }
+    }
+
+    #[test]
+    fn rhs_rejects_e_node_comprehension_filters() {
+        let cases = [
+            (
+                "(union x y ..rest)",
+                "(union ..{(g e) for e in rest if (f e x)})",
+            ),
+            (
+                "(concat x ..rest)",
+                "(concat ..[(g e) for e in rest if (g e)])",
+            ),
+            ("(concat x ..rest)", "(concat ..[(g e) for e in rest if e])"),
+            (
+                "(add x:1 ..rest)",
+                "(add ..{(g e):k for e:k in rest if (g e)})",
+            ),
+        ];
+        for (lhs, rhs) in cases {
+            let error = do_resolve_rhs(lhs, rhs).unwrap_err();
+            assert!(
+                error.msg.contains("concrete literal value")
+                    && error.msg.contains("not graph-existence tests"),
+                "{lhs} -> {rhs}: unexpected error: {}",
+                error.msg
+            );
         }
     }
 
@@ -2697,6 +3431,184 @@ mod tests {
                 );
             }
             _ => panic!("expected App"),
+        }
+    }
+
+    #[test]
+    fn rhs_mset_comp_uses_distinct_local_refs_without_changing_query_shape() {
+        let (rq, rhs, locals) =
+            resolve_rhs_with_locals("(add x:k ..rest)", "(add ..{(g x):k for x:k in rest} x:k)")
+                .unwrap();
+        assert_eq!(rq.shape.nodes.len(), rq.var_sorts.len());
+        assert_eq!(rq.shape.nodes.iter().filter(|name| *name == "x").count(), 1);
+        assert_eq!(rq.shape.mults, ["k"]);
+        assert_eq!(locals.node_count, 1);
+        assert_eq!(locals.mult_count, 1);
+
+        let x = rq.shape.find_var("x").unwrap();
+        let k = rq.shape.find_mult("k").unwrap();
+        let RRhsTerm::App { children, .. } = rhs else {
+            panic!("expected app");
+        };
+        let RRhsChild::MsetComp {
+            body,
+            mult,
+            var,
+            mult_var,
+            ..
+        } = &children[0]
+        else {
+            panic!("expected multiset comprehension");
+        };
+        assert_eq!(*var, RhsLocalVarId::new(0));
+        assert_eq!(*mult_var, RhsLocalMultVarId::new(0));
+        assert_eq!(mult, &ResolvedMultExpr::Var(RhsMultRef::Local(*mult_var)));
+        let RRhsTerm::App {
+            children: body_children,
+            ..
+        } = body.as_ref()
+        else {
+            panic!("expected mapped application");
+        };
+        assert!(matches!(
+            &body_children[0],
+            RRhsChild::Term(RRhsTerm::Var(RhsNodeRef::Local(id))) if id == var
+        ));
+        assert!(matches!(
+            &children[1],
+            RRhsChild::TermMult {
+                body,
+                mult: ResolvedMultExpr::Var(RhsMultRef::Query(id))
+            } if matches!(body.as_ref(), RRhsTerm::Var(RhsNodeRef::Query(node)) if *node == x)
+                && *id == k
+        ));
+    }
+
+    #[test]
+    fn rhs_sibling_comprehensions_reuse_names_with_fresh_ids() {
+        let (_, rhs, locals) = resolve_rhs_with_locals(
+            "(add x:1 ..rest)",
+            "(add ..{rest:k for rest:k in rest} ..{rest:k for rest:k in rest})",
+        )
+        .unwrap();
+        assert_eq!(
+            locals,
+            RhsLocalShape {
+                node_count: 2,
+                mult_count: 2
+            }
+        );
+        let RRhsTerm::App { children, .. } = rhs else {
+            panic!("expected app");
+        };
+        let (
+            RRhsChild::MsetComp {
+                var: first_node,
+                mult_var: first_mult,
+                ..
+            },
+            RRhsChild::MsetComp {
+                var: second_node,
+                mult_var: second_mult,
+                ..
+            },
+        ) = (&children[0], &children[1])
+        else {
+            panic!("expected sibling multiset comprehensions");
+        };
+        assert_ne!(first_node, second_node);
+        assert_ne!(first_mult, second_mult);
+    }
+
+    #[test]
+    fn rhs_nearest_wrong_kind_binding_does_not_fall_through() {
+        let node_shadow =
+            do_resolve_rhs("(add x:k ..rest)", "(add ..{k:k for k:inner in rest})").unwrap_err();
+        assert!(
+            node_shadow.msg.contains("RHS-local node") && node_shadow.msg.contains("multiplicity")
+        );
+
+        let mult_shadow =
+            do_resolve_rhs("(add x:k ..rest)", "(add ..{x:count for elem:x in rest})").unwrap_err();
+        assert!(
+            mult_shadow.msg.contains("multiplicity variable 'x'")
+                && mult_shadow.msg.contains("i64")
+        );
+    }
+
+    #[test]
+    fn rhs_rejects_duplicate_comprehension_binder_names() {
+        let error =
+            do_resolve_rhs("(add x:1 ..rest)", "(add ..{k:k for k:k in rest})").unwrap_err();
+        assert!(
+            error.msg.contains("declared twice"),
+            "unexpected error: {}",
+            error.msg
+        );
+    }
+
+    #[test]
+    fn rhs_comprehension_locals_do_not_escape_their_scope() {
+        let error = do_resolve_rhs(
+            "(add x:1 ..rest)",
+            "(add ..{elem:k for elem:k in rest} elem)",
+        )
+        .unwrap_err();
+        assert!(
+            error.msg.contains("unbound variable 'elem'"),
+            "unexpected error: {}",
+            error.msg
+        );
+    }
+
+    #[test]
+    fn rhs_outer_local_of_wrong_kind_blocks_nested_source_lookup() {
+        let error = do_resolve_rhs(
+            "(add x:1 ..rest)",
+            "(add ..{(add ..{inner:k2 for inner:k2 in rest}):1 \
+             for rest:k in rest})",
+        )
+        .unwrap_err();
+        assert!(
+            error.msg.contains("RHS-local node") && error.msg.contains("multiset rest variable"),
+            "unexpected error: {}",
+            error.msg
+        );
+    }
+
+    #[test]
+    fn rhs_rejects_collection_source_of_the_wrong_kind() {
+        let cases = [
+            ("(concat x ..rest)", "(concat ..[x for x in rest])", None),
+            (
+                "(concat x ..rest)",
+                "(add ..{x:k for x:k in rest})",
+                Some("multiset rest variable"),
+            ),
+            (
+                "(union x ..rest)",
+                "(concat ..[x for x in rest])",
+                Some("sequence rest variable"),
+            ),
+            (
+                "(add x:1 ..rest)",
+                "(union ..{x for x in rest})",
+                Some("set rest variable"),
+            ),
+        ];
+        for (lhs, rhs, expected_error) in cases {
+            let result = do_resolve_rhs(lhs, rhs);
+            match expected_error {
+                None => assert!(result.is_ok(), "{lhs} -> {rhs} should resolve"),
+                Some(expected) => {
+                    let error = result.unwrap_err();
+                    assert!(
+                        error.msg.contains(expected),
+                        "{lhs} -> {rhs}: unexpected error: {}",
+                        error.msg
+                    );
+                }
+            }
         }
     }
 
@@ -2826,18 +3738,9 @@ mod tests {
         let root_sort = rq.var_sorts[root_vid.idx()];
         let ri = "(f (p x) y)";
         let rhs = crate::test_helpers::parse_rhs(ri);
-        let mut vs = rq.var_sorts;
-        let mut shape = rq.shape;
-        let r = resolve_rhs(
-            &rhs,
-            root_sort,
-            &ops,
-            &sorts,
-            &model,
-            &mut vs,
-            &mut shape,
-            &GlobalCtx::<_, ()>::new(),
-        );
+        let mut ctx = RhsResolveCtx::new(&rq);
+        let globals = GlobalCtx::<_, ()>::new();
+        let r = resolve_rhs(&rhs, root_sort, &ops, &sorts, &model, &mut ctx, &globals);
         assert!(r.is_err());
         let msg = r.unwrap_err().msg;
         assert!(
@@ -2859,18 +3762,9 @@ mod tests {
         let root_sort = rq.var_sorts[root_vid.idx()];
         let ri = "(p x)";
         let rhs = crate::test_helpers::parse_rhs(ri);
-        let mut vs = rq.var_sorts;
-        let mut shape = rq.shape;
-        let r = resolve_rhs(
-            &rhs,
-            root_sort,
-            &ops,
-            &sorts,
-            &model,
-            &mut vs,
-            &mut shape,
-            &GlobalCtx::<_, ()>::new(),
-        );
+        let mut ctx = RhsResolveCtx::new(&rq);
+        let globals = GlobalCtx::<_, ()>::new();
+        let r = resolve_rhs(&rhs, root_sort, &ops, &sorts, &model, &mut ctx, &globals);
         assert!(r.is_err());
         let msg = r.unwrap_err().msg;
         assert!(
@@ -2882,10 +3776,26 @@ mod tests {
     #[test]
     fn rhs_plain_arity_mismatch() {
         // f: Int×Int→Int, RHS: (f x) — too few args for a plain op
-        let r = do_resolve_rhs("(f x y)", "(f x)");
-        // RHS doesn't strictly check arity for plain ops (splices may expand).
-        // Document current behavior: this may or may not error.
-        let _ = r;
+        let error = do_resolve_rhs("(f x y)", "(f x)").unwrap_err();
+        assert!(error.msg.contains("expects 2 arguments, got 1"));
+    }
+
+    #[test]
+    fn rhs_fixed_arity_operator_rejects_collection_expansion() {
+        for (lhs, rhs) in [
+            ("(concat x ..rest)", "(g ..rest)"),
+            ("(concat x ..rest)", "(g ..[e for e in rest])"),
+            ("(union x ..rest)", "(g ..{e for e in rest})"),
+            ("(add x:1 ..rest)", "(g ..{e:k for e:k in rest})"),
+            ("(add x:k ..rest)", "(g x:k)"),
+        ] {
+            let error = do_resolve_rhs(lhs, rhs).unwrap_err();
+            assert!(
+                error.msg.contains("fixed arity"),
+                "{lhs} -> {rhs}: unexpected error: {}",
+                error.msg
+            );
+        }
     }
 
     #[test]
@@ -2943,17 +3853,10 @@ mod tests {
             let root_sort = rq.var_sorts[root_vid.idx()];
             let ri = rhs;
             let rhs_ast = crate::test_helpers::parse_rhs(ri);
-            let mut vs = rq.var_sorts.clone();
-            let mut shape = rq.shape.clone();
+            let mut ctx = RhsResolveCtx::new(&rq);
+            let globals = GlobalCtx::<_, ()>::new();
             let e = resolve_rhs(
-                &rhs_ast,
-                root_sort,
-                &ops,
-                &sorts,
-                &model,
-                &mut vs,
-                &mut shape,
-                &GlobalCtx::<_, ()>::new(),
+                &rhs_ast, root_sort, &ops, &sorts, &model, &mut ctx, &globals,
             )
             .unwrap_err();
             println!("{label}:");

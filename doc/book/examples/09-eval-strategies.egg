@@ -1,0 +1,22 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Book chapter 9: the same checks run under naive and semi-naive evaluation.
+
+;; ANCHOR: eval-strategies
+(sort N)
+(constructor z () N)
+(constructor s (N) N)
+(function dbl (N) N)
+
+(rewrite (dbl (z)) (z))
+(rewrite (dbl (s x)) (s (s (dbl x))))
+
+(let input (s (s (s z))))
+(let result (dbl input))
+(let six (s (s (s (s (s (s z)))))))
+
+;; Several rounds propagate the recursive result through fresh parent nodes.
+(run 10)
+(check (= result six))
+(check (!= result input))
+;; ANCHOR_END: eval-strategies

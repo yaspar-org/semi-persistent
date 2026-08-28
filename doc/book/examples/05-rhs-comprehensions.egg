@@ -1,0 +1,103 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; EVAL: both
+;; Book chapter 5: right-hand-side splicing and comprehensions.
+
+;; ANCHOR: comprehension-forms
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function marker () E)
+(function F (E) E)
+
+(function Seq (E) E :assoc)
+(function Set (E) E :assoc-comm-idem)
+(function Bag (E) E :assoc-comm)
+
+(rewrite (Seq first ..rest)
+         (Seq (F first) ..[(F element) for element in rest]))
+(rewrite (Set chosen ..rest)
+         (Set (F chosen) ..{(F element) for element in rest}))
+(rewrite (Bag chosen:1 ..rest)
+         (Bag (F chosen)
+              ..{(F element):count for element:count in rest}))
+
+(let sequence (Seq a b c))
+(let set (Set a b c))
+(let bag (Bag a b b c c c))
+(run 1)
+
+(check (= sequence (Seq (F a) (F b) (F c))))
+(check (= set (Set (F a) (F b) (F c))))
+(check (= bag (Bag (F a) (F b) (F b) (F c) (F c) (F c))))
+;; ANCHOR_END: comprehension-forms
+
+;; ANCHOR: comprehension-filter
+;; A filter computes a literal value. It is not an e-graph existence query.
+(function Num (i64) E)
+(function FilterBox (E E) E)
+(function FilterBag (E) E :assoc-comm)
+
+(rewrite (FilterBox (Num threshold)
+                    (FilterBag marker:1 ..rest))
+         (FilterBag
+           ..{(F element):count
+              for element:count in rest
+              if (i64::< threshold count)}))
+
+(let filtered
+  (FilterBox (Num 1)
+             (FilterBag marker a b b c c c)))
+(run 1)
+(check (= filtered
+          (FilterBag (F b) (F b) (F c) (F c) (F c))))
+;; ANCHOR_END: comprehension-filter
+
+;; ANCHOR: comprehension-count
+;; A zero output count omits the body. Here a:1 disappears and b:3 becomes b:2.
+(function ReducedBag (E) E :assoc-comm)
+(rewrite (ReducedBag marker:1 ..rest)
+         (ReducedBag
+           ..{(F element):(u64::- count 1)
+              for element:count in rest}))
+
+(let reduced (ReducedBag marker a b b b))
+(run 1)
+(check (= reduced (ReducedBag (F b) (F b))))
+;; ANCHOR_END: comprehension-count
+
+;; ANCHOR: comprehension-scope
+;; The local element shadows the query binding only inside the comprehension.
+(function Keep (E) E)
+(function ScopeBox (E E) E)
+(function ScopeSeq (E) E :assoc)
+
+(rewrite (ScopeBox element (ScopeSeq first ..rest))
+         (ScopeSeq
+           ..[(F element) for element in rest]
+           (Keep element)))
+
+(let scoped (ScopeBox a (ScopeSeq b c marker)))
+(run 1)
+(check (= scoped (ScopeSeq (F c) (F marker) (Keep a))))
+;; ANCHOR_END: comprehension-scope
+
+;; ANCHOR: multiplicity-as-term
+;; A query multiplicity can fill an i64 term or primitive argument.
+(function Count (i64) E)
+(function CountPair (E E) E)
+(function MeasureBag (E) E :assoc-comm)
+(function MeasureBox (E E) E)
+
+(rewrite (MeasureBox (Num offset)
+                     (MeasureBag element:count ..rest))
+         (CountPair
+           (Count count)
+           (Count (i64::+ count offset))))
+
+(let measured
+  (MeasureBox (Num 10) (MeasureBag a a a)))
+(run 1)
+(check (= measured (CountPair (Count 3) (Count 13))))
+;; ANCHOR_END: multiplicity-as-term

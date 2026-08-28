@@ -1632,6 +1632,17 @@ and restoration. This chapter makes no fixed timing, node-count, or speedup
 claim; such results belong in a same-revision Criterion campaign with confidence
 intervals.
 
+**One consumer the lazy mode does not serve: anti-unification.** The trigger is
+an equality check, and `antiunify`/`checkau` are not equality checks, so the
+command loop closes the transaction and restores the graph before
+`AuSnapshot::new` reads it. The solver therefore searches the plain graph in lazy
+mode and reports the same, larger, anti-unifier it reports in plain mode. Only
+eager completion changes the relation the solver reasons over. The measurement,
+the reason a goal-directed search cannot be adapted to a solver with one OR node
+per reachable class pair, and the pinned regression are in
+[`19-anti-unification.md`](19-anti-unification.md) §2.8 and
+`tests/au_ac_completion_modes.rs`.
+
 ## 14. The A-only transfer: inter-reduction for sequences, and where it must stop
 
 An analogous erased-reference gap exists for associativity-only (`Seq`) operators:

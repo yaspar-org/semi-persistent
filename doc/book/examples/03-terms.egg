@@ -1,0 +1,67 @@
+;; EXPECT: ok
+;; TYPES: bignum
+;; Book chapter 3: sorts, operators, ground terms, and what congruence gives you
+;; for free. Nothing here declares a rule, so every equality below is either one
+;; the program asserted or one congruence closure derived from those.
+
+;; ANCHOR: literal-model-declarations
+(sort Expr)
+(sort Name)
+
+;; IBig is supplied by the selected bignum literal model.
+(function f (Name) Expr)
+(function Lit (IBig) Expr)
+;; ANCHOR_END: literal-model-declarations
+
+;; An operator declares its argument sorts, then its result sort. Arity is fixed
+;; by that list unless an algebraic attribute makes the operator variadic
+;; (chapter 4).
+;; ANCHOR: operator-declarations
+(function add (Expr Expr) Expr)
+(function neg (Expr) Expr)
+
+;; Nullary operators are the leaves. They take an empty argument list.
+(constructor x () Name)
+(constructor y () Name)
+(constructor z () Name)
+;; ANCHOR_END: operator-declarations
+
+;; `let` builds the term, inserts it, and binds the name to its e-class. The name
+;; is then usable wherever a term is expected.
+(let fx (f (x)))
+(let fy (f (y)))
+(let sum (add fx fy))
+
+;; A bare term at top level is inserted without being named. This is how you
+;; populate the e-graph with terms a rule should fire on.
+(neg (add (f (z)) (f (z))))
+
+;; Structural identity is free: the same term built twice is the same e-class,
+;; because every term is hash-consed on insertion.
+(let sum_again (add (f (x)) (f (y))))
+(check (= sum sum_again))
+
+;; `union` asserts an equality the program did not derive.
+(union fx fy)
+
+;; Congruence closure is the one inference that runs without any rule: equal
+;; arguments make equal applications. Nothing declared `add` to be commutative or
+;; anything else, yet `add(fx, fy) = add(fy, fx)` now holds, because `fx` and
+;; `fy` are the same class and so both terms are the same node.
+(check (= (add fx fy) (add fy fx)))
+;; It propagates upward through any number of layers.
+(check (= (neg (add fx fx)) (neg (add fy fy))))
+
+;; What congruence does NOT give you: it never equates terms with different
+;; operators or different arity at the root.
+(check (!= (add fx fx) (neg fx)))
+
+;; `(check t)` is the third form, and it is worth being precise about what it does,
+;; because the name invites a wrong reading. It is NOT a presence test. It builds
+;; the term, so it asserts that the term sort-checks and it inserts the term if the
+;; term was not already there. A `(check t)` that names something the program never
+;; derived succeeds, and leaves it in the graph.
+;;
+;; The two forms that assert something about the equality relation are `(= a b)`
+;; and `(!= a b)`. Use those to state what a program should have derived.
+(check (add fx fy))

@@ -1,0 +1,54 @@
+;; EXPECT: ok
+;; ANCHOR: clamping
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function e () E)
+
+;; Plain AC retains natural-number multiplicities.
+(function add (E) E :assoc :comm :identity (e))
+(check (!= (add a a) a))
+(check (!= (add a a a) (add a a)))
+(check (= (add a e) a))
+(check (= (add a e e b) (add a b)))
+(check (= (add e e) e))
+
+;; Idempotence clamps every positive multiplicity to one.
+(function meet (E) E :assoc-comm-idem :identity (e))
+(check (= (meet a a) a))
+(check (= (meet a a a b b) (meet a b)))
+(check (= (meet a e) a))
+
+;; Bare :nilpotent has order two. Counts are reduced modulo two.
+(function xor (E) E :assoc :comm :nilpotent :identity (e))
+(check (= (xor a a) e))
+(check (= (xor a a a) a))
+(check (= (xor a a b) b))
+(check (= (xor a b a b) e))
+(check (!= (xor a b) e))
+
+;; Nilpotence of order three can retain multiplicity two.
+(function tri (E) E :assoc :comm :nilpotent 3 :identity (e))
+(check (= (tri a a a) e))
+(check (!= (tri a a) e))
+(check (!= (tri a a) a))
+(check (= (tri a a a a) a))
+
+;; Rebuild applies the same clamps after child classes merge.
+(let x_ab (xor a b))
+(let m_ab (meet a b))
+(let t_ab (tri a b))
+(union a b)
+(check (= x_ab e))
+(check (= m_ab a))
+(check (= t_ab (tri a a)))
+
+;; A child that later joins the identity class is removed on rebuild.
+(let s_ce (add c e))
+(let s_c2 (add c c))
+(check (= s_ce c))
+(union c e)
+(check (= s_c2 e))
+(print-size)
+;; ANCHOR_END: clamping

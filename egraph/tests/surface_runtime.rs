@@ -36,6 +36,102 @@ fn run_with(src: &str, strategy: SaturationStrategy) -> Interp {
     interp
 }
 
+fn sortcheck_error(src: &str) -> String {
+    let cmds = semi_persistent_egraph::parser::parse_program_v2(src).expect("parse");
+    let mut interp = Interp::new(BignumModel);
+    let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
+    semi_persistent_egraph::sortcheck::sortcheck_program(
+        cmds,
+        &mut interp.eg,
+        &interp.model,
+        &mut globals,
+    )
+    .expect_err("program unexpectedly sort-checks")
+    .to_string()
+}
+
+#[test]
+fn rhs_comprehensions_map_between_element_sorts() {
+    run("
+(sort A)
+(sort B)
+(sort E)
+(constructor a () A)
+(constructor b () A)
+(constructor F (A) B)
+(constructor AS (A) A :assoc)
+(constructor ASet (A) A :assoc-comm-idem)
+(constructor AMset (A) A :assoc-comm)
+(constructor BS (B) B :assoc)
+(constructor BSet (B) B :assoc-comm-idem)
+(constructor BMset (B) B :assoc-comm)
+(constructor WrapA (A) E)
+(constructor WrapB (B) E)
+
+(rewrite (WrapA (AS first ..rest))
+         (WrapB (BS (F first) ..[(F element) for element in rest])))
+(rewrite (WrapA (ASet chosen ..rest))
+         (WrapB (BSet (F chosen) ..{(F element) for element in rest})))
+(rewrite (WrapA (AMset chosen:1 ..rest))
+         (WrapB
+           (BMset (F chosen)
+                  ..{(F element):count for element:count in rest})))
+
+(let seq (WrapA (AS a b b)))
+(let set (WrapA (ASet a b)))
+(let mset (WrapA (AMset a b b)))
+(run 2)
+
+(check (= seq (WrapB (BS (F a) (F b) (F b)))))
+(check (= set (WrapB (BSet (F a) (F b)))))
+(check (= mset (WrapB (BMset (F a) (F b) (F b)))))
+");
+}
+
+#[test]
+fn rhs_splices_reject_a_different_element_sort() {
+    for (source_decl, target_decl, lhs, rhs) in [
+        (
+            "(constructor AS (A) A :assoc)",
+            "(constructor BS (B) B :assoc)",
+            "(WrapA (AS first ..rest))",
+            "(WrapB (BS ..rest))",
+        ),
+        (
+            "(constructor AS (A) A :assoc-comm-idem)",
+            "(constructor BS (B) B :assoc-comm-idem)",
+            "(WrapA (AS first ..rest))",
+            "(WrapB (BS ..rest))",
+        ),
+        (
+            "(constructor AS (A) A :assoc-comm)",
+            "(constructor BS (B) B :assoc-comm)",
+            "(WrapA (AS first:1 ..rest))",
+            "(WrapB (BS ..rest))",
+        ),
+    ] {
+        let error = sortcheck_error(&format!(
+            "
+(sort A)
+(sort B)
+(sort E)
+{source_decl}
+{target_decl}
+(constructor WrapA (A) E)
+(constructor WrapB (B) E)
+(rewrite {lhs} {rhs})
+"
+        ));
+        assert!(
+            error.contains("rest variable 'rest'")
+                && error.contains("element sort")
+                && error.contains("'A'")
+                && error.contains("'B'"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
 // ── `:until` ───────────────────────────────────────────────────────────────
 
 const UNBOUNDED: &str = "
@@ -98,6 +194,71 @@ fn until_already_satisfied_runs_no_iterations() {
     let sat = interp.last_sat().expect("a run happened");
     assert_eq!(sat.iterations, 0);
     assert!(sat.goal_met);
+}
+
+#[test]
+fn until_reports_a_goal_joined_by_rebuild() {
+    let src = "
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(constructor f (E) E)
+(constructor seed () E)
+(let fa (f (a)))
+(let fb (f (b)))
+(seed)
+(rule ((seed)) ((union (a) (b))))
+(run 1 :until (= fa fb))
+";
+    for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {
+        let interp = run_with(src, strategy);
+        let sat = interp.last_sat().expect("a run happened");
+        assert_eq!(
+            sat.iterations, 1,
+            "{strategy:?}: only the child-merging round should execute"
+        );
+        assert!(
+            sat.goal_met,
+            "{strategy:?}: rebuild made the parents congruent"
+        );
+        assert!(
+            !sat.saturated,
+            "{strategy:?}: the run stopped on its goal, not saturation"
+        );
+    }
+}
+
+#[test]
+fn until_disequality_rebuilds_before_observing_a_dirty_graph() {
+    let src = "
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(constructor f (E) E)
+(constructor seed () E)
+(let fa (f (a)))
+(let fb (f (b)))
+(seed)
+(rule ((seed)) ((union (a) (b))))
+(run 1)
+(run 1 :until (!= fa fb))
+";
+    for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {
+        let interp = run_with(src, strategy);
+        let sat = interp.last_sat().expect("a run happened");
+        assert_eq!(
+            sat.iterations, 1,
+            "{strategy:?}: the false disequality must not stop iteration zero"
+        );
+        assert!(
+            !sat.goal_met,
+            "{strategy:?}: rebuild makes the parent terms congruent"
+        );
+        assert!(
+            sat.saturated,
+            "{strategy:?}: the second run has no new equality to add"
+        );
+    }
 }
 
 // ── Rulesets ───────────────────────────────────────────────────────────────

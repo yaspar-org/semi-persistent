@@ -1,0 +1,48 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Set patterns bind distinct members and an optional remainder.
+
+(sort E)
+(function top () E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+
+;; ANCHOR: set-patterns
+(function Conj (E) E :assoc-comm-idem :identity top)
+(function Absorbed (E) E)
+(rewrite (Conj (a) (b) ..rest)
+         (Absorbed (Conj (d) ..rest)))
+
+(let ordered (Conj a b c))
+(let permuted (Conj b a c))
+(run 1)
+(check (= ordered permuted))
+(check (= ordered (Absorbed (Conj d c))))
+
+(function Pick (E) E :assoc-comm-idem)
+(function Pair (E E) E)
+(function RepeatedSet () E)
+(rewrite (Pick x y ..rest) (Pair x y))
+(rewrite (Pick x x ..rest) (RepeatedSet))
+
+(let pair_source (Pick a c))
+(run 1)
+(check (= pair_source (Pair a c)))
+(check (= pair_source (Pair c a)))
+(check (!= pair_source (RepeatedSet)))
+
+(function ExactSet (E) E :assoc-comm-idem)
+(function Exactly () E)
+(rewrite (ExactSet (a) (b)) (Exactly))
+
+(let exact_pair (ExactSet a b))
+(let exact_triple (ExactSet a b c))
+(run 1)
+(check (= exact_pair (Exactly)))
+(check (!= exact_triple (Exactly)))
+;; ANCHOR_END: set-patterns
+
+(check (= (Conj a top) a))
+(check (= (Conj top top) top))

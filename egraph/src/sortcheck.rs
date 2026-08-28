@@ -8,7 +8,7 @@ use crate::ast::*;
 use crate::lit_model::LitModel;
 use crate::literal::LitVal;
 use crate::registry::{OpKind, OpRegistry, SortRegistry};
-use crate::resolve::{GlobalCtx, ResolvedQuery};
+use crate::resolve::{GlobalCtx, ResolvedQuery, RhsResolveCtx};
 use std::hash::Hash;
 
 // ── Error type ──
@@ -66,6 +66,7 @@ pub enum CCommand<O, S, L> {
     Extract(CTerm<O, S, L>),
     Rewrite {
         query: ResolvedQuery<O, S, L>,
+        rhs_locals: crate::resolve::RhsLocalShape,
         rhs: crate::resolve::RRhsTerm<O, S, L>,
         root_vid: crate::ast::VarId,
         subsume: bool,
@@ -73,6 +74,7 @@ pub enum CCommand<O, S, L> {
     },
     Rule {
         query: ResolvedQuery<O, S, L>,
+        rhs_locals: crate::resolve::RhsLocalShape,
         actions: Vec<crate::resolve::ResolvedAction<O, S, L>>,
         ruleset: Option<crate::apply::RulesetId>,
     },
@@ -842,22 +844,22 @@ where
                     lhs_span,
                 )
             })?;
-            let mut vs = rq.var_sorts.clone();
-            let mut shape = rq.shape.clone();
-            let root_sort = vs[root_vid.idx()];
+            let root_sort = rq.var_sorts[root_vid.idx()];
+            let mut rhs_ctx = RhsResolveCtx::new(&rq);
             let resolved_rhs = resolve_rhs(
                 &rhs,
                 root_sort,
                 eg.ops(),
                 eg.sorts(),
                 model,
-                &mut vs,
-                &mut shape,
+                &mut rhs_ctx,
                 globals,
             )
             .map_err(|e| serr(e.to_string(), Span::Dummy))?;
+            let rhs_locals = rhs_ctx.local_shape();
             Ok(CCommand::Rewrite {
                 query: rq,
+                rhs_locals,
                 rhs: resolved_rhs,
                 root_vid,
                 subsume,
@@ -873,17 +875,17 @@ where
             let fq = flatten_surface(&body, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
             let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
-            let mut vs = rq.var_sorts.clone();
-            let mut shape = rq.shape.clone();
+            let mut rhs_ctx = RhsResolveCtx::new(&rq);
             let mut actions = Vec::with_capacity(head.len());
             for a in &head {
-                let ra =
-                    resolve_action(a, eg.ops(), eg.sorts(), model, &mut vs, &mut shape, globals)
-                        .map_err(|e| serr(e.to_string(), Span::Dummy))?;
+                let ra = resolve_action(a, eg.ops(), eg.sorts(), model, &mut rhs_ctx, globals)
+                    .map_err(|e| serr(e.to_string(), Span::Dummy))?;
                 actions.push(ra);
             }
+            let rhs_locals = rhs_ctx.local_shape();
             Ok(CCommand::Rule {
                 query: rq,
+                rhs_locals,
                 actions,
                 ruleset,
             })
@@ -1127,28 +1129,33 @@ where
         ));
     }
 
-    // Collect the tag set into flags. Duplicate/conflicting basic tags are folded; direction
-    // and value tags are captured. Order-independent.
+    // Collect the tag set into flags. Duplicate basic tags are folded; incompatible
+    // associativity directions are rejected. The result is independent of tag order.
     let mut comm = false;
     let mut assoc = false;
-    let mut dir: Option<AssocDir> = None; // set by assoc-left/right
+    let mut dir: Option<AssocDir> = None;
     let mut idempotent = false;
     let mut nilpotent: Option<u8> = None;
     let mut identity: Option<Term> = None;
     let mut cancellative = false;
     let mut inverse: Option<String> = None;
+    let mut set_assoc_dir = |next: AssocDir| -> Result<(), SortError> {
+        if dir.is_some_and(|current| current != next) {
+            return Err(serr(
+                ":assoc, :assoc-left, and :assoc-right are mutually exclusive",
+                Span::Dummy,
+            ));
+        }
+        assoc = true;
+        dir = Some(next);
+        Ok(())
+    };
     for tag in tags {
         match tag {
             AlgTag::Comm => comm = true,
-            AlgTag::Assoc => assoc = true,
-            AlgTag::AssocLeft => {
-                assoc = true;
-                dir = Some(AssocDir::Left);
-            }
-            AlgTag::AssocRight => {
-                assoc = true;
-                dir = Some(AssocDir::Right);
-            }
+            AlgTag::Assoc => set_assoc_dir(AssocDir::Both)?,
+            AlgTag::AssocLeft => set_assoc_dir(AssocDir::Left)?,
+            AlgTag::AssocRight => set_assoc_dir(AssocDir::Right)?,
             AlgTag::Idempotent => idempotent = true,
             AlgTag::Nilpotent(order) => nilpotent = Some(order.unwrap_or(2)),
             AlgTag::Identity(term) => identity = Some(term.clone()),
@@ -1158,6 +1165,12 @@ where
     }
 
     // --- Validation (reject at registration; design §"Validation at registration") ---
+    if comm && matches!(dir, Some(AssocDir::Left) | Some(AssocDir::Right)) {
+        return Err(serr(
+            ":assoc-left/:assoc-right cannot be combined with :comm; use :assoc :comm for AC",
+            Span::Dummy,
+        ));
+    }
     if idempotent && nilpotent.is_some() {
         return Err(serr(
             ":idempotent and :nilpotent are mutually exclusive",
@@ -1230,6 +1243,17 @@ where
             if args.len() != 1 {
                 return Err(serr(
                     ":assoc :comm operator takes one argument sort",
+                    Span::Dummy,
+                ));
+            }
+            if args[0] != ret {
+                return Err(serr(
+                    format!(
+                        "associative operator '{name}' must use the same argument and return \
+                         sort (argument '{}', return '{}')",
+                        eg.sorts().name(args[0]),
+                        eg.sorts().name(ret),
+                    ),
                     Span::Dummy,
                 ));
             }
@@ -1312,12 +1336,23 @@ where
             if args.len() != 1 {
                 return Err(serr(":assoc requires 1 argument sort", Span::Dummy));
             }
+            if args[0] != ret {
+                return Err(serr(
+                    format!(
+                        "associative operator '{name}' must use the same argument and return \
+                         sort (argument '{}', return '{}')",
+                        eg.sorts().name(args[0]),
+                        eg.sorts().name(ret),
+                    ),
+                    Span::Dummy,
+                ));
+            }
             Ok(eg.register_kind_meta(
                 name,
                 ret,
                 OpKind::A {
                     arg_sort: args[0],
-                    dir: dir.unwrap_or(AssocDir::Left),
+                    dir: dir.unwrap_or(AssocDir::Both),
                 },
                 meta,
             ))
@@ -1332,6 +1367,17 @@ where
             }
             if args.len() != 2 {
                 return Err(serr(":comm requires 2 argument sorts", Span::Dummy));
+            }
+            if args[0] != args[1] {
+                return Err(serr(
+                    format!(
+                        "commutative operator '{name}' must use the same sort for both arguments \
+                         (got '{}' and '{}')",
+                        eg.sorts().name(args[0]),
+                        eg.sorts().name(args[1]),
+                    ),
+                    Span::Dummy,
+                ));
             }
             Ok(eg.register_kind_meta(
                 name,

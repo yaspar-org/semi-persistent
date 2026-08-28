@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Inverse-pair cancellation is part of term construction.
+
+;; ANCHOR: inverse-cancellation
+(sort E)
+(function Zero () E)
+(function A () E)
+(function Neg (E) E)
+(function Add (E) E
+  :assoc-comm
+  :identity (Zero)
+  :inverse Neg)
+
+(check (= (Add A A (Neg A)) A))
+;; ANCHOR_END: inverse-cancellation

@@ -1,0 +1,21 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; ANCHOR: completion-example
+(sort E)
+(function add (E) E :assoc :comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function n () E)
+
+(union (add a b) c)
+(union (add a b d) n)
+
+(function f (E) E)
+(check (= (f (add a b)) (f c)))
+
+;; Eager completion has retained the substituted sum.
+(print-size)
+(check (= n (add c d)))
+;; ANCHOR_END: completion-example

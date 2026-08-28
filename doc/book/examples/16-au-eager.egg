@@ -1,0 +1,40 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; Book chapter 16: with eager AC completion the solver reaches the AC optimum.
+;;
+;; Byte-for-byte the program of `16-au-plain.egg`, run with `--derive-ac-eqs`. The
+;; rebuild that happens before the solver takes its snapshot now runs completion, so
+;; `n` and `add(c, d)` are one class by the time the search starts. There is no
+;; position at which the two sides disagree, and the reported anti-unifier is the
+;; shared term itself:
+;;
+;;   (anti-unify :size 2 :cr 0.0000 :completion exact
+;;     (g n))
+;;
+;; Size 5 became size 2 and the `Variants` node is gone. Nothing about the solver
+;; changed. What changed is the equality relation it was reasoning over.
+;;
+;; This is the rule to take away: if you are anti-unifying over AC operators and you
+;; care whether a reported difference is real, run with eager completion. Otherwise
+;; the solver's optimality claim is about a weaker equality than the one you have in
+;; mind, and it will over-report.
+
+(sort E)
+(function add (E) E :assoc :comm)
+(function g (E) E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function n () E)
+
+(union (add a b) c)
+(union (add a b d) n)
+
+(let l (g n))
+(let r (g (add c d)))
+
+(antiunify l r :algorithm exact)
+
+;; Reached.
+(checkau l r :max_size 2 :algorithm exact)

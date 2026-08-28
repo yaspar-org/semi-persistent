@@ -1,0 +1,74 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Sequence patterns match ordered contiguous windows.
+
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+
+;; ANCHOR: sequence-ends
+(function Front (E) E :assoc)
+(function Back (E) E :assoc)
+(function First (E) E)
+(function Last (E) E)
+
+(rewrite (Front x ..rest) (First x))
+(rewrite (Back ..rest x) (Last x))
+
+(let front (Front a b c))
+(let back (Back a b c))
+(run 1)
+
+(check (= front (First a)))
+(check (= back (Last c)))
+(check (!= front (First b)))
+(check (!= back (Last a)))
+;; ANCHOR_END: sequence-ends
+
+;; ANCHOR: sequence-window
+(function Window (E) E :assoc)
+(function Adjacent (E E) E)
+(rewrite (Window ..prefix x y ..suffix) (Adjacent x y))
+
+(let window (Window a b c d))
+(run 1)
+
+(check (= window (Adjacent a b)))
+(check (= window (Adjacent b c)))
+(check (= window (Adjacent c d)))
+(check (!= window (Adjacent a c)))
+;; ANCHOR_END: sequence-window
+
+;; Exact patterns account for the complete sequence.
+(function Exact (E) E :assoc)
+(function PairOnly () E)
+(rewrite (Exact x y) (PairOnly))
+
+(let exact_pair (Exact a b))
+(let exact_triple (Exact a b c))
+(run 1)
+(check (= exact_pair (PairOnly)))
+(check (!= exact_triple (PairOnly)))
+
+;; Repeated variables constrain adjacent positions.
+(function Repeated (E) E :assoc)
+(function HasRun () E)
+(rewrite (Repeated ..prefix x x ..suffix) (HasRun))
+
+(let adjacent_repeat (Repeated a a b))
+(let separated_repeat (Repeated a b a))
+(run 1)
+(check (= adjacent_repeat (HasRun)))
+(check (!= separated_repeat (HasRun)))
+
+;; Construction flattens nested applications before matching.
+(function Flat (E) E :assoc)
+(function Spans (E E) E)
+(rewrite (Flat ..prefix x y ..suffix) (Spans x y))
+
+(let flat (Flat (Flat a b) (Flat c d)))
+(run 1)
+(check (= flat (Flat a b c d)))
+(check (= flat (Spans b c)))

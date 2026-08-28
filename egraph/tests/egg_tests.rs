@@ -390,6 +390,11 @@ egg_test!(
 );
 egg_test!(rhs_mult_expr, "rhs_mult_expr.egg");
 egg_test!(rhs_mult_expr_underflow, "rhs_mult_expr_underflow.egg");
+egg_test!(rhs_comprehensions, "rhs_comprehensions.egg");
+egg_test!(
+    rhs_comprehension_filter_reject_node,
+    "rhs_comprehension_filter_reject_node.egg"
+);
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");
@@ -467,6 +472,25 @@ egg_test!(
 egg_test!(
     alg_tags_reject_idem_needs_ac,
     "alg_tags_reject_idem_needs_ac.egg"
+);
+// Algebraic canonization must preserve sorts. Associative singleton collapse returns its
+// only child's class, so A/AC operators are closed over one sort. Commutative sorting can
+// exchange argument positions, so both argument sorts must match (the return may differ).
+egg_test!(
+    alg_tags_reject_a_sort_mismatch,
+    "alg_tags_reject_a_sort_mismatch.egg"
+);
+egg_test!(
+    alg_tags_reject_ac_sort_mismatch,
+    "alg_tags_reject_ac_sort_mismatch.egg"
+);
+egg_test!(
+    alg_tags_reject_comm_sort_mismatch,
+    "alg_tags_reject_comm_sort_mismatch.egg"
+);
+egg_test!(
+    alg_tags_comm_distinct_return_sort,
+    "alg_tags_comm_distinct_return_sort.egg"
 );
 // Idempotent + inverse is rejected: an idempotent group is trivial, so `not` is not an
 // `and`-inverse (it is xor-with-true). See design doc "Inverse is a group inverse, not a
@@ -615,6 +639,29 @@ egg_test!(eq_global_only_atom, "eq_global_only_atom.egg");
 #[test]
 fn readme_au_policy_divergence() {
     check("examples/au_policy_divergence.egg");
+}
+
+/// Every program shown in the book is a file in `doc/book/examples/`, and the
+/// chapters `{{#include}}` those files rather than quoting them, so what a reader
+/// copies is what this test ran. Walking the directory instead of listing the
+/// files is deliberate: adding an example to the book cannot forget to register a
+/// test, which is the failure mode a per-file registration invites.
+///
+/// A book example may expect failure. `;; EXPECT: sort-error` is how a chapter
+/// shows what an illegal declaration does and has CI assert it stays illegal.
+#[test]
+fn book_examples() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../doc/book/examples");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {dir}: {e}"))
+        .map(|entry| entry.expect("directory entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "egg"))
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "{dir} holds no .egg files");
+    for path in &files {
+        check(path.to_str().expect("utf-8 path"));
+    }
 }
 
 // ── Cross-engine benchmark corpus (`tests/egg/bench/`) ──

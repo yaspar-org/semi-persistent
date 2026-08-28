@@ -1,0 +1,25 @@
+;; EXPECT: ok
+;; Book chapter 5: directional rewrites and bidirectional rewrites.
+
+;; ANCHOR: rewrite-directions
+(sort Expr)
+(function a () Expr)
+(function b () Expr)
+(function c () Expr)
+(function f (Expr) Expr)
+(function g (Expr) Expr)
+(function h (Expr) Expr)
+
+(rewrite (f x) (g x))
+(birewrite (f x) (h x))
+
+(let forward (f a))
+(let rhs_only (g b))
+(let reverse (h c))
+(run 3)
+
+(check (= forward (g a)))
+(check (= forward (h a)))
+(check (!= rhs_only (f b)))
+(check (= reverse (f c)))
+;; ANCHOR_END: rewrite-directions

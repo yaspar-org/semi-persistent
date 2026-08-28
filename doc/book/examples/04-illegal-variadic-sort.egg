@@ -1,0 +1,9 @@
+;; EXPECT: sort-error
+;; EVAL: both
+;; A variadic operator must be closed over one sort.
+
+;; ANCHOR: illegal-variadic-sort
+(sort A)
+(sort B)
+(function Bad (A) B :assoc-comm)
+;; ANCHOR_END: illegal-variadic-sort

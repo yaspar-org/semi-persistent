@@ -1,0 +1,23 @@
+;; EXPECT: sort-error
+;; Book chapter 4: a clamp is not a free-standing property.
+;;
+;; This program is REJECTED, and the book shows it because the rejection is the
+;; lesson. `:idempotent` and `:nilpotent` are clamps on a multiset of children, so
+;; they presuppose that the children ARE a multiset, which is what `:assoc` and
+;; `:comm` together establish. Declaring a clamp on an operator whose children are
+;; an ordered, fixed-arity list asks the engine to bound a count that does not
+;; exist.
+;;
+;; The engine reports, and exits 1:
+;;   sort error: :idempotent/:nilpotent require :assoc :comm
+;;
+;; The test suite asserts that this file keeps failing this way, which is why the
+;; error text above can be trusted to be current.
+
+(sort E)
+(function a () E)
+
+;; No structural attribute, so `dup` is an ordinary binary Plain node.
+(function dup (E E) E :idempotent)
+
+(check (= (dup a a) a))

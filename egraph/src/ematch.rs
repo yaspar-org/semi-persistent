@@ -421,11 +421,8 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
 
     /// One stored match, by row.
     #[inline]
-    pub fn row_mut(&mut self, j: usize) -> MatchRow<'_, Cfg> {
-        MatchRow {
-            set: &mut self.set,
-            j,
-        }
+    pub fn row(&self, j: usize) -> MatchRow<'_, Cfg> {
+        MatchRow { set: &self.set, j }
     }
 
     /// Reconstruct row `j` as an owned `Match` (tests and diagnostics; this
@@ -715,10 +712,10 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
 // MatchView — one access surface over an owned Match and a MatchSet row
 // ---------------------------------------------------------------------------
 
-/// The binding-access surface `apply` consumes: reads of every variable kind
-/// plus the two scalar writes RHS comprehensions perform. Implemented by the
-/// in-progress `Match` and by [`MatchRow`], so the apply loop is agnostic to
-/// whether matches live in per-slot vectors or the flat store.
+/// The read-only binding-access surface consumed by RHS evaluation.
+///
+/// Comprehension locals are deliberately not stored in a query match; they
+/// live in `apply::RhsEnv`.
 pub trait MatchView<Cfg: EGraphConfig> {
     fn get(&self, v: VarId) -> Cfg::G;
     fn get_mult(&self, v: MultVarId) -> Cfg::M;
@@ -726,13 +723,6 @@ pub trait MatchView<Cfg: EGraphConfig> {
     fn seq_slice(&self, v: SeqVarId) -> &[Cfg::G];
     fn set_slice(&self, v: SetVarId) -> &[Cfg::G];
     fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C];
-    fn set(&mut self, v: VarId, val: Cfg::G);
-    fn set_mult(&mut self, v: MultVarId, val: Cfg::M);
-    /// Unbind `v` after a comprehension. On the owned `Match` this restores
-    /// the panic-on-read guard; the flat store holds no unbound state, so a
-    /// row leaves the stale value in place — equivalent for every compiled
-    /// action sequence, which sets a comprehension variable before each read.
-    fn clear(&mut self, v: VarId);
 }
 
 impl<Cfg: EGraphConfig> MatchView<Cfg> for Match<Cfg> {
@@ -754,20 +744,11 @@ impl<Cfg: EGraphConfig> MatchView<Cfg> for Match<Cfg> {
     fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C] {
         Match::mset_slice(self, v)
     }
-    fn set(&mut self, v: VarId, val: Cfg::G) {
-        Match::set(self, v, val)
-    }
-    fn set_mult(&mut self, v: MultVarId, val: Cfg::M) {
-        Match::set_mult(self, v, val)
-    }
-    fn clear(&mut self, v: VarId) {
-        Match::clear(self, v)
-    }
 }
 
 /// One match of a [`MatchSet`], by row index.
 pub struct MatchRow<'a, Cfg: EGraphConfig> {
-    set: &'a mut MatchSet<Cfg>,
+    set: &'a MatchSet<Cfg>,
     j: usize,
 }
 
@@ -790,13 +771,6 @@ impl<'a, Cfg: EGraphConfig> MatchView<Cfg> for MatchRow<'a, Cfg> {
     fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C] {
         self.set.mset_slice(v, self.j)
     }
-    fn set(&mut self, v: VarId, val: Cfg::G) {
-        self.set.set_node(v, self.j, val);
-    }
-    fn set_mult(&mut self, v: MultVarId, val: Cfg::M) {
-        self.set.set_mult(v, self.j, val);
-    }
-    fn clear(&mut self, _v: VarId) {}
 }
 
 // ---------------------------------------------------------------------------

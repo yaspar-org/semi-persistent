@@ -1,0 +1,52 @@
+name: Book
+on:
+  pull_request:
+    paths:
+      - 'doc/book/**'
+      - 'egraph/examples/**'
+      - '.github/workflows/docs.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'doc/book/**'
+      - 'egraph/examples/**'
+      - '.github/workflows/docs.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build on every pull request so a broken include or a SUMMARY entry with no
+  # file behind it fails review rather than the deploy.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: peaceiris/actions-mdbook@948b432f0fddb61de0806565a7222b36e12e2ee3 # v2.0.0
+        with:
+          mdbook-version: '0.5.2'
+      - run: bash doc/book/build.sh
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: peaceiris/actions-mdbook@948b432f0fddb61de0806565a7222b36e12e2ee3 # v2.0.0
+        with:
+          mdbook-version: '0.5.2'
+      - run: bash doc/book/build.sh
+      - uses: peaceiris/actions-gh-pages@1ef5a1b1df4c63fe21a2242edbee6cac921ece01 # v4.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./doc/book/book
+          publish_branch: gh-pages

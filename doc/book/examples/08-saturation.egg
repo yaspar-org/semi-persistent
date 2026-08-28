@@ -1,0 +1,46 @@
+;; EXPECT: ok
+;; EVAL: naive
+;; Book chapter 8: saturation, statistics, and goal-directed stopping.
+
+;; ANCHOR: saturation
+(sort N)
+(function z () N)
+(function s (N) N)
+(function dbl (N) N)
+
+(rewrite (dbl (z)) (z))
+(rewrite (dbl (s x)) (s (s (dbl x))))
+
+(let two (s (s z)))
+(let four (s (s (s (s z)))))
+(let d2 (dbl two))
+
+;; The first iteration exposes another recursive dbl application.
+(run 1)
+(check (!= d2 four))
+
+;; Two more iterations finish this input.
+(run 2)
+(check (= d2 four))
+
+;; This run reaches an action-counter fixpoint before its bound.
+(let d4 (dbl four))
+(let eight (s (s (s (s (s (s (s (s z)))))))))
+(run 10)
+(check (= d4 eight))
+(print-stats)
+;; ANCHOR_END: saturation
+
+;; ANCHOR: until-goal
+(function up (N) N)
+(rewrite (up x) (up (s x)))
+
+;; The rewrite can keep producing larger terms. The equality goal stops this
+;; run before the iteration bound.
+(run 100 :until (= (up z) (up (s (s (s z))))))
+(check (= (up z) (up (s (s (s z))))))
+(print-stats)
+;; ANCHOR_END: until-goal
+
+;; Keep an assertion after the final diagnostic command.
+(check (= d4 eight))

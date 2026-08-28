@@ -23,12 +23,10 @@ pub struct OpRegistryToken {
     completion: VecToken,
 }
 
-/// Source spelling retained for associative-only operators.
+/// Flattening direction for variadic sequence operators.
 ///
-/// All three variants currently use the same flat, order-preserving `Seq`
-/// representation and matching semantics. The value records whether the
-/// declaration used `:assoc-left`, `:assoc-right`, or `:assoc`; no production
-/// path branches on it after registration.
+/// `Left` folds and flattens through the first child, `Right` through the last,
+/// and `Both` through every nested same-op child. All preserve child order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssocDir {
     Left,
@@ -92,9 +90,11 @@ pub enum OpKind<S: DenseId> {
     Normal {
         arg_sorts: Vec<S>,
     },
+    /// Binary commutative operator. Both argument sorts are equal; the return sort may differ.
     Commutative {
         arg_sorts: [S; 2],
     },
+    /// Associative operator closed over one sort: `arg_sort` equals `OpInfo::return_sort`.
     A {
         arg_sort: S,
         dir: AssocDir,
@@ -655,6 +655,19 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             !self.map.contains_key(&name.to_owned()),
             "operator '{name}' already registered"
         );
+        match &kind {
+            OpKind::Commutative { arg_sorts } => assert!(
+                arg_sorts[0] == arg_sorts[1],
+                "commutative operator '{name}' must use the same sort for both arguments"
+            ),
+            OpKind::A { arg_sort, .. }
+            | OpKind::MSet { arg_sort, .. }
+            | OpKind::Set { arg_sort, .. } => assert!(
+                *arg_sort == return_sort,
+                "associative operator '{name}' must use the same argument and return sort"
+            ),
+            OpKind::Normal { .. } | OpKind::Lit => {}
+        }
         if self.builtin_count > 0 && return_sort.to_usize() < self.concrete_sort_count {
             panic!(
                 "operator '{name}' cannot return concrete sort (index {})",
@@ -1022,6 +1035,27 @@ mod tests {
         let mut ops = OR::new();
         ops.register_mset("Add", int_sort, int_sort);
         ops.register_mset("Add", int_sort, int_sort);
+    }
+
+    #[test]
+    #[should_panic(expected = "must use the same argument and return sort")]
+    fn associative_signature_mismatch_panics() {
+        let mut ops = OR::new();
+        ops.register_a("Bad", SortId::new(0), SortId::new(1), AssocDir::Both);
+    }
+
+    #[test]
+    #[should_panic(expected = "must use the same argument and return sort")]
+    fn ac_signature_mismatch_panics() {
+        let mut ops = OR::new();
+        ops.register_mset("Bad", SortId::new(0), SortId::new(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "must use the same sort for both arguments")]
+    fn commutative_argument_sort_mismatch_panics() {
+        let mut ops = OR::new();
+        ops.register_c("Bad", [SortId::new(0), SortId::new(1)], SortId::new(2));
     }
 
     #[test]

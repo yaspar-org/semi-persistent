@@ -1,0 +1,27 @@
+;; EXPECT: ok
+;; Book chapter 5: conjunctive rule queries and actions.
+
+;; ANCHOR: rule-actions
+(sort Node)
+(sort Fact)
+(function a () Node)
+(function b () Node)
+(function c () Node)
+(function edge (Node Node) Fact)
+(function path (Node Node) Fact)
+(function witnessed (Node Node) Fact)
+(function group (Node) Node)
+
+(rule ((edge x y) (edge y z))
+      ((path x z)
+       (union (group x) (group z))))
+
+(rewrite (path x z) (witnessed x z))
+
+(edge a b)
+(edge b c)
+(run 3)
+
+(check (= (path a c) (witnessed a c)))
+(check (= (group a) (group c)))
+;; ANCHOR_END: rule-actions

@@ -777,11 +777,9 @@ where
             self.flatten_ac_children(op);
         }
 
-        // The A-only (`Seq`) counterpart of the same law. Every associative spelling
-        // (`:assoc-left`, `:assoc-right`, and `:assoc`) currently has the same flattened
-        // sequence semantics; `AssocDir` is retained registration metadata. Only the merge
-        // step differs from AC: an order-preserving splice here, because associativity permits
-        // re-association but not reordering.
+        // A-only operators use an ordered sequence normal form. `AssocDir` selects which
+        // nested same-op children belong to that sequence: the first child for a left fold,
+        // the last child for a right fold, or every child for full associativity.
         if matches!(self.ops.info(op).kind, OpKind::A { .. }) {
             self.flatten_seq_children(op);
         }
@@ -3288,61 +3286,107 @@ where
         best
     }
 
-    /// Flatten nested same-op children of an A-only (`Seq`) op in `self.g_buf`, to a fixpoint,
-    /// **preserving order**: associativity licenses re-association, not reordering, so a
-    /// spliced child's elements take the child's position in the parent's sequence.
+    /// Flatten the nested same-op children selected by an A-only (`Seq`) op's
+    /// [`AssocDir`](crate::registry::AssocDir), to a fixpoint while preserving order.
     ///
     /// A child is spliced iff [`pure_seq_node`](Self::pure_seq_node) names an `op`-sequence
-    /// for its class; otherwise it is kept as one element. Splicing recurses, because a
-    /// spliced sequence's own elements may since have been merged into pure `op`-sequence
-    /// classes.
+    /// for its class and it lies on the selected spine: the first child for `Left`, the last
+    /// child for `Right`, or any child for `Both`. A non-selected nested child remains one
+    /// element, preserving explicit grouping such as `a - (b - c)`.
     ///
     /// `g_buf` already holds `find`'d ids. The least-node choice makes expansion
     /// well-founded for a valid append-only graph. The same work/output budget as
     /// `flatten_ac_children` is still enforced in every build profile: malformed state such
     /// as `X = {seq(X)}` is refused rather than looping or producing a partial normal form.
     fn flatten_seq_children(&mut self, op: Cfg::O) {
+        use crate::registry::AssocDir;
+
+        let dir = match self.ops.info(op).kind {
+            OpKind::A { dir, .. } => dir,
+            _ => unreachable!("flatten_seq_children requires an A-only operator"),
+        };
+
         // Move the buffers out to satisfy the borrow checker while reading `self`.
-        let mut work = std::mem::take(&mut self.flatten_buf);
+        let mut scratch = std::mem::take(&mut self.flatten_buf);
         let mut out = std::mem::take(&mut self.g_buf);
-        // Seed the worklist reversed, so popping yields the children in sequence order — for
-        // A this is load-bearing, not cosmetic as in the AC counterpart.
-        work.clear();
-        work.extend(out.iter().rev().copied());
-        out.clear();
-        let cap = work
+        let cap = out
             .len()
             .saturating_add(1)
             .saturating_add(64usize.saturating_mul(self.node_count()));
         let mut expansions = 0usize;
-        while let Some(g) = work.pop() {
-            let mut spliced = false;
-            if let Some(inner) = self.pure_seq_node(g, op)
-                && let NodeRef::Seq(l) = self.node_ref(inner)
-            {
+
+        match dir {
+            AssocDir::Both => {
+                // Seed the worklist reversed, so popping yields children in sequence order.
+                scratch.clear();
+                scratch.extend(out.iter().rev().copied());
+                out.clear();
+                while let Some(g) = scratch.pop() {
+                    let mut spliced = false;
+                    if let Some(inner) = self.pure_seq_node(g, op)
+                        && let NodeRef::Seq(l) = self.node_ref(inner)
+                    {
+                        assert!(
+                            expansions < cap && out.len() <= cap,
+                            "flatten_seq_children exceeded work cap (degenerate cyclic A class?)"
+                        );
+                        expansions += 1;
+                        let (s, e) = self.nodes.seq.get(l).span();
+                        // Reversed again, so the elements pop back in their stored order.
+                        for i in (s..e).rev() {
+                            scratch.push(self.nodes.seq.pool_get(i));
+                        }
+                        spliced = true;
+                    }
+                    if !spliced {
+                        out.push(g);
+                    }
+                }
+            }
+            AssocDir::Left | AssocDir::Right => loop {
+                let edge = match dir {
+                    AssocDir::Left => out.first().copied(),
+                    AssocDir::Right => out.last().copied(),
+                    AssocDir::Both => unreachable!(),
+                };
+                let Some(edge) = edge else {
+                    break;
+                };
+                let Some(inner) = self.pure_seq_node(edge, op) else {
+                    break;
+                };
+                let NodeRef::Seq(l) = self.node_ref(inner) else {
+                    unreachable!("pure_seq_node must return a Seq node");
+                };
                 assert!(
                     expansions < cap && out.len() <= cap,
                     "flatten_seq_children exceeded work cap (degenerate cyclic A class?)"
                 );
                 expansions += 1;
                 let (s, e) = self.nodes.seq.get(l).span();
-                // Reversed again, so the elements pop back in their stored order.
-                for i in (s..e).rev() {
-                    work.push(self.nodes.seq.pool_get(i));
+
+                scratch.clear();
+                if dir == AssocDir::Right {
+                    scratch.extend_from_slice(&out[..out.len() - 1]);
                 }
-                spliced = true;
-            }
-            if !spliced {
-                out.push(g);
-            }
+                for i in s..e {
+                    scratch.push(self.nodes.seq.pool_get(i));
+                }
+                if dir == AssocDir::Left {
+                    scratch.extend_from_slice(&out[1..]);
+                }
+                std::mem::swap(&mut out, &mut scratch);
+            },
         }
+
         assert!(
             out.len() <= cap,
             "flatten_seq_children exceeded cap (degenerate cyclic A class?)"
         );
 
+        scratch.clear();
         self.g_buf = out;
-        self.flatten_buf = work;
+        self.flatten_buf = scratch;
     }
 
     /// Read ACI children (ids only, no multiplicities) into `buf`.

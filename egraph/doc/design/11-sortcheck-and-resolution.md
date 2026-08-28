@@ -24,6 +24,22 @@ register sorts and operators; an AC identity declaration also builds its
 ground unit term at this point. Pattern commands are flattened and resolved.
 Ordinary ground terms are classified and sort-checked without being built.
 
+### Algebraic Signature Invariants
+
+Registration rejects algebraic signatures for which canonization would not be
+well sorted:
+
+- `A`, `AC`, and `ACI` operators are closed over one sort. Their sole argument
+  sort equals their return sort because flattening nests results back into
+  argument positions, and singleton canonization returns the child's e-class.
+- A binary commutative operator has equal argument sorts because canonization
+  may exchange the two positions. Its return sort may differ, as in a
+  commutative equality operator `Eq : E x E -> Bool`.
+
+The surface checker reports these as sort errors. `OpRegistry` asserts the same
+invariants for direct Rust callers, making malformed algebraic metadata
+unrepresentable downstream.
+
 ## `flatten_surface` — Op-Kind Validation
 
 Walks `SurfacePattern` tree, assigns synthetic variable names to
@@ -128,6 +144,25 @@ whether `x` is already bound. In the RHS, a global becomes
 `RhsOp::FetchGlobal(gid)`: apply reads the stored binding and canonicalizes it
 with `eg.find`. The binding array itself is not continuously rewritten to
 canonical representatives.
+
+### RHS Collection Sorts
+
+`ResolvedQuery` records the element sort of every `SeqVarId`, `SetVarId`, and
+`MsetVarId`. Reusing one rest name at two different element sorts is rejected
+while the query is resolved.
+
+RHS resolution uses this metadata in two ways. A direct `..rest` splice must
+have the destination operator's element sort. A comprehension binder has the
+source collection's element sort, while its body has the destination
+operator's element sort. The latter permits a typed map from one sort to
+another, such as `..[(F x) for x in rest]` with `F : A -> B`, without treating
+the source `x` as a `B`.
+
+Splices, comprehensions, and multiplicity annotations are legal only as
+children of variadic operators. Fixed-arity RHS applications must supply their
+declared number of ordinary children. These checks keep malformed child arrays
+from reaching `EGraph::add`, whose sort and arity assertions are debug-only
+invariants rather than user-facing validation.
 
 ## `check_term` — Ground Term Sort-Checking
 

@@ -1,0 +1,46 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Book chapter 7: nested scopes, restoration, shrinking, and global names.
+
+;; ANCHOR: push-pop
+(sort E)
+(function a () E)
+(function b () E)
+(function f (E) E)
+(function g (E) E)
+
+(let left (f (a)))
+(let right (f (b)))
+(print-size)
+
+(push)
+(union (a) (b))
+(check (= left right))
+
+(push)
+(let nested (g left))
+(print-size)
+(pop)
+
+;; The inner pop keeps the equality from the outer scope.
+(check (= left right))
+(pop)
+
+(check (!= left right))
+(print-size)
+;; ANCHOR_END: push-pop
+
+;; ANCHOR: push-shrink
+(push :shrink)
+(check (!= left right))
+(pop)
+;; ANCHOR_END: push-shrink
+
+;; ANCHOR: shadowed-global
+(let chosen (a))
+(push)
+(let chosen (b))
+(check (= chosen (b)))
+(pop)
+(check (= chosen (a)))
+;; ANCHOR_END: shadowed-global

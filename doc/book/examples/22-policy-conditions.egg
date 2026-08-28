@@ -1,0 +1,89 @@
+;; EXPECT: ok
+;; EVAL: both
+;; A self-contained model of one cross-region replication request.
+
+(sort Formula)
+(sort Int)
+(sort Bucket)
+(sort Object)
+(sort Region)
+(sort Account)
+
+(function Lit (bool) Formula)
+(function And (Formula) Formula :assoc-comm-idem :identity (Lit true))
+(function Or (Formula) Formula :assoc-comm-idem :identity (Lit false))
+(function Implies (Formula Formula) Formula)
+(function Ite (Formula Formula Formula) Formula)
+(function Eq (Account Account) Formula :comm)
+(function Lt (Int Int) Formula)
+(function Lte (Int Int) Formula)
+
+(function src () Bucket)
+(function dst () Bucket)
+(function obj () Object)
+(function regionOf (Bucket) Region)
+(function accountOf (Bucket) Account)
+(function sizeOf (Object) Int)
+(function multipartThreshold () Int)
+
+(function permit () Formula)
+(function sseCmk () Formula)
+(function directCopy () Formula)
+(function multipartCopy () Formula)
+(function versioningOn (Bucket) Formula)
+(function approvedRegion (Region) Formula)
+(function usEast1 (Region) Formula)
+(function euWest1 (Region) Formula)
+(function taggedConfidential (Object) Formula)
+
+(let formulaA
+  (Implies (permit)
+    (And
+      (versioningOn (src))
+      (approvedRegion (regionOf (dst)))
+      (Implies
+        (taggedConfidential (obj))
+        (And
+          (Eq (accountOf (dst)) (accountOf (src)))
+          (sseCmk)))
+      (Ite
+        (Lte (sizeOf (obj)) (multipartThreshold))
+        (directCopy)
+        (multipartCopy)))))
+
+(let formulaB
+  (Implies (permit)
+    (And
+      (Ite
+        (Lt (sizeOf (obj)) (multipartThreshold))
+        (directCopy)
+        (multipartCopy))
+      (Implies
+        (taggedConfidential (obj))
+        (Or
+          (Eq (accountOf (src)) (accountOf (dst)))
+          (sseCmk)))
+      (Or
+        (usEast1 (regionOf (dst)))
+        (euWest1 (regionOf (dst))))
+      (versioningOn (src)))))
+
+;; ANCHOR: policy-first-query
+(antiunify formulaA formulaB :algorithm exact)
+(checkau formulaA formulaB :max_size 42 :algorithm exact)
+;; ANCHOR_END: policy-first-query
+
+;; ANCHOR: policy-domain-fact
+(rewrite
+  (approvedRegion r)
+  (Or (usEast1 r) (euWest1 r)))
+(run 3)
+
+(antiunify formulaA formulaB :algorithm exact)
+(checkau formulaA formulaB :max_size 35 :algorithm exact)
+;; ANCHOR_END: policy-domain-fact
+
+;; ANCHOR: policy-uct-cross-check
+(antiunify formulaA formulaB :algorithm uct :playouts 3000)
+(checkau formulaA formulaB :max_size 35 :algorithm uct :playouts 3000)
+;; ANCHOR_END: policy-uct-cross-check

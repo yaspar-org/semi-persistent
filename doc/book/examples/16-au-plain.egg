@@ -1,0 +1,50 @@
+;; EXPECT: check-failed
+;; Book chapter 16: anti-unification is complete relative to the E-GRAPH, not
+;; relative to the AC theory.
+;;
+;; The solver is given two classes and asked for a minimum anti-unifier. Every
+;; question it asks about the two sides is a question about the graph as it stands:
+;; are these two child positions the same class, and if not, what operators do they
+;; have in common. It never asks "are these two terms equal in the theory".
+;;
+;; So the answer it returns is optimal for the equality relation the graph holds. If
+;; the graph is missing an AC consequence, the solver reports a disagreement where
+;; the theory has none, and the anti-unifier it returns is LARGER than the AC
+;; optimum. That is the failure direction, and it is the bad one for the use in
+;; Part IV: a reported difference that is not a difference points you at a stable
+;; part of a formalization and tells you it is unstable.
+;;
+;; The setup is chapter 11's containment gap, wrapped in one common operator so the
+;; anti-unifier has a backbone. `n` and `add(c, d)` are AC-equal. Plain mode does
+;; not know that.
+;;
+;; Under plain congruence the solver reports:
+;;
+;;   (anti-unify :size 5 :cr 0.7500 :completion exact
+;;     (g (Variants n (add c d))))
+;;
+;; `Variants` is the node the solver uses for a position where the two sides
+;; disagree, and here it holds two spellings of the same value. The assertion below
+;; demands size 2, the answer chapter 16's eager run gets, and it FAILS. The test
+;; suite asserts that it fails, which is how the book pins that plain mode cannot
+;; reach the AC optimum.
+
+(sort E)
+(function add (E) E :assoc :comm)
+(function g (E) E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function n () E)
+
+(union (add a b) c)
+(union (add a b d) n)
+
+(let l (g n))
+(let r (g (add c d)))
+
+;; ANCHOR: ac-completion-query
+(antiunify l r :algorithm exact)
+(checkau l r :max_size 2 :algorithm exact)
+;; ANCHOR_END: ac-completion-query

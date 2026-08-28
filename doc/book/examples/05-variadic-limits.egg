@@ -1,0 +1,31 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Book chapter 5: limits of maximum-partition matching.
+
+;; ANCHOR: variadic-limits
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function Add (E) E :assoc-comm)
+(function PairFound () E)
+(function Repeated (E) E)
+
+;; Two scalar elements require exactly two distinct multiset children.
+(rewrite (Add x:1 y:1) (PairFound))
+
+;; A multiplicity annotation handles one child repeated two or more times.
+(rewrite (Add x:k>=2 ..rest) (Repeated x))
+
+(let repeated (Add a a))
+(let triple (Add a b c))
+(run 1)
+
+;; The binary-shaped pattern cannot split a:2 between x and y.
+(check (!= repeated (PairFound)))
+(check (= repeated (Repeated a)))
+
+;; Without a rest variable, two scalar elements cannot absorb a third child or
+;; bind an implicit sub-sum such as Add(a,b).
+(check (!= triple (PairFound)))
+;; ANCHOR_END: variadic-limits

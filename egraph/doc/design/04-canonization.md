@@ -106,17 +106,20 @@ After:  (or {e3, e7})
 
 ## A-Only Operators — Flattening and Singleton Collapse
 
-Every associative spelling currently has the same runtime normal form: a flat
-sequence. `:assoc-left`, `:assoc-right`, and `:assoc` all derive `OpKind::A`;
-the stored `AssocDir` records the spelling but is not consulted by canonization
-or matching. Two laws follow, and both run in `EGraph::add`:
+Every A-only sequence spelling uses an order-preserving `Seq`, but `AssocDir`
+controls which nested same-op children are part of that sequence:
+`:assoc-left` flattens the first-child spine, `:assoc-right` flattens the
+last-child spine, and bare `:assoc` flattens every nested same-op child. Two
+laws follow, and both run in `EGraph::add`, including when a rewrite RHS builds
+a term:
 
-1. **Flatten.** A child whose class is an `op`-sequence is spliced into the
-   parent's sequence, at the child's position, to a fixpoint
-   (`flatten_seq_children`). `op(op(a,b),c)`, `op(a,op(b,c))` and `op(a,b,c)`
-   are one node. Order is preserved: associativity licenses re-association, not
-   reordering, which is the only difference from the AC counterpart
-   (`flatten_ac_children`), where the multiset union sorts.
+1. **Flatten the selected spine.** A selected child whose class is an
+   `op`-sequence is spliced into the parent's sequence, at the child's position,
+   to a fixpoint (`flatten_seq_children`). For `:assoc-left`,
+   `op(op(a,b),c)` and `op(a,b,c)` are one node while `op(a,op(b,c))`
+   retains its grouped right child. `:assoc-right` is the mirror image.
+   Bare `:assoc` makes both nestings and `op(a,b,c)` one node. Every mode
+   preserves order.
 2. **Collapse the singleton.** A one-element sequence is its element, so `add`
    returns that child's class instead of minting a node: the same degenerate-arity
    resolution the MSet and Set arms perform, and the reason a program does not have
@@ -127,8 +130,10 @@ or matching. Two laws follow, and both run in `EGraph::add`:
 
 ### Which child is spliced
 
-The test is `pure_seq_node`: splice a child iff **every** member of its class is
-an `op` `Seq` node, and splice the class's **least node id** among them.
+Direction chooses the candidates: the first child for `Left`, the last for
+`Right`, and every child for `Both`. For each candidate, `pure_seq_node`
+splices it iff **every** member of its class is an `op` `Seq` node, choosing
+the class's **least node id** when several spellings exist.
 
 Both halves answer the representative trap (`ac-congruence-completeness.md`
 §6c): a test keyed on `find(child)` flattens or not depending on which node the
@@ -181,12 +186,14 @@ associative equations.
 
 `ac-congruence-completeness.md` §2 states the trade for AC: flattening erases
 the intermediate sub-term, so a rule written against the nested shape has
-nothing to match. The A-only case inherits it exactly. After `op(op(a,b),c)`
-flattens, no node spells the intermediate `op(a,b)` *as a child*, so a binary
-pattern `(op ?x ?y)` no longer matches the three-element term: it is an exact
-pattern against a sequence of a different length. Patterns over A operators are
-written with rest variables (`(op ..p ?x ..s)`), which is what makes an interior
-position expressible at all; `egraph/tests/egg/bench/calc.native.egg` is the worked example.
+nothing to match. A-only operators inherit that trade along the selected
+spine. After a left-associative `op(op(a,b),c)` flattens, no node spells the
+intermediate `op(a,b)` *as a child*, so a binary pattern `(op ?x ?y)` no longer
+matches the three-element term: it is an exact pattern against a sequence of a
+different length. The unselected side remains explicitly grouped. Patterns
+over A operators are written with rest variables (`(op ..p ?x ..s)`), which
+is what makes an interior position expressible at all;
+`egraph/tests/egg/bench/calc.native.egg` is the worked example.
 
 The erasure is of the *occurrence*, not of the class. Flattening rewrites the
 child list of the node being built and nothing else: the spliced class keeps its
@@ -227,7 +234,7 @@ e-classes and collecting new collisons until none subsist).
 |------|----------|---------------|----------------|
 | Plain | `[c₀, ..., cₙ]` | Order preserved | Update in place |
 | SPair (was C) | `[c₀, c₁]` | Sorted pair | Re-sort |
-| Seq (theory: A) | `[c₀, ..., cₙ]` | Flat sequence, order preserved | Update in place (flatten + singleton collapse are build-time) |
+| Seq (theory: A) | `[c₀, ..., cₙ]` | Directionally flattened sequence, order preserved | Update in place (flatten + singleton collapse are build-time) |
 | MSet (theory: AC) | `[(id, mult), ...]` | Sorted by id | Merge multiplicities + clamp + unit-drop |
 | Set (theory: ACI) | `[id, ...]` | Sorted, unique | Deduplicate + unit-drop |
 

@@ -1,0 +1,24 @@
+;; EXPECT: ok
+;; Book chapter 3: the three forms that insert ground terms into the e-graph.
+
+;; ANCHOR: building-terms
+(sort Expr)
+(constructor x () Expr)
+(function f (Expr) Expr)
+(function g (Expr) Expr)
+(function h (Expr) Expr)
+
+;; A bare application inserts a term without naming its e-class.
+(f (x))
+(print-size)
+
+;; `let` inserts a term and binds a name to its e-class.
+(let named (g (f (x))))
+(print-size)
+
+;; `union` inserts both terms and merges their e-classes.
+(union named (h (f (x))))
+(print-size)
+
+(check (= named (h (f (x)))))
+;; ANCHOR_END: building-terms

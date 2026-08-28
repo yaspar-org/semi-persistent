@@ -1,0 +1,19 @@
+;; EXPECT: sort-error
+;; EVAL: both
+;; A comprehension filter computes a concrete literal. An ordinary application
+;; would build an e-node and then always fail the literal truthiness test, so it
+;; is rejected instead of being accepted as a graph-existence query.
+(sort E)
+(function a () E)
+(function b () E)
+(function Keep (E) E)
+(function Seq (E) E :assoc)
+
+(rewrite (Seq first ..rest)
+         (Seq first
+              ..[element
+                 for element in rest
+                 if (Keep element)]))
+
+(let term (Seq a b))
+(run 1)

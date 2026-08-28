@@ -1,0 +1,42 @@
+;; EXPECT: ok
+
+;; ANCHOR: identity-comparison
+(sort Formula)
+(sort Bucket)
+(sort Region)
+
+(function Lit (bool) Formula)
+(function AndU (Formula) Formula :assoc-comm-idem :identity (Lit true))
+(function AndN (Formula) Formula :assoc-comm-idem)
+
+(function src () Bucket)
+(function dst () Bucket)
+(function regionOf (Bucket) Region)
+(function versioningOn (Bucket) Formula)
+(function encrypted (Bucket) Formula)
+(function approvedRegion (Region) Formula)
+
+(let fullU
+  (AndU
+    (versioningOn (src))
+    (encrypted (src))
+    (approvedRegion (regionOf (dst)))))
+(let droppedU
+  (AndU
+    (versioningOn (src))
+    (encrypted (src))))
+(antiunify fullU droppedU :algorithm exact)
+(checkau fullU droppedU :max_size 10 :algorithm exact)
+
+(let fullN
+  (AndN
+    (versioningOn (src))
+    (encrypted (src))
+    (approvedRegion (regionOf (dst)))))
+(let droppedN
+  (AndN
+    (versioningOn (src))
+    (encrypted (src))))
+(antiunify fullN droppedN :algorithm exact)
+(checkau fullN droppedN :max_size 13 :algorithm exact)
+;; ANCHOR_END: identity-comparison
