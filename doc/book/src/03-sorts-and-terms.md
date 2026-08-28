@@ -137,13 +137,42 @@ defines those properties and their legal combinations.
 
 ## Building a term
 
-> Three ways in: a bare term at top level, `(let x t)` which also names the class,
-> and `(union t1 t2)` which inserts both and asserts they are equal. Show the
-> e-node count after each with `print-size` so the reader sees that insertion is
-> the thing that grows the graph.
->
-> State plainly what `let` binds: an e-class, not a term. This is the distinction
-> the whole book rests on and it is cheapest to establish here.
+A ground term enters the e-graph through one of three top-level forms. A bare
+application inserts it without naming it. `(let name term)` inserts the term and
+binds `name` to its e-class. `(union left right)` inserts both terms and merges
+their e-classes.
+
+```lisp
+{{#include ../examples/03-building-terms.egg:building-terms}}
+```
+
+The three `print-size` commands report:
+
+```text
+x: 1
+f: 1
+total: 2
+x: 1
+f: 1
+g: 1
+total: 3
+x: 1
+f: 1
+g: 1
+h: 1
+total: 4
+```
+
+The bare `(f (x))` inserts two e-nodes. The `let` reuses both and inserts only
+`(g (f (x)))`, raising the total to three. The `union` likewise reuses
+`(f (x))`, inserts `(h (f (x)))`, and raises the total to four. `print-size`
+counts e-nodes, so merging the last two nodes into one e-class does not reduce
+the total.
+
+`named` is an e-class binding, not an alias for the syntax
+`(g (f (x)))`. After the `union`, the same binding denotes the class containing
+both `(g (f (x)))` and `(h (f (x)))`. Later commands may use `named` wherever a
+ground term is accepted.
 
 ## Sortchecking
 
