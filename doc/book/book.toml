@@ -1,0 +1,25 @@
+[book]
+title = "The Semper Book"
+description = "Using anti-unification to diagnose formalization problems"
+authors = ["Semper contributors"]
+src = "src"
+language = "en"
+
+[build]
+build-dir = "book"
+# A chapter listed in SUMMARY.md but absent from disk is a mistake, not a file
+# to create. With this on, `mdbook build` reports it instead of writing a stub.
+create-missing = false
+
+[output.html]
+site-url = "/semi-persistent/"
+git-repository-url = "https://github.com/yaspar-org/semi-persistent"
+# `{path}` expands to the chapter path prefixed by `src`, relative to the
+# directory holding this file, so the template carries `doc/book/` itself.
+edit-url-template = "https://github.com/yaspar-org/semi-persistent/edit/main/doc/book/{path}"
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+
+[output.html.fold]
+enable = true
+level = 1

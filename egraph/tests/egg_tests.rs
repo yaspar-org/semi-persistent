@@ -641,6 +641,29 @@ fn readme_au_policy_divergence() {
     check("examples/au_policy_divergence.egg");
 }
 
+/// Every program shown in the book is a file in `doc/book/examples/`, and the
+/// chapters `{{#include}}` those files rather than quoting them, so what a reader
+/// copies is what this test ran. Walking the directory instead of listing the
+/// files is deliberate: adding an example to the book cannot forget to register a
+/// test, which is the failure mode a per-file registration invites.
+///
+/// A book example may expect failure. `;; EXPECT: sort-error` is how a chapter
+/// shows what an illegal declaration does and has CI assert it stays illegal.
+#[test]
+fn book_examples() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../doc/book/examples");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {dir}: {e}"))
+        .map(|entry| entry.expect("directory entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "egg"))
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "{dir} holds no .egg files");
+    for path in &files {
+        check(path.to_str().expect("utf-8 path"));
+    }
+}
+
 // ── Cross-engine benchmark corpus (`tests/egg/bench/`) ──
 //
 // The same programs `scripts/egglog-compare/compare.py` times against egglog and

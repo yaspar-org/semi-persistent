@@ -325,6 +325,12 @@ already-published short paper is retained unchanged as a historical artifact.
 
 ## Documentation
 
+[**The Semper Book**](doc/book/) is the user-facing guide, extracted from the
+design documentation and organized around using anti-unification to diagnose
+formalization problems. Build it with `bash doc/book/build.sh` (needs
+[mdBook](https://rust-lang.github.io/mdBook/)); every program it shows is a file
+in this repository that the test suite executes.
+
 Design chapters live beside their crates:
 [`egraph/doc/design/`](egraph/doc/design/00-table-of-contents.md),
 [`containers-verus/doc/design/`](containers-verus/doc/design/00-table-of-contents.md),
