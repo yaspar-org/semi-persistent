@@ -362,6 +362,17 @@ egg_test!(
     rhs_comprehension_filter_reject_node,
     "rhs_comprehension_filter_reject_node.egg"
 );
+// Inverse-pair cancellation re-applied after a merge creates the pair, in both statement
+// orders, plus the guard that the neighbouring `atomic` condition still keeps the §5b pair.
+egg_test!(inverse_cancel_after_merge, "inverse_cancel_after_merge.egg");
+egg_test!(
+    inverse_cancel_after_merge_control,
+    "inverse_cancel_after_merge_control.egg"
+);
+egg_test!(
+    inverse_cancel_keeps_atomic_pair,
+    "inverse_cancel_keeps_atomic_pair.egg"
+);
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");

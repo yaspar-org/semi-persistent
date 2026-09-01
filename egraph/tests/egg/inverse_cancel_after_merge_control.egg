@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; The control for `inverse_cancel_after_merge.egg`: union first, so the pair is already
+;; visible when `add` canonicalizes and build-time cancellation fires. This order always
+;; passed; it pins the other side of the equivalence.
+
+(sort E)
+(constructor A () E)
+(constructor B () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+
+(union (A) (B))
+(let s (Add (A) (Neg (B))))
+(check (= s (Zero)))

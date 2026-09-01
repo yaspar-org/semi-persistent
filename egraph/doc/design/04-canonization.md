@@ -86,6 +86,35 @@ nodes. A node visit does not deliberately create a fresh scratch vector, but a
 buffer may allocate when a larger input exceeds its retained capacity. The
 caller reads the buffer length after canonization to determine the new span.
 
+### Inverse-pair cancellation, on both paths
+
+An op declaring `:inverse g` also cancels summand pairs related by `g`
+(`x ∘ inv(x) = e`, `group_cancel_pairs`), which can empty a monomial and hand the
+degeneracy resolution the unit. Like the unit drop, this is a canonization law and not a
+completion inference, so it holds in plain mode.
+
+Unlike the other laws in this list, its condition **opens** rather than closes: it needs the
+node `inv(x)` to exist *and* to resolve into a summand class, and a later merge can make that
+true for a node that was already canonical. Applying it only at build was therefore not
+enough, and left plain mode inconsistent with itself — `(+ a (neg b))` followed by
+`(union a b)` did not reduce to `0`, while the same two statements in the other order did:
+
+```lisp
+(let s (Add (A) (Neg (B))))
+(union (A) (B))
+(check (= s (Zero)))          ;; used to fail; the control order always passed
+```
+
+The law is therefore re-applied after merges, by `canon_repair_round` in `rebuild`. That pass
+cannot be a recanonization step: `recanonize_node` writes children back into the node's
+existing span and the result may need a *different* node (or the unit class), which is an
+equality rather than a representation change. So it materializes the cancelled monomial with
+`add` and merges, labelled `Justification::InverseCancel`, in the same style as `cc_round`.
+
+Cancellation is purely subtractive, so unlike the flattening laws it can never grow a
+monomial: each repair merge strictly reduces the class count and the fixpoint needs no growth
+budget. Covered by `inverse_cancel_after_merge.egg` and its control.
+
 ## `SetCanon` — Set Canonization
 
 For ACI operators: children are deduplicated ids, stored in sorted order.

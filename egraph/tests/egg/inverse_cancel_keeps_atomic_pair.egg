@@ -1,0 +1,23 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Guard for design §5b against the flattening repair that was tried and rejected: the
+;; summand pair in `+(c, neg(c))`, where `c` is itself a sum, only cancels because `c` is
+;; kept as ONE summand. `c`'s class is `atomic` (it is referenced as `Neg`'s child), so
+;; `flatten_ac_children` declines to splice it and the pair stays visible.
+;;
+;; Splicing it — which is what "flatten whenever the class holds a same-op node" does —
+;; turns the node into `+{A, B, Neg c}`, no pair is adjacent, and `t = Zero` is lost. That
+;; is why the `atomic` condition is not a bookkeeping detail, and why the AC flattening
+;; order dependence is left to the eager/lazy modes instead of repaired in plain mode.
+
+(sort E)
+(constructor A () E)
+(constructor B () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+
+(let c (Add (A) (B)))
+(let n (Neg c))
+(let t (Add c n))
+(check (= t (Zero)))

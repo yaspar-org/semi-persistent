@@ -1,0 +1,28 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Inverse-pair cancellation is a canonization law that plain mode applies at build
+;; (`group_cancel_pairs` in `add`), but its condition *opens*: the pair `x, inv(x)` can be
+;; created by a merge long after the node was built. Nothing re-ran the law, so the law
+;; applied or not depending on statement order.
+;;
+;; Here `(Add A (Neg B))` is built while A and B are still distinct, so no pair is visible.
+;; `(union A B)` then makes `Neg A` and `Neg B` congruent, and the stored monomial becomes
+;; `+{A, Neg A}` — which is the unit. `canon_repair_round` re-applies cancellation after the
+;; merge. The control fixture writes the union first, which always worked.
+;;
+;; Cancellation is purely subtractive, so re-applying it cannot grow the graph and needs no
+;; completion budget: this holds in plain mode, with no rules and no run.
+
+(sort E)
+(constructor A () E)
+(constructor B () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+
+(let s (Add (A) (Neg (B))))
+(union (A) (B))
+;; Congruence alone gives this one.
+(check (= (Neg (A)) (Neg (B))))
+;; This is the one the missing re-application lost.
+(check (= s (Zero)))
