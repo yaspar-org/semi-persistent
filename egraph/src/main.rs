@@ -16,7 +16,8 @@ struct Cli {
     #[arg(long, default_value = "31", value_parser = parse_id_bits)]
     id_bits: u8,
 
-    /// Push/pop mechanism: "diff" (semi-persistent undo log) or "clone" (deep copy)
+    /// Push/pop mechanism: "diff" (semi-persistent undo log). "clone" (deep copy) is
+    /// reserved and rejected: no such backend exists.
     #[arg(long, default_value = "diff", value_parser = parse_push_pop)]
     push_pop: PushPop,
 
@@ -129,14 +130,23 @@ fn parse_union_by(s: &str) -> Result<semi_persistent_egraph::UnionBy, String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PushPop {
     Diff,
-    Clone,
 }
 
+/// `clone` is a **reserved** value, not an accepted one. A deep-copy push/pop backend does
+/// not exist: no container implements one, and nothing outside this file reads this flag. It
+/// used to parse and then exit 1 from `main`, which meant `--help` advertised a mode that
+/// could never run. Rejecting it here says so at the point of use, and keeps the name for the
+/// backend if it is built (its value is as a differential oracle: a from-scratch deep copy is
+/// the reference that diff-log `restore` should reproduce).
 fn parse_push_pop(s: &str) -> Result<PushPop, String> {
     match s {
         "diff" => Ok(PushPop::Diff),
-        "clone" => Ok(PushPop::Clone),
-        _ => Err(format!("expected 'diff' or 'clone', got '{s}'")),
+        "clone" => Err(
+            "'clone' is reserved but not implemented: no deep-copy push/pop backend exists. \
+             Use 'diff' (the semi-persistent undo log), which is the default."
+                .to_string(),
+        ),
+        _ => Err(format!("expected 'diff', got '{s}'")),
     }
 }
 fn parse_id_bits(s: &str) -> Result<u8, String> {
@@ -202,11 +212,6 @@ fn main() {
             })
         })
         .collect();
-
-    if cli.push_pop == PushPop::Clone {
-        eprintln!("--push-pop clone is not yet implemented");
-        process::exit(1);
-    }
 
     let choice = choose_litval(&groups);
 
