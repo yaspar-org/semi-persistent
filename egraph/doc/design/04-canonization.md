@@ -211,6 +211,31 @@ completion is enabled. Plain mode does not run that pass, and even completion
 mode does not claim a complete decision procedure for arbitrary ground
 associative equations.
 
+Note what that gap does *not* cover, because the two cases were confused once
+and the distinction is the whole point. Flattening a nested application the
+program **wrote** — `op(op(a,b),c)` — is not in the gap: it is associativity on
+the term, it depends on no union, and it is decided from the syntax tree before
+any child id exists, at both places a term is written: `push_seq_args`
+(`interpret.rs`) for a ground term, and `eval_seq_args` (`apply.rs`) for a rule
+right-hand side. That placement is deliberate and is the only correct one
+available.
+`pure_seq_node` cannot decide it, because purity *closes*: a union into the
+child's class turns the test false forever, so `(union (F a b) blob)` written
+before `(F (F a b) c)` used to store the nested spelling while the reverse
+order stored the flat one — the same program with two answers
+(`seq_flatten_order_independent.egg`). Nor can `EGraph::add` decide it: by then
+a child is a plain node id, and a nested application is indistinguishable from
+a class id that merely happens to be a `Seq` node. RHS rest bindings supply
+exactly such ids, and splicing those rewrites uphill — `seq(a,b)` becomes
+`seq(unit,a,b)` and grows again every round under a rule that reintroduces the
+unit (`a_singleton_collapse.egg`).
+
+The gap above is the genuinely different case: the program wrote `op(x,d)` with
+`x` opaque, and only a *proved equation* `x = op(a,b)` relates it to
+`op(a,b,d)`. That is a consequence of the associative theory rather than a
+canonical form of what was written, so declining it in plain mode is correct
+rather than a defect.
+
 ### What flattening erases
 
 `ac-congruence-completeness.md` §2 states the trade for AC: flattening erases

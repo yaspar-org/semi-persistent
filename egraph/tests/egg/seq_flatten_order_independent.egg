@@ -1,0 +1,26 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A-only associativity is a property of the term as *written*, so a nested same-op
+;; argument flattens whatever else has been unioned into its class. This used to depend on
+;; statement order: `pure_seq_node` declines a class that is not a pure `op`-sequence, so
+;; the `(union n (Blob))` below made `[n]` impure and `(F (F A B) C)` was stored nested,
+;; never rejoining `(F A B C)` — while writing the union *after* the nested term flattened
+;; it and the check passed. Same program, two answers.
+;;
+;; The decision now happens in the term builder (`push_seq_args`), where a nested
+;; application is still syntax, so no class membership can reach it. This is NOT an
+;; A-theory consequence of the union: `F(F(A,B),C) = F(A,B,C)` is associativity alone.
+
+(sort E)
+(constructor F (E) E :assoc)
+(constructor A () E)
+(constructor B () E)
+(constructor C () E)
+(constructor Blob () E)
+
+(let n (F (A) (B)))
+;; The union comes FIRST, which is the order that used to fail.
+(union n (Blob))
+(check (= (F (F (A) (B)) (C)) (F (A) (B) (C))))
+;; ... and the nested spelling is still equal to the flat one through the union, too.
+(check (= (F (Blob) (C)) (F (Blob) (C))))

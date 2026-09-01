@@ -373,6 +373,17 @@ egg_test!(
     inverse_cancel_keeps_atomic_pair,
     "inverse_cancel_keeps_atomic_pair.egg"
 );
+// A-only associativity on a written nested application, in both statement orders and on a
+// rule right-hand side.
+egg_test!(
+    seq_flatten_order_independent,
+    "seq_flatten_order_independent.egg"
+);
+egg_test!(
+    seq_flatten_order_independent_control,
+    "seq_flatten_order_independent_control.egg"
+);
+egg_test!(seq_flatten_rhs_nesting, "seq_flatten_rhs_nesting.egg");
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");

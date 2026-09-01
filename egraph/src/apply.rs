@@ -566,8 +566,20 @@ where
         }
         RhsOp::App { op: o, args } => {
             let mut children = ChildVec::<Cfg>::new();
-            for arg in args {
-                eval_arg(arg, env, eg, model, globals, &mut children)?;
+            // A right-hand side is a syntax tree too, so a rule written
+            // `(rewrite ... (F (F x y) z))` carries the same nested same-op application the
+            // interpreter's `push_seq_args` flattens for a ground term, and it needs the same
+            // treatment for the same reason: `EGraph::add` only ever sees ids and cannot tell
+            // a nested application from a class id that happens to be a `Seq` node.
+            match eg.ops().info(*o).kind {
+                crate::registry::OpKind::A { dir, .. } => {
+                    eval_seq_args(args, *o, dir, env, eg, model, globals, &mut children)?
+                }
+                _ => {
+                    for arg in args {
+                        eval_arg(arg, env, eg, model, globals, &mut children)?;
+                    }
+                }
             }
             eg.add(*o, &children)
         }
@@ -598,6 +610,62 @@ where
             eg.add_lit(lit_op, result_id)
         }
     })
+}
+
+/// Evaluate the argument list of an A-only right-hand-side application, splicing a nested
+/// same-`op` application on the declared spine instead of building it as one child.
+///
+/// The RHS counterpart of `Interp::push_seq_args`, and deliberately the same shape: for an
+/// associative operator `(F (F x y) z)` and `(F x y z)` are one term, and this is the last
+/// point at which that is visible, because after evaluation a child is a plain id.
+///
+/// Only [`RhsArg::One`] is spliced. A `..rest` splice or comprehension contributes many
+/// children whose own nesting was already resolved when those children were built, and an
+/// output multiplicity on a nested application asks for *n copies of that application*, which
+/// is not the same request as flattening it — both stay one argument.
+///
+/// [`AssocDir`](crate::registry::AssocDir) is honoured: off the declared spine a nested
+/// application is explicit grouping that the operator does not flatten, so for a left fold
+/// `a - (b - c)` must not become `a - b - c`. Index-based spine detection is exact for the
+/// positions actually spliced, since a `One` argument contributes exactly one child.
+#[allow(clippy::too_many_arguments)]
+fn eval_seq_args<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
+    args: &[RhsArg<Cfg::O, L>],
+    op: Cfg::O,
+    dir: crate::registry::AssocDir,
+    env: &mut RhsEnv<'_, Cfg, Q>,
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    out: &mut ChildVec<Cfg>,
+) -> Result<(), EvalError>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    M: crate::lit_model::LitModel<Value = L>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    use crate::registry::AssocDir;
+    let last = args.len().saturating_sub(1);
+    for (i, arg) in args.iter().enumerate() {
+        let on_spine = match dir {
+            AssocDir::Both => true,
+            AssocDir::Left => i == 0,
+            AssocDir::Right => i == last,
+        };
+        match arg {
+            RhsArg::One(RhsOp::App {
+                op: inner_op,
+                args: inner,
+            }) if on_spine && *inner_op == op => {
+                // Recursive, so `(F (F (F x y) z) w)` flattens in one pass.
+                eval_seq_args(inner, op, dir, env, eg, model, globals, out)?;
+            }
+            _ => eval_arg(arg, env, eg, model, globals, out)?,
+        }
+    }
+    Ok(())
 }
 
 fn eval_arg<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(

@@ -1,0 +1,39 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A rule's right-hand side is a syntax tree too, so a nested same-op application written in
+;; an RHS needs the same associativity flattening as one written in a ground term
+;; (`eval_seq_args` in `apply.rs`, the counterpart of `push_seq_args` in `interpret.rs`).
+;;
+;; The union below is what gives this fixture teeth. With `[F a b]` still pure, the
+;; class-level test in `flatten_seq_children` splices the nested child on its own and the RHS
+;; handling only saves an intermediate node. Unioning `Blob` into that class makes it impure,
+;; `pure_seq_node` declines it, and then flattening the RHS nesting is the *only* thing that
+;; puts `F(F(a,b),c)` and `F(a,b,c)` in one class — which is what associativity says, with no
+;; appeal to the union at all.
+
+(sort E)
+(constructor F (E) E :assoc)
+(constructor a () E)
+(constructor b () E)
+(constructor c () E)
+(constructor Blob () E)
+(constructor Seed () E)
+(constructor Flat () E)
+
+;; Make the inner sequence's class impure, so the class-level test declines it.
+(let inner (F (a) (b)))
+(union inner (Blob))
+
+;; The RHS writes the nesting explicitly; the other writes it flat.
+(rewrite (Seed) (F (F (a) (b)) (c)))
+(rewrite (Flat) (F (a) (b) (c)))
+
+(let s (Seed))
+(let f (Flat))
+(run 5)
+
+;; Both right-hand sides denote the same sequence, so both roots land in one class.
+(check (= s f))
+(check (= s (F (a) (b) (c))))
+;; Order is still not touched: flattening re-associates, it does not reorder.
+(check (!= s (F (c) (b) (a))))

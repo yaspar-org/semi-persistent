@@ -3454,6 +3454,21 @@ where
     /// Cost is one class-ring walk, with an early exit on the first non-`op` member — so an
     /// ordinary atom child (a leaf, a constructor) costs its class's first member, and the
     /// full walk is paid only by classes that really are pure sequences.
+    ///
+    /// **Purity is monotone-false: it *closes*, it does not merely fail to open.** A union
+    /// only adds members, so a class that is a pure `op`-sequence today can stop being one
+    /// tomorrow and can never become one again. This test is therefore a function of the
+    /// class *at the moment it is asked*, not of the term, and asking it at two different
+    /// times is what used to make `(union (F a b) blob)` before `(F (F a b) c)` store the
+    /// nested spelling while the reverse order stored the flat one.
+    ///
+    /// That is why this test is no longer the only one on the build path.
+    /// [`push_seq_args`](crate::interpret::Interp::push_seq_args) in the term builder decides
+    /// the written nesting from the syntax first, where no class can reach it, and this test
+    /// then handles what is left: a child that came back from `add` already flattenable. Do
+    /// not try to move the syntactic case here or into `add` — by this point a child is a
+    /// plain `Cfg::G`, and a nested application is indistinguishable from a class id that
+    /// happens to be a `Seq` node, which is what RHS rest bindings supply.
     fn pure_seq_node(&self, g: Cfg::G, op: Cfg::O) -> Option<Cfg::G> {
         let cls = self.classes.find_const(g);
         let mut best: Option<Cfg::G> = None;
