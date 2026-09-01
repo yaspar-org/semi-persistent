@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-bf2d2db0.js";
+            window.path_to_searchindex_js = "searchindex-a61cca14.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-87de0060.js"></script>
@@ -1371,8 +1371,10 @@ use <code>u64::+</code>, <code>u64::-</code>, <code>u64::*</code>, <code>u64::/<
 <p>Subtraction is accepted only when the collected left-hand-side interval proves
 that it cannot underflow. Division and remainder require a divisor whose
 interval excludes zero. Addition and multiplication use checked arithmetic at
-runtime. An output multiplicity of zero omits the child without evaluating its
-term.</p>
+runtime: an overflow, or a computed count too wide for the configured
+multiplicity type, stops the run with an error naming the rule and the operands
+rather than wrapping or aborting the process. An output multiplicity of zero
+omits the child without evaluating its term.</p>
 <h2 id="splicing-and-comprehensions"><a class="header" href="#splicing-and-comprehensions">Splicing and comprehensions</a></h2>
 <p>A plain <code>..rest</code> splice copies a rest binding unchanged. A comprehension maps
 its elements while splicing the results into the surrounding application:</p>
@@ -2210,6 +2212,25 @@ transaction, so other graph readers see the restored plain graph.</p>
 over associative, AC, or ACI nodes. Use lazy mode for a limited sequence of
 equality questions. Use eager mode when rules, extraction, anti-unification,
 or another graph reader must observe completion-derived classes.</p>
+<p>One practical point when choosing plain mode: because plain mode derives no
+AC consequences, its answer to an equality query over AC or ACI nodes can
+depend on the <strong>order the statements appear in</strong>. Flattening a nested
+same-operator argument is declined once that argument’s class is referenced
+as a child anywhere else, and that condition never becomes false again, so
+building an unrelated term earlier can change how a later term is spelled:</p>
+<pre><code class="language-lisp">(let t0 (Add (Mul D D) A))    ; delete this line, or move it below, and
+(let t1 (Mul D D A D))        ; the following check passes instead of failing
+(let t2 (Mul A D (Mul D D)))
+(check (= t1 t2))
+</code></pre>
+<p>Both readings are sound — a reordering never makes a <em>false</em> equality
+provable, only a true one unprovable — and within a single term the order is
+fixed, so the effect appears only across statements. If a program depends on
+equalities like this one, that is the signal to enable <code>--derive-ac-eqs</code> or
+<code>--lazy-ac-eqs</code>, which prove it in either order. Operators declared
+associative-only (<code>:assoc</code>) are not affected: their flattening is decided
+from the written form of the application, so it does not depend on what else
+the program has built.</p>
 <p>Chapter 23 collects the limits and qualifications of these modes. The
 procedures are specified in
 <a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-completion-spec.md"><code>ac-completion-spec.md</code></a>,

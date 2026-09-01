@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-bf2d2db0.js";
+            window.path_to_searchindex_js = "searchindex-a61cca14.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-87de0060.js"></script>
@@ -615,8 +615,10 @@ use <code>u64::+</code>, <code>u64::-</code>, <code>u64::*</code>, <code>u64::/<
 <p>Subtraction is accepted only when the collected left-hand-side interval proves
 that it cannot underflow. Division and remainder require a divisor whose
 interval excludes zero. Addition and multiplication use checked arithmetic at
-runtime. An output multiplicity of zero omits the child without evaluating its
-term.</p>
+runtime: an overflow, or a computed count too wide for the configured
+multiplicity type, stops the run with an error naming the rule and the operands
+rather than wrapping or aborting the process. An output multiplicity of zero
+omits the child without evaluating its term.</p>
 <h2 id="splicing-and-comprehensions"><a class="header" href="#splicing-and-comprehensions">Splicing and comprehensions</a></h2>
 <p>A plain <code>..rest</code> splice copies a rest binding unchanged. A comprehension maps
 its elements while splicing the results into the surrounding application:</p>
