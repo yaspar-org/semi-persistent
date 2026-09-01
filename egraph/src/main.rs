@@ -238,12 +238,16 @@ fn main() {
                     &surface_cmds,
                     MachineModel,
                     &opts,
+                    &src,
                 ),
-                LitValChoice::Bignum => {
-                    run::<$Cfg, BignumLit, BignumModel, $proofs>(&surface_cmds, BignumModel, &opts)
-                }
+                LitValChoice::Bignum => run::<$Cfg, BignumLit, BignumModel, $proofs>(
+                    &surface_cmds,
+                    BignumModel,
+                    &opts,
+                    &src,
+                ),
                 LitValChoice::All => {
-                    run::<$Cfg, AllLit, AllModel, $proofs>(&surface_cmds, AllModel, &opts)
+                    run::<$Cfg, AllLit, AllModel, $proofs>(&surface_cmds, AllModel, &opts, &src)
                 }
             }
         };
@@ -282,6 +286,9 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     surface_cmds: &[semi_persistent_egraph::surface_ast::SurfaceCommand],
     model: M,
     opts: &EngineOptions,
+    // The original program text, kept only to turn a diagnostic's byte offsets into a line
+    // and column (`Span::render_in`). Nothing else reads it.
+    src: &str,
 ) where
     Cfg: semi_persistent_egraph::config::EGraphConfig,
     Cfg::O: std::hash::Hash,
@@ -309,12 +316,22 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     ) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("sort error: {e}");
+            // `SortError::render` carries its own `sort error` prefix and reports a line and
+            // column rather than the byte offsets `Display` is limited to.
+            eprintln!("{}", e.render(src));
             process::exit(1);
         }
     };
     if let Err(e) = interp.run_checked(&checked) {
-        eprintln!("error: {e}");
+        // A primitive fault carries the applying rule's span, which only becomes a line and
+        // column here, where the source is still in hand. Every other interpreter error has
+        // no span to add, so it renders through `Display`.
+        match &e {
+            semi_persistent_egraph::interpret::InterpError::EvalFailed(ev) => {
+                eprintln!("error: {}", ev.render(src))
+            }
+            _ => eprintln!("error: {e}"),
+        }
         process::exit(1);
     }
     if let Some(path) = &opts.dump_proofs {

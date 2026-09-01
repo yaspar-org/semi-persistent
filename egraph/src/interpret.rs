@@ -544,6 +544,7 @@ where
                 root_vid,
                 subsume,
                 ruleset,
+                span,
             } => {
                 let name = format!("rewrite_{}", self.eg.rules().len());
                 let rule_id = self.eg.register_rule(&name, "", "");
@@ -562,6 +563,7 @@ where
                     rhs_locals: *rhs_locals,
                     actions,
                     ruleset: *ruleset,
+                    span: *span,
                 };
                 Self::check_rule_mults(&name, &rule)?;
                 self.rules.push(rule);
@@ -571,6 +573,7 @@ where
                 rhs_locals,
                 actions,
                 ruleset,
+                span,
             } => {
                 let name = format!("rule_{}", self.eg.rules().len());
                 let rule_id = self.eg.register_rule(&name, "", "");
@@ -584,6 +587,7 @@ where
                     rhs_locals: *rhs_locals,
                     actions: compiled,
                     ruleset: *ruleset,
+                    span: *span,
                 };
                 Self::check_rule_mults(&name, &rule)?;
                 self.rules.push(rule);

@@ -103,6 +103,10 @@ pub struct EvalError {
     /// The rule's name, filled in at the boundary that knows it. The
     /// evaluators see only the operation, so they leave this `None`.
     pub rule: Option<String>,
+    /// Source span of the rule that was applying, filled in with the name. Byte offsets,
+    /// because that is what the parser records and what this type can hold without borrowing
+    /// the program text; [`render`](Self::render) turns them into a line and column.
+    pub span: crate::ast::Span,
 }
 
 impl EvalError {
@@ -113,6 +117,7 @@ impl EvalError {
             args: args.iter().map(|a| a.to_string()).collect(),
             site,
             rule: None,
+            span: crate::ast::Span::Dummy,
         }
     }
 
@@ -123,6 +128,38 @@ impl EvalError {
             self.rule = Some(name.to_owned());
         }
         self
+    }
+
+    /// Attach the applying rule's source span. Keeps an existing span, matching
+    /// [`in_rule`](Self::in_rule): the innermost frame that knows a location wins.
+    pub fn at(mut self, span: crate::ast::Span) -> Self {
+        if matches!(self.span, crate::ast::Span::Dummy) {
+            self.span = span;
+        }
+        self
+    }
+
+    /// The message with the rule's **line and column**, which `Display` cannot report because
+    /// it does not have the program text. Falls back to `Display` when the span is unresolvable
+    /// (a rule built through the API rather than parsed), so a caller can always use this.
+    pub fn render(&self, src: &str) -> String {
+        match self.span.render_in(src) {
+            Some(at) => match &self.rule {
+                Some(rule) => format!(
+                    "rule '{rule}' at {at}: {} in {} is undefined on ({})",
+                    self.op,
+                    self.site,
+                    self.args.join(", ")
+                ),
+                None => format!(
+                    "at {at}: {} in {} is undefined on ({})",
+                    self.op,
+                    self.site,
+                    self.args.join(", ")
+                ),
+            },
+            None => self.to_string(),
+        }
     }
 }
 

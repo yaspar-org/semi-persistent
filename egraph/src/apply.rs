@@ -186,6 +186,12 @@ pub struct PreparedRule<O, S, V> {
     /// The ruleset this rule belongs to (`:ruleset name`), or `None` for the default one.
     /// The saturation driver runs the rules whose ruleset equals the one asked for.
     pub ruleset: Option<RulesetId>,
+    /// Source span of the rule's left-hand side, or [`Span::Dummy`] for a rule built by an
+    /// API caller rather than parsed. Carried only for diagnostics: a primitive that faults
+    /// while this rule is applying can then name the line the rule was written on, instead of
+    /// only the generated rule name (`rewrite_0`), which tells a reader nothing about where to
+    /// look. Nothing in matching or application reads it.
+    pub span: crate::ast::Span,
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +388,7 @@ where
         rhs_locals,
         actions,
         ruleset: None,
+        span: lhs.span(),
     })
 }
 
@@ -425,6 +432,7 @@ where
         rhs_locals,
         actions,
         ruleset: None,
+        span: body.first().map_or(crate::ast::Span::Dummy, |p| p.span()),
     })
 }
 
@@ -848,6 +856,7 @@ where
     // like any other partial operation, so it is reported rather than asserted:
     // narrowing is decided by `try_from_u64`, never by truncation.
     let count = Cfg::M::try_from_u64(count).ok_or_else(|| EvalError {
+        span: crate::ast::Span::Dummy,
         op: "multiplicity",
         args: vec![count.to_string()],
         site: EvalSite::Multiplicity,
@@ -883,6 +892,7 @@ where
             let a = eval_mult_expr::<Cfg, Q>(&args[0], env)?;
             let b = eval_mult_expr::<Cfg, Q>(&args[1], env)?;
             let fault = |name: &'static str| EvalError {
+                span: crate::ast::Span::Dummy,
                 op: name,
                 args: vec![a.to_string(), b.to_string()],
                 site: EvalSite::Multiplicity,
@@ -1211,7 +1221,7 @@ where
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    fault.in_rule(eg.rules().name(rule.rule_id))
+    fault.in_rule(eg.rules().name(rule.rule_id)).at(rule.span)
 }
 
 #[cfg(test)]

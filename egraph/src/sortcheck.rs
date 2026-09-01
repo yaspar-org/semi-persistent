@@ -30,6 +30,24 @@ impl std::fmt::Display for SortError {
     }
 }
 
+impl SortError {
+    /// The message with a **line and column** instead of the byte offsets `Display` prints.
+    ///
+    /// `Display` cannot do this: it has no access to the source text, so it can only report
+    /// the offsets the parser recorded. A caller that still holds the source should prefer
+    /// this — `sort error at line 4 column 12:` is actionable where `sort error at 87..93:`
+    /// is not.
+    ///
+    /// Note this carries the `sort error` prefix itself, exactly as `Display` does, so a
+    /// caller prints it bare. Prefixing it again yields `sort error: sort error at ...`.
+    pub fn render(&self, src: &str) -> String {
+        match self.span.render_in(src) {
+            Some(at) => format!("sort error at {at}: {}", self.msg),
+            None => format!("sort error: {}", self.msg),
+        }
+    }
+}
+
 fn serr(msg: impl Into<String>, span: Span) -> SortError {
     SortError {
         msg: msg.into(),
@@ -71,12 +89,17 @@ pub enum CCommand<O, S, L> {
         root_vid: crate::ast::VarId,
         subsume: bool,
         ruleset: Option<crate::apply::RulesetId>,
+        /// Source span of the rule's left-hand side, carried so a runtime fault in this
+        /// rule can name a line rather than only the generated rule name.
+        span: Span,
     },
     Rule {
         query: ResolvedQuery<O, S, L>,
         rhs_locals: crate::resolve::RhsLocalShape,
         actions: Vec<crate::resolve::ResolvedAction<O, S, L>>,
         ruleset: Option<crate::apply::RulesetId>,
+        /// Source span of the rule's first body pattern; see `Rewrite::span`.
+        span: Span,
     },
     Run {
         ruleset: Option<crate::apply::RulesetId>,
@@ -864,6 +887,7 @@ where
                 root_vid,
                 subsume,
                 ruleset,
+                span: lhs_span,
             })
         }
         SurfaceCommand::Rule {
@@ -872,6 +896,7 @@ where
             ruleset,
         } => {
             let ruleset = rulesets.resolve(&ruleset)?;
+            let body_span = body.first().map_or(Span::Dummy, |p| p.span());
             let fq = flatten_surface(&body, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
             let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
@@ -888,6 +913,7 @@ where
                 rhs_locals,
                 actions,
                 ruleset,
+                span: body_span,
             })
         }
     }

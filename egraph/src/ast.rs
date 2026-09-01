@@ -64,6 +64,97 @@ impl Span {
     pub const fn new(start: u32, end: u32) -> Self {
         Self::Range { start, end }
     }
+
+    /// 1-based `(line, column)` of this span's start in `src`, or `None` for
+    /// [`Span::Dummy`] or an offset past the end of `src`.
+    ///
+    /// Byte offsets are what the parser records and what a `Display` on an error type can
+    /// print without holding the source; a line and column are what a person reading a
+    /// terminal can act on. Diagnostics therefore keep the offset and convert here, at the
+    /// one place that has the source text: [`render_in`](Self::render_in), called from the
+    /// binary's top-level error reporting.
+    ///
+    /// The column counts UTF-8 *characters*, not bytes, so a line with multi-byte text still
+    /// reports a column a reader can count to. Cost is one scan of the prefix, which is
+    /// irrelevant on a path that runs once, as the program is about to exit.
+    pub fn line_col(&self, src: &str) -> Option<(usize, usize)> {
+        let Span::Range { start, .. } = *self else {
+            return None;
+        };
+        let start = start as usize;
+        if start > src.len() {
+            return None;
+        }
+        let prefix = &src[..start];
+        let line = prefix.matches('\n').count() + 1;
+        let col = prefix
+            .rfind('\n')
+            .map_or(prefix, |nl| &prefix[nl + 1..])
+            .chars()
+            .count()
+            + 1;
+        Some((line, col))
+    }
+
+    /// `"line L column C"` for a resolvable span, else `None`.
+    ///
+    /// Returning `Option` rather than an empty string keeps the caller in charge of how a
+    /// missing location reads in its own message, instead of leaving a dangling " at ".
+    pub fn render_in(&self, src: &str) -> Option<String> {
+        self.line_col(src)
+            .map(|(l, c)| format!("line {l} column {c}"))
+    }
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::Span;
+
+    #[test]
+    fn line_col_is_one_based_on_the_first_line() {
+        let src = "(sort E)\n(constructor a () E)\n";
+        assert_eq!(Span::new(0, 4).line_col(src), Some((1, 1)));
+        assert_eq!(Span::new(6, 7).line_col(src), Some((1, 7)));
+    }
+
+    #[test]
+    fn line_col_counts_newlines_and_restarts_the_column() {
+        let src = "(sort E)\n(constructor a () E)\n";
+        // Offset 9 is the '(' that opens line 2.
+        assert_eq!(Span::new(9, 20).line_col(src), Some((2, 1)));
+        assert_eq!(Span::new(21, 22).line_col(src), Some((2, 13)));
+    }
+
+    #[test]
+    fn column_counts_characters_not_bytes() {
+        // 'é' is two bytes, so a byte-based column would report 4 rather than 3.
+        let src = "aé b";
+        assert_eq!(Span::new(3, 4).line_col(src), Some((1, 3)));
+    }
+
+    #[test]
+    fn dummy_and_out_of_range_do_not_resolve() {
+        let src = "(sort E)";
+        assert_eq!(Span::Dummy.line_col(src), None);
+        assert_eq!(Span::Dummy.render_in(src), None);
+        assert_eq!(Span::new(999, 1000).line_col(src), None);
+    }
+
+    #[test]
+    fn offset_at_end_of_source_resolves() {
+        // A span pointing just past the last byte is the EOF position, not an error.
+        let src = "(sort E)";
+        assert_eq!(Span::new(8, 8).line_col(src), Some((1, 9)));
+    }
+
+    #[test]
+    fn render_in_is_human_readable() {
+        let src = "a\nbb\nccc";
+        assert_eq!(
+            Span::new(5, 6).render_in(src).as_deref(),
+            Some("line 3 column 1")
+        );
+    }
 }
 
 /// Multiplicity constraint on an AC element.
