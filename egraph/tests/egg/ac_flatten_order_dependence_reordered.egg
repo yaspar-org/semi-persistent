@@ -1,0 +1,23 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; The other half of `ac_flatten_order_dependence.egg`: the SAME program with `t0` moved
+;; after `t2`. Now nothing has referenced `[Mul(D,D)]` as a non-same-op child when `t2` is
+;; built, so the class is not yet `atomic`, `flatten_ac_children` splices it, and `t2` is
+;; stored flat — equal to `t1` by canonization alone.
+;;
+;; The pair of fixtures is the point: plain mode's answer to `t1 = t2` depends on statement
+;; order. That is documented AC incompleteness, not a soundness bug — neither fixture ever
+;; asserts a false equality — and `--derive-ac-eqs` proves it in both orders.
+
+(sort E)
+(constructor A () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor One () E)
+(constructor Add (E) E :assoc :comm :identity (Zero))
+(constructor Mul (E) E :assoc :comm :identity (One))
+
+(let t1 (Mul (D) (D) (A) (D)))
+(let t2 (Mul (A) (D) (Mul (D) (D))))
+(let t0 (Add (Mul (D) (D)) (A)))
+(check (= t1 t2))

@@ -384,6 +384,22 @@ egg_test!(
     "seq_flatten_order_independent_control.egg"
 );
 egg_test!(seq_flatten_rhs_nesting, "seq_flatten_rhs_nesting.egg");
+// Asserts a *documented incompleteness*, on purpose: plain mode declines the AC flatten
+// consequence in one statement order and derives it in the other, and `--derive-ac-eqs`
+// derives it in both. `ac-congruence-completeness.md` §6c records why every build-time
+// alternative is worse. If the plain-mode fixture starts passing, find out what changed.
+egg_test!(
+    ac_flatten_order_dependence,
+    "ac_flatten_order_dependence.egg"
+);
+egg_test!(
+    ac_flatten_order_dependence_reordered,
+    "ac_flatten_order_dependence_reordered.egg"
+);
+egg_test!(
+    ac_flatten_order_dependence_eager,
+    "ac_flatten_order_dependence_eager.egg"
+);
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");

@@ -57,6 +57,29 @@ over associative, AC, or ACI nodes. Use lazy mode for a limited sequence of
 equality questions. Use eager mode when rules, extraction, anti-unification,
 or another graph reader must observe completion-derived classes.
 
+One practical point when choosing plain mode: because plain mode derives no
+AC consequences, its answer to an equality query over AC or ACI nodes can
+depend on the **order the statements appear in**. Flattening a nested
+same-operator argument is declined once that argument's class is referenced
+as a child anywhere else, and that condition never becomes false again, so
+building an unrelated term earlier can change how a later term is spelled:
+
+```lisp
+(let t0 (Add (Mul D D) A))    ; delete this line, or move it below, and
+(let t1 (Mul D D A D))        ; the following check passes instead of failing
+(let t2 (Mul A D (Mul D D)))
+(check (= t1 t2))
+```
+
+Both readings are sound — a reordering never makes a *false* equality
+provable, only a true one unprovable — and within a single term the order is
+fixed, so the effect appears only across statements. If a program depends on
+equalities like this one, that is the signal to enable `--derive-ac-eqs` or
+`--lazy-ac-eqs`, which prove it in either order. Operators declared
+associative-only (`:assoc`) are not affected: their flattening is decided
+from the written form of the application, so it does not depend on what else
+the program has built.
+
 Chapter 23 collects the limits and qualifications of these modes. The
 procedures are specified in
 [`ac-completion-spec.md`](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-completion-spec.md),

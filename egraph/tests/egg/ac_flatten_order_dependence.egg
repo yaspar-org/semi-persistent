@@ -1,0 +1,40 @@
+;; EXPECT: error
+;; TYPES: machine
+;; ASSERTS AN INCOMPLETENESS, ON PURPOSE. The companion
+;; `ac_flatten_order_dependence_eager.egg` is the same program under `--derive-ac-eqs`,
+;; where it passes.
+;;
+;; AC flattening splices a nested same-op child only when the child's class is NOT `atomic`
+;; (`flatten_ac_children`, design §6c). `atomic` answers "is this class referenced as a
+;; non-same-op child" with *so far*, and it is monotone-true, so building `t0` first makes
+;; `[Mul(D,D)]` atomic and `t2` then stores the nested spelling. Reorder the two `let`s
+;; (`ac_flatten_order_dependence_reordered.egg`) and the same program proves the check.
+;;
+;; This is left as-is deliberately. Every way to remove the order dependence at build time
+;; is worse: splicing unconditionally destroys the §5b summand pair
+;; (`inverse_cancel_keeps_atomic_pair.egg`), never splicing regresses
+;; `ac_flatten_build.egg`, and deciding on the written syntax instead of the class still
+;; breaks §5b for a §5b term written inline. Note `atomic` *is* order-independent within a
+;; single term, since argument evaluation fixes the order — the dependence is only across
+;; statements, which is exactly the AC incompleteness the eager and lazy modes exist to
+;; close.
+;;
+;; Supplying the missing equality in plain mode instead was measured at +73% nodes on
+;; `rhs_mult_expr.egg` under `--derive-ac-eqs`, for a consequence plain mode is defined not
+;; to derive. If this fixture ever starts passing in plain mode, that budget is being spent
+;; somewhere: check what changed before relaxing the expectation.
+
+(sort E)
+(constructor A () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor One () E)
+(constructor Add (E) E :assoc :comm :identity (Zero))
+(constructor Mul (E) E :assoc :comm :identity (One))
+
+;; Makes `[Mul(D,D)]` atomic by referencing it as an `Add` child.
+(let t0 (Add (Mul (D) (D)) (A)))
+(let t1 (Mul (D) (D) (A) (D)))
+(let t2 (Mul (A) (D) (Mul (D) (D))))
+;; True in the AC theory; NOT derived by canonization plus congruence alone.
+(check (= t1 t2))

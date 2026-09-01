@@ -367,21 +367,31 @@ shape and so to fire as expected.
 Case (b): a scalar variable that must bind to a compound sub-sum is not matched, and
 this can miss a real equality. It arises only when one variable must bind to a
 compound sub-sum as a single value, usually because the variable is reused, so its
-identity matters. One example is cancellation, `(+ ?x (neg ?x)) ⇒ 0`. Insert
-`a + b + (neg (a+b))`. To build `neg(a+b)` at all, the node `+(a,b)` must exist;
-call its class `c`. So `a+b` is in fact materialized as `c`, not virtual. But the
-outer sum flattens by substituting the child class of each summand, and the two
-leaves `a`, `b` are summands in their own right, so the outer node is:
+identity matters. The example to reach for is cancellation, `(+ ?x (neg ?x)) ⇒ 0` —
+but it is important to be precise about when it actually fails, because the obvious
+reading of it is wrong.
+
+Insert `c + (neg c)` where `c` is the class of `+(a,b)`. To build `neg(c)` at all,
+the node `+(a,b)` must exist, and *referencing it as `neg`'s child is what makes its
+class `atomic`* (§9a). §6c's `summand_form` therefore keeps it as one summand, so the
+outer node is:
 
 ```
-+{ a, b, neg(c) }     (not +{ c, neg(c) })
++{ c, neg(c) }
 ```
 
-Now match `(+ ?x (neg ?x))`: `neg(c)` is a summand, so `(neg ?x)` forces `?x = c`.
-The match then needs `c` to also be a summand, but the outer multiset is
-`{a, b, neg(c)}`, which contains `a` and `b` separately, not `c`. The match fails,
-and the rule that should reduce the term to `0` never fires. A genuine AC
-consequence is lost.
+and `(+ ?x (neg ?x))` matches with `?x = c`. **This case works**, in plain mode, with
+no completion: see `inverse_cancel_keeps_atomic_pair.egg`. An earlier revision of this
+chapter claimed the outer node was `+{a, b, neg(c)}` and the rule never fired. That
+described a flattening rule with no `atomic` condition, which the implementation does
+not have and must not have — see §6c, and the "why not just splice" note there.
+
+What case (b) does lose is a sub-sum that no node references as a non-same-op child,
+so nothing makes its class `atomic`, and it is spliced away before the reused variable
+can bind it. Build `h(+(a,b))` for some unrelated `h` and the class is atomic again,
+which is why the failure is fragile and why it is stated as a matching limit rather
+than a soundness problem: what is lost is a genuine AC consequence, never a false
+equality.
 
 It failed not because `a+b` is missing (it is present, as `c`), but because `c` was
 never substituted into the outer node to expose it. That is the inter-reduction of
@@ -827,8 +837,15 @@ the active set generally plateaus near the input size.
 
 ### Flattening (`WF_flat`) and the matcher-crash gate
 
-The engine requires **AC terms to be flattened** (`WF_flat`): an `f`-node never has an
-`f`-class child. This is a canonicalization invariant, not a completion-specific one: the
+The engine requires **AC terms to be flattened** (`WF_flat`): an `f`-node never has a
+**non-`atomic`** `f`-class child. The qualifier is not a detail and was missing from an
+earlier revision of this chapter. Stated without it — "never has an `f`-class child" — the
+invariant is simply **false** of the implementation, and it has to be: §5b's cancellation
+needs `+{c, neg(c)}` to keep `c` as one summand precisely when `c`'s class holds an
+`f`-node. §6c case 1 is the rule, and this is the invariant that follows from it.
+
+Nothing asserts on `WF_flat`; it is a documentation-level statement of what the build path
+establishes. This is a canonicalization invariant, not a completion-specific one: the
 materialization invariant of §1 needs every summand to be a real summand, and a nested
 `+f(+f(…),…)` hides one. §6c states exactly what to flatten (the class summand-form), gives
 the implementation argument that recanonicalization-time flattening is vacuous, and
@@ -892,6 +909,22 @@ Why this is the *right* predicate, and what it does to the worked examples:
   sums; it has no standalone atom form, so it must be spliced. This is the same `atomic`
   distinction that orients completion's rule RHS; flattening and completion agree by
   construction.
+
+  **Do not decompose that disjunction.** It reads like one algebraic condition ("holds a
+  non-AC node") plus one bookkeeping artifact ("referenced as a child"), and it is tempting
+  to conclude that only the first carries meaning. Both carry meaning, for *different*
+  reasons, and dropping either one breaks something distinct:
+
+  - "holds a non-AC node" is what keeps the splice from rewriting **uphill**. When a class
+    holds a genuine atom — `(union (+ c0 c1) c2)` — `c2` is the small spelling and `+(c0,c1)`
+    the large one. Splicing grows every AC node over that class, every round, without bound.
+    This is a *termination* property, not a spelling preference.
+  - "referenced as a child" is what preserves **§5b**. It is the only thing making
+    `[+(a,b)]` atomic in `+{c, neg(c)}`, and without it the cancellation pair is destroyed.
+
+  A predicate keeping only the first disjunct (class purity) still breaks §5b; one keeping
+  only the second still runs away. Both were implemented and measured before this note was
+  written.
 
 - **§5b is preserved.** In §5b, `c = +{a,b}` is a child of `neg(c)`, so its class is
   `atomic`. Canonicalizing `+{c, neg(c)}` therefore expands `c` to `summand_form(c) = {c}`
@@ -970,6 +1003,54 @@ The intuition: the act of *using* a class as an AC child is exactly what makes i
 permanently, so by the time a class is stored in a multiset it can never again be a splice
 candidate. Inlining is fundamentally a build-time operation, on a child that is non-atomic
 *at the moment its parent is built*; building the parent then makes it atomic forever after.
+
+**What the lemma does not establish.** Both statements above are about *re-running* the
+predicate on an already-stored child, and they are correct: a stored child is atomic, so a
+recanon-time flatten would splice nothing. Neither statement says the build-time choice is
+**canonical**, and it is not. The question they do not ask is the converse one:
+
+> can a class stop being a splice candidate *before* its parent is built?
+
+It can, and that is the whole content of the phrase "non-atomic *at the moment its parent is
+built*" above. `atomic` is monotone-true, so it answers "is this class referenced as a
+non-same-op child" with **so far**. Two programs that differ only in the order of two
+unrelated `let`s therefore store different spellings and land in different classes:
+
+```lisp
+(let t0 (Add (Mul D D) A))   ; referencing [Mul(D,D)] as an Add child makes it atomic
+(let t1 (Mul D D A D))
+(let t2 (Mul A D (Mul D D))) ; [Mul(D,D)] now atomic  ⇒  kept nested  ⇒  t1 ≠ t2
+```
+
+Move the `t0` line after `t2` and the same program proves `t1 = t2`. Both orders are in
+`ac_flatten_order_dependence.egg` / `..._reordered.egg`, and `..._eager.egg` shows
+`--derive-ac-eqs` proving it either way.
+
+This is **left as-is deliberately**, and the reason is worth recording because every
+alternative was tried and is worse:
+
+| alternative | why it fails |
+| --- | --- |
+| splice unconditionally (drop `atomic`) | destroys §5b's summand pair, and rewrites uphill without bound — measured as a runaway in the completion normalizer on the `ac_completion` bench workload |
+| require class *purity* instead of `atomic` | still breaks §5b, since `[+(a,b)]` is pure; and purity closes too, so the order dependence remains |
+| never splice | regresses `ac_flatten_build.egg`; nested and flat spellings stop being one class at all |
+| decide on the written syntax, not the class | breaks §5b for a §5b term written inline, e.g. `(Add (Add A B) (Neg (Add A B)))` |
+| supply the missing equality as a repair pass after merges | sound and it works, but it derives AC consequences in plain mode, which the mode is defined not to do; measured at **+73% nodes** on `rhs_mult_expr.egg` under `--derive-ac-eqs` |
+
+Note also that `atomic` **is** order-independent *within* a single term, because argument
+evaluation order is fixed. The dependence is only *across statements*, which is exactly the
+AC incompleteness the eager and lazy modes (§13) exist to close. Getting all AC consequences
+requires one of those modes; plain mode gives canonization plus congruence and no more.
+
+The A-only (`Seq`) analogue of this is a different matter and *is* fixed, because A-only
+operators admit neither `:identity` nor `:inverse` (the property resolver rejects both
+without `:comm`), so no §5b pair depends on a nested spelling being kept. There, the
+flattening decision is made in the term builder (`push_seq_args` in `interpret.rs`), on the
+*syntax* of the application, before child ids exist. It cannot be made in `EGraph::add`: by
+then a child is a plain id, and a nested application is indistinguishable from a class id
+that merely happens to be a `Seq` node — RHS rest bindings hand `add` exactly such ids, and
+splicing those rewrites `seq(a,b)` up to `seq(unit,a,b)` and again every round
+(`a_singleton_collapse.egg`). See `seq_flatten_order_independent.egg`.
 
 A worked trace (watch `atomic([S])`):
 

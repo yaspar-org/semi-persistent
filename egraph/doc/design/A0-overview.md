@@ -138,6 +138,25 @@ survivor policy on the verified per-class counters. See
 the modes and [Future Work](A3-future-work.md) for the verification
 plan.
 
+**Caveat (statement order in plain mode):** one visible consequence of
+plain mode's incompleteness is that AC flattening depends on the order
+in which statements appear, so plain mode can answer the same equality
+query differently for two programs that differ only by a reordering.
+Flattening splices a nested same-op child only when the child's class is
+not yet referenced as a child elsewhere, and that condition is
+monotone-true, so building an unrelated term first can change how a
+later term is spelled. Within a single term the order is fixed by
+argument evaluation, so the effect is only across statements. Nothing
+unsound follows — a reordering never produces a *false* equality, only a
+missing one — but a program that needs AC consequences should enable
+`--derive-ac-eqs` or `--lazy-ac-eqs` rather than rely on plain mode.
+`ac-congruence-completeness.md` §6c records why every way of removing
+the dependence at build time is worse, and
+`egraph/tests/egg/ac_flatten_order_dependence*.egg` pins the behaviour
+in both orders and under completion. Associativity-only (`:assoc`)
+operators are *not* affected: their flattening is decided on the written
+syntax of the application, so it is order-independent.
+
 ### Relational pattern matching via leapfrog triejoin
 
 Patterns compile to flat relational atoms. Their relational intersections use

@@ -1,0 +1,20 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; DERIVE_AC_EQS: on
+;; The eager companion of `ac_flatten_order_dependence.egg`: byte-identical program, with AC
+;; completion enabled. It passes, which is the whole argument for leaving plain mode alone —
+;; the equality `t1 = t2` is a genuine AC consequence, and deriving it is completion's job,
+;; under completion's growth budget.
+
+(sort E)
+(constructor A () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor One () E)
+(constructor Add (E) E :assoc :comm :identity (Zero))
+(constructor Mul (E) E :assoc :comm :identity (One))
+
+(let t0 (Add (Mul (D) (D)) (A)))
+(let t1 (Mul (D) (D) (A) (D)))
+(let t2 (Mul (A) (D) (Mul (D) (D))))
+(check (= t1 t2))
