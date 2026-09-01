@@ -1,0 +1,13 @@
+;; EXPECT: ok
+;; The control for the rest-linearity rejection: distinct rest names are the ordinary
+;; window pattern and must still compile and fire.
+(sort E)
+(function S (E) E :assoc)
+(function a () E)
+(function b () E)
+(function c () E)
+(function W () E)
+(let t (S (a) (b) (c)))
+(rule ((S ..p x ..q)) ((union (W) x)))
+(run 2)
+(check (= (W) (b)))

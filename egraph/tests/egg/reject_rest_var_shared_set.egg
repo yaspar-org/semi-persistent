@@ -1,0 +1,11 @@
+;; EXPECT: sort-error
+;; The ACI rest (`DecomposeACI`, SetVarId) has the same single-writer requirement.
+(sort E)
+(function U (E) E :assoc-comm-idem)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(let t1 (U (a) (b)))
+(let t2 (U (c) (d)))
+(rule ((U ..r x) (U y ..r)) ((union x y)))

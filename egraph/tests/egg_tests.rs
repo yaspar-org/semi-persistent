@@ -632,6 +632,35 @@ egg_test!(
 
 egg_test!(eq_global_only_atom, "eq_global_only_atom.egg");
 
+// Whole-query resolve checks (`check_rest_vars_linear`, `check_nodes_bindable`). Both
+// reject query shapes the matcher cannot execute, and both shapes previously reached the
+// interpreter: the rest-variable one silently dropped the constraint and derived a false
+// equality, the `Eq` one aborted the process in `MatchPool::push`. Each rejection carries
+// its control, a query of the same shape that must still compile.
+egg_test!(
+    reject_rest_var_shared_across_atoms,
+    "reject_rest_var_shared_across_atoms.egg"
+);
+egg_test!(
+    reject_rest_var_aliased_one_atom,
+    "reject_rest_var_aliased_one_atom.egg"
+);
+egg_test!(
+    reject_rest_var_shared_mset,
+    "reject_rest_var_shared_mset.egg"
+);
+egg_test!(reject_rest_var_shared_set, "reject_rest_var_shared_set.egg");
+egg_test!(ok_rest_var_distinct_names, "ok_rest_var_distinct_names.egg");
+egg_test!(
+    reject_eq_atom_neither_side_bound,
+    "reject_eq_atom_neither_side_bound.egg"
+);
+egg_test!(
+    reject_eq_atom_unbound_with_other_atom,
+    "reject_eq_atom_unbound_with_other_atom.egg"
+);
+egg_test!(ok_eq_atom_one_side_bound, "ok_eq_atom_one_side_bound.egg");
+
 // The README's autoformalization example is executable documentation. Its
 // `checkau` commands guard the documented size-42 bound before domain
 // saturation, the size-8/9 identity-padding examples, and the size-35

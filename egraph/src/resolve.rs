@@ -743,6 +743,8 @@ where
     }
 
     link_pred_deps(&mut resolved, &shape)?;
+    check_rest_vars_linear(&resolved, &shape)?;
+    check_nodes_bindable(&resolved, &shape)?;
 
     let mult_intervals = collect_mult_intervals(&resolved, &fq.atoms, &shape)?;
 
@@ -797,6 +799,141 @@ fn link_pred_deps<O, S, L>(atoms: &mut [RAtom<O, S, L>], shape: &MatchShape) -> 
             unreachable!()
         };
         *slot = deps;
+    }
+    Ok(())
+}
+
+/// Reject a rest variable that more than one atom position writes.
+///
+/// A repeated name is the ordinary non-linear case for a node variable: the first
+/// occurrence binds and later ones compile to `CheckEq`/`CheckChildEq`. Rest variables
+/// have no such step. `ExpandA`, `DecomposeAC` and `DecomposeACI` *write* their spans
+/// unconditionally, so a second writer silently overwrites the first and the equality
+/// the repeated name asks for is never checked — the rule then fires on assignments
+/// where the two rests differ, which derives equalities that do not follow. The `Step`
+/// enum has no span comparison at all, so this cannot be checked in the matcher without
+/// a new step; until there is one, the query is rejected here.
+///
+/// `pre` and `suf` of a single variadic atom count as two writers, which is what
+/// rejects `(S ..r x ..r)` as well as a rest shared between two atoms.
+fn check_rest_vars_linear<O, S, L>(atoms: &[RAtom<O, S, L>], shape: &MatchShape) -> R<()> {
+    let mut seqs = vec![0usize; shape.num_seq_vars()];
+    let mut sets = vec![0usize; shape.num_set_vars()];
+    let mut msets = vec![0usize; shape.num_mset_vars()];
+    for a in atoms {
+        match a {
+            RAtom::APrefix { pre, .. } => seqs[pre.idx()] += 1,
+            RAtom::ASuffix { suf, .. } => seqs[suf.idx()] += 1,
+            RAtom::ABoth { pre, suf, .. } => {
+                seqs[pre.idx()] += 1;
+                seqs[suf.idx()] += 1;
+            }
+            RAtom::ACSub { rest, .. } => msets[rest.idx()] += 1,
+            RAtom::ACISub { rest, .. } => sets[rest.idx()] += 1,
+            _ => {}
+        }
+    }
+    // Zip counts against the name tables rather than minting an id back from the index:
+    // the name is all the diagnostic needs, and the counter vectors were sized from the
+    // same `num_*_vars()` the tables have, so the pairing is total in both directions.
+    let offenders = seqs
+        .iter()
+        .zip(&shape.seqs)
+        .chain(sets.iter().zip(&shape.sets))
+        .chain(msets.iter().zip(&shape.msets));
+    for (&count, name) in offenders {
+        if count > 1 {
+            return Err(err(
+                format!(
+                    "rest variable '..{name}' is written {count} times by this rule; a rest \
+                     variable may occur at most once, because the matcher has no step that \
+                     compares two rest spans for equality (use distinct names)"
+                ),
+                Span::Dummy,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Reject a query in which some node variable of the match shape can never be bound.
+///
+/// `MatchPool::push` unwraps every node slot of the shape, so a plan that leaves one
+/// unbound aborts the process when the first match is materialized. Every atom kind but
+/// `Eq` and `Pred` binds its own node variable and all its local children when the
+/// scheduler lowers it, so bindability is the closure of those seeds under `Eq`, which
+/// copies a binding in whichever direction is already bound. An `Eq` with neither side in
+/// the closure is lowered by neither scheduler phase — `try_eager_lower` returns `None`
+/// and phase B's argmin skips `Eq` — and the atom is silently dropped, which is the same
+/// shape `Step::BindGlobal` exists to prevent for the global case.
+fn check_nodes_bindable<O, S, L>(atoms: &[RAtom<O, S, L>], shape: &MatchShape) -> R<()> {
+    fn mark(pv: &PatVar, bound: &mut [bool]) {
+        if let PatVar::Local(v) = pv {
+            bound[v.idx()] = true;
+        }
+    }
+    let mut bound = vec![false; shape.num_vars()];
+    for a in atoms {
+        match a {
+            RAtom::Plain { node, children, .. } | RAtom::AExact { node, children, .. } => {
+                bound[node.idx()] = true;
+                for c in children {
+                    mark(c, &mut bound);
+                }
+            }
+            RAtom::APrefix { node, fixed, .. }
+            | RAtom::ASuffix { node, fixed, .. }
+            | RAtom::ABoth { node, fixed, .. } => {
+                bound[node.idx()] = true;
+                for c in fixed {
+                    mark(c, &mut bound);
+                }
+            }
+            RAtom::ACExact { node, elems, .. } | RAtom::ACSub { node, elems, .. } => {
+                bound[node.idx()] = true;
+                for (ev, _) in elems {
+                    mark(ev, &mut bound);
+                }
+            }
+            RAtom::ACIExact { node, elems, .. } | RAtom::ACISub { node, elems, .. } => {
+                bound[node.idx()] = true;
+                for ev in elems {
+                    mark(ev, &mut bound);
+                }
+            }
+            RAtom::Lit { node, .. } | RAtom::LitBind { node, .. } => bound[node.idx()] = true,
+            // `BindGlobal`: the atom is what gives the variable its value.
+            RAtom::EqGlobal(local, _) => bound[local.idx()] = true,
+            // Binds nothing on its own; propagated below.
+            RAtom::Eq(..) | RAtom::Pred { .. } => {}
+        }
+    }
+    // `Eq` copies a binding in either direction, so closing under it can bind a variable
+    // that no scanning atom mentions. Iterate: one `Eq` can feed the next.
+    loop {
+        let mut progress = false;
+        for a in atoms {
+            if let RAtom::Eq(x, y) = a {
+                let (bx, by) = (bound[x.idx()], bound[y.idx()]);
+                if bx != by {
+                    bound[x.idx()] = true;
+                    bound[y.idx()] = true;
+                    progress = true;
+                }
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    if let Some((_, name)) = bound.iter().zip(&shape.nodes).find(|(b, _)| !**b) {
+        return Err(err(
+            format!(
+                "variable '{name}' is never bound by this rule: no pattern in it can give the \
+                 variable a value"
+            ),
+            Span::Dummy,
+        ));
     }
     Ok(())
 }

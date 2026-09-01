@@ -1,0 +1,7 @@
+;; EXPECT: sort-error
+;; The dropped `Eq` need not be the only atom, and the RHS need not mention its variables.
+(sort E)
+(function h (E) E)
+(function p () E)
+(let z (h (p)))
+(rule ((h q) (= x y)) ((union q q)))

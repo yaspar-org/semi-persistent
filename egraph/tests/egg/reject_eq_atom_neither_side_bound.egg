@@ -1,0 +1,11 @@
+;; EXPECT: sort-error
+;; `(= x y)` with neither side bound elsewhere is lowered by neither scheduler phase:
+;; `try_eager_lower` returns None and phase B's argmin skips `Eq`. The atom was dropped,
+;; the two node variables stayed in the MatchShape, and `MatchPool::push` unwrapped an
+;; unset slot — a process abort. This is the local counterpart of what `Step::BindGlobal`
+;; already handles for a global.
+(sort E)
+(function h (E) E)
+(function p () E)
+(let z (h (p)))
+(rule ((= x y)) ((union x y)))
