@@ -132,17 +132,26 @@ the model inconsistent with the semantics its author intended even though it
 satisfies the Rust type signature.
 
 The provided integer machine operations use checked arithmetic for the
-unqualified names and panic on overflow or invalid integer division. This is
-not a blanket failure policy: `f64` operations use Rust/IEEE floating-point
-semantics, and string indexing operations return an empty string for invalid
-UTF-8 byte ranges.
+unqualified names. Overflow and invalid integer division are *partial*: `eval`
+returns `None`, which the engine reports as an `EvalError` naming the rule, the
+operation, and the operands, and the program exits nonzero. It stops the run
+rather than panicking, so a caller can tell a bad `.egg` program from a bug in
+the engine, and it is not a blanket failure policy: `f64` operations use
+Rust/IEEE floating-point semantics, and string indexing operations return an
+empty string for invalid UTF-8 byte ranges.
 
 Wrapping and saturating variants use Rust's standard method names
 (`wrapping_add`, `saturating_mul`, etc.) and require explicit opt-in.
 Arbitrary-precision types (IBig, UBig, RBig) do not overflow their numeric
-range, although partial operations such as division by zero can still panic.
-Operations that would produce unrepresentable exact results (for example,
-rational square root) are not provided.
+range, but they are still partial: division and remainder by zero, and a `UBig`
+subtraction whose result would be negative, report the same way. Operations that
+would produce unrepresentable exact results (for example, rational square root)
+are not provided.
+
+A fault ends the run at the action that hit it, and the effects of the actions
+already applied stay in the e-graph. Nothing reads the graph afterwards except a
+diagnostic, and undoing them would cost a rollback point per action on the hot
+path for a case that ends the program either way.
 
 When implementing a new `eval` function, specify its intended semantics and
 make it deterministic and total over the values on which the engine will call
@@ -153,7 +162,7 @@ relative to that external contract; no proof checks an arbitrary callback.
 
 | Model | Sorts | Use case |
 |-------|-------|----------|
-| `BignumModel` | bool, IBig, UBig, RBig | Arbitrary-precision operations relative to their documented callback semantics; no overflow, but partial operations can panic |
+| `BignumModel` | bool, IBig, UBig, RBig | Arbitrary-precision operations relative to their documented callback semantics; no overflow, and partial operations report an `EvalError` |
 | `MachineModel` | bool, i64, u64, f64, usize, String | Integer arithmetic checked by default; `f64` follows Rust/IEEE semantics; strings use Rust `String` |
 | `AllModel` | All of the above | Testing |
 

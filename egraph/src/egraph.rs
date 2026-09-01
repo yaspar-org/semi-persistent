@@ -137,6 +137,12 @@ pub struct EGraph<
     /// [`set_completion_node_budget`](Self::set_completion_node_budget) (tests use a tiny
     /// budget to exercise the abort path directly).
     completion_node_budget: usize,
+    /// `(touched.len(), num_classes)` as of the last [`canon_repair_round`](EGraph::canon_repair_round)
+    /// that found nothing. While both are unchanged no node was created or recanonicalized
+    /// and no classes merged, so the round cannot find anything and is skipped. Transient
+    /// scratch, not semi-persistent state: `restore` clears it, so a rolled-back graph is
+    /// always rescanned.
+    repair_state: Option<(usize, usize)>,
 }
 
 /// Default node-growth budget for one completion-enabled `rebuild` (see
@@ -263,6 +269,7 @@ where
             inverse_op: crate::containers::SpMap::new(),
             completion_outcome: None,
             completion_node_budget: DEFAULT_COMPLETION_NODE_BUDGET,
+            repair_state: None,
         }
     }
 
@@ -574,13 +581,17 @@ where
     }
 
     /// Saturate: apply rules to fixpoint or until `limit` iterations.
+    ///
+    /// `Err` is a rule that applied a partial primitive outside its domain; see
+    /// [`EvalError`](crate::lit_model::EvalError). Every `saturate*` entry point
+    /// here reports it the same way.
     pub fn saturate<M: crate::lit_model::LitModel<Value = L>, S: crate::DenseId + Copy>(
         &mut self,
         rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
         model: &M,
         limit: usize,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate(rules, self, model, limit, globals)
     }
 
@@ -592,7 +603,7 @@ where
         model: &M,
         limit: usize,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate_semi(rules, self, model, limit, globals)
     }
 
@@ -604,7 +615,7 @@ where
         model: &M,
         spec: &crate::saturate::RunSpec<Cfg::G>,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate_spec(rules, self, model, spec, globals)
     }
 
@@ -618,7 +629,7 @@ where
         model: &M,
         spec: &crate::saturate::RunSpec<Cfg::G>,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate_semi_spec(rules, self, model, spec, globals)
     }
 
@@ -632,7 +643,7 @@ where
         spec: &crate::saturate::RunSpec<Cfg::G>,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
         scratch: &mut crate::index::IndexScratch<Cfg>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate_spec_in(rules, self, model, spec, globals, scratch)
     }
 
@@ -647,7 +658,7 @@ where
         spec: &crate::saturate::RunSpec<Cfg::G>,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
         scratch: &mut crate::index::IndexScratch<Cfg>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         // Semi-naive is the one consumer of the merge-membership delta (see
         // `merge_in_classes`); the flag keeps the per-merge ring walks off
         // everywhere else.
@@ -1647,7 +1658,20 @@ where
         // Ordinary atom-level congruence closure always runs. AC completion runs only
         // when opted in (default off for divergence scoping — see the `cc` field docs).
         if !self.cc {
-            self.rebuild_congruence();
+            // Canonization repair runs in plain mode too: it does not derive AC
+            // consequences, it supplies the equalities the canonization laws already
+            // *state* but whose stored spelling `add` chose from a non-monotone predicate
+            // (see `canon_repair_round`). Its merges feed congruence, so the two run to a
+            // joint fixpoint, bounded by the node-growth budget.
+            // No budget on this loop: the repair is purely subtractive (inverse-pair
+            // cancellation), so each of its merges strictly reduces the class count and the
+            // fixpoint is bounded by the number of classes.
+            loop {
+                self.rebuild_congruence();
+                if !self.canon_repair_round() {
+                    break;
+                }
+            }
             self.completion_outcome = Some(CompletionOutcome::Disabled);
             return;
         }
@@ -1708,7 +1732,8 @@ where
             let was_full = full;
             // `|`, not `||`: the A-only pass runs every iteration, its changes
             // and the AC round's alike drain through the same fixpoint.
-            let changed = self.cc_round(full, prev_mark, mark) | self.a_round();
+            let changed =
+                self.cc_round(full, prev_mark, mark) | self.a_round() | self.canon_repair_round();
             prev_mark = mark;
             if trace {
                 eprintln!(
@@ -2040,6 +2065,159 @@ where
                 }
                 break;
             }
+        }
+        changed
+    }
+
+    /// One canonization-repair round: re-apply the canonization law whose applicability
+    /// condition *opens* with later merges, so that applying it stays a function of the
+    /// e-graph rather than of statement order. Returns `true` if it scheduled any merge (the
+    /// caller drains congruence and calls again). Runs in every mode, plain included.
+    ///
+    /// # What this does and does not repair
+    ///
+    /// `add` decides each child's stored spelling once, from a predicate over the child's
+    /// *class* at that moment, and those predicates are monotone in one direction. Two
+    /// canonization laws are affected, and they need opposite treatment:
+    ///
+    /// | law | predicate | direction | reordering symptom |
+    /// | --- | --- | --- | --- |
+    /// | inverse cancel ([`group_cancel_pairs`](Self::group_cancel_pairs)) | `inv(x)`'s node resolves to a summand | **opens**: a later merge can create the pair | `(+ a (neg b))` built *before* `(union a b)` hides `+(a, neg(a)) = 0` |
+    /// | AC flatten ([`flatten_ac_children`](Self::flatten_ac_children)) | `¬atomic(c)` | **closes**: `atomic` is monotone-true | `+(*(d,d), a)` built *before* `*(a,d,*(d,d))` hides `*(a,d,d,d) = *(a,d,*(d,d))` |
+    ///
+    /// Only the first is repaired here. An opening condition means the law simply was not
+    /// tried at the moment it became applicable, and re-trying it costs nothing and can only
+    /// shrink a monomial. Plain mode already applies this law at build, so *not* re-applying
+    /// it leaves plain mode inconsistent with itself.
+    ///
+    /// The AC flatten row is deliberately **not** repaired, and the reason is worth recording
+    /// because it is not obvious. `atomic` answers "is this class used as a non-same-op child"
+    /// with *so far*; order independence would need it answered for the rest of the program,
+    /// which no build-time predicate can do. Every way of removing the dependence is worse:
+    /// always splice breaks `§5b`'s cancellation (`+(c, neg(c))` needs the pair to survive as
+    /// two summands), never splice regresses the flatten fixtures, and deciding syntactically
+    /// on inline-versus-by-name still breaks `§5b` for a `§5b` term written inline. Note that
+    /// `atomic` *is* order-independent within a single term, since argument evaluation fixes
+    /// the order; the dependence is only across statements, which is exactly the AC
+    /// incompleteness the eager and lazy modes exist to close (`--derive-ac-eqs` proves
+    /// `ac_flatten_order_dependence.egg`, plain declines it). Supplying the equality here
+    /// instead was measured at +73% nodes on `rhs_mult_expr` under `--derive-ac-eqs`, for a
+    /// consequence plain mode is not meant to derive.
+    ///
+    /// The A-only (`Seq`) analogue of the flatten row is a separate matter and *is* fixed, at
+    /// the source rather than here: [`splice_raw_seq_children`](Self::splice_raw_seq_children)
+    /// decides on the immutable child node id, so it mints nothing and cannot depend on merge
+    /// order. That works for `Seq` and not for AC because an A-only operator has no
+    /// `:identity` or `:inverse` (the property resolver rejects them without `:comm`), so no
+    /// `§5b` pair depends on the nested spelling being kept.
+    ///
+    /// # Termination
+    ///
+    /// Cancellation is purely subtractive and each repair merge strictly reduces the class
+    /// count, so the caller's fixpoint terminates with no growth budget and mints no node that
+    /// needs one.
+    fn canon_repair_round(&mut self) -> bool {
+        // Nothing to re-decide unless a node was created or recanonicalized (`touched` grew)
+        // or classes merged (`num_classes` fell) since the last round that found nothing.
+        // Both counters are cheap and monotone within a rebuild, so a `rebuild` on an
+        // unchanged graph — the common case for a run of `(check ...)` commands — costs two
+        // integer reads. `restore` resets the watermark, so a rolled-back graph is rescanned.
+        let state = (
+            self.touched.len(),
+            crate::containers::IndexLike::as_usize(self.classes.num_classes()),
+        );
+        if self.repair_state == Some(state) {
+            return false;
+        }
+        let changed = self.inverse_cancel_repair();
+        if !changed {
+            // Arm the skip only on a clean round. A round that merged left `touched` and
+            // `num_classes` moved, and the caller drains congruence and calls again.
+            self.repair_state = Some((
+                self.touched.len(),
+                crate::containers::IndexLike::as_usize(self.classes.num_classes()),
+            ));
+        }
+        changed
+    }
+
+    /// Merge helper for the repair passes: skip an already-joined pair, fold the
+    /// min-monomial pool, and queue the absorbed use-list for congruence. Mirrors
+    /// `cc_round`'s local `do_merge`.
+    fn repair_merge(&mut self, x: Cfg::G, y: Cfg::G, just: Justification<Cfg::G>) -> bool {
+        if self.classes.find_const(x) == self.classes.find_const(y) {
+            return false;
+        }
+        let m = if PROOFS {
+            self.merge_in_classes(x, y, Some(just))
+        } else {
+            self.merge_in_classes(x, y, None)
+        };
+        match m {
+            Some(m) => {
+                self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+                self.worklist.push((m.absorbed_uses, m.survivor));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Re-apply inverse-pair cancellation (`x ∘ inv(x) = e`) to the stored MSet nodes.
+    ///
+    /// The build path cancels a pair only if the `inv(x)` node already existed *and* landed
+    /// in a summand class at that moment; a later merge can create the pair, and nothing
+    /// re-ran the law. `(+ a (neg b))` then `(union a b)` is the smallest witness: the node
+    /// recanonicalizes to `+{a, neg-class}` and `find(neg(a)) == find(neg(b))` holds by
+    /// congruence, but the summand pair is never cancelled, so `s = 0` is lost.
+    ///
+    /// Cancellation is purely subtractive, so unlike the two flatten laws it cannot grow a
+    /// node and needs no cap. MSet only, mirroring the build path (`add`'s Set arm does not
+    /// cancel). Free for a graph with no `:inverse` op.
+    fn inverse_cancel_repair(&mut self) -> bool {
+        // O(#ops) precheck, so a program with no group operator pays nothing.
+        let any_inverse = self.ops.mset_ops().any(|op| self.inverse_op(op).is_some());
+        if !any_inverse {
+            return false;
+        }
+        // Collect first, apply second: `add`/`merge` below mutate the node store that
+        // `completion_node_ids` walks.
+        let mut work: Vec<(Cfg::O, Cfg::G, Vec<(Cfg::G, Cfg::M)>)> = Vec::new();
+        let mut m: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        let ids: Vec<Cfg::G> = self.completion_node_ids().collect();
+        for gid in ids {
+            if !matches!(self.node_ref(gid), NodeRef::MSet(_)) {
+                continue;
+            }
+            let op = self.node_op(gid);
+            let Some(inv) = self.inverse_op(op) else {
+                continue;
+            };
+            self.node_monomial_into(gid, &mut m);
+            if self.group_cancel_pairs(inv, &mut m) {
+                work.push((op, gid, std::mem::take(&mut m)));
+            }
+        }
+        let mut buf: Vec<Cfg::G> = Vec::new();
+        let mut changed = false;
+        for (op, gid, ms) in work {
+            buf.clear();
+            for (g, mult) in &ms {
+                for _ in 0..mult.to_usize() {
+                    buf.push(*g);
+                }
+            }
+            // `add` resolves the degenerate results itself: a fully cancelled monomial is
+            // the unit (`+(a, neg(a)) → {} = 0`) and a single mult-1 residue is that class.
+            let c = self.add(op, &buf);
+            changed |= self.repair_merge(
+                c,
+                gid,
+                Justification::InverseCancel {
+                    node_a: c,
+                    node_b: gid,
+                },
+            );
         }
         changed
     }
@@ -2828,6 +3006,10 @@ where
         self.worklist.clear();
         self.collisions.clear();
         self.touched.clear();
+        // The repair watermark is a pair of counters over the *pre-restore* graph, and
+        // restore moves both (touched cleared, classes regrown). Drop it so the next
+        // `rebuild` rescans rather than trusting a comparison against a discarded state.
+        self.repair_state = None;
     }
 
     fn register_if_fresh(&mut self, result: Added<Cfg::G>, op: Cfg::O) -> Cfg::G {
@@ -3272,6 +3454,21 @@ where
     /// Cost is one class-ring walk, with an early exit on the first non-`op` member — so an
     /// ordinary atom child (a leaf, a constructor) costs its class's first member, and the
     /// full walk is paid only by classes that really are pure sequences.
+    ///
+    /// **Purity is monotone-false: it *closes*, it does not merely fail to open.** A union
+    /// only adds members, so a class that is a pure `op`-sequence today can stop being one
+    /// tomorrow and can never become one again. This test is therefore a function of the
+    /// class *at the moment it is asked*, not of the term, and asking it at two different
+    /// times is what used to make `(union (F a b) blob)` before `(F (F a b) c)` store the
+    /// nested spelling while the reverse order stored the flat one.
+    ///
+    /// That is why this test is no longer the only one on the build path.
+    /// [`push_seq_args`](crate::interpret::Interp::push_seq_args) in the term builder decides
+    /// the written nesting from the syntax first, where no class can reach it, and this test
+    /// then handles what is left: a child that came back from `add` already flattenable. Do
+    /// not try to move the syntactic case here or into `add` — by this point a child is a
+    /// plain `Cfg::G`, and a nested application is indistinguishable from a class id that
+    /// happens to be a `Seq` node, which is what RHS rest bindings supply.
     fn pure_seq_node(&self, g: Cfg::G, op: Cfg::O) -> Option<Cfg::G> {
         let cls = self.classes.find_const(g);
         let mut best: Option<Cfg::G> = None;

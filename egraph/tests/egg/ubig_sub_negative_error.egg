@@ -1,0 +1,10 @@
+;; EXPECT: error
+;; TYPES: bignum
+;; `UBig::-` is partial for a different reason than division: the operation is
+;; total on the integers but its result sort has no negatives, so `1 - 2` is
+;; outside the domain. `num_bigint::BigUint`'s own `-` panics there; the model
+;; checks the order first and reports instead.
+(datatype U (Sub UBig UBig) (UR UBig))
+(rewrite (Sub x y) (UR (UBig::- x y)))
+(let e (Sub 1 2))
+(run 10)

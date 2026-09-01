@@ -296,14 +296,30 @@ dispatch happens at resolve time based on the operator's `OpKind`.
 
 ### Non-Linear Variables
 
-A variable that appears more than once in a pattern is non-linear.
-The first occurrence binds; subsequent occurrences check equality
-(same e-class). This works uniformly across all operator kinds:
+An *element* variable that appears more than once in a pattern is
+non-linear. The first occurrence binds; subsequent occurrences check
+equality (same e-class). This works uniformly across all operator
+kinds:
 
 ```
 (rewrite (Add x x) (Dbl x)) ;; matches Add nodes where both children
                             ;; are in the same e-class
 ```
+
+A *rest* variable (`..r`) is the exception: it must be linear, and
+repeating one is a resolve error. The matcher has no step that compares
+two rest spans, so a repeated rest name cannot be checked — each
+occurrence would write the span and the last writer would win, dropping
+the constraint. This applies both across atoms and within one, so
+
+```
+(rule ((S ..r x) (S y ..r)) ((union x y)))  ;; error: '..r' written twice
+(rule ((S ..r x ..r))       ((union x x)))  ;; error: '..r' written twice
+```
+
+are both rejected. Use distinct names (`..p`, `..q`) when the two rests
+need not be equal; a constraint that two rests *are* equal cannot be
+expressed today.
 
 ### ACI Patterns (set semantics)
 

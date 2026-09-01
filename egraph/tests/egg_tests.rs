@@ -5,7 +5,9 @@
 //! Each `.egg` file in `tests/egg/` is run through the interpreter. The first six lines may
 //! carry directive comments. The feature directives mirror the CLI flags, so a test file is
 //! self-contained, no env var needed:
-//!   ;; EXPECT: ok|check-failed|parse-error|sort-error|error|panic   outcome (default: ok)
+//!   ;; EXPECT: ok|check-failed|parse-error|sort-error|error   outcome (default: ok)
+//! No fixture expects a panic: an outcome a program can provoke is reported through
+//! `error`, and a panic is an engine bug, which is not something to pin with a test.
 //!   ;; TYPES: machine                                     type group (default: bignum)
 //!   ;; EVAL: naive|semi|both                              eval algorithm (default: both)
 //!   ;; DERIVE_AC_EQS: on                                  eager AC completion (default off)
@@ -215,53 +217,11 @@ fn check(path: &str) {
     semi_persistent_egraph::ematch::set_runtime_scheduling(false);
 }
 
-fn check_panic(path: &str) {
-    let src = std::fs::read_to_string(path).unwrap();
-    let directives = parse_directives(&src);
-    for strategy in directives.evals.iter().copied() {
-        let src = src.clone();
-        let cc = directives.derive_ac_eqs;
-        let basis_checks = directives.check_ac_basis;
-        let result = std::panic::catch_unwind(move || {
-            let surface_cmds = semi_persistent_egraph::parser::parse_program_v2(&src).unwrap();
-            let mut interp = Interpreter::<
-                semi_persistent_egraph::nodes::DefaultConfig,
-                MachineLit,
-                MachineModel,
-                true,
-                false,
-            >::new(MachineModel);
-            interp.set_strategy(strategy);
-            interp.set_cc(cc);
-            interp.set_basis_checks(basis_checks);
-            let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
-            let checked = semi_persistent_egraph::sortcheck::sortcheck_program(
-                surface_cmds,
-                &mut interp.eg,
-                &interp.model,
-                &mut globals,
-            )
-            .unwrap();
-            let _ = interp.run_checked(&checked);
-        });
-        assert!(
-            result.is_err(),
-            "{path} [{strategy:?}]: expected panic but succeeded"
-        );
-    }
-}
-
 macro_rules! egg_test {
     ($name:ident, $file:expr) => {
         #[test]
         fn $name() {
             check(concat!("tests/egg/", $file));
-        }
-    };
-    ($name:ident, $file:expr, panic) => {
-        #[test]
-        fn $name() {
-            check_panic(concat!("tests/egg/", $file));
         }
     };
     // Unsupported-behavior fixture: runs only under `--ignored`; `$why` states the limitation.
@@ -276,7 +236,14 @@ macro_rules! egg_test {
 
 // ── Arithmetic: checked (default) ──
 egg_test!(checked_add_ok, "checked_add_ok.egg");
-egg_test!(checked_overflow, "checked_overflow.egg", panic);
+// A partial primitive applied outside its domain is a reported program error,
+// not a panic: the engine cannot pick a value, but the caller has to be able to
+// tell a bad program from an engine bug.
+egg_test!(checked_overflow, "checked_overflow.egg");
+egg_test!(div_by_zero_error, "div_by_zero_error.egg");
+egg_test!(bignum_div_by_zero_error, "bignum_div_by_zero_error.egg");
+egg_test!(ubig_sub_negative_error, "ubig_sub_negative_error.egg");
+egg_test!(guard_div_by_zero_error, "guard_div_by_zero_error.egg");
 
 // ── Arithmetic: wrapping ──
 egg_test!(wrapping_add, "wrapping_add.egg");
@@ -394,6 +361,44 @@ egg_test!(rhs_comprehensions, "rhs_comprehensions.egg");
 egg_test!(
     rhs_comprehension_filter_reject_node,
     "rhs_comprehension_filter_reject_node.egg"
+);
+// Inverse-pair cancellation re-applied after a merge creates the pair, in both statement
+// orders, plus the guard that the neighbouring `atomic` condition still keeps the §5b pair.
+egg_test!(inverse_cancel_after_merge, "inverse_cancel_after_merge.egg");
+egg_test!(
+    inverse_cancel_after_merge_control,
+    "inverse_cancel_after_merge_control.egg"
+);
+egg_test!(
+    inverse_cancel_keeps_atomic_pair,
+    "inverse_cancel_keeps_atomic_pair.egg"
+);
+// A-only associativity on a written nested application, in both statement orders and on a
+// rule right-hand side.
+egg_test!(
+    seq_flatten_order_independent,
+    "seq_flatten_order_independent.egg"
+);
+egg_test!(
+    seq_flatten_order_independent_control,
+    "seq_flatten_order_independent_control.egg"
+);
+egg_test!(seq_flatten_rhs_nesting, "seq_flatten_rhs_nesting.egg");
+// Asserts a *documented incompleteness*, on purpose: plain mode declines the AC flatten
+// consequence in one statement order and derives it in the other, and `--derive-ac-eqs`
+// derives it in both. `ac-congruence-completeness.md` §6c records why every build-time
+// alternative is worse. If the plain-mode fixture starts passing, find out what changed.
+egg_test!(
+    ac_flatten_order_dependence,
+    "ac_flatten_order_dependence.egg"
+);
+egg_test!(
+    ac_flatten_order_dependence_reordered,
+    "ac_flatten_order_dependence_reordered.egg"
+);
+egg_test!(
+    ac_flatten_order_dependence_eager,
+    "ac_flatten_order_dependence_eager.egg"
 );
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
@@ -631,6 +636,35 @@ egg_test!(
 );
 
 egg_test!(eq_global_only_atom, "eq_global_only_atom.egg");
+
+// Whole-query resolve checks (`check_rest_vars_linear`, `check_nodes_bindable`). Both
+// reject query shapes the matcher cannot execute, and both shapes previously reached the
+// interpreter: the rest-variable one silently dropped the constraint and derived a false
+// equality, the `Eq` one aborted the process in `MatchPool::push`. Each rejection carries
+// its control, a query of the same shape that must still compile.
+egg_test!(
+    reject_rest_var_shared_across_atoms,
+    "reject_rest_var_shared_across_atoms.egg"
+);
+egg_test!(
+    reject_rest_var_aliased_one_atom,
+    "reject_rest_var_aliased_one_atom.egg"
+);
+egg_test!(
+    reject_rest_var_shared_mset,
+    "reject_rest_var_shared_mset.egg"
+);
+egg_test!(reject_rest_var_shared_set, "reject_rest_var_shared_set.egg");
+egg_test!(ok_rest_var_distinct_names, "ok_rest_var_distinct_names.egg");
+egg_test!(
+    reject_eq_atom_neither_side_bound,
+    "reject_eq_atom_neither_side_bound.egg"
+);
+egg_test!(
+    reject_eq_atom_unbound_with_other_atom,
+    "reject_eq_atom_unbound_with_other_atom.egg"
+);
+egg_test!(ok_eq_atom_one_side_bound, "ok_eq_atom_one_side_bound.egg");
 
 // The README's autoformalization example is executable documentation. Its
 // `checkau` commands guard the documented size-42 bound before domain

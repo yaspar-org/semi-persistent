@@ -1,0 +1,15 @@
+;; EXPECT: sort-error
+;; A rest variable shared by two atoms has no lowering: both `ExpandA` steps write
+;; SeqVarId(0), the second overwrites the first, and the equality the repeated name asks
+;; for is never checked. On this graph atom 1 admits r=[a] and r=[c] while atom 2 admits
+;; r=[b] and r=[d], so there is no match — but with the constraint dropped the rule fired
+;; and derived (b) = (d).
+(sort E)
+(function S (E) E :assoc)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(let t1 (S (a) (b)))
+(let t2 (S (c) (d)))
+(rule ((S ..r x) (S y ..r)) ((union x y)))

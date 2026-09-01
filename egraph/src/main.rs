@@ -16,7 +16,8 @@ struct Cli {
     #[arg(long, default_value = "31", value_parser = parse_id_bits)]
     id_bits: u8,
 
-    /// Push/pop mechanism: "diff" (semi-persistent undo log) or "clone" (deep copy)
+    /// Push/pop mechanism: "diff" (semi-persistent undo log). "clone" (deep copy) is
+    /// reserved and rejected: no such backend exists.
     #[arg(long, default_value = "diff", value_parser = parse_push_pop)]
     push_pop: PushPop,
 
@@ -129,14 +130,23 @@ fn parse_union_by(s: &str) -> Result<semi_persistent_egraph::UnionBy, String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PushPop {
     Diff,
-    Clone,
 }
 
+/// `clone` is a **reserved** value, not an accepted one. A deep-copy push/pop backend does
+/// not exist: no container implements one, and nothing outside this file reads this flag. It
+/// used to parse and then exit 1 from `main`, which meant `--help` advertised a mode that
+/// could never run. Rejecting it here says so at the point of use, and keeps the name for the
+/// backend if it is built (its value is as a differential oracle: a from-scratch deep copy is
+/// the reference that diff-log `restore` should reproduce).
 fn parse_push_pop(s: &str) -> Result<PushPop, String> {
     match s {
         "diff" => Ok(PushPop::Diff),
-        "clone" => Ok(PushPop::Clone),
-        _ => Err(format!("expected 'diff' or 'clone', got '{s}'")),
+        "clone" => Err(
+            "'clone' is reserved but not implemented: no deep-copy push/pop backend exists. \
+             Use 'diff' (the semi-persistent undo log), which is the default."
+                .to_string(),
+        ),
+        _ => Err(format!("expected 'diff', got '{s}'")),
     }
 }
 fn parse_id_bits(s: &str) -> Result<u8, String> {
@@ -203,11 +213,6 @@ fn main() {
         })
         .collect();
 
-    if cli.push_pop == PushPop::Clone {
-        eprintln!("--push-pop clone is not yet implemented");
-        process::exit(1);
-    }
-
     let choice = choose_litval(&groups);
 
     // Set here rather than threaded into `run`: the flag is thread-local and
@@ -238,12 +243,16 @@ fn main() {
                     &surface_cmds,
                     MachineModel,
                     &opts,
+                    &src,
                 ),
-                LitValChoice::Bignum => {
-                    run::<$Cfg, BignumLit, BignumModel, $proofs>(&surface_cmds, BignumModel, &opts)
-                }
+                LitValChoice::Bignum => run::<$Cfg, BignumLit, BignumModel, $proofs>(
+                    &surface_cmds,
+                    BignumModel,
+                    &opts,
+                    &src,
+                ),
                 LitValChoice::All => {
-                    run::<$Cfg, AllLit, AllModel, $proofs>(&surface_cmds, AllModel, &opts)
+                    run::<$Cfg, AllLit, AllModel, $proofs>(&surface_cmds, AllModel, &opts, &src)
                 }
             }
         };
@@ -282,6 +291,9 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     surface_cmds: &[semi_persistent_egraph::surface_ast::SurfaceCommand],
     model: M,
     opts: &EngineOptions,
+    // The original program text, kept only to turn a diagnostic's byte offsets into a line
+    // and column (`Span::render_in`). Nothing else reads it.
+    src: &str,
 ) where
     Cfg: semi_persistent_egraph::config::EGraphConfig,
     Cfg::O: std::hash::Hash,
@@ -309,12 +321,22 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     ) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("sort error: {e}");
+            // `SortError::render` carries its own `sort error` prefix and reports a line and
+            // column rather than the byte offsets `Display` is limited to.
+            eprintln!("{}", e.render(src));
             process::exit(1);
         }
     };
     if let Err(e) = interp.run_checked(&checked) {
-        eprintln!("error: {e}");
+        // A primitive fault carries the applying rule's span, which only becomes a line and
+        // column here, where the source is still in hand. Every other interpreter error has
+        // no span to add, so it renders through `Display`.
+        match &e {
+            semi_persistent_egraph::interpret::InterpError::EvalFailed(ev) => {
+                eprintln!("error: {}", ev.render(src))
+            }
+            _ => eprintln!("error: {e}"),
+        }
         process::exit(1);
     }
     if let Some(path) = &opts.dump_proofs {

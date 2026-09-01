@@ -287,8 +287,10 @@ use `u64::+`, `u64::-`, `u64::*`, `u64::/`, `u64::%`, `u64::min`, and
 Subtraction is accepted only when the collected left-hand-side interval proves
 that it cannot underflow. Division and remainder require a divisor whose
 interval excludes zero. Addition and multiplication use checked arithmetic at
-runtime. An output multiplicity of zero omits the child without evaluating its
-term.
+runtime: an overflow, or a computed count too wide for the configured
+multiplicity type, stops the run with an error naming the rule and the operands
+rather than wrapping or aborting the process. An output multiplicity of zero
+omits the child without evaluating its term.
 
 ## Splicing and comprehensions
 

@@ -86,6 +86,35 @@ nodes. A node visit does not deliberately create a fresh scratch vector, but a
 buffer may allocate when a larger input exceeds its retained capacity. The
 caller reads the buffer length after canonization to determine the new span.
 
+### Inverse-pair cancellation, on both paths
+
+An op declaring `:inverse g` also cancels summand pairs related by `g`
+(`x ∘ inv(x) = e`, `group_cancel_pairs`), which can empty a monomial and hand the
+degeneracy resolution the unit. Like the unit drop, this is a canonization law and not a
+completion inference, so it holds in plain mode.
+
+Unlike the other laws in this list, its condition **opens** rather than closes: it needs the
+node `inv(x)` to exist *and* to resolve into a summand class, and a later merge can make that
+true for a node that was already canonical. Applying it only at build was therefore not
+enough, and left plain mode inconsistent with itself — `(+ a (neg b))` followed by
+`(union a b)` did not reduce to `0`, while the same two statements in the other order did:
+
+```lisp
+(let s (Add (A) (Neg (B))))
+(union (A) (B))
+(check (= s (Zero)))          ;; used to fail; the control order always passed
+```
+
+The law is therefore re-applied after merges, by `canon_repair_round` in `rebuild`. That pass
+cannot be a recanonization step: `recanonize_node` writes children back into the node's
+existing span and the result may need a *different* node (or the unit class), which is an
+equality rather than a representation change. So it materializes the cancelled monomial with
+`add` and merges, labelled `Justification::InverseCancel`, in the same style as `cc_round`.
+
+Cancellation is purely subtractive, so unlike the flattening laws it can never grow a
+monomial: each repair merge strictly reduces the class count and the fixpoint needs no growth
+budget. Covered by `inverse_cancel_after_merge.egg` and its control.
+
 ## `SetCanon` — Set Canonization
 
 For ACI operators: children are deduplicated ids, stored in sorted order.
@@ -181,6 +210,31 @@ inter-reduction (`a_round`) closes some such contiguous-subsequence cases when
 completion is enabled. Plain mode does not run that pass, and even completion
 mode does not claim a complete decision procedure for arbitrary ground
 associative equations.
+
+Note what that gap does *not* cover, because the two cases were confused once
+and the distinction is the whole point. Flattening a nested application the
+program **wrote** — `op(op(a,b),c)` — is not in the gap: it is associativity on
+the term, it depends on no union, and it is decided from the syntax tree before
+any child id exists, at both places a term is written: `push_seq_args`
+(`interpret.rs`) for a ground term, and `eval_seq_args` (`apply.rs`) for a rule
+right-hand side. That placement is deliberate and is the only correct one
+available.
+`pure_seq_node` cannot decide it, because purity *closes*: a union into the
+child's class turns the test false forever, so `(union (F a b) blob)` written
+before `(F (F a b) c)` used to store the nested spelling while the reverse
+order stored the flat one — the same program with two answers
+(`seq_flatten_order_independent.egg`). Nor can `EGraph::add` decide it: by then
+a child is a plain node id, and a nested application is indistinguishable from
+a class id that merely happens to be a `Seq` node. RHS rest bindings supply
+exactly such ids, and splicing those rewrites uphill — `seq(a,b)` becomes
+`seq(unit,a,b)` and grows again every round under a rule that reintroduces the
+unit (`a_singleton_collapse.egg`).
+
+The gap above is the genuinely different case: the program wrote `op(x,d)` with
+`x` opaque, and only a *proved equation* `x = op(a,b)` relates it to
+`op(a,b,d)`. That is a consequence of the associative theory rather than a
+canonical form of what was written, so declining it in plain mode is correct
+rather than a defect.
 
 ### What flattening erases
 

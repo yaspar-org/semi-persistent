@@ -1,0 +1,17 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; The control for `seq_flatten_order_independent.egg`: the same program with the union
+;; written AFTER the nested term. This order always passed, so it pins the other side of
+;; the equivalence — both orders must now agree.
+
+(sort E)
+(constructor F (E) E :assoc)
+(constructor A () E)
+(constructor B () E)
+(constructor C () E)
+(constructor Blob () E)
+
+(let n (F (A) (B)))
+(check (= (F (F (A) (B)) (C)) (F (A) (B) (C))))
+(union n (Blob))
+(check (= (F (F (A) (B)) (C)) (F (A) (B) (C))))

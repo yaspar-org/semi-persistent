@@ -10,6 +10,7 @@ use crate::ast::{
     GlobalVarId, LitValVarId, MsetVarId, RhsLocalMultVarId, RhsLocalVarId, SeqVarId, SetVarId,
 };
 use crate::containers::DenseId;
+use crate::lit_model::{EvalError, EvalSite};
 use crate::resolve::{RRhsChild, RRhsTerm, RhsMultRef, RhsNodeRef};
 
 // ---------------------------------------------------------------------------
@@ -185,6 +186,12 @@ pub struct PreparedRule<O, S, V> {
     /// The ruleset this rule belongs to (`:ruleset name`), or `None` for the default one.
     /// The saturation driver runs the rules whose ruleset equals the one asked for.
     pub ruleset: Option<RulesetId>,
+    /// Source span of the rule's left-hand side, or [`Span::Dummy`] for a rule built by an
+    /// API caller rather than parsed. Carried only for diagnostics: a primitive that faults
+    /// while this rule is applying can then name the line the rule was written on, instead of
+    /// only the generated rule name (`rewrite_0`), which tells a reader nothing about where to
+    /// look. Nothing in matching or application reads it.
+    pub span: crate::ast::Span,
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +388,7 @@ where
         rhs_locals,
         actions,
         ruleset: None,
+        span: lhs.span(),
     })
 }
 
@@ -424,6 +432,7 @@ where
         rhs_locals,
         actions,
         ruleset: None,
+        span: body.first().map_or(crate::ast::Span::Dummy, |p| p.span()),
     })
 }
 
@@ -528,13 +537,18 @@ fn mult_as_lit<L: LitVal, M: crate::lit_model::LitModel<Value = L>>(model: &M, k
     (desc.parse)(&k.to_string()).expect("multiplicity in RHS does not fit i64")
 }
 
+/// Build the term an RHS operator denotes, in `eg`.
+///
+/// `Err` is a partial primitive applied outside its domain on this match (see
+/// [`EvalError`]). There is no term to return in that case and no defensible
+/// substitute, so the error travels out instead of being absorbed.
 fn eval<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
     op: &RhsOp<Cfg::O, L>,
     env: &mut RhsEnv<'_, Cfg, Q>,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-) -> Cfg::G
+) -> Result<Cfg::G, EvalError>
 where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -542,7 +556,7 @@ where
     Q: crate::ematch::MatchView<Cfg> + ?Sized,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    match op {
+    Ok(match op {
         RhsOp::FetchNode(node) => eg.find(env.node(*node)),
         RhsOp::FetchGlobal(gid) => eg.find(globals.binding(*gid)),
         RhsOp::Lit(op, val) => {
@@ -560,8 +574,20 @@ where
         }
         RhsOp::App { op: o, args } => {
             let mut children = ChildVec::<Cfg>::new();
-            for arg in args {
-                eval_arg(arg, env, eg, model, globals, &mut children);
+            // A right-hand side is a syntax tree too, so a rule written
+            // `(rewrite ... (F (F x y) z))` carries the same nested same-op application the
+            // interpreter's `push_seq_args` flattens for a ground term, and it needs the same
+            // treatment for the same reason: `EGraph::add` only ever sees ids and cannot tell
+            // a nested application from a class id that happens to be a `Seq` node.
+            match eg.ops().info(*o).kind {
+                crate::registry::OpKind::A { dir, .. } => {
+                    eval_seq_args(args, *o, dir, env, eg, model, globals, &mut children)?
+                }
+                _ => {
+                    for arg in args {
+                        eval_arg(arg, env, eg, model, globals, &mut children)?;
+                    }
+                }
             }
             eg.add(*o, &children)
         }
@@ -581,7 +607,8 @@ where
                 .collect();
             let refs: SmallVec<[&L; PRIM_ARGS]> = raw_vals.iter().collect();
             let prim = &model.ops()[op.to_usize()];
-            let result = (prim.eval)(&refs);
+            let result = (prim.eval)(&refs)
+                .ok_or_else(|| EvalError::new(prim.name, &refs, EvalSite::Rhs))?;
             let result_id = eg.lits_mut().intern(result);
             // Find the @-prefixed lit op for the return sort
             let lit_op = eg
@@ -590,7 +617,63 @@ where
                 .expect("no lit op for prim op return sort");
             eg.add_lit(lit_op, result_id)
         }
+    })
+}
+
+/// Evaluate the argument list of an A-only right-hand-side application, splicing a nested
+/// same-`op` application on the declared spine instead of building it as one child.
+///
+/// The RHS counterpart of `Interp::push_seq_args`, and deliberately the same shape: for an
+/// associative operator `(F (F x y) z)` and `(F x y z)` are one term, and this is the last
+/// point at which that is visible, because after evaluation a child is a plain id.
+///
+/// Only [`RhsArg::One`] is spliced. A `..rest` splice or comprehension contributes many
+/// children whose own nesting was already resolved when those children were built, and an
+/// output multiplicity on a nested application asks for *n copies of that application*, which
+/// is not the same request as flattening it — both stay one argument.
+///
+/// [`AssocDir`](crate::registry::AssocDir) is honoured: off the declared spine a nested
+/// application is explicit grouping that the operator does not flatten, so for a left fold
+/// `a - (b - c)` must not become `a - b - c`. Index-based spine detection is exact for the
+/// positions actually spliced, since a `One` argument contributes exactly one child.
+#[allow(clippy::too_many_arguments)]
+fn eval_seq_args<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
+    args: &[RhsArg<Cfg::O, L>],
+    op: Cfg::O,
+    dir: crate::registry::AssocDir,
+    env: &mut RhsEnv<'_, Cfg, Q>,
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    out: &mut ChildVec<Cfg>,
+) -> Result<(), EvalError>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    M: crate::lit_model::LitModel<Value = L>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    use crate::registry::AssocDir;
+    let last = args.len().saturating_sub(1);
+    for (i, arg) in args.iter().enumerate() {
+        let on_spine = match dir {
+            AssocDir::Both => true,
+            AssocDir::Left => i == 0,
+            AssocDir::Right => i == last,
+        };
+        match arg {
+            RhsArg::One(RhsOp::App {
+                op: inner_op,
+                args: inner,
+            }) if on_spine && *inner_op == op => {
+                // Recursive, so `(F (F (F x y) z) w)` flattens in one pass.
+                eval_seq_args(inner, op, dir, env, eg, model, globals, out)?;
+            }
+            _ => eval_arg(arg, env, eg, model, globals, out)?,
+        }
     }
+    Ok(())
 }
 
 fn eval_arg<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
@@ -600,7 +683,8 @@ fn eval_arg<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     out: &mut ChildVec<Cfg>,
-) where
+) -> Result<(), EvalError>
+where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
@@ -614,16 +698,17 @@ fn eval_arg<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
         // match bindings. Going through `eval` would `find` each child twice.
         RhsArg::One(RhsOp::FetchNode(node)) => out.push(env.node(*node)),
         RhsArg::One(RhsOp::FetchGlobal(gid)) => out.push(globals.binding(*gid)),
-        RhsArg::One(inner) => out.push(eval(inner, env, eg, model, globals)),
+        RhsArg::One(inner) => out.push(eval(inner, env, eg, model, globals)?),
         RhsArg::OneMult { body, mult } => {
             // Multiplicity 0 omits the child without evaluating it, so an
             // omitted term is never materialized (the k-1 = 0 case of a
             // multiplicity variant). Underflow and division by zero were rejected
             // at install by the interval check; the checked ops here are the
-            // second line, like the checked literal primitives.
-            let k = eval_mult_expr::<Cfg, Q>(mult, env);
+            // second line, like the checked literal primitives, and report the
+            // same way.
+            let k = eval_mult_expr::<Cfg, Q>(mult, env)?;
             if k > 0 {
-                let id = eval(body, env, eg, model, globals);
+                let id = eval(body, env, eg, model, globals)?;
                 for _ in 0..k {
                     out.push(id);
                 }
@@ -651,14 +736,14 @@ fn eval_arg<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
             let source = env.query.seq_slice(*source).to_vec();
             for child in source {
                 let previous = env.bind_local_node(*var, child);
-                let passes = filter.as_ref().is_none_or(|filter| {
-                    let value = eval(filter, env, eg, model, globals);
-                    check_filter_truthy(eg, model, value)
-                });
-                if passes {
-                    out.push(eval(body, env, eg, model, globals));
-                }
+                // The binding is restored on the error path too: `?` here would
+                // leave the comprehension variable bound, and `locals_are_unbound`
+                // asserts it is not.
+                let outcome = eval_comp_element(body, filter, env, eg, model, globals);
                 env.restore_local_node(*var, previous);
+                if let Some(id) = outcome? {
+                    out.push(id);
+                }
             }
         }
         RhsArg::SetComp {
@@ -670,14 +755,14 @@ fn eval_arg<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
             let source = env.query.set_slice(*source).to_vec();
             for child in source {
                 let previous = env.bind_local_node(*var, child);
-                let passes = filter.as_ref().is_none_or(|filter| {
-                    let value = eval(filter, env, eg, model, globals);
-                    check_filter_truthy(eg, model, value)
-                });
-                if passes {
-                    out.push(eval(body, env, eg, model, globals));
-                }
+                // The binding is restored on the error path too: `?` here would
+                // leave the comprehension variable bound, and `locals_are_unbound`
+                // asserts it is not.
+                let outcome = eval_comp_element(body, filter, env, eg, model, globals);
                 env.restore_local_node(*var, previous);
+                if let Some(id) = outcome? {
+                    out.push(id);
+                }
             }
         }
         RhsArg::MsetComp {
@@ -692,68 +777,138 @@ fn eval_arg<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
             for child in source {
                 let previous_node = env.bind_local_node(*var, Cfg::mset_child_id(&child));
                 let previous_mult = env.bind_local_mult(*mult_var, Cfg::mset_child_mult(&child));
-                let passes = filter.as_ref().is_none_or(|filter| {
-                    let value = eval(filter, env, eg, model, globals);
-                    check_filter_truthy(eg, model, value)
-                });
-                if passes {
-                    let count = eval_mult_expr::<Cfg, Q>(out_mult, env);
-                    if count != 0 {
-                        let result = eval(body, env, eg, model, globals);
-                        // Install-time checks guarantee that every emitted
-                        // multiplicity fits the configured storage width.
-                        let count = Cfg::M::try_from_u64(count)
-                            .expect("RHS multiplicity exceeds the configured width");
-                        for _ in 0..count.to_usize() {
-                            out.push(result);
-                        }
-                    }
-                }
+                // Unbind before propagating, as in the seq/set arms above.
+                let outcome =
+                    eval_mset_comp_element(body, out_mult, filter, env, eg, model, globals);
                 env.restore_local_mult(*mult_var, previous_mult);
                 env.restore_local_node(*var, previous_node);
+                if let Some((result, count)) = outcome? {
+                    for _ in 0..count.to_usize() {
+                        out.push(result);
+                    }
+                }
             }
         }
     }
+    Ok(())
+}
+
+/// One element of a `SeqComp`/`SetComp`: `None` when the filter rejects it.
+///
+/// Split out so `eval_arg` can restore the comprehension variable before
+/// propagating an error; the body would otherwise need the binding live across a
+/// `?`.
+fn eval_comp_element<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
+    body: &RhsOp<Cfg::O, L>,
+    filter: &Option<Box<RhsOp<Cfg::O, L>>>,
+    env: &mut RhsEnv<'_, Cfg, Q>,
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) -> Result<Option<Cfg::G>, EvalError>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    M: crate::lit_model::LitModel<Value = L>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    if let Some(filter) = filter {
+        let value = eval(filter, env, eg, model, globals)?;
+        if !check_filter_truthy(eg, model, value) {
+            return Ok(None);
+        }
+    }
+    Ok(Some(eval(body, env, eg, model, globals)?))
+}
+
+/// One element of an `MsetComp`: `None` when the filter rejects it or the output
+/// multiplicity is zero, otherwise the term and how many copies to emit.
+fn eval_mset_comp_element<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
+    body: &RhsOp<Cfg::O, L>,
+    out_mult: &crate::resolve::ResolvedMultExpr,
+    filter: &Option<Box<RhsOp<Cfg::O, L>>>,
+    env: &mut RhsEnv<'_, Cfg, Q>,
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) -> Result<Option<(Cfg::G, Cfg::M)>, EvalError>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    M: crate::lit_model::LitModel<Value = L>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    if let Some(filter) = filter {
+        let value = eval(filter, env, eg, model, globals)?;
+        if !check_filter_truthy(eg, model, value) {
+            return Ok(None);
+        }
+    }
+    let count = eval_mult_expr::<Cfg, Q>(out_mult, env)?;
+    if count == 0 {
+        return Ok(None);
+    }
+    // `check_mult_literals` rejects a rule whose *literal* multiplicities
+    // overflow the configured width at install, but a computed one (`k+k`, or a
+    // `k` from a wider surface width) is only known here. It is a program error
+    // like any other partial operation, so it is reported rather than asserted:
+    // narrowing is decided by `try_from_u64`, never by truncation.
+    let count = Cfg::M::try_from_u64(count).ok_or_else(|| EvalError {
+        span: crate::ast::Span::Dummy,
+        op: "multiplicity",
+        args: vec![count.to_string()],
+        site: EvalSite::Multiplicity,
+        rule: None,
+    })?;
+    let result = eval(body, env, eg, model, globals)?;
+    Ok(Some((result, count)))
 }
 
 /// Evaluate an RHS multiplicity expression over the match's bound
-/// multiplicities, in checked u64 arithmetic. Underflow and division by zero
-/// are rejected statically at rule install ([`check_rhs_mult_exprs`]); the
-/// checked ops here are the second line, and panic like the checked literal
-/// primitives do.
-fn eval_mult_expr<Cfg, Q>(e: &crate::resolve::ResolvedMultExpr, env: &RhsEnv<'_, Cfg, Q>) -> u64
+/// multiplicities, in checked u64 arithmetic.
+///
+/// Underflow and division by zero are rejected statically at rule install
+/// ([`check_rhs_mult_exprs`]), so reaching them here would be an install-check
+/// bug; overflow is genuinely reachable, because rejecting every expression that
+/// could overflow an unbounded `k` would ban `k+1`. All three report the same
+/// way, for the same reason the literal primitives do: there is no multiplicity
+/// to return, and emitting a different number of copies than the rule asks for
+/// would silently change what the rule means.
+fn eval_mult_expr<Cfg, Q>(
+    e: &crate::resolve::ResolvedMultExpr,
+    env: &RhsEnv<'_, Cfg, Q>,
+) -> Result<u64, EvalError>
 where
     Cfg: EGraphConfig,
     Q: crate::ematch::MatchView<Cfg> + ?Sized,
 {
     use crate::resolve::{MultPrimOp as P, ResolvedMultExpr as E};
-    match e {
+    Ok(match e {
         E::Lit(n) => *n,
         E::Var(v) => env.mult(*v).to_u64(),
         E::Prim { op, args } => {
-            let a = eval_mult_expr::<Cfg, Q>(&args[0], env);
-            let b = eval_mult_expr::<Cfg, Q>(&args[1], env);
+            let a = eval_mult_expr::<Cfg, Q>(&args[0], env)?;
+            let b = eval_mult_expr::<Cfg, Q>(&args[1], env)?;
+            let fault = |name: &'static str| EvalError {
+                span: crate::ast::Span::Dummy,
+                op: name,
+                args: vec![a.to_string(), b.to_string()],
+                site: EvalSite::Multiplicity,
+                rule: None,
+            };
             match op {
-                P::Add => a
-                    .checked_add(b)
-                    .expect("u64::+ overflow in RHS multiplicity"),
-                P::Sub => a
-                    .checked_sub(b)
-                    .expect("u64::- underflow in RHS multiplicity"),
-                P::Mul => a
-                    .checked_mul(b)
-                    .expect("u64::* overflow in RHS multiplicity"),
-                P::Div => a
-                    .checked_div(b)
-                    .expect("u64::/ by zero in RHS multiplicity"),
-                P::Rem => a
-                    .checked_rem(b)
-                    .expect("u64::% by zero in RHS multiplicity"),
+                P::Add => a.checked_add(b).ok_or_else(|| fault("u64::+"))?,
+                P::Sub => a.checked_sub(b).ok_or_else(|| fault("u64::-"))?,
+                P::Mul => a.checked_mul(b).ok_or_else(|| fault("u64::*"))?,
+                P::Div => a.checked_div(b).ok_or_else(|| fault("u64::/"))?,
+                P::Rem => a.checked_rem(b).ok_or_else(|| fault("u64::%"))?,
                 P::Min => a.min(b),
                 P::Max => a.max(b),
             }
         }
-    }
+    })
 }
 
 /// Interval bounds of an RHS multiplicity expression, from the rule's LHS
@@ -762,7 +917,7 @@ where
 /// *wrong* at runtime rather than merely large: a subtraction that cannot be
 /// proved non-negative, and a division or remainder whose divisor could be
 /// zero. Additions and products saturate in the bound computation; a runtime
-/// overflow still traps in [`eval_mult_expr`].
+/// overflow is still reported by [`eval_mult_expr`].
 fn mult_expr_bounds(
     e: &crate::resolve::ResolvedMultExpr,
     intervals: &[(crate::ast::MultVarId, u64, u64)],
@@ -813,11 +968,12 @@ fn mult_expr_bounds(
 }
 
 /// Static safety check for every RHS multiplicity expression in a rule's
-/// actions, against the rule's LHS multiplicity intervals. Rejection here is
-/// what licenses the `expect`s in `eval_mult_expr` for underflow and
-/// division by zero; overflow stays a runtime trap because any expression
-/// over an unbounded `k` could overflow and rejecting them all would ban
-/// `k+1`.
+/// actions, against the rule's LHS multiplicity intervals. Rejection here turns
+/// underflow and division by zero into an install-time diagnostic naming the
+/// multiplicity to constrain, which is far more useful than the same fault
+/// surfacing mid-saturation; overflow stays a runtime report because any
+/// expression over an unbounded `k` could overflow and rejecting them all would
+/// ban `k+1`.
 pub fn check_rhs_mult_exprs<O, S, V>(rule: &PreparedRule<O, S, V>) -> Result<(), String> {
     fn walk_op<O, V>(
         op: &RhsOp<O, V>,
@@ -896,7 +1052,7 @@ fn apply_action<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-) -> usize
+) -> Result<usize, EvalError>
 where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -904,10 +1060,10 @@ where
     Q: crate::ematch::MatchView<Cfg> + ?Sized,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    match action {
+    Ok(match action {
         CompiledAction::Union(rule_id, a, b) => {
-            let va = eval(a, env, eg, model, globals);
-            let vb = eval(b, env, eg, model, globals);
+            let va = eval(a, env, eg, model, globals)?;
+            let vb = eval(b, env, eg, model, globals)?;
             if eg.find(va) != eg.find(vb) {
                 if P {
                     eg.merge_justified(
@@ -924,7 +1080,7 @@ where
             }
         }
         CompiledAction::Insert(t) => {
-            eval(t, env, eg, model, globals);
+            eval(t, env, eg, model, globals)?;
             1
         }
         CompiledAction::Set {
@@ -939,7 +1095,7 @@ where
             eg.subsume(node);
             1
         }
-    }
+    })
 }
 
 pub(crate) fn apply_rule_actions<Cfg, L, M, Q, S, const T: bool, const P: bool>(
@@ -948,7 +1104,7 @@ pub(crate) fn apply_rule_actions<Cfg, L, M, Q, S, const T: bool, const P: bool>(
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-) -> usize
+) -> Result<usize, EvalError>
 where
     Cfg: EGraphConfig,
     S: Copy,
@@ -958,16 +1114,30 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let mut env = RhsEnv::new(query, rule.rhs_locals);
-    let changes = rule
-        .actions
-        .iter()
-        .map(|action| apply_action(action, &mut env, eg, model, globals))
-        .sum();
+    // Actions are applied in order and an error stops at the one that faulted:
+    // the earlier actions' effects stay in the e-graph. That is deliberate. The
+    // run is over, so nothing reads the graph again except a diagnostic, and
+    // undoing them would need a rollback point per action for a case that ends
+    // the program either way.
+    let mut changes = 0;
+    let mut faulted = None;
+    for action in &rule.actions {
+        match apply_action(action, &mut env, eg, model, globals) {
+            Ok(n) => changes += n,
+            Err(e) => {
+                faulted = Some(e);
+                break;
+            }
+        }
+    }
     debug_assert!(
         env.locals_are_unbound(),
         "RHS comprehension locals must not escape action evaluation"
     );
-    changes
+    match faulted {
+        Some(e) => Err(e),
+        None => Ok(changes),
+    }
 }
 
 pub fn apply_rule<Cfg, L, M, S, const T: bool, const P: bool>(
@@ -977,7 +1147,7 @@ pub fn apply_rule<Cfg, L, M, S, const T: bool, const P: bool>(
     stats: &crate::schedule::IndexStats<Cfg::O>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-) -> usize
+) -> Result<usize, EvalError>
 where
     Cfg: EGraphConfig,
     S: crate::DenseId,
@@ -1009,7 +1179,7 @@ pub fn apply_rule_pooled<Cfg, L, M, S, const T: bool, const P: bool>(
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     pool: &mut MatchPool<Cfg>,
-) -> usize
+) -> Result<usize, EvalError>
 where
     Cfg: EGraphConfig,
     S: crate::DenseId,
@@ -1021,12 +1191,37 @@ where
     let sampler = crate::index::IndexSampler::new(eg, vindex);
     let plan = crate::schedule::schedule_with_stats_sampled(&rule.query, stats, &sampler);
     run_query_scheduled_into(&rule.query, &plan, eg, &vindex, globals, pool);
+    // A guard fault is checked before the actions run. The matcher dropped the
+    // assignment it was found on, so applying the surviving matches would be
+    // deriving from a query the engine could not fully evaluate.
+    if let Some(fault) = pool.guard_fault() {
+        return Err(name_fault(fault.clone(), rule, eg));
+    }
     let mut changes = 0;
     for j in 0..pool.len() {
         let row = pool.row(j);
-        changes += apply_rule_actions(rule, &row, eg, model, globals);
+        match apply_rule_actions(rule, &row, eg, model, globals) {
+            Ok(n) => changes += n,
+            Err(e) => return Err(name_fault(e, rule, eg)),
+        }
     }
-    changes
+    Ok(changes)
+}
+
+/// Attribute a fault to the rule that hit it, by the name the rule was
+/// registered under. The evaluators only see the operation, and a `RuleId` alone
+/// tells the reader nothing.
+pub(crate) fn name_fault<Cfg, L, S, O, const T: bool, const P: bool>(
+    fault: EvalError,
+    rule: &PreparedRule<O, S, L>,
+    eg: &EGraph<Cfg, L, T, P>,
+) -> EvalError
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    fault.in_rule(eg.rules().name(rule.rule_id)).at(rule.span)
 }
 
 #[cfg(test)]
@@ -1621,7 +1816,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert!(changes > 0, "expected at least one change");
 
         // After: (f b a) should exist and be merged with (f a b)
@@ -1671,7 +1867,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert!(changes > 0);
 
         // (g (f b a)) should now exist and be merged with (f a (g b))
@@ -1716,7 +1913,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert_eq!(changes, 0);
     }
 
@@ -1757,7 +1955,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert!(changes > 0);
 
         // (h a b) should exist and be in same e-class as (f a b)
@@ -1810,7 +2009,9 @@ mod tests {
                 &crate::schedule::IndexStats::from_index(&index),
                 &model,
                 &globals,
-            ) > 0
+            )
+            .unwrap()
+                > 0
         );
         assert_eq!(
             eg.op_node_counts()[count_f.to_usize()],
@@ -1858,7 +2059,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert_eq!(changes, 1);
 
         // (h a b) should exist but NOT be merged with (f a b)
@@ -1913,7 +2115,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert!(changes > 0);
 
         // (concat a a b c) should be merged with (concat a b c)
@@ -1959,7 +2162,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert!(changes > 0);
 
         // For match x=a, rest={b}: {add (g a) b} merged with {add a b}
@@ -2006,7 +2210,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert!(changes > 0);
 
         let ga = eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
@@ -2066,7 +2271,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert!(changes > 0, "constant fold should fire");
 
         // (ILit (@IBig 8)) should now be merged with (IAdd (ILit 3) (ILit 5))
@@ -2123,7 +2329,8 @@ mod tests {
             &crate::schedule::IndexStats::from_index(&index),
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
         assert!(changes > 0);
         eg.rebuild();
 

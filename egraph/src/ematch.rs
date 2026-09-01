@@ -17,6 +17,7 @@ use crate::egraph::EGraph;
 use crate::index::{IndexMode, IndexStore, SortedVecCursor, VariantIndex};
 use crate::leapfrog::seek_stats::Probed;
 use crate::leapfrog::{CursorVec, Difference, LeapfrogJoin, SortedCursor};
+use crate::lit_model::{EvalError, EvalSite};
 use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
 use crate::resolve::{PatVar, RMult};
@@ -394,6 +395,16 @@ pub struct MatchPool<Cfg: EGraphConfig> {
     /// because it is the only per-query state `run_join` already receives; see
     /// [`OP_FILTER_POLICY`] for why it is not read per join.
     op_filter_policy: OpFilterPolicy,
+    /// The first guard this query found to be undefined on an assignment it
+    /// reached, if any. On the pool for the same reason as `op_filter_policy`:
+    /// it is per-query state and the pool is the one channel every step already
+    /// holds, so recording a fault costs the matcher no extra parameter and no
+    /// `Result` threaded through its continuations.
+    ///
+    /// Only the first is kept: any one of them ends the run, and a rule that is
+    /// partial on one assignment is usually partial on many, so the rest would
+    /// be noise.
+    guard_fault: Option<EvalError>,
 }
 
 impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
@@ -410,6 +421,7 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
             mset_bufs: Vec::new(),
             steps: 0,
             op_filter_policy: OpFilterPolicy::Adaptive,
+            guard_fault: None,
         }
     }
 
@@ -417,6 +429,20 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
     /// allocation warm.
     pub fn reshape(&mut self, shape: &crate::resolve::MatchShape) {
         self.set.reshape(shape);
+    }
+
+    /// The guard fault this query hit, if any. `None` means every guard the
+    /// matcher evaluated was defined on the assignment it saw — not that the
+    /// rule's guards are total.
+    pub fn guard_fault(&self) -> Option<&EvalError> {
+        self.guard_fault.as_ref()
+    }
+
+    /// Record a guard fault, keeping the first.
+    fn record_guard_fault(&mut self, e: EvalError) {
+        if self.guard_fault.is_none() {
+            self.guard_fault = Some(e);
+        }
     }
 
     /// One stored match, by row.
@@ -879,6 +905,7 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     pool.reshape(&plan.shape);
     pool.steps = 0;
     pool.op_filter_policy = op_filter_policy();
+    pool.guard_fault = None;
     let mut env = Match::new(&plan.shape);
     let exec = Exec::<Cfg, L, S>::static_plan(&plan.steps);
     run_step(&exec, 0, eg, index, globals, &mut env, pool);
@@ -911,6 +938,7 @@ pub fn run_query_scheduled_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS
     pool.reshape(&rq.shape);
     pool.steps = 0;
     pool.op_filter_policy = op_filter_policy();
+    pool.guard_fault = None;
     let mut env = Match::new(&rq.shape);
     let adaptive = Adaptive::new(rq);
     let exec = Exec::adaptive(&adaptive);
@@ -1487,8 +1515,14 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             }
         }
         Step::CheckPred { guard } => {
-            if eval_guard(guard, eg, env) {
-                run_step(exec, step_idx + 1, eg, index, globals, env, results);
+            // A fault stops this branch rather than continuing as if the guard
+            // were false: the run is going to be reported as an error, and
+            // extending an assignment whose guard has no value would be
+            // deriving from a constraint nobody checked.
+            match eval_guard(guard, eg, env) {
+                Ok(true) => run_step(exec, step_idx + 1, eg, index, globals, env, results),
+                Ok(false) => {}
+                Err(e) => results.record_guard_fault(e),
             }
         }
     }
@@ -1503,25 +1537,31 @@ const GUARD_ARGS: usize = 2;
 /// The values come from the match's literal slots, which the guard's `deps` guarantee
 /// are filled: the scheduler emits the check only after every `LitBind` atom feeding it
 /// has run.
+///
+/// `Err` is a guard that is *undefined* on this assignment — say `(i64::< (i64::/ 1 k) 3)`
+/// reached with `k` bound to 0. That is not the same as the guard being false, and it is
+/// deliberately not treated as one: silently skipping the match would hide a partial rule
+/// and make the result depend on which assignments the matcher happened to enumerate. The
+/// caller records the fault, stops extending this match, and the driver reports it.
 fn eval_guard<Cfg, L, const TRACK: bool, const PROOFS: bool>(
     guard: &crate::resolve::PredGuard<Cfg::O, L>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     env: &Match<Cfg>,
-) -> bool
+) -> Result<bool, EvalError>
 where
     Cfg: EGraphConfig,
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let v = eval_pred_expr(&guard.expr, eg, env);
-    (guard.truthy)(&v)
+    let v = eval_pred_expr(&guard.expr, eg, env)?;
+    Ok((guard.truthy)(&v))
 }
 
 fn eval_pred_expr<Cfg, L, const TRACK: bool, const PROOFS: bool>(
     expr: &crate::resolve::RPredExpr<Cfg::O, L>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     env: &Match<Cfg>,
-) -> L
+) -> Result<L, EvalError>
 where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -1529,13 +1569,17 @@ where
 {
     use crate::resolve::RPredExpr;
     match expr {
-        RPredExpr::Val(v) => eg.lits().get(env.get_lit_val(*v)).clone(),
-        RPredExpr::Const(l) => l.clone(),
-        RPredExpr::App { eval, args, .. } => {
-            let vals: SmallVec<[L; GUARD_ARGS]> =
-                args.iter().map(|a| eval_pred_expr(a, eg, env)).collect();
+        RPredExpr::Val(v) => Ok(eg.lits().get(env.get_lit_val(*v)).clone()),
+        RPredExpr::Const(l) => Ok(l.clone()),
+        RPredExpr::App {
+            eval, name, args, ..
+        } => {
+            let mut vals: SmallVec<[L; GUARD_ARGS]> = SmallVec::new();
+            for a in args {
+                vals.push(eval_pred_expr(a, eg, env)?);
+            }
             let refs: SmallVec<[&L; GUARD_ARGS]> = vals.iter().collect();
-            eval(&refs)
+            eval(&refs).ok_or_else(|| EvalError::new(name, &refs, EvalSite::Guard))
         }
     }
 }
@@ -2439,6 +2483,10 @@ pub struct MatchIterator<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: boo
     /// Next plan step to enter (usize::MAX = must backtrack after yield).
     cursor: usize,
     done: bool,
+    /// The first guard found undefined on an assignment this iterator reached.
+    /// The pull engine has no result pool to hang it on, so it lives here; see
+    /// [`MatchPool::guard_fault`] for why one fault is enough.
+    guard_fault: Option<EvalError>,
 }
 
 impl<'a, Cfg, L, S: Copy, const T: bool, const P: bool> MatchIterator<'a, Cfg, L, S, T, P>
@@ -2462,11 +2510,19 @@ where
             frames: Vec::new(),
             cursor: 0,
             done: false,
+            guard_fault: None,
         }
     }
 
     pub fn env(&self) -> &Match<Cfg> {
         &self.env
+    }
+
+    /// The guard fault this iteration hit, if any. Read it after the iteration
+    /// finishes: a fault does not stop enumeration, it only drops the branch it
+    /// was found on.
+    pub fn guard_fault(&self) -> Option<&EvalError> {
+        self.guard_fault.as_ref()
     }
 
     /// Composable iterator that clones each match on yield.
@@ -2653,14 +2709,21 @@ where
                     Enter::Failed
                 }
             }
-            Step::CheckPred { guard } => {
-                if eval_guard(guard, self.eg, &self.env) {
+            Step::CheckPred { guard } => match eval_guard(guard, self.eg, &self.env) {
+                Ok(true) => {
                     self.cursor += 1;
                     Enter::Advanced
-                } else {
+                }
+                Ok(false) => Enter::Failed,
+                // As in `run_step`: record and abandon the branch, rather than
+                // conflate "undefined here" with "false here".
+                Err(e) => {
+                    if self.guard_fault.is_none() {
+                        self.guard_fault = Some(e);
+                    }
                     Enter::Failed
                 }
-            }
+            },
         }
     }
 

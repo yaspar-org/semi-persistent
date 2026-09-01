@@ -197,10 +197,13 @@ enum Driver {
 #[inline]
 fn run(driver: Driver, eg: &mut EG, rules: &[Rule], limit: usize) -> usize {
     let g = GlobalCtx::<SortId, ENodeId>::new();
+    // The workloads' rules are total on their operands, so a fault is a broken
+    // workload rather than a measurement.
     let r = match driver {
         Driver::Naive => saturate(rules, eg, &NiraModel, limit, &g),
         Driver::Semi => saturate_semi(rules, eg, &NiraModel, limit, &g),
-    };
+    }
+    .expect("benchmark rules are total");
     // Fold both the result and the final graph size into the returned value:
     // a change that silently stops saturating would otherwise look like a win.
     r.iterations + eg.node_count() + usize::from(r.saturated)

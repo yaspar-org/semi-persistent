@@ -1,0 +1,11 @@
+;; EXPECT: sort-error
+;; The AC rest (`DecomposeAC`, MsetVarId) has the same single-writer requirement.
+(sort E)
+(function M (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(let t1 (M (a) (b)))
+(let t2 (M (c) (d)))
+(rule ((M ..r x) (M y ..r)) ((union x y)))

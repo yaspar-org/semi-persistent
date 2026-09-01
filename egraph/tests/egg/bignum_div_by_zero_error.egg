@@ -1,0 +1,9 @@
+;; EXPECT: error
+;; TYPES: bignum
+;; Arbitrary precision removes overflow, not partiality: `IBig::/` still has no
+;; value at a zero divisor. Reported the same way as the machine-width case, so
+;; the type group does not change whether a program error is a panic.
+(datatype Math (Num IBig) (Div Math Math))
+(rewrite (Div (Num x) (Num y)) (Num (IBig::/ x y)))
+(let e (Div (Num 7) (Num 0)))
+(run 10)

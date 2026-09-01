@@ -1,0 +1,10 @@
+;; EXPECT: ok
+;; The control: with either side bound by another atom the eager fixpoint lowers the `Eq`
+;; as a `CopyBinding`, in either textual order.
+(sort E)
+(function h (E) E)
+(function p () E)
+(let z (h (p)))
+(rule ((h x) (= x y)) ((union x y)))
+(rule ((= u v) (h v)) ((union u v)))
+(run 1)

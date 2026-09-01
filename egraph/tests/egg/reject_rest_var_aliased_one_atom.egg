@@ -1,0 +1,13 @@
+;; EXPECT: sort-error
+;; `pre` and `suf` of one variadic atom are two writers of the same span, so aliasing them
+;; is the same defect as sharing a rest between atoms. On (S (a) (b) (c)) the correct
+;; answer is no match ([] != [b c], [a] != [c], [a b] != []); with the constraint dropped
+;; `x` ranged over all three children.
+(sort E)
+(function S (E) E :assoc)
+(function a () E)
+(function b () E)
+(function c () E)
+(function W () E)
+(let t (S (a) (b) (c)))
+(rule ((S ..r x ..r)) ((union (W) x)))

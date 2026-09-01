@@ -123,6 +123,32 @@ values it reads. Three things are checked here:
 
 `deps` is filled once every atom is resolved, by `link_pred_deps`.
 
+### Whole-Query Checks
+
+Two properties are not properties of a single atom, so they are checked once the
+atom list is complete. Both reject queries the matcher cannot execute; both would
+otherwise surface as a panic in `ematch` or, worse, as a silently dropped
+constraint.
+
+`check_rest_vars_linear` — **a rest variable has at most one writer.** `pre` and
+`suf` of one variadic atom count as two, so `(S ..r x ..r)` is rejected along
+with a rest shared between two atoms. Unlike a node variable, a repeated rest
+name cannot lower to a check: `ExpandA`, `DecomposeAC` and `DecomposeACI` write
+their spans unconditionally, and the `Step` enum has no span comparison, so the
+second writer would overwrite the first and the constraint would vanish — which
+admits matches the pattern excludes. Expressing the constraint instead of
+rejecting it needs a new `Step`.
+
+`check_nodes_bindable` — **every node variable of the `MatchShape` is bindable.**
+`MatchPool::push` unwraps every node slot, so a plan that leaves one unbound
+aborts when the first match is materialized. Every atom kind but `Eq` and `Pred`
+binds its own node variable and its local children, so bindability is the closure
+of those seeds under `Eq`, which copies a binding in whichever direction is
+already bound. An `Eq` with neither side in the closure is lowered by neither
+scheduler phase — `try_eager_lower` returns `None` and phase B's argmin skips
+`Eq` — and is silently dropped; this is the local counterpart of the case
+`Step::BindGlobal` handles for a global.
+
 ### Global Name Resolution
 
 When a child or variadic element name exists in `GlobalCtx`, the resolver emits

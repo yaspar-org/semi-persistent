@@ -94,6 +94,11 @@ pub fn choose_litval(groups: &[TypeGroup]) -> LitValChoice {
 // Op-generation macros (parameterized by enum name)
 // ---------------------------------------------------------------------------
 
+// Every `eval` below returns `Option`: `None` is "this operation has no value on
+// these operands" (see `LitOpDesc::eval`). The `_ => panic!()` arms are a
+// different thing — a sort mismatch that sortcheck already ruled out — and stay
+// panics, because a `None` there would report a user error for an engine bug.
+
 macro_rules! bool_ops {
     ($E:ident) => {
         &[
@@ -102,7 +107,7 @@ macro_rules! bool_ops {
                 arg_sorts: &["bool", "bool"],
                 ret_sort: "bool",
                 eval: |a| match (a[0], a[1]) {
-                    ($E::Bool(x), $E::Bool(y)) => $E::Bool(*x && *y),
+                    ($E::Bool(x), $E::Bool(y)) => Some($E::Bool(*x && *y)),
                     _ => panic!(),
                 },
             },
@@ -111,7 +116,7 @@ macro_rules! bool_ops {
                 arg_sorts: &["bool", "bool"],
                 ret_sort: "bool",
                 eval: |a| match (a[0], a[1]) {
-                    ($E::Bool(x), $E::Bool(y)) => $E::Bool(*x || *y),
+                    ($E::Bool(x), $E::Bool(y)) => Some($E::Bool(*x || *y)),
                     _ => panic!(),
                 },
             },
@@ -120,7 +125,7 @@ macro_rules! bool_ops {
                 arg_sorts: &["bool"],
                 ret_sort: "bool",
                 eval: |a| match a[0] {
-                    $E::Bool(x) => $E::Bool(!x),
+                    $E::Bool(x) => Some($E::Bool(!x)),
                     _ => panic!(),
                 },
             },
@@ -129,13 +134,7 @@ macro_rules! bool_ops {
                 arg_sorts: &["bool", "bool", "bool"],
                 ret_sort: "bool",
                 eval: |a| match a[0] {
-                    $E::Bool(c) => {
-                        if *c {
-                            a[1].clone()
-                        } else {
-                            a[2].clone()
-                        }
-                    }
+                    $E::Bool(c) => Some(if *c { a[1].clone() } else { a[2].clone() }),
                     _ => panic!(),
                 },
             },
@@ -143,6 +142,8 @@ macro_rules! bool_ops {
     };
 }
 
+/// A checked machine-integer operation: the `checked_*` method's `None` — an
+/// overflow, or a division or remainder by zero — is the op's `None`.
 macro_rules! checked_binop {
     ($E:ident,$V:ident,$n:expr,$s:expr,$m:ident) => {
         LitOpDesc {
@@ -150,7 +151,7 @@ macro_rules! checked_binop {
             arg_sorts: &[$s, $s],
             ret_sort: $s,
             eval: |a| match (a[0], a[1]) {
-                ($E::$V(x), $E::$V(y)) => $E::$V(x.$m(*y).expect($n)),
+                ($E::$V(x), $E::$V(y)) => x.$m(*y).map($E::$V),
                 _ => panic!(),
             },
         }
@@ -163,7 +164,7 @@ macro_rules! wrapping_binop {
             arg_sorts: &[$s, $s],
             ret_sort: $s,
             eval: |a| match (a[0], a[1]) {
-                ($E::$V(x), $E::$V(y)) => $E::$V(x.$m(*y)),
+                ($E::$V(x), $E::$V(y)) => Some($E::$V(x.$m(*y))),
                 _ => panic!(),
             },
         }
@@ -176,7 +177,7 @@ macro_rules! saturating_binop {
             arg_sorts: &[$s, $s],
             ret_sort: $s,
             eval: |a| match (a[0], a[1]) {
-                ($E::$V(x), $E::$V(y)) => $E::$V(x.$m(*y)),
+                ($E::$V(x), $E::$V(y)) => Some($E::$V(x.$m(*y))),
                 _ => panic!(),
             },
         }
@@ -184,7 +185,7 @@ macro_rules! saturating_binop {
 }
 macro_rules! cmp_op { ($E:ident,$V:ident,$n:expr,$s:expr,$op:tt) => {
     LitOpDesc { name: $n, arg_sorts: &[$s,$s], ret_sort: "bool",
-        eval: |a| match (a[0],a[1]) { ($E::$V(x),$E::$V(y)) => $E::Bool(x $op y), _=>panic!() } }
+        eval: |a| match (a[0],a[1]) { ($E::$V(x),$E::$V(y)) => Some($E::Bool(x $op y)), _=>panic!() } }
 };}
 macro_rules! if_op {
     ($E:ident,$n:expr,$s:expr) => {
@@ -193,13 +194,7 @@ macro_rules! if_op {
             arg_sorts: &["bool", $s, $s],
             ret_sort: $s,
             eval: |a| match a[0] {
-                $E::Bool(c) => {
-                    if *c {
-                        a[1].clone()
-                    } else {
-                        a[2].clone()
-                    }
-                }
+                $E::Bool(c) => Some(if *c { a[1].clone() } else { a[2].clone() }),
                 _ => panic!(),
             },
         }
@@ -212,7 +207,7 @@ macro_rules! min_op {
             arg_sorts: &[$s, $s],
             ret_sort: $s,
             eval: |a| match (a[0], a[1]) {
-                ($E::$V(x), $E::$V(y)) => $E::$V(*x.min(y)),
+                ($E::$V(x), $E::$V(y)) => Some($E::$V(*x.min(y))),
                 _ => panic!(),
             },
         }
@@ -225,7 +220,7 @@ macro_rules! max_op {
             arg_sorts: &[$s, $s],
             ret_sort: $s,
             eval: |a| match (a[0], a[1]) {
-                ($E::$V(x), $E::$V(y)) => $E::$V(*x.max(y)),
+                ($E::$V(x), $E::$V(y)) => Some($E::$V(*x.max(y))),
                 _ => panic!(),
             },
         }
@@ -241,29 +236,32 @@ macro_rules! signed_int_ops { ($E:ident, $V:ident, $s:expr) => { &[
     LitOpDesc { name: concat!($s,"::pow"), arg_sorts: &[$s,$s], ret_sort: $s,
         eval: |a| match (a[0], a[1]) {
             ($E::$V(x), $E::$V(e)) => {
-                let e = u32::try_from(*e).expect(concat!($s,"::pow exponent out of range"));
-                $E::$V(x.checked_pow(e).expect(concat!($s,"::pow overflow")))
+                // `checked_pow` takes a `u32` exponent. An exponent outside
+                // that range is outside the operation's domain, not something
+                // to truncate: `try_from` decides it, never an `as` cast.
+                let e = u32::try_from(*e).ok()?;
+                x.checked_pow(e).map($E::$V)
             }
             _ => panic!(),
         } },
     LitOpDesc { name: concat!($s,"::neg"), arg_sorts: &[$s], ret_sort: $s,
-        eval: |a| match a[0] { $E::$V(x) => $E::$V(x.checked_neg().expect(concat!($s,"::neg overflow"))), _=>panic!() } },
+        eval: |a| match a[0] { $E::$V(x) => x.checked_neg().map($E::$V), _=>panic!() } },
     LitOpDesc { name: concat!($s,"::abs"), arg_sorts: &[$s], ret_sort: $s,
-        eval: |a| match a[0] { $E::$V(x) => $E::$V(x.checked_abs().expect(concat!($s,"::abs overflow"))), _=>panic!() } },
+        eval: |a| match a[0] { $E::$V(x) => x.checked_abs().map($E::$V), _=>panic!() } },
     wrapping_binop!($E,$V,concat!($s,"::wrapping_add"),$s,wrapping_add),
     wrapping_binop!($E,$V,concat!($s,"::wrapping_sub"),$s,wrapping_sub),
     wrapping_binop!($E,$V,concat!($s,"::wrapping_mul"),$s,wrapping_mul),
     LitOpDesc { name: concat!($s,"::wrapping_neg"), arg_sorts: &[$s], ret_sort: $s,
-        eval: |a| match a[0] { $E::$V(x) => $E::$V(x.wrapping_neg()), _=>panic!() } },
+        eval: |a| match a[0] { $E::$V(x) => Some($E::$V(x.wrapping_neg())), _=>panic!() } },
     LitOpDesc { name: concat!($s,"::wrapping_abs"), arg_sorts: &[$s], ret_sort: $s,
-        eval: |a| match a[0] { $E::$V(x) => $E::$V(x.wrapping_abs()), _=>panic!() } },
+        eval: |a| match a[0] { $E::$V(x) => Some($E::$V(x.wrapping_abs())), _=>panic!() } },
     saturating_binop!($E,$V,concat!($s,"::saturating_add"),$s,saturating_add),
     saturating_binop!($E,$V,concat!($s,"::saturating_sub"),$s,saturating_sub),
     saturating_binop!($E,$V,concat!($s,"::saturating_mul"),$s,saturating_mul),
     LitOpDesc { name: concat!($s,"::saturating_neg"), arg_sorts: &[$s], ret_sort: $s,
-        eval: |a| match a[0] { $E::$V(x) => $E::$V(x.saturating_neg()), _=>panic!() } },
+        eval: |a| match a[0] { $E::$V(x) => Some($E::$V(x.saturating_neg())), _=>panic!() } },
     LitOpDesc { name: concat!($s,"::saturating_abs"), arg_sorts: &[$s], ret_sort: $s,
-        eval: |a| match a[0] { $E::$V(x) => $E::$V(x.saturating_abs()), _=>panic!() } },
+        eval: |a| match a[0] { $E::$V(x) => Some($E::$V(x.saturating_abs())), _=>panic!() } },
     min_op!($E,$V,concat!($s,"::min"),$s), max_op!($E,$V,concat!($s,"::max"),$s),
     cmp_op!($E,$V,concat!($s,"::<"),$s,<), cmp_op!($E,$V,concat!($s,"::<="),$s,<=),
     cmp_op!($E,$V,concat!($s,"::>"),$s,>), cmp_op!($E,$V,concat!($s,"::>="),$s,>=),
@@ -290,47 +288,56 @@ macro_rules! unsigned_int_ops { ($E:ident, $V:ident, $s:expr) => { &[
     if_op!($E,concat!($s,"::if"),$s),
 ]};}
 
+// IEEE-754 arithmetic is total: division by zero and overflow produce infinities
+// and NaN rather than faulting, so every `f64` op is a `Some`.
 macro_rules! f64_ops { ($E:ident) => { &[
     LitOpDesc { name: "f64::+", arg_sorts: &["f64","f64"], ret_sort: "f64",
-        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => $E::F64(OrderedFloat(*x.as_ref()+*y.as_ref())), _=>panic!() } },
+        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => Some($E::F64(OrderedFloat(*x.as_ref()+*y.as_ref()))), _=>panic!() } },
     LitOpDesc { name: "f64::-", arg_sorts: &["f64","f64"], ret_sort: "f64",
-        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => $E::F64(OrderedFloat(*x.as_ref()-*y.as_ref())), _=>panic!() } },
+        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => Some($E::F64(OrderedFloat(*x.as_ref()-*y.as_ref()))), _=>panic!() } },
     LitOpDesc { name: "f64::*", arg_sorts: &["f64","f64"], ret_sort: "f64",
-        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => $E::F64(OrderedFloat(*x.as_ref()*(*y.as_ref()))), _=>panic!() } },
+        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => Some($E::F64(OrderedFloat(*x.as_ref()*(*y.as_ref())))), _=>panic!() } },
     LitOpDesc { name: "f64::/", arg_sorts: &["f64","f64"], ret_sort: "f64",
-        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => $E::F64(OrderedFloat(*x.as_ref()/(*y.as_ref()))), _=>panic!() } },
+        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => Some($E::F64(OrderedFloat(*x.as_ref()/(*y.as_ref())))), _=>panic!() } },
     LitOpDesc { name: "f64::neg", arg_sorts: &["f64"], ret_sort: "f64",
-        eval: |a| match a[0] { $E::F64(x) => $E::F64(OrderedFloat(-*x.as_ref())), _=>panic!() } },
+        eval: |a| match a[0] { $E::F64(x) => Some($E::F64(OrderedFloat(-*x.as_ref()))), _=>panic!() } },
     LitOpDesc { name: "f64::abs", arg_sorts: &["f64"], ret_sort: "f64",
-        eval: |a| match a[0] { $E::F64(x) => $E::F64(OrderedFloat(x.as_ref().abs())), _=>panic!() } },
+        eval: |a| match a[0] { $E::F64(x) => Some($E::F64(OrderedFloat(x.as_ref().abs()))), _=>panic!() } },
     LitOpDesc { name: "f64::min", arg_sorts: &["f64","f64"], ret_sort: "f64",
-        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => $E::F64(*x.min(y)), _=>panic!() } },
+        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => Some($E::F64(*x.min(y))), _=>panic!() } },
     LitOpDesc { name: "f64::max", arg_sorts: &["f64","f64"], ret_sort: "f64",
-        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => $E::F64(*x.max(y)), _=>panic!() } },
+        eval: |a| match (a[0],a[1]) { ($E::F64(x),$E::F64(y)) => Some($E::F64(*x.max(y))), _=>panic!() } },
     cmp_op!($E,F64,"f64::<","f64",<), cmp_op!($E,F64,"f64::<=","f64",<=),
     cmp_op!($E,F64,"f64::>","f64",>), cmp_op!($E,F64,"f64::>=","f64",>=),
     cmp_op!($E,F64,"f64::==","f64",==), cmp_op!($E,F64,"f64::!=","f64",!=),
     if_op!($E,"f64::if","f64"),
 ]};}
 
+// The string operations are total. `substr` and `at` keep their documented
+// behaviour of yielding the empty string for a range that is out of bounds or
+// not on a UTF-8 boundary, rather than reporting it: an index is data here, not
+// a partial operation. Their index arithmetic saturates so that a `usize` near
+// the maximum cannot overflow the `+` — the sum is only used to bound a range
+// that `s.get` re-checks anyway.
 macro_rules! string_ops { ($E:ident) => { &[
     LitOpDesc { name: "String::concat", arg_sorts: &["String","String"], ret_sort: "String",
-        eval: |a| match (a[0],a[1]) { ($E::Str(x),$E::Str(y)) => { let mut r=x.clone(); r.push_str(y); $E::Str(r) } _=>panic!() } },
+        eval: |a| match (a[0],a[1]) { ($E::Str(x),$E::Str(y)) => { let mut r=x.clone(); r.push_str(y); Some($E::Str(r)) } _=>panic!() } },
     LitOpDesc { name: "String::contains", arg_sorts: &["String","String"], ret_sort: "bool",
-        eval: |a| match (a[0],a[1]) { ($E::Str(x),$E::Str(y)) => $E::Bool(x.contains(y.as_str())), _=>panic!() } },
+        eval: |a| match (a[0],a[1]) { ($E::Str(x),$E::Str(y)) => Some($E::Bool(x.contains(y.as_str()))), _=>panic!() } },
     LitOpDesc { name: "String::replace", arg_sorts: &["String","String","String"], ret_sort: "String",
-        eval: |a| match (a[0],a[1],a[2]) { ($E::Str(s),$E::Str(f),$E::Str(t)) => $E::Str(s.replacen(f.as_str(),t.as_str(),1)), _=>panic!() } },
+        eval: |a| match (a[0],a[1],a[2]) { ($E::Str(s),$E::Str(f),$E::Str(t)) => Some($E::Str(s.replacen(f.as_str(),t.as_str(),1))), _=>panic!() } },
     cmp_op!($E,Str,"String::==","String",==), cmp_op!($E,Str,"String::!=","String",!=),
     if_op!($E,"String::if","String"),
     LitOpDesc { name: "String::len", arg_sorts: &["String"], ret_sort: "usize",
-        eval: |a| match a[0] { $E::Str(s) => $E::Usize(s.len()), _=>panic!() } },
+        eval: |a| match a[0] { $E::Str(s) => Some($E::Usize(s.len())), _=>panic!() } },
     LitOpDesc { name: "String::substr", arg_sorts: &["String","usize","usize"], ret_sort: "String",
         eval: |a| match (a[0],a[1],a[2]) {
-            ($E::Str(s),$E::Usize(st),$E::Usize(ln)) => $E::Str(s.get(*st..(*st+*ln).min(s.len())).unwrap_or("").to_owned()),
+            ($E::Str(s),$E::Usize(st),$E::Usize(ln)) =>
+                Some($E::Str(s.get(*st..st.saturating_add(*ln).min(s.len())).unwrap_or("").to_owned())),
             _=>panic!(),
         } },
     LitOpDesc { name: "String::at", arg_sorts: &["String","usize"], ret_sort: "String",
-        eval: |a| match (a[0],a[1]) { ($E::Str(s),$E::Usize(i)) => $E::Str(s.get(*i..*i+1).unwrap_or("").to_owned()), _=>panic!() } },
+        eval: |a| match (a[0],a[1]) { ($E::Str(s),$E::Usize(i)) => Some($E::Str(s.get(*i..i.saturating_add(1)).unwrap_or("").to_owned())), _=>panic!() } },
 ]};}
 
 // ---------------------------------------------------------------------------
@@ -360,9 +367,28 @@ fn parse_rbig(s: &str) -> Option<BigRational> {
 // Bignum op macros (use operator overloading, not checked_ methods)
 // ---------------------------------------------------------------------------
 
+/// A *total* arbitrary-precision operation, applied with the plain operator.
+///
+/// Arbitrary precision removes overflow but not partiality, so this macro is
+/// only for the operators that cannot fault on their sort: `+ - *` on `IBig` and
+/// `RBig`, and `+ *` on `UBig`. Division, remainder, and `UBig`'s subtraction
+/// panic in the underlying type and get their own macros below.
 macro_rules! bignum_binop { ($E:ident,$V:ident,$n:expr,$s:expr,$op:tt) => {
     LitOpDesc { name: $n, arg_sorts: &[$s,$s], ret_sort: $s,
-        eval: |a| match (a[0],a[1]) { ($E::$V(x),$E::$V(y)) => $E::$V(x $op y), _=>panic!() } }
+        eval: |a| match (a[0],a[1]) { ($E::$V(x),$E::$V(y)) => Some($E::$V(x $op y)), _=>panic!() } }
+};}
+/// Division or remainder on an arbitrary-precision type: undefined at a zero
+/// divisor, which the underlying type signals by panicking. Tested before the
+/// operator is applied, so the panic is unreachable.
+macro_rules! bignum_divop { ($E:ident,$V:ident,$n:expr,$s:expr,$op:tt) => {
+    LitOpDesc { name: $n, arg_sorts: &[$s,$s], ret_sort: $s,
+        eval: |a| match (a[0],a[1]) {
+            ($E::$V(x),$E::$V(y)) => {
+                if y.is_zero() { return None; }
+                Some($E::$V(x $op y))
+            }
+            _=>panic!(),
+        } }
 };}
 macro_rules! bignum_min {
     ($E:ident,$V:ident,$n:expr,$s:expr) => {
@@ -371,7 +397,7 @@ macro_rules! bignum_min {
             arg_sorts: &[$s, $s],
             ret_sort: $s,
             eval: |a| match (a[0], a[1]) {
-                ($E::$V(x), $E::$V(y)) => $E::$V(x.min(y).clone()),
+                ($E::$V(x), $E::$V(y)) => Some($E::$V(x.min(y).clone())),
                 _ => panic!(),
             },
         }
@@ -384,7 +410,7 @@ macro_rules! bignum_max {
             arg_sorts: &[$s, $s],
             ret_sort: $s,
             eval: |a| match (a[0], a[1]) {
-                ($E::$V(x), $E::$V(y)) => $E::$V(x.max(y).clone()),
+                ($E::$V(x), $E::$V(y)) => Some($E::$V(x.max(y).clone())),
                 _ => panic!(),
             },
         }
@@ -393,12 +419,12 @@ macro_rules! bignum_max {
 
 macro_rules! ibig_ops { ($E:ident) => { &[
     bignum_binop!($E,IBig,"IBig::+","IBig",+), bignum_binop!($E,IBig,"IBig::-","IBig",-),
-    bignum_binop!($E,IBig,"IBig::*","IBig",*), bignum_binop!($E,IBig,"IBig::/","IBig",/),
-    bignum_binop!($E,IBig,"IBig::%","IBig",%),
+    bignum_binop!($E,IBig,"IBig::*","IBig",*), bignum_divop!($E,IBig,"IBig::/","IBig",/),
+    bignum_divop!($E,IBig,"IBig::%","IBig",%),
     LitOpDesc { name: "IBig::neg", arg_sorts: &["IBig"], ret_sort: "IBig",
-        eval: |a| match a[0] { $E::IBig(x) => $E::IBig(-x), _=>panic!() } },
+        eval: |a| match a[0] { $E::IBig(x) => Some($E::IBig(-x)), _=>panic!() } },
     LitOpDesc { name: "IBig::abs", arg_sorts: &["IBig"], ret_sort: "IBig",
-        eval: |a| match a[0] { $E::IBig(x) => $E::IBig(if *x<BigInt::zero() {-x} else {x.clone()}), _=>panic!() } },
+        eval: |a| match a[0] { $E::IBig(x) => Some($E::IBig(if *x<BigInt::zero() {-x} else {x.clone()})), _=>panic!() } },
     bignum_min!($E,IBig,"IBig::min","IBig"), bignum_max!($E,IBig,"IBig::max","IBig"),
     cmp_op!($E,IBig,"IBig::<","IBig",<), cmp_op!($E,IBig,"IBig::<=","IBig",<=),
     cmp_op!($E,IBig,"IBig::>","IBig",>), cmp_op!($E,IBig,"IBig::>=","IBig",>=),
@@ -406,9 +432,17 @@ macro_rules! ibig_ops { ($E:ident) => { &[
     if_op!($E,"IBig::if","IBig"),
 ]};}
 macro_rules! ubig_ops { ($E:ident) => { &[
-    bignum_binop!($E,UBig,"UBig::+","UBig",+), bignum_binop!($E,UBig,"UBig::-","UBig",-),
-    bignum_binop!($E,UBig,"UBig::*","UBig",*), bignum_binop!($E,UBig,"UBig::/","UBig",/),
-    bignum_binop!($E,UBig,"UBig::%","UBig",%),
+    bignum_binop!($E,UBig,"UBig::+","UBig",+),
+    // The one unsigned arbitrary-precision operator that is still partial:
+    // `BigUint`'s `-` panics when the result would be negative, so the order is
+    // the domain condition and is tested first.
+    LitOpDesc { name: "UBig::-", arg_sorts: &["UBig","UBig"], ret_sort: "UBig",
+        eval: |a| match (a[0],a[1]) {
+            ($E::UBig(x),$E::UBig(y)) => if x < y { None } else { Some($E::UBig(x - y)) },
+            _=>panic!(),
+        } },
+    bignum_binop!($E,UBig,"UBig::*","UBig",*), bignum_divop!($E,UBig,"UBig::/","UBig",/),
+    bignum_divop!($E,UBig,"UBig::%","UBig",%),
     bignum_min!($E,UBig,"UBig::min","UBig"), bignum_max!($E,UBig,"UBig::max","UBig"),
     cmp_op!($E,UBig,"UBig::<","UBig",<), cmp_op!($E,UBig,"UBig::<=","UBig",<=),
     cmp_op!($E,UBig,"UBig::>","UBig",>), cmp_op!($E,UBig,"UBig::>=","UBig",>=),
@@ -417,11 +451,11 @@ macro_rules! ubig_ops { ($E:ident) => { &[
 ]};}
 macro_rules! rbig_ops { ($E:ident) => { &[
     bignum_binop!($E,RBig,"RBig::+","RBig",+), bignum_binop!($E,RBig,"RBig::-","RBig",-),
-    bignum_binop!($E,RBig,"RBig::*","RBig",*), bignum_binop!($E,RBig,"RBig::/","RBig",/),
+    bignum_binop!($E,RBig,"RBig::*","RBig",*), bignum_divop!($E,RBig,"RBig::/","RBig",/),
     LitOpDesc { name: "RBig::neg", arg_sorts: &["RBig"], ret_sort: "RBig",
-        eval: |a| match a[0] { $E::RBig(x) => $E::RBig(-x), _=>panic!() } },
+        eval: |a| match a[0] { $E::RBig(x) => Some($E::RBig(-x)), _=>panic!() } },
     LitOpDesc { name: "RBig::abs", arg_sorts: &["RBig"], ret_sort: "RBig",
-        eval: |a| match a[0] { $E::RBig(x) => { let v=x.clone(); $E::RBig(if v<BigRational::zero() {-v} else {v}) } _=>panic!() } },
+        eval: |a| match a[0] { $E::RBig(x) => { let v=x.clone(); Some($E::RBig(if v<BigRational::zero() {-v} else {v})) } _=>panic!() } },
     bignum_min!($E,RBig,"RBig::min","RBig"), bignum_max!($E,RBig,"RBig::max","RBig"),
     cmp_op!($E,RBig,"RBig::<","RBig",<), cmp_op!($E,RBig,"RBig::<=","RBig",<=),
     cmp_op!($E,RBig,"RBig::>","RBig",>), cmp_op!($E,RBig,"RBig::>=","RBig",>=),
@@ -622,7 +656,7 @@ impl LitModel for AllModel {
                 arg_sorts: &["i64"],
                 ret_sort: "RBig",
                 eval: |a| match a[0] {
-                    AllLit::I64(x) => AllLit::RBig(BigRational::from_integer((*x).into())),
+                    AllLit::I64(x) => Some(AllLit::RBig(BigRational::from_integer((*x).into()))),
                     _ => panic!(),
                 },
             });
@@ -632,7 +666,7 @@ impl LitModel for AllModel {
                 ret_sort: "RBig",
                 eval: |a| match (a[0], a[1]) {
                     (AllLit::RBig(x), AllLit::I64(k)) => {
-                        AllLit::RBig(x * BigRational::from_integer((*k).into()))
+                        Some(AllLit::RBig(x * BigRational::from_integer((*k).into())))
                     }
                     _ => panic!(),
                 },
@@ -643,9 +677,16 @@ impl LitModel for AllModel {
                 ret_sort: "RBig",
                 eval: |a| match (a[0], a[1]) {
                     (AllLit::RBig(x), AllLit::I64(e)) => {
-                        let e = i32::try_from(*e).expect("RBig::pow exponent out of range");
-                        assert!(e >= 0, "RBig::pow negative exponent");
-                        AllLit::RBig(x.pow(e))
+                        // `Ratio::pow` takes an `i32`, and a negative exponent
+                        // inverts, which panics at zero. Both are domain
+                        // conditions: an exponent that does not fit `i32`, and a
+                        // negative one, have no value here. Decided by
+                        // `try_from` and a comparison, never by truncation.
+                        let e = i32::try_from(*e).ok()?;
+                        if e < 0 {
+                            return None;
+                        }
+                        Some(AllLit::RBig(x.pow(e)))
                     }
                     _ => panic!(),
                 },

@@ -1,0 +1,11 @@
+;; EXPECT: error
+;; TYPES: machine
+;; The same fault inside a `:when` guard rather than a right-hand side. A guard
+;; that has no value on an assignment is NOT read as a guard that failed: the
+;; matcher records the fault and the run ends. Treating it as false would hide a
+;; partial rule and make the result depend on which assignments the join
+;; happened to enumerate.
+(datatype Math (Num i64) (Mark Math))
+(rewrite (Num a) (Mark (Num a)) :when ((i64::< (i64::/ 100 a) 3)))
+(let z (Num 0))
+(run 10)
