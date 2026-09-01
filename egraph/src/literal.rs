@@ -262,7 +262,7 @@ macro_rules! nira_int_binop {
     ($name:expr, $op:tt) => {
         LitOpDesc { name: $name, arg_sorts: &["IBig", "IBig"], ret_sort: "IBig",
             eval: |args| match (args[0], args[1]) {
-                (NiraLitVal::Int(a), NiraLitVal::Int(b)) => NiraLitVal::Int(a $op b),
+                (NiraLitVal::Int(a), NiraLitVal::Int(b)) => Some(NiraLitVal::Int(a $op b)),
                 _ => panic!("type error"),
             },
         }
@@ -273,7 +273,7 @@ macro_rules! nira_rat_binop {
     ($name:expr, $op:tt) => {
         LitOpDesc { name: $name, arg_sorts: &["RBig", "RBig"], ret_sort: "RBig",
             eval: |args| match (args[0], args[1]) {
-                (NiraLitVal::Rat(a), NiraLitVal::Rat(b)) => NiraLitVal::Rat(a $op b),
+                (NiraLitVal::Rat(a), NiraLitVal::Rat(b)) => Some(NiraLitVal::Rat(a $op b)),
                 _ => panic!("type error"),
             },
         }
@@ -287,13 +287,29 @@ const NIRA_OPS: &[LitOpDesc<NiraLitVal>] = &[
     nira_rat_binop!("r+", +),
     nira_rat_binop!("r-", -),
     nira_rat_binop!("r*", *),
-    nira_rat_binop!("r/", /),
+    // Not `nira_rat_binop!`: rational division is the one partial operation in
+    // this model, and dividing by zero has no value rather than a value the
+    // engine could build.
+    LitOpDesc {
+        name: "r/",
+        arg_sorts: &["RBig", "RBig"],
+        ret_sort: "RBig",
+        eval: |args| match (args[0], args[1]) {
+            (NiraLitVal::Rat(a), NiraLitVal::Rat(b)) => {
+                if b.is_zero() {
+                    return None;
+                }
+                Some(NiraLitVal::Rat(a / b))
+            }
+            _ => panic!("type error"),
+        },
+    },
     LitOpDesc {
         name: "<",
         arg_sorts: &["IBig", "IBig"],
         ret_sort: "bool",
         eval: |args| match (args[0], args[1]) {
-            (NiraLitVal::Int(a), NiraLitVal::Int(b)) => NiraLitVal::Bool(a < b),
+            (NiraLitVal::Int(a), NiraLitVal::Int(b)) => Some(NiraLitVal::Bool(a < b)),
             _ => panic!("type error"),
         },
     },
@@ -302,7 +318,7 @@ const NIRA_OPS: &[LitOpDesc<NiraLitVal>] = &[
         arg_sorts: &["IBig", "IBig"],
         ret_sort: "bool",
         eval: |args| match (args[0], args[1]) {
-            (NiraLitVal::Int(a), NiraLitVal::Int(b)) => NiraLitVal::Bool(a <= b),
+            (NiraLitVal::Int(a), NiraLitVal::Int(b)) => Some(NiraLitVal::Bool(a <= b)),
             _ => panic!("type error"),
         },
     },
@@ -311,7 +327,7 @@ const NIRA_OPS: &[LitOpDesc<NiraLitVal>] = &[
         arg_sorts: &["IBig", "IBig"],
         ret_sort: "bool",
         eval: |args| match (args[0], args[1]) {
-            (NiraLitVal::Int(a), NiraLitVal::Int(b)) => NiraLitVal::Bool(a != b),
+            (NiraLitVal::Int(a), NiraLitVal::Int(b)) => Some(NiraLitVal::Bool(a != b)),
             _ => panic!("type error"),
         },
     },
@@ -320,7 +336,7 @@ const NIRA_OPS: &[LitOpDesc<NiraLitVal>] = &[
         arg_sorts: &["bool", "bool"],
         ret_sort: "bool",
         eval: |args| match (args[0], args[1]) {
-            (NiraLitVal::Bool(a), NiraLitVal::Bool(b)) => NiraLitVal::Bool(*a && *b),
+            (NiraLitVal::Bool(a), NiraLitVal::Bool(b)) => Some(NiraLitVal::Bool(*a && *b)),
             _ => panic!("type error"),
         },
     },
@@ -329,7 +345,7 @@ const NIRA_OPS: &[LitOpDesc<NiraLitVal>] = &[
         arg_sorts: &["bool", "bool"],
         ret_sort: "bool",
         eval: |args| match (args[0], args[1]) {
-            (NiraLitVal::Bool(a), NiraLitVal::Bool(b)) => NiraLitVal::Bool(*a || *b),
+            (NiraLitVal::Bool(a), NiraLitVal::Bool(b)) => Some(NiraLitVal::Bool(*a || *b)),
             _ => panic!("type error"),
         },
     },
@@ -338,7 +354,7 @@ const NIRA_OPS: &[LitOpDesc<NiraLitVal>] = &[
         arg_sorts: &["bool"],
         ret_sort: "bool",
         eval: |args| match args[0] {
-            NiraLitVal::Bool(a) => NiraLitVal::Bool(!a),
+            NiraLitVal::Bool(a) => Some(NiraLitVal::Bool(!a)),
             _ => panic!("type error"),
         },
     },
@@ -454,15 +470,30 @@ mod tests {
         let a = NiraLitVal::Int(BigInt::from(3));
         let b = NiraLitVal::Int(BigInt::from(7));
         let result = (plus.eval)(&[&a, &b]);
-        assert_eq!(result, NiraLitVal::Int(BigInt::from(10)));
+        assert_eq!(result, Some(NiraLitVal::Int(BigInt::from(10))));
 
         let lt = m.find_op("<").unwrap();
         let result = (lt.eval)(&[&a, &b]);
-        assert_eq!(result, NiraLitVal::Bool(true));
+        assert_eq!(result, Some(NiraLitVal::Bool(true)));
 
         let not = m.find_op("not").unwrap();
         let t = NiraLitVal::Bool(true);
-        assert_eq!((not.eval)(&[&t]), NiraLitVal::Bool(false));
+        assert_eq!((not.eval)(&[&t]), Some(NiraLitVal::Bool(false)));
+    }
+
+    /// The one partial operation in this model: `r/` has no value at a zero
+    /// divisor, and says so instead of panicking inside `BigRational`.
+    #[test]
+    fn nira_rational_division_by_zero_is_undefined() {
+        let m = NiraModel;
+        let div = m.find_op("r/").unwrap();
+        let one = NiraLitVal::Rat(BigRational::from_integer(BigInt::from(1)));
+        let zero = NiraLitVal::Rat(BigRational::from_integer(BigInt::from(0)));
+        assert_eq!((div.eval)(&[&one, &zero]), None);
+        assert_eq!(
+            (div.eval)(&[&one, &one]),
+            Some(NiraLitVal::Rat(BigRational::from_integer(BigInt::from(1))))
+        );
     }
 
     #[test]

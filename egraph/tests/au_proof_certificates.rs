@@ -645,7 +645,8 @@ fn certificate_trace_with_rewrite_step() {
     // and assert the axioms, then close congruence.
     let index = IndexStore::build(&eg);
     let stats = IndexStats::from_index(&index);
-    let fired = apply_rule(&rule, &mut eg, &index, &stats, &model, &globals);
+    let fired = apply_rule(&rule, &mut eg, &index, &stats, &model, &globals)
+        .expect("the rule's RHS applies no primitive");
     assert!(fired > 0, "rule (h1 x) -> (c) must fire on h1(a)");
     eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax_h2 });
     eg.merge_justified(k1u, p, Justification::Axiom { axiom_id: ax_k1 });
@@ -688,7 +689,8 @@ fn certificate_trace_with_rewrite_step() {
 
     let index = IndexStore::build(&eg);
     let stats = IndexStats::from_index(&index);
-    let fired = apply_rule(&rule, &mut eg, &index, &stats, &model, &globals);
+    let fired = apply_rule(&rule, &mut eg, &index, &stats, &model, &globals)
+        .expect("the rule's RHS applies no primitive");
     assert!(fired > 0, "rule must fire again after restore");
     eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax_h2 });
     eg.merge_justified(k1u, p, Justification::Axiom { axiom_id: ax_k1 });

@@ -32,11 +32,26 @@ pub enum InterpError {
     ExtractFailed(crate::extract::ExtractError),
     /// `(pop)` without matching `(push)`.
     PopWithoutPush,
+    /// A rule applied a partial primitive operation outside its domain while a
+    /// `(run …)` or `(check …)` was saturating: division by zero, an overflow
+    /// under checked arithmetic, a multiplicity too wide for the configuration.
+    ///
+    /// Separate from `CompileError` because nothing about the rule is wrong:
+    /// it sortchecks, and the operands only exist once it matches. The engine
+    /// cannot pick a value on the program's behalf, so the run stops here and
+    /// the driver exits nonzero.
+    EvalFailed(crate::lit_model::EvalError),
 }
 
 impl From<crate::resolve::ResolveError> for InterpError {
     fn from(e: crate::resolve::ResolveError) -> Self {
         InterpError::CompileError(e)
+    }
+}
+
+impl From<crate::lit_model::EvalError> for InterpError {
+    fn from(e: crate::lit_model::EvalError) -> Self {
+        InterpError::EvalFailed(e)
     }
 }
 
@@ -50,6 +65,7 @@ impl std::fmt::Display for InterpError {
             InterpError::CheckFailed(s) => write!(f, "check failed: {s}"),
             InterpError::ExtractFailed(e) => write!(f, "extract failed: {e}"),
             InterpError::PopWithoutPush => write!(f, "pop without matching push"),
+            InterpError::EvalFailed(e) => write!(f, "{e}"),
         }
     }
 }
@@ -288,7 +304,7 @@ where
     /// this driver's operational joint fixpoint without joining the pair. It is
     /// not a semantic non-derivability theorem: matching is over materialized
     /// nodes, and AC scalar-subterm matching remains incomplete.
-    fn lazy_ac_decide(&mut self, a: Cfg::G, b: Cfg::G) -> (bool, bool) {
+    fn lazy_ac_decide(&mut self, a: Cfg::G, b: Cfg::G) -> Result<(bool, bool), InterpError> {
         self.lazy_txn_open();
         self.eg.set_cc_goal(Some((a, b)));
         self.eg.rebuild();
@@ -326,11 +342,21 @@ where
                     &mut self.index_scratch,
                 ),
             };
+            // The completion goal is cleared on the fault path too: it is state
+            // on the e-graph, and a caller that reports the error and keeps the
+            // interpreter alive must not inherit a goal from a run that ended.
+            let result = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    self.eg.set_cc_goal(None);
+                    return Err(e.into());
+                }
+            };
             equal = self.eg.find(a) == self.eg.find(b);
             inconclusive = !equal && (aborted(&self.eg) || !result.saturated);
         }
         self.eg.set_cc_goal(None);
-        (equal, inconclusive)
+        Ok((equal, inconclusive))
     }
 
     /// Enable/disable the runtime reduced-basis invariant checks (default off; see
@@ -446,7 +472,7 @@ where
                 self.eg.rebuild();
                 if self.eg.find(a_id) != self.eg.find(b_id) {
                     if self.ac_mode == AcMode::Lazy {
-                        match self.lazy_ac_decide(a_id, b_id) {
+                        match self.lazy_ac_decide(a_id, b_id)? {
                             (true, _) => return Ok(()),
                             (false, aborted) => {
                                 return Err(InterpError::CheckFailed(if aborted {
@@ -481,7 +507,7 @@ where
                 // implemented operational fixpoint without a join is the command's
                 // acceptance criterion, not a semantic non-disequality theorem.
                 if self.ac_mode == AcMode::Lazy {
-                    match self.lazy_ac_decide(a_id, b_id) {
+                    match self.lazy_ac_decide(a_id, b_id)? {
                         (true, _) => {
                             return Err(InterpError::CheckFailed(
                                 "terms are equal (derived by lazy AC completion)".into(),
@@ -611,8 +637,11 @@ where
                         )
                     }
                 };
+                // The elapsed time is recorded before the fault is propagated:
+                // the run did take that long, and `(print-stats)` after a caught
+                // error should not read a stale duration from an earlier run.
                 self.last_run_time = Some(t0.elapsed());
-                self.last_sat = Some(result);
+                self.last_sat = Some(result?);
             }
             CCommand::PrintSize(op) => {
                 let counts = self.eg.op_node_counts();

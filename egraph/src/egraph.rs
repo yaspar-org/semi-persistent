@@ -574,13 +574,17 @@ where
     }
 
     /// Saturate: apply rules to fixpoint or until `limit` iterations.
+    ///
+    /// `Err` is a rule that applied a partial primitive outside its domain; see
+    /// [`EvalError`](crate::lit_model::EvalError). Every `saturate*` entry point
+    /// here reports it the same way.
     pub fn saturate<M: crate::lit_model::LitModel<Value = L>, S: crate::DenseId + Copy>(
         &mut self,
         rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
         model: &M,
         limit: usize,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate(rules, self, model, limit, globals)
     }
 
@@ -592,7 +596,7 @@ where
         model: &M,
         limit: usize,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate_semi(rules, self, model, limit, globals)
     }
 
@@ -604,7 +608,7 @@ where
         model: &M,
         spec: &crate::saturate::RunSpec<Cfg::G>,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate_spec(rules, self, model, spec, globals)
     }
 
@@ -618,7 +622,7 @@ where
         model: &M,
         spec: &crate::saturate::RunSpec<Cfg::G>,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate_semi_spec(rules, self, model, spec, globals)
     }
 
@@ -632,7 +636,7 @@ where
         spec: &crate::saturate::RunSpec<Cfg::G>,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
         scratch: &mut crate::index::IndexScratch<Cfg>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         crate::saturate::saturate_spec_in(rules, self, model, spec, globals, scratch)
     }
 
@@ -647,7 +651,7 @@ where
         spec: &crate::saturate::RunSpec<Cfg::G>,
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
         scratch: &mut crate::index::IndexScratch<Cfg>,
-    ) -> crate::saturate::SatResult {
+    ) -> Result<crate::saturate::SatResult, crate::lit_model::EvalError> {
         // Semi-naive is the one consumer of the merge-membership delta (see
         // `merge_in_classes`); the flag keeps the per-merge ring walks off
         // everywhere else.

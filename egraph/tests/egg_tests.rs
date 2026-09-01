@@ -5,7 +5,9 @@
 //! Each `.egg` file in `tests/egg/` is run through the interpreter. The first six lines may
 //! carry directive comments. The feature directives mirror the CLI flags, so a test file is
 //! self-contained, no env var needed:
-//!   ;; EXPECT: ok|check-failed|parse-error|sort-error|error|panic   outcome (default: ok)
+//!   ;; EXPECT: ok|check-failed|parse-error|sort-error|error   outcome (default: ok)
+//! No fixture expects a panic: an outcome a program can provoke is reported through
+//! `error`, and a panic is an engine bug, which is not something to pin with a test.
 //!   ;; TYPES: machine                                     type group (default: bignum)
 //!   ;; EVAL: naive|semi|both                              eval algorithm (default: both)
 //!   ;; DERIVE_AC_EQS: on                                  eager AC completion (default off)
@@ -215,53 +217,11 @@ fn check(path: &str) {
     semi_persistent_egraph::ematch::set_runtime_scheduling(false);
 }
 
-fn check_panic(path: &str) {
-    let src = std::fs::read_to_string(path).unwrap();
-    let directives = parse_directives(&src);
-    for strategy in directives.evals.iter().copied() {
-        let src = src.clone();
-        let cc = directives.derive_ac_eqs;
-        let basis_checks = directives.check_ac_basis;
-        let result = std::panic::catch_unwind(move || {
-            let surface_cmds = semi_persistent_egraph::parser::parse_program_v2(&src).unwrap();
-            let mut interp = Interpreter::<
-                semi_persistent_egraph::nodes::DefaultConfig,
-                MachineLit,
-                MachineModel,
-                true,
-                false,
-            >::new(MachineModel);
-            interp.set_strategy(strategy);
-            interp.set_cc(cc);
-            interp.set_basis_checks(basis_checks);
-            let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
-            let checked = semi_persistent_egraph::sortcheck::sortcheck_program(
-                surface_cmds,
-                &mut interp.eg,
-                &interp.model,
-                &mut globals,
-            )
-            .unwrap();
-            let _ = interp.run_checked(&checked);
-        });
-        assert!(
-            result.is_err(),
-            "{path} [{strategy:?}]: expected panic but succeeded"
-        );
-    }
-}
-
 macro_rules! egg_test {
     ($name:ident, $file:expr) => {
         #[test]
         fn $name() {
             check(concat!("tests/egg/", $file));
-        }
-    };
-    ($name:ident, $file:expr, panic) => {
-        #[test]
-        fn $name() {
-            check_panic(concat!("tests/egg/", $file));
         }
     };
     // Unsupported-behavior fixture: runs only under `--ignored`; `$why` states the limitation.
@@ -276,7 +236,14 @@ macro_rules! egg_test {
 
 // ── Arithmetic: checked (default) ──
 egg_test!(checked_add_ok, "checked_add_ok.egg");
-egg_test!(checked_overflow, "checked_overflow.egg", panic);
+// A partial primitive applied outside its domain is a reported program error,
+// not a panic: the engine cannot pick a value, but the caller has to be able to
+// tell a bad program from an engine bug.
+egg_test!(checked_overflow, "checked_overflow.egg");
+egg_test!(div_by_zero_error, "div_by_zero_error.egg");
+egg_test!(bignum_div_by_zero_error, "bignum_div_by_zero_error.egg");
+egg_test!(ubig_sub_negative_error, "ubig_sub_negative_error.egg");
+egg_test!(guard_div_by_zero_error, "guard_div_by_zero_error.egg");
 
 // ── Arithmetic: wrapping ──
 egg_test!(wrapping_add, "wrapping_add.egg");

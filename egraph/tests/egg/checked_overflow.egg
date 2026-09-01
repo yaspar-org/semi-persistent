@@ -1,5 +1,8 @@
-;; EXPECT: panic
+;; EXPECT: error
 ;; TYPES: machine
+;; Checked arithmetic at the machine widths: `i64::+` has no i64 value here, so
+;; the run reports the operation and its operands and stops. It used to abort the
+;; process from inside the model's `expect`.
 (datatype Math (Num i64) (Add Math Math))
 (rewrite (Add (Num x) (Num y)) (Num (i64::+ x y)))
 (let e (Add (Num 9223372036854775807) (Num 1)))

@@ -102,11 +102,14 @@ fn main() {
     for _ in 0..reps {
         let (mut eg, rules) = ac_rules(width);
         let t = std::time::Instant::now();
+        // The benchmark's rules are total on their operands; a fault would mean
+        // the site itself is malformed, which is not what it measures.
         let r = if semi {
             saturate_semi(&rules, &mut eg, &NiraModel, 4, &g)
         } else {
             saturate(&rules, &mut eg, &NiraModel, 4, &g)
-        };
+        }
+        .expect("benchmark rules are total");
         let dt = t.elapsed().as_secs_f64() * 1e3;
         acc += r.iterations + eg.node_count();
         best = best.min(dt);

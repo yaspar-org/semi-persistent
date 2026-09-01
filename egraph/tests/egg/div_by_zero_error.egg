@@ -1,0 +1,11 @@
+;; EXPECT: error
+;; TYPES: machine
+;; A partial primitive on the right-hand side, reached with operands that put it
+;; outside its domain. The rule is well sorted and the match is real; only the
+;; divisor makes it undefined, and that is known no earlier than the firing. The
+;; run stops with a program error naming the rule, the operation, and the
+;; operands, instead of panicking inside `i64::checked_div`'s caller.
+(datatype Math (Num i64) (Div Math Math))
+(rewrite (Div (Num x) (Num y)) (Num (i64::/ x y)))
+(let e (Div (Num 7) (Num 0)))
+(run 10)

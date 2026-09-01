@@ -87,8 +87,9 @@ find performance.
 ### Sound and extensible builtin operations
 
 Primitive operations on machine-word types (i64, u64, f64) are checked
-by default: overflow, division by zero, and lossy conversions panic
-rather than silently producing wrong results. Wrapping and saturating
+by default: overflow, division by zero, and lossy conversions stop the run
+with an error naming the rule and the operands, rather than silently
+producing wrong results. Wrapping and saturating
 variants (`wrapping_add`, `saturating_mul`, etc.) require explicit
 opt-in, so constant-folding rules are sound to execute by default and
 the engine never derives false equalities from silent wraparound.

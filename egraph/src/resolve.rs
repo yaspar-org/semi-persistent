@@ -245,7 +245,14 @@ pub enum RPredExpr<O, L> {
     Const(L),
     App {
         op: O,
-        eval: fn(&[&L]) -> L,
+        /// The model's [`crate::lit_model::LitOpDesc::eval`]. `None` from it is
+        /// the guard being undefined on this assignment, not the guard failing;
+        /// the matcher reports it rather than quietly dropping the match.
+        eval: fn(&[&L]) -> Option<L>,
+        /// The operation's surface name, carried so a fault can be attributed
+        /// to it. Only the pointer is otherwise needed, and a pointer cannot be
+        /// turned back into a name.
+        name: &'static str,
         args: Vec<RPredExpr<O, L>>,
     },
 }
@@ -1632,11 +1639,13 @@ where
             for (a, s) in args.iter().zip(arg_sorts) {
                 rargs.push(resolve_pred_expr(a, Some(*s), ops, sorts, model, shape)?);
             }
+            // A primitive op's id is its index into the model's op table: the
+            // registry registers `LitModel::ops()` first and in order.
+            let desc = &model.ops()[op_id.to_usize()];
             Ok(RPredExpr::App {
                 op: op_id,
-                // A primitive op's id is its index into the model's op table: the
-                // registry registers `LitModel::ops()` first and in order.
-                eval: model.ops()[op_id.to_usize()].eval,
+                eval: desc.eval,
+                name: desc.name,
                 args: rargs,
             })
         }

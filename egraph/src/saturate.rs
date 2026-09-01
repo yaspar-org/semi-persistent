@@ -9,7 +9,7 @@ use crate::containers::DenseId;
 use crate::egraph::EGraph;
 use crate::ematch::MatchPool;
 use crate::index::IndexStore;
-use crate::lit_model::LitModel;
+use crate::lit_model::{EvalError, LitModel};
 use crate::literal::LitVal;
 
 /// The goal of a `(run … :until …)`: two already-built class ids and the relation that has
@@ -92,13 +92,18 @@ pub enum SaturationStrategy {
 }
 
 /// Run equality saturation for up to `limit` iterations, over every rule given.
+///
+/// `Err` is a partial primitive operation applied outside its domain by a rule
+/// that fired — see [`EvalError`]. It ends the run at the action that faulted:
+/// the effects already applied stay in the e-graph, and the caller is expected
+/// to report and stop rather than keep saturating.
 pub fn saturate<Cfg, L, M, S, const T: bool, const P: bool>(
     rules: &[PreparedRule<Cfg::O, S, L>],
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     limit: usize,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-) -> SatResult
+) -> Result<SatResult, EvalError>
 where
     Cfg: EGraphConfig,
     S: DenseId,
@@ -117,7 +122,7 @@ pub fn saturate_spec<Cfg, L, M, S, const T: bool, const P: bool>(
     model: &M,
     spec: &RunSpec<Cfg::G>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-) -> SatResult
+) -> Result<SatResult, EvalError>
 where
     Cfg: EGraphConfig,
     S: DenseId,
@@ -152,7 +157,7 @@ pub fn saturate_spec_in<Cfg, L, M, S, const T: bool, const P: bool>(
     spec: &RunSpec<Cfg::G>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     scratch: &mut crate::index::IndexScratch<Cfg>,
-) -> SatResult
+) -> Result<SatResult, EvalError>
 where
     Cfg: EGraphConfig,
     S: DenseId,
@@ -169,7 +174,7 @@ where
             eg.rebuild();
         }
         if goal_met(spec, eg) {
-            return sat_result(i, false, true, steps_base);
+            return Ok(sat_result(i, false, true, steps_base));
         }
         let index = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
@@ -183,7 +188,11 @@ where
                 crate::schedule::IndexStats::from_index(&index)
             };
             for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
-                changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool);
+                // A fault gives up the recycled arenas: `?` skips the
+                // `recycle_into` below. That costs one round's arenas on a path
+                // that ends the program, and keeping them would mean either a
+                // guard object or duplicating the recycle on the error path.
+                changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool)?;
             }
         }
         // Before any exit from the loop body: the arenas go back so the next
@@ -192,7 +201,7 @@ where
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
         crate::phase_timing::round_line("naive");
         if changes == 0 {
-            return sat_result(i + 1, true, false, steps_base);
+            return Ok(sat_result(i + 1, true, false, steps_base));
         }
     }
     // The budget is spent, but a goal met by the last iteration's work should still be
@@ -203,7 +212,7 @@ where
         eg.rebuild();
     }
     let met = goal_met(spec, eg);
-    sat_result(spec.limit, false, met, steps_base)
+    Ok(sat_result(spec.limit, false, met, steps_base))
 }
 
 /// Does the run's `:until` goal hold? Always false when there is no goal.
@@ -421,7 +430,8 @@ where
 }
 
 /// Schedule one (rule, variant) against `vindex` and apply its actions to
-/// every match. Returns the number of changes applied.
+/// every match. Returns the number of changes applied, or the first
+/// [`EvalError`] a fired action produced.
 /// `pool` is carried across every (rule, variant) in a saturation run so the
 /// match buffers are allocated once and then recycled; see [`MatchPool`].
 fn run_rule_variant<Cfg, L, M, S, const T: bool, const P: bool>(
@@ -432,7 +442,7 @@ fn run_rule_variant<Cfg, L, M, S, const T: bool, const P: bool>(
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     pool: &mut MatchPool<Cfg>,
-) -> usize
+) -> Result<usize, EvalError>
 where
     Cfg: EGraphConfig,
     S: DenseId,
@@ -453,12 +463,22 @@ where
     let sampler = crate::index::IndexSampler::new(eg, *vindex);
     let plan = crate::schedule::schedule_with_stats_sampled(&rule.query, stats, &sampler);
     crate::ematch::run_query_scheduled_into(&rule.query, &plan, eg, vindex, globals, pool);
+    // Checked before the actions, for the same reason as in `apply_rule_pooled`:
+    // the matcher dropped the assignment the guard was undefined on, so the
+    // surviving matches are the answers to a query the engine could not fully
+    // evaluate.
+    if let Some(fault) = pool.guard_fault() {
+        return Err(crate::apply::name_fault(fault.clone(), rule, eg));
+    }
     let mut changes = 0;
     for j in 0..pool.len() {
         let row = pool.row(j);
-        changes += crate::apply::apply_rule_actions(rule, &row, eg, model, globals);
+        match crate::apply::apply_rule_actions(rule, &row, eg, model, globals) {
+            Ok(n) => changes += n,
+            Err(e) => return Err(crate::apply::name_fault(e, rule, eg)),
+        }
     }
-    changes
+    Ok(changes)
 }
 
 /// Semi-naive saturation: equivalent to [`saturate`] but, each round after
@@ -475,7 +495,7 @@ pub fn saturate_semi<Cfg, L, M, S, const T: bool, const P: bool>(
     model: &M,
     limit: usize,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-) -> SatResult
+) -> Result<SatResult, EvalError>
 where
     Cfg: EGraphConfig,
     S: DenseId,
@@ -494,7 +514,7 @@ pub fn saturate_semi_spec<Cfg, L, M, S, const T: bool, const P: bool>(
     model: &M,
     spec: &RunSpec<Cfg::G>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-) -> SatResult
+) -> Result<SatResult, EvalError>
 where
     Cfg: EGraphConfig,
     S: DenseId,
@@ -526,7 +546,7 @@ pub fn saturate_semi_spec_in<Cfg, L, M, S, const T: bool, const P: bool>(
     spec: &RunSpec<Cfg::G>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     scratch: &mut crate::index::IndexScratch<Cfg>,
-) -> SatResult
+) -> Result<SatResult, EvalError>
 where
     Cfg: EGraphConfig,
     S: DenseId,
@@ -545,7 +565,7 @@ where
             eg.rebuild();
         }
         if goal_met(spec, eg) {
-            return sat_result(i, false, true, steps_base);
+            return Ok(sat_result(i, false, true, steps_base));
         }
         let full = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
@@ -577,7 +597,7 @@ where
                 let vindex = VariantIndex::naive(&full);
                 for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
                     changes +=
-                        run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool);
+                        run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool)?;
                 }
             }
             // Rounds ≥ 1: one variant per join atom.
@@ -602,7 +622,7 @@ where
                             model,
                             globals,
                             &mut pool,
-                        );
+                        )?;
                         continue;
                     }
                     for &di in &jatoms {
@@ -613,7 +633,7 @@ where
                         };
                         let vindex = VariantIndex::variant(&full, delta, di);
                         changes +=
-                            run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool);
+                            run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool)?;
                     }
                 }
             }
@@ -630,7 +650,7 @@ where
         crate::phase_timing::round_line(if had_delta { "semi" } else { "semi-r0" });
 
         if changes == 0 {
-            return sat_result(i + 1, true, false, steps_base);
+            return Ok(sat_result(i + 1, true, false, steps_base));
         }
     }
     if spec.until.is_some() {
@@ -638,7 +658,7 @@ where
         eg.rebuild();
     }
     let met = goal_met(spec, eg);
-    sat_result(limit, false, met, steps_base)
+    Ok(sat_result(limit, false, met, steps_base))
 }
 
 /// Like `saturate`, but prints each match and union when `labels` is provided.
@@ -648,7 +668,7 @@ pub fn saturate_trace<Cfg, L, M, S, const T: bool, const P: bool>(
     model: &M,
     limit: usize,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-) -> SatResult
+) -> Result<SatResult, EvalError>
 where
     Cfg: EGraphConfig,
     S: DenseId,
@@ -656,10 +676,11 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    use crate::ematch::run_query;
-
     let steps_base = crate::ematch::match_steps();
     let mut total_iter = 0;
+    // `run_query_into` rather than `run_query`: the latter drops its pool, and
+    // with it the guard fault the matcher recorded there.
+    let mut pool = MatchPool::new();
     for i in 0..limit {
         total_iter = i + 1;
         eg.rebuild();
@@ -670,7 +691,11 @@ where
         for (label, rule) in rules {
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let shape = &plan.shape;
-            let matches = run_query(&plan, eg, &vindex, globals);
+            crate::ematch::run_query_into(&plan, eg, &vindex, globals, &mut pool);
+            if let Some(fault) = pool.guard_fault() {
+                return Err(crate::apply::name_fault(fault.clone(), rule, eg));
+            }
+            let matches: Vec<_> = (0..pool.len()).map(|j| pool.clone_match(j)).collect();
             for m in &matches {
                 // Print node bindings (skip internal ?-prefixed names)
                 let binds: Vec<String> = shape
@@ -679,7 +704,16 @@ where
                     .enumerate()
                     .filter(|(_, name)| !name.starts_with('?'))
                     .map(|(i, name)| {
-                        let vid = crate::ast::VarId::new(i as u16);
+                        // `shape.nodes` is the interner's own name table and its
+                        // positions ARE the `VarId`s: every entry was appended by
+                        // `VarScope::intern_var`, which mints through
+                        // `u16::try_from(self.nodes.len())` and refuses beyond it.
+                        // So `i < nodes.len() <= u16::MAX as usize + 1` and the
+                        // narrowing cannot fail; a failure would be that table
+                        // holding an id it could not have minted.
+                        let raw = u16::try_from(i)
+                            .expect("node var position: minted by a checked intern_var");
+                        let vid = crate::ast::VarId::new(raw);
                         format!("{name}=e{}", m.get(vid).to_usize())
                     })
                     .collect();
@@ -688,7 +722,11 @@ where
                     .iter()
                     .enumerate()
                     .map(|(i, name)| {
-                        let vid = crate::ast::LitValVarId::new(i as u16);
+                        // Same bound as `shape.nodes` above, from
+                        // `VarScope::intern_lit_val`'s checked mint.
+                        let raw = u16::try_from(i)
+                            .expect("lit var position: minted by a checked intern_lit_val");
+                        let vid = crate::ast::LitValVarId::new(raw);
                         let lid = m.get_lit_val(vid);
                         format!("{name}={}", eg.lits().get(lid))
                     })
@@ -696,17 +734,20 @@ where
                 let all_binds = [binds, lit_binds].concat().join(", ");
                 eprint!("  [{label}] match: {all_binds}");
 
-                changes += crate::apply::apply_rule_actions(rule, m, eg, model, globals);
+                // The newline first, so the trace line for the match that
+                // faulted is closed before the error propagates.
+                let applied = crate::apply::apply_rule_actions(rule, m, eg, model, globals);
                 eprintln!();
+                changes += applied.map_err(|e| crate::apply::name_fault(e, rule, eg))?;
             }
         }
         if changes == 0 {
             eprintln!("-- fixpoint after {total_iter} iterations --");
-            return sat_result(total_iter, true, false, steps_base);
+            return Ok(sat_result(total_iter, true, false, steps_base));
         }
         eprintln!("-- iteration {total_iter}: {changes} changes --");
     }
-    sat_result(total_iter, false, false, steps_base)
+    Ok(sat_result(total_iter, false, false, steps_base))
 }
 
 #[cfg(test)]
@@ -903,11 +944,13 @@ mod tests {
         let (mut a, rules_a, n) = setup();
         let ra = saturate::<DefaultConfig, _, _, _, false, false>(
             &rules_a, &mut a, &NiraModel, 30, &globals,
-        );
+        )
+        .unwrap();
         let (mut b, rules_b, n2) = setup();
         let rb = saturate_semi::<DefaultConfig, _, _, _, false, false>(
             &rules_b, &mut b, &NiraModel, 30, &globals,
-        );
+        )
+        .unwrap();
 
         // Same fixpoint.
         assert_eq!(n, n2);
@@ -993,12 +1036,14 @@ mod tests {
         let (mut a, rules_a, n) = setup();
         let ra = saturate::<DefaultConfig, _, _, _, false, false>(
             &rules_a, &mut a, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
 
         let (mut b, rules_b, n2) = setup();
         let rb = saturate_semi::<DefaultConfig, _, _, _, false, false>(
             &rules_b, &mut b, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
 
         assert_eq!(n, n2, "setup must be deterministic");
         assert_eq!(ra.saturated, rb.saturated, "saturation flag mismatch");
@@ -1181,11 +1226,11 @@ mod tests {
                 let (mut a, rules_a, n) = build(&specs, mask);
                 let ra = saturate::<DefaultConfig, _, _, _, false, false>(
                     &rules_a, &mut a, &NiraModel, 40, &globals,
-                );
+                ).unwrap();
                 let (mut b, rules_b, _n2) = build(&specs, mask);
                 let rb = saturate_semi::<DefaultConfig, _, _, _, false, false>(
                     &rules_b, &mut b, &NiraModel, 40, &globals,
-                );
+                ).unwrap();
 
                 prop_assert_eq!(ra.saturated, rb.saturated, "saturation flag");
                 prop_assert_eq!(
@@ -1277,11 +1322,13 @@ mod tests {
             let (mut a, rules_a, n) = build_nested(&specs, mask);
             let ra = saturate::<DefaultConfig, _, _, _, false, false>(
                 &rules_a, &mut a, &NiraModel, round_cap, &globals,
-            );
+            )
+            .unwrap();
             let (mut b, rules_b, _n2) = build_nested(&specs, mask);
             let rb = saturate_semi::<DefaultConfig, _, _, _, false, false>(
                 &rules_b, &mut b, &NiraModel, round_cap, &globals,
-            );
+            )
+            .unwrap();
 
             assert_eq!(n, 6, "fixture shape");
             assert!(
@@ -1324,11 +1371,11 @@ mod tests {
                 let (mut a, rules_a, n) = build_nested(&specs, mask);
                 let ra = saturate::<DefaultConfig, _, _, _, false, false>(
                     &rules_a, &mut a, &NiraModel, 12, &globals,
-                );
+                ).unwrap();
                 let (mut b, rules_b, _n2) = build_nested(&specs, mask);
                 let rb = saturate_semi::<DefaultConfig, _, _, _, false, false>(
                     &rules_b, &mut b, &NiraModel, 12, &globals,
-                );
+                ).unwrap();
 
                 prop_assert_eq!(ra.saturated, rb.saturated, "saturation flag");
                 prop_assert_eq!(
@@ -2139,11 +2186,13 @@ mod tests {
         let (mut a, rules_a, n) = setup();
         saturate::<DefaultConfig, _, _, _, false, false>(
             &rules_a, &mut a, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
         let (mut b, rules_b, n2) = setup();
         saturate_semi::<DefaultConfig, _, _, _, false, false>(
             &rules_b, &mut b, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
         assert_eq!(n, n2);
         assert_eq!(
             partition_over(&a, n),
@@ -2295,11 +2344,13 @@ mod tests {
         let (mut a, rules_a, n) = build();
         let ra = saturate::<DefaultConfig, _, _, _, false, true>(
             &rules_a, &mut a, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
         let (mut b, rules_b, n2) = build();
         let rb = saturate_semi::<DefaultConfig, _, _, _, false, true>(
             &rules_b, &mut b, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
         assert_eq!(n, n2);
         assert_eq!(
             ra.saturated, rb.saturated,
@@ -2372,7 +2423,8 @@ mod tests {
         let tok = eg.mark(crate::containers::ShrinkPolicy::Never);
         let _ = saturate_semi::<DefaultConfig, _, _, _, true, false>(
             &rules, &mut eg, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
         eg.restore(tok);
         assert!(
             eg.touched().is_empty(),
@@ -2383,13 +2435,15 @@ mod tests {
         // naive run from the same input.
         let rs = saturate_semi::<DefaultConfig, _, _, _, true, false>(
             &rules, &mut eg, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
         assert!(rs.saturated);
 
         let (mut egn, rules_n, n2) = build();
         let _ = saturate::<DefaultConfig, _, _, _, true, false>(
             &rules_n, &mut egn, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
         assert_eq!(n, n2);
         assert_eq!(
             partition_over(&eg, n),
@@ -2415,7 +2469,8 @@ mod tests {
         let (mut eg, rules) = setup();
         let r1 = saturate_semi::<DefaultConfig, _, _, _, false, false>(
             &rules, &mut eg, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
         assert!(
             r1.saturated,
             "should reach a fixpoint (final round empty-delta)"
@@ -2425,7 +2480,8 @@ mod tests {
         // re-finds the matches, every application is idempotent → 0 changes.
         let r2 = saturate_semi::<DefaultConfig, _, _, _, false, false>(
             &rules, &mut eg, &NiraModel, 50, &globals,
-        );
+        )
+        .unwrap();
         assert!(r2.saturated);
         assert_eq!(
             r2.iterations, 1,
@@ -2447,7 +2503,8 @@ mod tests {
             &NiraModel,
             10,
             &globals,
-        );
+        )
+        .unwrap();
         assert!(res.saturated);
         assert_eq!(res.iterations, 1);
     }
@@ -2467,7 +2524,8 @@ mod tests {
             &NiraModel,
             10,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
 
         assert!(res.saturated);
         let fba = eg.add(eg.ops().id_by_name("f").unwrap(), &[b, a]);
@@ -2488,7 +2546,8 @@ mod tests {
             &NiraModel,
             10,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
 
         assert!(res.saturated);
         assert_eq!(res.iterations, 1);
@@ -2528,7 +2587,8 @@ mod tests {
             &model,
             10,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
 
         assert!(res.saturated);
 
@@ -2556,7 +2616,8 @@ mod tests {
             &NiraModel,
             10,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
 
         assert!(res.saturated);
         // g(a) and g(b) should both be merged with f(a,b)
@@ -2619,7 +2680,8 @@ mod tests {
             &model,
             10,
             &globals,
-        );
+        )
+        .unwrap();
         assert!(res.saturated);
 
         let v9 = eg.intern_lit(NiraLitVal::Int(BigInt::from(9)));
@@ -2703,7 +2765,8 @@ mod tests {
             &model,
             20,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
-        );
+        )
+        .unwrap();
 
         eg.rebuild();
         eg.show("after_saturation");

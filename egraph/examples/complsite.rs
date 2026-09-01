@@ -55,7 +55,8 @@ fn main() {
     for _ in 0..reps {
         let mut eg = ac_completion(pairs);
         let t = std::time::Instant::now();
-        let r = saturate(&[], &mut eg, &NiraModel, 1, &g);
+        // No rules, so nothing can evaluate a primitive, let alone fault.
+        let r = saturate(&[], &mut eg, &NiraModel, 1, &g).expect("no rules to fault");
         let dt = t.elapsed().as_secs_f64() * 1e3;
         acc += r.iterations + eg.node_count();
         best = best.min(dt);

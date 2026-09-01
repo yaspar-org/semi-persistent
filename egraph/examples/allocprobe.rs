@@ -213,11 +213,14 @@ fn probe(name: &str, semi: bool, limit: usize, build: impl Fn() -> (EG, Vec<Rule
     let peak_before = PEAK.load(Ordering::Relaxed);
     PEAK.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
 
+    // The probe's rules are total on their operands, so a fault here is the
+    // probe being wrong about its own inputs, not a result to report.
     let r = if semi {
         semi_persistent_egraph::saturate::saturate_semi(&rules, &mut eg, &NiraModel, limit, &g)
     } else {
         semi_persistent_egraph::saturate::saturate(&rules, &mut eg, &NiraModel, limit, &g)
-    };
+    }
+    .expect("probe rules are total");
 
     let after = snap();
     let peak = PEAK.load(Ordering::Relaxed);
