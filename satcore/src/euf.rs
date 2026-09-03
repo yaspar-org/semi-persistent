@@ -19,6 +19,11 @@
 //! e-graph (a disequality is an atom property, not a merge — Z3's design):
 //! it is checked against the union-find after each rebuild.
 //!
+//! The solver is parametric on the e-graph id configuration, like the
+//! engine itself: [`EufConfig`] extends `EGraphConfig` with an atom id
+//! constrained to the same index word, so the 31-bit and 63-bit families
+//! ([`Euf31`], [`Euf63`]) share one implementation.
+//!
 //! Backtracking composes the e-graph's semi-persistent token with this
 //! layer's own trail lengths, following the struct-of-tokens convention
 //! used throughout the workspace. A single [`Euf::restore`] undoes the
@@ -26,11 +31,13 @@
 
 use std::collections::HashMap;
 
+use semi_persistent_egraph::canon::{MSetCanon, VarCanon};
 use semi_persistent_egraph::containers::ShrinkPolicy;
-use semi_persistent_egraph::id::{self, AssumptionId, ENodeId, OpId, SortId};
+use semi_persistent_egraph::id;
 use semi_persistent_egraph::literal::LitVal;
+use semi_persistent_egraph::nodes::{Config64, ConfigM16, DefaultConfig};
 use semi_persistent_egraph::union_find::{Justification, ProofBuf};
-use semi_persistent_egraph::{EGraph31, EGraphToken};
+use semi_persistent_egraph::{DenseId, EGraph, EGraphConfig, EGraphToken, IndexLike};
 
 semi_persistent_containers::define_id31! {
     /// A 31-bit index into the EUF atom table. Atoms are created
@@ -39,63 +46,96 @@ semi_persistent_containers::define_id31! {
     pub struct AtomId / StoredAtomId, "atom";
 }
 
-/// A Boolean literal over EUF atoms.
-///
-/// The representation is the [`AssumptionId`] carrying `2 * atom + sign`
-/// (low bit set = negative polarity) — the classic SAT packing, chosen so a
-/// literal round-trips through [`Justification::Assumption`] with no side
-/// table. The doubling means atoms above half the 31-bit id space have no
-/// literal; like the deliberately 15-bit `RuleId`, the checked mint turns
-/// that exhaustion into a panic rather than a wrapped id.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Lit(AssumptionId);
+semi_persistent_containers::define_id63! {
+    /// The 63-bit atom id, for the [`Config64`] id family.
+    pub struct AtomId64 / StoredAtomId64, "atom64";
+}
 
-impl Lit {
-    pub fn new(atom: AtomId, positive: bool) -> Self {
-        Lit(id::id_at(atom.to_usize() * 2 + usize::from(!positive)))
+/// Extends the e-graph configuration with the satcore ids. The atom id is
+/// constrained to the configuration's index word because the atom table
+/// scales with the formula, which scales with the e-graph: the same
+/// capacity-coupling rule `EGraphConfig` states for its own ids.
+pub trait EufConfig: EGraphConfig {
+    /// Atom table index.
+    type Atom: DenseId<Index = Self::Index>;
+}
+
+impl EufConfig for DefaultConfig {
+    type Atom = AtomId;
+}
+impl EufConfig for Config64 {
+    type Atom = AtomId64;
+}
+impl EufConfig for ConfigM16 {
+    type Atom = AtomId;
+}
+
+/// A Boolean literal over EUF atoms: an atom id plus a polarity.
+///
+/// At rest the two are separate fields; only the [`Justification::Assumption`]
+/// boundary packs them into the configuration's index word as
+/// `2 * atom + sign` (low bit set = negative). The packing uses the full
+/// word, so the atom id's own 31/63-bit bound is the binding capacity
+/// constraint, and [`Lit::decode`]'s checked mint turns any out-of-range
+/// word into a panic rather than a wrapped id.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Lit<A: DenseId> {
+    atom: A,
+    positive: bool,
+}
+
+impl<A: DenseId> Lit<A> {
+    pub fn new(atom: A, positive: bool) -> Self {
+        Lit { atom, positive }
     }
-    pub fn atom(self) -> AtomId {
-        // In range by construction: every Lit was minted from an AtomId.
-        id::id_at(self.0.to_usize() / 2)
+    pub fn atom(self) -> A {
+        self.atom
     }
     pub fn is_positive(self) -> bool {
-        self.0.to_usize() & 1 == 0
+        self.positive
     }
-    pub fn negated(self) -> Lit {
-        Lit(id::id_at(self.0.to_usize() ^ 1))
+    pub fn negated(self) -> Self {
+        Lit {
+            atom: self.atom,
+            positive: !self.positive,
+        }
     }
-    /// The justification payload this literal travels as.
-    pub fn assumption(self) -> AssumptionId {
-        self.0
+    /// Pack into the index word carried by [`Justification::Assumption`].
+    pub fn encode(self) -> usize {
+        self.atom.as_usize() * 2 + usize::from(!self.positive)
     }
-    pub fn from_assumption(a: AssumptionId) -> Self {
-        Lit(a)
+    /// Unpack a word produced by [`Lit::encode`], with a checked atom mint.
+    pub fn decode(word: usize) -> Self {
+        Lit {
+            atom: id::id_at(word / 2),
+            positive: word & 1 == 0,
+        }
     }
 }
 
-struct AtomData {
+struct AtomData<G> {
     /// The interned `Eq` node. One atom per node: `Eq` is a commutative
     /// (sorted-pair) operator, so `eq(a, b)` and `eq(b, a)` intern to the
     /// same node and therefore the same atom.
-    node: ENodeId,
-    lhs: ENodeId,
-    rhs: ENodeId,
+    node: G,
+    lhs: G,
+    rhs: G,
     value: Option<bool>,
 }
 
 /// Result of [`Euf::check`].
 #[derive(Debug, PartialEq, Eq)]
-pub enum CheckResult {
+pub enum CheckResult<A: DenseId> {
     /// The assignment is consistent. Carries equality literals entailed by
     /// the current assignment but not yet assigned (theory propagations);
     /// each can be explained on demand with [`Euf::explain_true_eq`].
-    Ok(Vec<Lit>),
+    Ok(Vec<Lit<A>>),
     /// The assignment is EUF-inconsistent. The returned literals are all
     /// currently assigned true and are jointly contradictory: the
     /// antecedent equalities that force two classes together, plus the
     /// disequality literal they violate. The learned clause is the negation
     /// of this set.
-    Conflict(Vec<Lit>),
+    Conflict(Vec<Lit<A>>),
 }
 
 /// Restore token for [`Euf`]: the e-graph token plus this layer's trail
@@ -109,27 +149,38 @@ pub struct EufToken {
 
 /// Ground EUF solver over a proof-tracking e-graph (`PROOFS = true` is
 /// required: conflict explanation walks the justification forest).
-pub struct Euf<L: LitVal> {
-    eg: EGraph31<L, true, true>,
-    term_sort: SortId,
-    eq_op: OpId,
-    atoms: Vec<AtomData>,
-    atom_of_node: HashMap<ENodeId, AtomId>,
+pub struct Euf<Cfg: EufConfig, L: LitVal> {
+    eg: EGraph<Cfg, L, true, true>,
+    term_sort: Cfg::S,
+    eq_op: Cfg::O,
+    atoms: Vec<AtomData<Cfg::G>>,
+    atom_of_node: HashMap<Cfg::G, Cfg::Atom>,
     /// Assignment order, for unwinding values on restore.
-    trail: Vec<AtomId>,
+    trail: Vec<Cfg::Atom>,
     /// Scratch for proof extraction.
-    buf: ProofBuf<ENodeId>,
+    buf: ProofBuf<Cfg::G>,
 }
 
-impl<L: LitVal> Default for Euf<L> {
+/// The default 31-bit configuration, mirroring `EGraph31`.
+pub type Euf31<L> = Euf<DefaultConfig, L>;
+/// The 63-bit configuration, mirroring `EGraph63`.
+pub type Euf63<L> = Euf<Config64, L>;
+
+impl<Cfg: EufConfig, L: LitVal> Default for Euf<Cfg, L>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<L: LitVal> Euf<L> {
+impl<Cfg: EufConfig, L: LitVal> Euf<Cfg, L>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
     pub fn new() -> Self {
-        let mut eg = EGraph31::new();
+        let mut eg = EGraph::new();
         // Interned (not builtin) sorts are non-concrete, which both merge
         // directions need: term classes merge on assertion, and Bool-sorted
         // Eq classes merge when congruence identifies two atoms.
@@ -150,30 +201,30 @@ impl<L: LitVal> Euf<L> {
     }
 
     /// Declare an uninterpreted function `Term^arity -> Term`.
-    pub fn declare_fun(&mut self, name: &str, arity: usize) -> OpId {
+    pub fn declare_fun(&mut self, name: &str, arity: usize) -> Cfg::O {
         let sorts = vec![self.term_sort; arity];
         self.eg.ops_mut().register(name, &sorts, self.term_sort)
     }
 
     /// Declare an uninterpreted constant and return its e-node.
-    pub fn declare_const(&mut self, name: &str) -> ENodeId {
+    pub fn declare_const(&mut self, name: &str) -> Cfg::G {
         let op = self.declare_fun(name, 0);
         self.eg.add(op, &[])
     }
 
     /// Build the term `op(children...)`.
-    pub fn term(&mut self, op: OpId, children: &[ENodeId]) -> ENodeId {
+    pub fn term(&mut self, op: Cfg::O, children: &[Cfg::G]) -> Cfg::G {
         self.eg.add(op, children)
     }
 
     /// Intern the equality atom for `a = b`, reusing an existing atom when
     /// the (canonicalized, sorted) pair already has one.
-    pub fn eq_atom(&mut self, a: ENodeId, b: ENodeId) -> AtomId {
+    pub fn eq_atom(&mut self, a: Cfg::G, b: Cfg::G) -> Cfg::Atom {
         let node = self.eg.add(self.eq_op, &[a, b]);
         if let Some(&atom) = self.atom_of_node.get(&node) {
             return atom;
         }
-        let atom: AtomId = id::id_at(self.atoms.len());
+        let atom: Cfg::Atom = id::id_at(self.atoms.len());
         self.atoms.push(AtomData {
             node,
             lhs: a,
@@ -184,11 +235,11 @@ impl<L: LitVal> Euf<L> {
         atom
     }
 
-    pub fn value(&self, atom: AtomId) -> Option<bool> {
-        self.atoms[atom.to_usize()].value
+    pub fn value(&self, atom: Cfg::Atom) -> Option<bool> {
+        self.atoms[atom.as_usize()].value
     }
 
-    pub fn find(&self, x: ENodeId) -> ENodeId {
+    pub fn find(&self, x: Cfg::G) -> Cfg::G {
         self.eg.find_const(x)
     }
 
@@ -197,10 +248,10 @@ impl<L: LitVal> Euf<L> {
     /// — it is enforced by the next [`Euf::check`]. Re-asserting the same
     /// value is a no-op; asserting the opposite of an assigned literal is a
     /// caller bug (a CDCL driver never does this — it backtracks first).
-    pub fn assert_lit(&mut self, lit: Lit) {
+    pub fn assert_lit(&mut self, lit: Lit<Cfg::Atom>) {
         let atom = lit.atom();
         let positive = lit.is_positive();
-        let data = &mut self.atoms[atom.to_usize()];
+        let data = &mut self.atoms[atom.as_usize()];
         match data.value {
             Some(v) if v == positive => return,
             Some(_) => panic!("assert_lit on an atom already assigned the opposite value"),
@@ -213,13 +264,10 @@ impl<L: LitVal> Euf<L> {
             // Already-equal classes make this a no-op merge; the atom's
             // truth is then explained by the pre-existing forest, not this
             // edge.
-            self.eg.merge_justified(
-                lhs,
-                rhs,
-                Justification::Assumption {
-                    lit: lit.assumption(),
-                },
-            );
+            let word = Cfg::Index::try_from_usize(lit.encode())
+                .expect("literal encoding exceeds the configuration's index word");
+            self.eg
+                .merge_justified(lhs, rhs, Justification::Assumption { lit: word });
         }
     }
 
@@ -231,7 +279,7 @@ impl<L: LitVal> Euf<L> {
     /// should drive this from the rebuild's `touched` log instead, which
     /// records exactly the recanonicalized nodes (the analogue of Z3's
     /// reinsert-parents hook).
-    pub fn check(&mut self) -> CheckResult {
+    pub fn check(&mut self) -> CheckResult<Cfg::Atom> {
         self.eg.rebuild();
         let mut propagations = Vec::new();
         for i in 0..self.atoms.len() {
@@ -242,7 +290,7 @@ impl<L: LitVal> Euf<L> {
             if self.eg.find_const(lhs) != self.eg.find_const(rhs) {
                 continue;
             }
-            let atom: AtomId = id::id_at(i);
+            let atom: Cfg::Atom = id::id_at(i);
             match value {
                 Some(true) => {}
                 None => propagations.push(Lit::new(atom, true)),
@@ -262,9 +310,9 @@ impl<L: LitVal> Euf<L> {
     /// Explain why an atom's two sides are currently equal, as the set of
     /// asserted equality literals whose merges (closed under congruence)
     /// force it. Returns `None` if the sides are not equal.
-    pub fn explain_true_eq(&mut self, atom: AtomId) -> Option<Vec<Lit>> {
+    pub fn explain_true_eq(&mut self, atom: Cfg::Atom) -> Option<Vec<Lit<Cfg::Atom>>> {
         let (lhs, rhs) = {
-            let d = &self.atoms[atom.to_usize()];
+            let d = &self.atoms[atom.as_usize()];
             (d.lhs, d.rhs)
         };
         if self.eg.find_const(lhs) != self.eg.find_const(rhs) {
@@ -277,16 +325,16 @@ impl<L: LitVal> Euf<L> {
     /// proof steps. `explain_deep` expands every congruence step into child
     /// explanations, so the collection is complete for ground EUF, where
     /// the only leaf justifications are assumptions.
-    fn explain_eq_lits(&mut self, a: ENodeId, b: ENodeId) -> Vec<Lit> {
+    fn explain_eq_lits(&mut self, a: Cfg::G, b: Cfg::G) -> Vec<Lit<Cfg::Atom>> {
         self.buf.steps.clear();
         let ok = self.eg.explain_deep(a, b, &mut self.buf);
         debug_assert!(ok, "explain_eq_lits on unequal classes");
-        let mut lits: Vec<Lit> = self
+        let mut lits: Vec<Lit<Cfg::Atom>> = self
             .buf
             .steps
             .iter()
             .filter_map(|&(_, _, j)| match j {
-                Justification::Assumption { lit } => Some(Lit::from_assumption(lit)),
+                Justification::Assumption { lit } => Some(Lit::decode(lit.as_usize())),
                 _ => None,
             })
             .collect();
@@ -316,8 +364,8 @@ impl<L: LitVal> Euf<L> {
         }
         for &atom in &self.trail[token.trail_len..] {
             // Atoms above atoms_len were just drained with the suffix.
-            if atom.to_usize() < token.atoms_len {
-                self.atoms[atom.to_usize()].value = None;
+            if atom.as_usize() < token.atoms_len {
+                self.atoms[atom.as_usize()].value = None;
             }
         }
         self.trail.truncate(token.trail_len);
@@ -329,9 +377,9 @@ mod tests {
     use super::*;
     use semi_persistent_egraph::model::MachineLit;
 
-    type E = Euf<MachineLit>;
+    type E = Euf31<MachineLit>;
 
-    fn lit(atom: AtomId, positive: bool) -> Lit {
+    fn lit<A: DenseId>(atom: A, positive: bool) -> Lit<A> {
         Lit::new(atom, positive)
     }
 
@@ -342,7 +390,7 @@ mod tests {
         assert_eq!(l.atom(), a);
         assert!(!l.is_positive());
         assert_eq!(l.negated(), lit(a, true));
-        assert_eq!(Lit::from_assumption(l.assumption()), l);
+        assert_eq!(Lit::<AtomId>::decode(l.encode()), l);
     }
 
     #[test]
@@ -356,6 +404,31 @@ mod tests {
     #[test]
     fn transitivity_conflict_names_all_antecedents() {
         let mut e = E::new();
+        let a = e.declare_const("a");
+        let b = e.declare_const("b");
+        let c = e.declare_const("c");
+        let ab = e.eq_atom(a, b);
+        let bc = e.eq_atom(b, c);
+        let ac = e.eq_atom(a, c);
+        e.assert_lit(lit(ab, true));
+        e.assert_lit(lit(bc, true));
+        e.assert_lit(lit(ac, false));
+        match e.check() {
+            CheckResult::Conflict(mut ls) => {
+                ls.sort_unstable();
+                let mut expected = vec![lit(ab, true), lit(bc, true), lit(ac, false)];
+                expected.sort_unstable();
+                assert_eq!(ls, expected);
+            }
+            other => panic!("expected conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn works_at_63_bit_width() {
+        // The same transitivity conflict through the Config64 id family:
+        // proves the solver is parametric in practice, not just in signature.
+        let mut e = Euf63::<MachineLit>::new();
         let a = e.declare_const("a");
         let b = e.declare_const("b");
         let c = e.declare_const("c");
@@ -478,12 +551,12 @@ mod tests {
         let b = e.declare_const("b");
         let base = e.mark();
         let ab = e.eq_atom(a, b);
-        assert_eq!(ab.to_usize(), 0);
+        assert_eq!(ab.as_usize(), 0);
         e.restore(base);
         // The atom table and the node it referenced are both gone; a fresh
         // interning starts over cleanly.
         let ab2 = e.eq_atom(a, b);
-        assert_eq!(ab2.to_usize(), 0);
+        assert_eq!(ab2.as_usize(), 0);
         assert_eq!(e.value(ab2), None);
     }
 

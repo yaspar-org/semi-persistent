@@ -19,4 +19,4 @@
 
 pub mod euf;
 
-pub use euf::{AtomId, CheckResult, Euf, EufToken, Lit};
+pub use euf::{AtomId, AtomId64, CheckResult, Euf, Euf31, Euf63, EufConfig, EufToken, Lit};

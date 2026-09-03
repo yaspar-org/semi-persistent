@@ -34,15 +34,6 @@ semi_persistent_containers::define_id15! {
     pub struct AxiomId / StoredAxiomId, "ax";
 }
 
-semi_persistent_containers::define_id31! {
-    /// A 31-bit external-assumption identifier, the payload of
-    /// [`crate::union_find::Justification::Assumption`]. The e-graph treats
-    /// it as opaque: a companion solver (the `satcore` crate) mints one per
-    /// asserted literal and maps it back to its own literal encoding when a
-    /// proof path surfaces it as a leaf antecedent.
-    pub struct AssumptionId / StoredAssumptionId, "asm";
-}
-
 /// Mint the dense id for an arena or log position, checked.
 ///
 /// Use this wherever an id is derived from a container position. A position and its

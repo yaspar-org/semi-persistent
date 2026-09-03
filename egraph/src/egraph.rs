@@ -1525,7 +1525,7 @@ where
                 node_b.to_usize()
             ),
             Justification::Assumption { lit } => {
-                write!(out, "assumption lit={}", lit.to_usize())
+                write!(out, "assumption lit={}", lit.as_usize())
             }
         }
     }
