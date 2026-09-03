@@ -288,6 +288,7 @@ fn reason<const T: bool, const P: bool>(
         | Justification::ACAxiomCP { .. }
         | Justification::Cancellative { .. }
         | Justification::InverseCancel { .. } => "ac-algebraic".to_string(),
+        Justification::Assumption { lit } => format!("assumption {lit}"),
         Justification::Filler => unreachable!("filler is never a real proof step"),
     }
 }

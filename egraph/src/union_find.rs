@@ -54,6 +54,15 @@ pub enum Justification<G: Copy> {
         node_a: G,
         node_b: G,
     },
+    /// External assumption: a companion solver (the `satcore` crate's EUF
+    /// layer) asserted an equality atom true, and this merge is that
+    /// assertion. The id's encoding is owned by the client; proof extraction
+    /// surfaces it as a leaf antecedent, which is what lets conflict
+    /// analysis cross from an e-graph explanation back into the client's
+    /// Boolean domain.
+    Assumption {
+        lit: crate::id::AssumptionId,
+    },
 }
 
 impl<G: Copy + Clone + core::fmt::Debug + PartialEq + Eq> Tagged for Justification<G> {
