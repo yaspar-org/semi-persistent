@@ -931,6 +931,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "semi-persistent-satcore"
+version = "0.3.0"
+dependencies = [
+ "semi-persistent-containers-verus",
+ "semi-persistent-egraph",
+ "vstd",
+]
+
+[[package]]
 name = "semi-persistent-traversals"
 version = "0.3.0"
 dependencies = [

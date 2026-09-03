@@ -3,6 +3,7 @@ members = [
     "semi-persistent",
     "containers",
     "egraph",
+    "satcore",
     "traversals",
     "traversals/compile-tests",
     "traversals/derive",

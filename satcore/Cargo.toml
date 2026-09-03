@@ -1,0 +1,23 @@
+[package]
+name = "semi-persistent-satcore"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "Apache-2.0"
+description = "Companion SAT/SMT layer for the semi-persistent e-graph: EUF theory solving over the e-graph's rollback tokens"
+repository = "https://github.com/yaspar-org/semi-persistent"
+homepage = "https://github.com/yaspar-org/semi-persistent"
+readme = "../README.md"
+publish = false
+
+[lib]
+name = "semi_persistent_satcore"
+path = "src/lib.rs"
+
+[dependencies]
+semi-persistent-egraph = { path = "../egraph", version = "0.3.0" }
+semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.3.0" }
+# The id macros expand to `verus!{}` blocks that name `::vstd` absolutely, so
+# every crate invoking `define_id31!` carries the same pinned vstd (as the
+# egraph crate does).
+vstd = "=0.0.0-2026-08-02-0125"
