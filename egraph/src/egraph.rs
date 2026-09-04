@@ -1538,10 +1538,33 @@ where
             return false;
         }
 
+        // The expansion walks a DAG of pair dependencies. Without
+        // memoization a pair shared by several paths is re-expanded once per
+        // path, which is exponential on diamond-shaped explanation structure
+        // (a two-assertion Boolean-congruence input ran for over 15 seconds
+        // before these sets were added). Two sets, because the two guards
+        // protect different work: `expanded` marks congruence steps whose
+        // child pairs have been walked; `explained` marks pairs whose forest
+        // path is already in `buf.steps`. A congruence pair must not seed
+        // `explained` (its path can be longer than the one recorded edge),
+        // and the initial pair must not seed `expanded` (its own congruence
+        // step still needs its children walked). Repeats append no steps,
+        // and consumers collect leaf justifications as a set, so skipping
+        // them loses nothing.
+        let mut expanded: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
+        let mut explained: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
+        explained.insert(Self::pair_key(a, b));
+
         let mut ac_scratch: Vec<Cfg::C> = Vec::new();
         let mut i = 0;
         while i < buf.steps.len() {
             if let Justification::Congruence { node_a, node_b } = buf.steps[i].2 {
+                if !expanded.insert(Self::pair_key(node_a, node_b)) {
+                    i += 1;
+                    continue;
+                }
                 buf.children_a.clear();
                 buf.children_b.clear();
                 self.collect_original_children(node_a, &mut buf.children_a, &mut ac_scratch);
@@ -1561,12 +1584,15 @@ where
                     for j in 0..n {
                         let ca = buf.children_a[j];
                         let cb = buf.children_b[j];
-                        if ca != cb && self.classes.find_const(ca) == self.classes.find_const(cb) {
+                        if ca != cb
+                            && self.classes.find_const(ca) == self.classes.find_const(cb)
+                            && explained.insert(Self::pair_key(ca, cb))
+                        {
                             self.classes.explain(ca, cb, buf);
                         }
                     }
                 } else {
-                    self.explain_grouped(buf);
+                    self.explain_grouped(buf, &mut explained);
                 }
             }
             i += 1;
@@ -1574,7 +1600,18 @@ where
         true
     }
 
-    fn explain_grouped(&self, buf: &mut ProofBuf<Cfg::G>) {
+    /// Order-normalized key for the explain-once set: `(a, b)` and `(b, a)`
+    /// name the same explanation.
+    fn pair_key(a: Cfg::G, b: Cfg::G) -> (usize, usize) {
+        let (x, y) = (a.to_usize(), b.to_usize());
+        if x <= y { (x, y) } else { (y, x) }
+    }
+
+    fn explain_grouped(
+        &self,
+        buf: &mut ProofBuf<Cfg::G>,
+        explained: &mut std::collections::HashSet<(usize, usize)>,
+    ) {
         buf.group_a.clear();
         buf.group_a.extend_from_slice(&buf.children_a);
         buf.group_a
@@ -1611,7 +1648,9 @@ where
         while k < buf.children_a.len() {
             let ca = buf.children_a[k];
             let cb = buf.children_a[k + 1];
-            self.classes.explain(ca, cb, buf);
+            if explained.insert(Self::pair_key(ca, cb)) {
+                self.classes.explain(ca, cb, buf);
+            }
             k += 2;
         }
     }
