@@ -11,7 +11,7 @@ documentation = "https://docs.rs/semi-persistent-containers-verus"
 autobins = false
 
 [dependencies]
-vstd = "=0.0.0-2026-08-02-0125"
+vstd = "=0.0.0-2026-08-23-0033"
 # SpMap's transient key index uses the same foldhash `fast` algorithm as
 # production through std::HashMap<K, usize, hasher_spec::IndexHasher>.
 # IndexHasher stores one explicit seed and builds foldhash::fast::FixedState.
