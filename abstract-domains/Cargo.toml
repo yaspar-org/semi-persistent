@@ -15,7 +15,7 @@ required-features = ["bin"]
 bin = []
 
 [dependencies]
-vstd = "=0.0.0-2026-08-02-0125"
+vstd = "=0.0.0-2026-08-23-0033"
 
 [package.metadata.verus]
 verify = true
