@@ -1949,7 +1949,16 @@ where
             // mode did). Sweep the full spliced use list; parents that are already
             // canonical early-return inside recanonize. Rare path (a class becomes a unit
             // class at most once per op), so the scratch collection is acceptable.
-            let merged_is_unit = {
+            //
+            // Guard the sweep on the presence of any completion (MSet/Set) op.
+            // `mset_ops().chain(set_ops())` filters `ops_of_kind`, which iterates
+            // the whole completion table (one slot per registered op), so without
+            // the guard this test is an O(num_ops) scan on every merge — one that
+            // provably finds nothing when no completion op exists, quadratic on
+            // op-heavy, merge-heavy inputs (e.g. eq_diamond). `min_width()` is the
+            // completion-op count (0 iff no MSet/Set op), an O(1) read; when it is
+            // 0 no class can be a unit class, so `merged_is_unit` is false.
+            let merged_is_unit = self.classes.min_width() > 0 && {
                 let units = &self.unit_node;
                 let classes = &self.classes;
                 self.ops.mset_ops().chain(self.ops.set_ops()).any(|op| {
