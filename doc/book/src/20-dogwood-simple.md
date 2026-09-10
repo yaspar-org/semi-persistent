@@ -9,15 +9,16 @@ of the original intent.
 ## Dogwood and temporal policies
 
 [Dogwood](https://github.com/dogwood-policy/dogwood) is a Cedar-derived policy
-language for authorization over event histories. Its
-[temporal sublanguage](https://dogwood-policy.github.io/dogwood/guide/04-temporal-expressions.html)
+language for authorization over event histories. Its [temporal
+sublanguage](https://dogwood-policy.github.io/dogwood/guide/04-temporal-expressions.html)
 is a bounded, past-only fragment of Metric First-Order Temporal Logic (MFOTL).
 It provides event predicates, `formerly`, `previous`, `since`, and the `count`
-and `sum` aggregations. Every temporal operator has a bounded look-back window.
+and `sum` aggregations. Every temporal operator has a bounded look-back
+window.
 
 A `when temporal { phi }` clause evaluates `phi` at the current decision
-timepoint against the recorded event history. The
-[event schema](https://dogwood-policy.github.io/dogwood/guide/03-event-schema.html)
+timepoint against the recorded event history. The [event
+schema](https://dogwood-policy.github.io/dogwood/guide/03-event-schema.html)
 determines the fields carried by each action and event kind. Request events
 carry inputs. Response events can additionally carry outputs such as an HTTP
 status code.
@@ -86,7 +87,7 @@ candidate B permits a `POST` to `/admin/purge-all` as well as a `POST` to
 
 The candidates also contain six presentational differences:
 
-| difference | representation in Semper |
+| difference | representation in the engine |
 | --- | --- |
 | Cedar condition order | `eAnd :assoc-comm-idem` |
 | temporal conjunction order | `tAnd :assoc-comm-idem` |
@@ -95,10 +96,10 @@ The candidates also contain six presentational differences:
 | `15m` versus `900s` | rewrite `mins` through `secsTimes`, then constant-fold its product |
 | `count >= 1` versus `1 <= count` | `(birewrite (tLte a b) (tGte b a))` |
 
-## Encoding Dogwood in Semper
+## Encoding Dogwood in the engine
 
-Semper does not evaluate Dogwood policies. It represents their abstract syntax
-as sorted first-order terms so that policies can be compared modulo the
+The engine does not evaluate Dogwood policies. It represents their abstract
+syntax as sorted first-order terms so that policies can be compared modulo the
 declared algebraic properties of the language operators and rewrite rules
 encoding known identities in the language. Dogwood remains responsible for
 validating and replaying completed policies.
@@ -107,7 +108,7 @@ The model retains the policy head, Cedar conditions, temporal conditions,
 aggregation binders, field paths, and request and response event kinds. The
 main correspondences are:
 
-| Dogwood construct | Semper representation |
+| Dogwood construct | Engine representation |
 | --- | --- |
 | `permit (...) when ...` | `rule`, `permit`, and `head` |
 | Cedar conditions and multiple `when` clauses | `Expr` terms under `eAnd` |

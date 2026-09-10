@@ -2,21 +2,21 @@
 
 ## What this is
 
-Semper is a term rewriting and equality saturation engine. Programs can
-snapshot and restore its state with semi-persistent `(push)` and `(pop)`, and
-can issue anti-unification queries over e-classes. Semper is a command-line
-program that reads a text file of S-expression commands in order. Every program
-in this book is one such file.
+`semi-persistent-egraph` is a term rewriting and equality saturation engine.
+Programs can snapshot and restore its state with semi-persistent `(push)` and
+`(pop)`, and can issue anti-unification queries over e-classes. It ships as a
+command-line program that reads a text file of S-expression commands in order.
+Every program in this book is one such file.
 
-Semper lets a program tag operators with algebraic properties such as
-associativity, commutativity, idempotence, an identity element, or a declared
-nilpotence order. The engine enforces those properties through automatic term
+A program can tag operators with algebraic properties such as associativity,
+commutativity, idempotence, an identity element, or a declared nilpotence
+order. The engine enforces those properties through automatic term
 canonization instead of rewrite rules. For an associative and commutative
 operator, children are represented as a sorted multiset. One e-node therefore
 represents every reassociation and permutation of that multiset, compressing a
 whole family of AC-equivalent terms without enumerating its members.
 
-The engine also answers more than equality questions. An anti-unification query
+It also answers more than equality questions. An anti-unification query
 returns a term that preserves shared structure and marks the remaining
 disagreements with `Variants` nodes.
 
@@ -39,9 +39,10 @@ clusters to explain the remaining differences.
 
 ## What you need to know already
 
-We assume that you are familiar with first-order terms and rewrite rules. We do
-not assume any experience with Semper or with e-graphs, equality saturation, AC
-canonization, or anti-unification; we introduce each of them from scratch.
+We assume that you are familiar with first-order terms and rewrite rules. We
+do not assume any experience with this engine or with e-graphs, equality
+saturation, AC canonization, or anti-unification; we introduce each of them
+from scratch.
 
 ## The examples
 
@@ -57,11 +58,11 @@ message quoted in the book was captured by running the corresponding file.
 ## What this book is not
 
 This book is not the design documentation. It states what a user needs to run
-and understand the engine. The
-[design chapters](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/00-table-of-contents.md)
-are the source of truth for storage, algorithms, and implementation invariants.
-When more detail is needed, this book links to the relevant design chapter
-instead of restating its specification.
+and understand the engine. The [design
+chapters](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/00-table-of-contents.md)
+are the source of truth for storage, algorithms, and implementation
+invariants. When more detail is needed, this book links to the relevant design
+chapter instead of restating its specification.
 
 This book is also not a paper. It proves no theorems. When an implementation
 claim rests on a prose argument rather than a machine-checked proof, the book

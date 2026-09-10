@@ -41,7 +41,7 @@ alternatives:
 
 A reviewer must determine which region belongs in the deployment policy. A
 configuration source, deployment test, or domain owner can settle that
-question. Semper reports the alternatives but does not choose one.
+question. The engine reports the alternatives but does not choose one.
 
 A `Variants` node is a syntactic marker in the selected anti-unifier, not
 necessarily one independent semantic decision. Chapter 22 shows one connective
@@ -49,7 +49,7 @@ change represented by two markers through identity elements.
 
 ## Ordering several differences
 
-Semper reports `:cr` for each pair and the terms under each `Variants` node.
+The engine reports `:cr` for each pair and the terms under each `Variants` node.
 It does not rank review questions or aggregate them across queries. A review
 can use three observable quantities as a convention:
 

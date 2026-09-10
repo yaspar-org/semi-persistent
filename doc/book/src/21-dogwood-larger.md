@@ -69,7 +69,7 @@ items:
 | request versus response event | A/B and B/C | the Dogwood event schema |
 | require `/deploy` versus omit the path guard | A/C and B/C | the requirement and a policy-owner review |
 
-Semper does not compute this aggregate table. The fixture executes all three
+The engine does not compute this aggregate table. The fixture executes all three
 queries, and the reader groups repeated alternative pairs by their position in
 the shared skeleton. Chapter 19's speculative scope can test either resolution;
 this chapter only reduces the repeated outputs to the distinct decisions.

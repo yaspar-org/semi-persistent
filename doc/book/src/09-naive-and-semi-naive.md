@@ -30,7 +30,7 @@ The delta is not merely a suffix of newly allocated node IDs. A merge can change
 a stored node's canonical children or enlarge a class without allocating a
 node, and either event can enable a match.
 
-For an eligible rule with `k` relation-scanning atoms, Semper evaluates `k`
+For an eligible rule with `k` relation-scanning atoms, the engine evaluates `k`
 variants. Variant `i` restricts atoms before `i` to `full` minus `delta`,
 restricts atom `i` to `delta`, and leaves later atoms on `full`. Every selected
 match belongs to the variant containing its first delta atom, so the variants
@@ -38,7 +38,7 @@ do not duplicate one another.
 
 Equality constraints, primitive predicates, and global comparisons are filters,
 not relation-scanning atoms. Some equality and global-reference shapes can
-become enabled by a merge that no scanning atom represents. Semper evaluates
+become enabled by a merge that no scanning atom represents. The engine evaluates
 those rules against the full index in every iteration rather than applying an
 unsafe delta restriction.
 
@@ -91,7 +91,7 @@ Naive evaluation is the default. `--use-naive` selects it explicitly, and
 `--use-semi-naive` selects semi-naive evaluation. The flags are mutually
 exclusive.
 
-`EVAL` is a directive understood by the `.egg` test harness, not a Semper
-language command. `;; EVAL: naive` and `;; EVAL: semi` select one strategy.
+`EVAL` is a directive understood by the `.egg` test harness, not a command in
+the `.egg` language. `;; EVAL: naive` and `;; EVAL: semi` select one strategy.
 `;; EVAL: both` runs the fixture separately under both strategies and checks
 the expected program outcome in each run.

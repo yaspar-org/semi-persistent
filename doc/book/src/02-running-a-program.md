@@ -29,15 +29,15 @@ All its checks pass, and the engine finishes with 11 e-nodes.
 
 ## What a program file is
 
-A Semper program is a text file containing S-expression commands. The `.egg`
+A program is a text file containing S-expression commands. The `.egg`
 extension is a convention rather than a requirement. A semicolon starts a
 comment that continues to the end of the line.
 
-Semper parses the complete file, sort-checks its commands in source order, and
-then executes the checked commands in that same order. Declarations are not
-hoisted: a sort must precede operators that use it, and an operator must precede
-terms or rules that use it. A declaration later in the file cannot satisfy an
-earlier reference.
+The engine parses the complete file, sort-checks its commands in source order,
+and then executes the checked commands in that same order. Declarations are
+not hoisted: a sort must precede operators that use it, and an operator must
+precede terms or rules that use it. A declaration later in the file cannot
+satisfy an earlier reference.
 
 The example above follows this order: it declares its sorts, declares its
 operators, builds and names terms, and finally checks equalities.
@@ -46,7 +46,7 @@ operators, builds and names terms, and finally checks equalities.
 
 Commands that return data, including `extract`, `antiunify`, `print-size`, and
 `print-stats`, write their results to standard output. Successful checks print
-nothing. After the program finishes, Semper writes its closing status to
+nothing. After the program finishes, the engine writes its closing status to
 standard error:
 
 ```text
@@ -72,8 +72,9 @@ To capture both streams separately:
 
 ## Exit status
 
-Semper exits with status 0 only after the complete program runs successfully.
-Syntax, sort-checking, and failed-check errors exit with status 1.
+The engine exits with status 0 only after the complete program runs
+successfully. Syntax, sort-checking, and failed-check errors exit with status
+1.
 
 | Status | Cause | Standard error |
 | --- | --- | --- |
@@ -108,7 +109,7 @@ cargo test -p semi-persistent-egraph --test egg_tests book_examples
 
 The `book_examples` test scans every `.egg` file in the directory. The first six
 lines of a file may contain directives such as `;; EXPECT: ok` or
-`;; DERIVE_AC_EQS: on`. These lines are comments to the engine binary; the test
+`;; DERIVE_AC_EQS: on`. These lines are comments to the binary; the test
 harness reads them to select settings and the expected outcome.
 
 [Annex C](C-flag-reference.md) lists every directive and its corresponding

@@ -13,10 +13,10 @@ semantic inequality.
 
 ## An algebraic declaration is an assertion
 
-Chapter 4's tags cause Semper to enforce the listed laws, but Semper does not
-prove that the modeled operator satisfies them. Structural declaration
-invariants, including equal argument and result sorts for associative
-operators, are checked separately.
+Chapter 4's tags cause the engine to enforce the listed laws, but it does not
+prove that the modeled operator satisfies them. Structural
+declaration invariants, including equal argument and result sorts for
+associative operators, are checked separately.
 
 ## Inverse and cancellative reasoning are narrow
 
@@ -53,8 +53,8 @@ Changing any of those three inputs can change the result.
 The `au-verus` crate proves objective and recurrence lemmas, not end-to-end
 refinement of the Rust solver. Pair-cycle erasure, AC and ACI transport, and
 global optimality retain prose arguments plus finite oracle and regression
-evidence. Chapter 16 and the
-[AU correctness plan](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/future/au-correctness-and-validation.md)
+evidence. Chapter 16 and the [AU correctness
+plan](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/future/au-correctness-and-validation.md)
 state the boundary.
 
 ## `checkau` and `:cr` are measurements
@@ -80,7 +80,7 @@ decisions.
 
 ## Surface clustering is quadratic
 
-Chapter 18 uses `n(n - 1) / 2` equality checks because Semper has no
+Chapter 18 uses `n(n - 1) / 2` equality checks because the engine has no
 clustering command. That grid is practical for the three-to-five-sample
 workflow in this book. Larger collections require host code to group e-class
 identifiers.

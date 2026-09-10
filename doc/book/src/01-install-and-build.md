@@ -73,14 +73,15 @@ Confirm the installation with `verus --version`, then run the proof suites:
 
 ## The crates in the workspace
 
-Running Semper does not require working with these crates individually. Cargo
-prints their package names during builds, and the corresponding Rust crate
-names appear in stack traces. This table maps those names to their source paths.
+Running the engine does not require working with these crates individually.
+Cargo prints their package names during builds, and the corresponding Rust
+crate names appear in stack traces. This table maps those names to their
+source paths.
 
 | Package | Path | Purpose |
 | --- | --- | --- |
 | `semi-persistent` | `semi-persistent/` | Published facade that re-exports the containers, e-graph, and traversal libraries. |
-| `semi-persistent-egraph` | `egraph/` | The Semper engine library and the `semi-persistent` command-line binary. |
+| `semi-persistent-egraph` | `egraph/` | The e-graph engine library and the `semi-persistent` command-line binary. |
 | `semi-persistent-containers-verus` | `containers-verus/` | Verus-verified production container layer used by the e-graph. |
 | `semi-persistent-containers` | `containers/` | Independent plain-Rust container implementation retained as a reference and performance baseline. |
 | `containers-conformance` | `containers-conformance/` | Differential, property, layout, and benchmark harness comparing the two container implementations. |

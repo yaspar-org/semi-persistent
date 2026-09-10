@@ -26,7 +26,7 @@ the selected literal model. Running the same declaration with only
 
 ## The grammar
 
-The declaration and ground-term fragment of a Semper program has this grammar.
+The declaration and ground-term fragment of a program has this grammar.
 Braces mean zero or more repetitions, brackets mark an optional item, and `|`
 separates alternatives.
 
@@ -76,8 +76,8 @@ patterns, rule actions, query and control commands, and every command option.
 
 `(sort S)` registers an uninterpreted sort named `S`. It introduces only the
 sort; it does not create any constants or other terms. The running example
-declares `Expr` and `Name` as separate sorts. Semper has no subtyping or implicit
-coercions between them.
+declares `Expr` and `Name` as separate sorts. The engine has no subtyping or
+implicit coercions between them.
 
 An operator declaration fixes the sort of every term it builds. In the example,
 `(constructor x () Name)` makes `(x)` a `Name`, while
@@ -116,7 +116,7 @@ matching. Both tags are accepted on functions and constructors. They affect
 which representative `extract` selects, not which terms are equal. Chapter 8
 defines the extraction cost model.
 
-The remaining declaration tags assign algebraic properties. Semper enforces
+The remaining declaration tags assign algebraic properties. The engine enforces
 them through automatic term canonization rather than rewrite rules. Chapter 4
 defines those properties and their legal combinations.
 
@@ -161,13 +161,13 @@ ground term is accepted.
 
 ## Sortchecking
 
-Semper sort-checks the complete program before executing any command.
+The engine sort-checks the complete program before executing any command.
 Declarations are processed in source order. An operator declaration is rejected
 if an argument or result sort is unknown. Registration also validates the
 supported shapes and combinations of algebraic tags, including identity sorts
 and inverse signatures. Chapter 4 gives those requirements.
 
-Before a ground term is built, Semper resolves its operator and checks its
+Before a ground term is built, the engine resolves its operator and checks its
 arity. It then checks the children from the leaves upward, requiring each child
 to have exactly the sort declared for its position. Names must resolve to an
 earlier `let` binding, a literal, or a nullary operator.
@@ -187,7 +187,7 @@ These checks establish that declarations have supported forms and terms are
 well-sorted. Algebraic tags remain assertions about the intended
 interpretation. Sortchecking can validate that a tag combination is supported,
 but it does not prove that the intended operator satisfies the declared laws.
-Once accepted, Semper enforces those laws through canonization. Chapter 23
+Once accepted, the engine enforces those laws through canonization. Chapter 23
 collects this and the other obligations left to the program author.
 
 ## Literals
@@ -203,7 +203,7 @@ literal models so it can use machine and arbitrary-precision sorts together.
 
 The two occurrences of `42` have the same spelling, but `Big` requires an
 `IBig` while `Machine` requires an `i64`. Similarly, `true` is parsed as
-`bool`, `3.5` as `f64`, and the quoted token `"Semper"` as `String`.
+`bool`, `3.5` as `f64`, and the quoted token `"hello"` as `String`.
 
 Concrete literal sorts are separate from user-declared sorts. There is no
 implicit coercion from `bool` to `Expr`; `(Lit true)` explicitly constructs an
@@ -211,8 +211,8 @@ implicit coercion from `bool` to `Expr`; `(Lit true)` explicitly constructs an
 can therefore use `(Lit true)` as its identity term, while bare `true` would
 have the wrong sort.
 
-During term construction, Semper interns the concrete value in an internal
+During term construction, the engine interns the concrete value in an internal
 literal node beneath the user-declared constructor. These internal operators
-do not appear in surface syntax. The
-[literal-model design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/13-literal-model.md)
+do not appear in surface syntax. The [literal-model design
+chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/13-literal-model.md)
 specifies their representation and the primitive-operation interface.

@@ -1,6 +1,6 @@
 # Annex B. Command reference
 
-This annex is a compact index of Semper's commands. Follow the chapter links
+This annex is a compact index of the engine's commands. Follow the chapter links
 for semantics and [Annex A](A-full-grammar.md) for the complete grammar.
 
 ## Symbol declarations and algebraic properties

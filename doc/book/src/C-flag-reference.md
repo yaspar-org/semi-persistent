@@ -6,7 +6,7 @@ The command-line form is:
 semi-persistent [OPTIONS] <FILE>
 ```
 
-`FILE` is the required path to one Semper program.
+`FILE` is the required path to one program.
 
 ## Representation and literal model
 

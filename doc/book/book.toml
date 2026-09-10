@@ -1,7 +1,7 @@
 [book]
-title = "The Semper Book"
+title = "The Semi-Persistent E-Graph User Manual"
 description = "Using anti-unification to diagnose formalization problems"
-authors = ["Semper contributors"]
+authors = ["semi-persistent-egraph contributors"]
 src = "src"
 language = "en"
 

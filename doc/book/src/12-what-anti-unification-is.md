@@ -24,7 +24,7 @@ The `antiunify` command prints:
 ```
 
 Textbook anti-unification would usually put a fresh variable in that position.
-Semper instead writes `(Variants a b)`. Selecting the first child of each
+The engine instead writes `(Variants a b)`. Selecting the first child of each
 `Variants` node reconstructs the left operand; selecting the second reconstructs
 the right operand. The output therefore carries the two readings that produced
 each disagreement.

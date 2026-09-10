@@ -52,7 +52,7 @@ and ratio 0.
 
 ## Arity, aligned by an identity element
 
-Order and duplicate removal happen while Semper constructs the operands.
+Order and duplicate removal happen while the engine constructs the operands.
 Different cardinalities require an additional AU operation: when an AC or ACI
 operator has an identity, the solver can pad the shorter collection with that
 identity before aligning children.

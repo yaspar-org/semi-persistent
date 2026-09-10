@@ -37,9 +37,9 @@ The lazy result has size 5, the same as plain, rather than the eager result's
 size 2. As Chapter 11 explains, lazy completion is scoped to equality and
 disequality checks. Anti-unification reads the restored graph.
 
-When an AU query must observe consequences of asserted AC equations, run Semper
-with `--derive-ac-eqs`. Lazy completion is suitable for isolated equality
-questions, not for preparing an anti-unification snapshot.
+When an AU query must observe consequences of asserted AC equations, run the
+engine with `--derive-ac-eqs`. Lazy completion is suitable for isolated
+equality questions, not for preparing an anti-unification snapshot.
 
 ## Optimal within the cycle policy
 
@@ -88,7 +88,7 @@ end. A small exhaustive oracle supplies finite evidence for pair-mode Exact on
 enumerable fixtures.
 
 Pair-cycle erasure and global optimality remain prose arguments supported by
-regressions. Hybrid calls have finite differential evidence. Chapters 14 and 15
-state the operational claims, and
-[`19-anti-unification.md`, section 9.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md)
+regressions. Hybrid calls have finite differential evidence. Chapters 14 and
+15 state the operational claims, and [`19-anti-unification.md`, section
+9.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md)
 states the current proof boundary.

@@ -6,7 +6,7 @@ right-hand-side comprehensions.
 
 ## The grammar
 
-Semper has three surface forms for defining rules:
+The engine has three surface forms for defining rules:
 
 ```text
 (rewrite lhs rhs [:when (pattern ...)] [:subsume] [:ruleset name])
@@ -55,10 +55,10 @@ the query checks equality with it.
 ## `rewrite`, `birewrite`, and `:subsume`
 
 A `rewrite` is directional in what triggers it, not in the equality it
-establishes. When the left-hand side matches, Semper builds the right-hand side
-and merges it with the matched root class. The equality is then symmetric, but
-an existing right-hand-side shape does not cause the left-hand side to be
-built.
+establishes. When the left-hand side matches, the engine builds the right-hand
+side and merges it with the matched root class. The equality is then
+symmetric, but an existing right-hand-side shape does not cause the left-hand
+side to be built.
 
 ```lisp
 {{#include ../examples/05-rewrite-directions.egg:rewrite-directions}}
@@ -218,7 +218,7 @@ Multiplicity annotations have these forms:
 | `x:k` | any positive count, also bind it to `k` |
 | `x:k>=2` | bind `k` and require the stated relation |
 
-The relational form accepts `>=`, `>`, `<=`, `<`, `==`, and `!=`. Semper
+The relational form accepts `>=`, `>`, `<=`, `<`, `==`, and `!=`. The engine
 collects the constraints on each multiplicity variable and reduces them to a
 closed interval used during rule installation:
 
@@ -330,7 +330,7 @@ The filter combines the LHS-bound `threshold` with the current source
 
 A filter is not an e-graph query. An ordinary application such as
 `(Keep element)` would construct an e-node rather than compute a literal, so
-Semper rejects it:
+The engine rejects it:
 
 ```lisp
 {{#include ../examples/05-illegal-comprehension-filter.egg:illegal-comprehension-filter}}
@@ -375,7 +375,7 @@ The count-three child produces two copies of `(F b)`.
 
 ## Limits of variadic matching
 
-Semper's AC matcher implements maximum-partition matching, not unrestricted
+The engine's AC matcher implements maximum-partition matching, not unrestricted
 classical AC matching. Scalar elements bind distinct stored children and take
 their complete multiplicities. The rest variable takes all remaining stored
 children.
@@ -402,8 +402,8 @@ Sequence patterns permit one prefix and one suffix rest because their fixed
 elements describe a contiguous window. AC and ACI patterns are unordered and
 permit one remainder.
 
-The
-[pattern-matching design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/09-pattern-matching.md)
-defines the matching relations and their limits. The
-[rule-application design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-rule-application.md)
+The [pattern-matching design
+chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/09-pattern-matching.md)
+defines the matching relations and their limits. The [rule-application design
+chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-rule-application.md)
 specifies right-hand-side evaluation and actions.

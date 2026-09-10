@@ -6,7 +6,7 @@ explains union-find, congruence closure, rebuild, and equality checks.
 ## E-nodes and e-classes
 
 An **e-node** is an operator together with references to its argument
-e-classes. An **e-class** is a set of e-nodes that Semper currently knows to
+e-classes. An **e-class** is a set of e-nodes that the engine currently knows to
 be equal.
 
 ```lisp
@@ -62,8 +62,8 @@ the affected parent keys.
 
 ## Union-find
 
-Semper maintains e-class membership with union-find. Every e-node has a class
-identifier. `find` follows parent links to the class's canonical
+The engine maintains e-class membership with union-find. Every e-node has a
+class identifier. `find` follows parent links to the class's canonical
 representative, and path compression shortens later lookups. A `union` between
 two representatives makes one the survivor and the other a child of it.
 
@@ -71,8 +71,8 @@ The survivor is an implementation choice, not a preferred term. A merge does
 not rewrite or delete either side, and choosing a different survivor does not
 change the asserted equality. The `--union-by` flag changes the survivor
 heuristic and can change operational work and printed representatives, but it
-does not change which input equality was asserted. [Annex C](C-flag-reference.md)
-lists the available policies.
+does not change which input equality was asserted. [Annex
+C](C-flag-reference.md) lists the available policies.
 
 Path compression and union updates are included in push and pop restoration.
 Chapter 7 describes that semi-persistent storage.
@@ -127,8 +127,8 @@ intermediate state with stale parent keys. `print-size` itself only reads the
 node arenas; it does not trigger rebuild.
 
 Chapter 10 describes the operator-specific canonization performed during term
-construction and parent recanonization. The
-[e-graph design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/05-egraph.md)
+construction and parent recanonization. The [e-graph design
+chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/05-egraph.md)
 specifies the rebuild worklist and use-list algorithm.
 
 ## What an equality check asks

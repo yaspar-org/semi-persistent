@@ -1,12 +1,12 @@
 # Declaring algebraic operators
 
-Chapter 3 established which declarations Semper accepts. This chapter defines
-the semantic contract those declarations create. Chapter 10 later explains how
-the corresponding canonical representations are implemented.
+Chapter 3 established which declarations the engine accepts. This chapter
+defines the semantic contract those declarations create. Chapter 10 later
+explains how the corresponding canonical representations are implemented.
 
-Semper lets you tag operators with algebraic properties. Once declared, these
-properties are enforced through automatic term canonization rather than rewrite
-rules. The most familiar example is associativity and commutativity:
+The engine lets you tag operators with algebraic properties. Once declared,
+these properties are enforced through automatic term canonization rather than
+rewrite rules. The most familiar example is associativity and commutativity:
 
 ```lisp
 {{#include ../examples/04-ac-canonization.egg:ac-canonization}}
@@ -44,15 +44,16 @@ Compatible attributes may be combined and written in any order.
 `:nilpotent` must be accompanied by `:identity`. The identity is a ground term
 of the result sort, built from declarations available at that point. Reducing
 child multiplicities modulo the nilpotence order can empty the multiset. When
-that happens, Semper canonizes the result directly to the identity's e-class.
-The same rule applies to an explicitly empty application such as `(Xor)`;
-there is no separate empty `Xor` node connected to the identity by a rewrite.
+that happens, the engine canonizes the result directly to the identity's
+e-class. The same rule applies to an explicitly empty application such as
+`(Xor)`; there is no separate empty `Xor` node connected to the identity by a
+rewrite.
 
 ```lisp
 {{#include ../examples/04-nilpotent-identity.egg:nilpotent-identity}}
 ```
 
-Semper rejects both a `:nilpotent` declaration without an identity and an
+The engine rejects both a `:nilpotent` declaration without an identity and an
 empty variadic application whose operator has no identity. A nullary operator
 declared with an empty argument list remains an ordinary constant; this
 restriction applies only to empty applications of variadic operators.
@@ -76,7 +77,7 @@ table later in this chapter lists the supported combinations.
 
 ## Inverse-pair cancellation and cancellativity
 
-Semper supports two additional algebraic attributes with deliberately narrow
+The engine supports two additional algebraic attributes with deliberately narrow
 contracts. They provide inverse-pair cancellation and cancellative inference,
 not general group reasoning.
 
@@ -92,8 +93,8 @@ The inverse attribute names a previously declared unary operator:
 ```
 
 `Neg` must have signature `E -> E`, and `Add` must declare an identity. This
-declaration asserts that `Add(x, Neg(x)) = Zero`. Semper cancels such explicit
-pairs while constructing terms, even in plain mode. For example,
+declaration asserts that `Add(x, Neg(x)) = Zero`. The engine cancels such
+explicit pairs while constructing terms, even in plain mode. For example,
 `Add(a, a, Neg(a))` canonizes to `a`.
 
 In plain mode, `:cancellative` performs no inference because AC completion does
@@ -107,20 +108,20 @@ removed only from equations for an operator declared cancellative. This
 soundness argument is backed by focused tests but is not yet machine-checked
 end to end.
 
-The boundary is completeness. Semper recognizes an inverse pair only when the
-corresponding `Neg(x)` node exists, and pairs exposed only by later merges may
-require AC completion. The tags alone do not derive general Abelian-group laws
-such as `Neg(Neg(x)) = x`, distribute `Neg` over `Add`, or normalize sums to
-signed coefficients. In particular, `:inverse` means a group inverse, not a
-Boolean complement: `Not(x)` is not an inverse for `And`, because
-`And(x, Not(x))` is `False` while `And`'s identity is `True`.
+The boundary is completeness. The engine recognizes an inverse pair only when
+the corresponding `Neg(x)` node exists, and pairs exposed only by later merges
+may require AC completion. The tags alone do not derive general Abelian-group
+laws such as `Neg(Neg(x)) = x`, distribute `Neg` over `Add`, or normalize sums
+to signed coefficients. In particular, `:inverse` means a group inverse, not a
+Boolean complement: `Not(x)` is not an inverse for `And`, because `And(x,
+Not(x))` is `False` while `And`'s identity is `True`.
 
 ## Arity: one child, and none
 
-A variadic application denotes a fold of its binary operator. Folding one child
-returns that child; folding no children returns the identity, when one has been
-declared. Semper performs these reductions during term construction rather than
-storing nodes that later need rewriting.
+A variadic application denotes a fold of its binary operator. Folding one
+child returns that child; folding no children returns the identity, when one
+has been declared. The engine performs these reductions during term
+construction rather than storing nodes that later need rewriting.
 
 | application | result |
 | --- | --- |
@@ -137,7 +138,7 @@ argument.
 Associative operators must therefore be closed over one sort. Their argument
 and result sorts must coincide, both because nested applications feed results
 back as arguments and because singleton collapse returns the child's e-class
-directly. Semper enforces this invariant. For example,
+directly. The engine enforces this invariant. For example,
 
 ```lisp
 {{#include ../examples/04-illegal-variadic-sort.egg:illegal-variadic-sort}}
@@ -145,7 +146,7 @@ directly. Semper enforces this invariant. For example,
 
 ## Which combinations are legal
 
-Semper validates algebraic attributes when an operator is declared.
+The engine validates algebraic attributes when an operator is declared.
 
 | invariant | error if violated |
 | --- | --- |
@@ -169,8 +170,8 @@ A commutative-only operator's return sort may differ from its shared argument
 sort. For example, `(function Same (E E) R :comm)` is legal.
 
 One important implementation restriction follows from the table: an identity
-requires a full AC operator. Semper cannot currently attach an identity to an
-associative-but-noncommutative operator.
+requires a full AC operator. The engine cannot currently attach an identity to
+an associative-but-noncommutative operator.
 
 ## Canonization carries the declared laws, rewrite rules carry the rest
 
@@ -193,6 +194,6 @@ which additional domain equalities saturation can derive. Part IV uses this
 distinction when adding a domain rewrite changes a reported difference between
 two autoformalizations.
 
-The
-[algebraic-properties design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-algebraic-properties.md)
+The [algebraic-properties design
+chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-algebraic-properties.md)
 specifies the canonical representations and completion interactions in detail.

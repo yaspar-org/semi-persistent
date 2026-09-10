@@ -14,12 +14,12 @@
 (let big (Big 42))
 (let machine (Machine 42))
 (let real (Real 3.5))
-(let text (Text "Semper"))
+(let text (Text "hello"))
 
 (check (= truth (Lit true)))
 (check (= big (Big 42)))
 (check (= machine (Machine 42)))
 (check (= real (Real 3.5)))
-(check (= text (Text "Semper")))
+(check (= text (Text "hello")))
 (check (!= big machine))
 ;; ANCHOR_END: literals

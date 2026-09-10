@@ -2,7 +2,7 @@
 
 [Introduction](README.md)
 
-# Part I. Writing and running Semper programs
+# Part I. Writing and running programs
 
 - [Install and build](01-install-and-build.md)
 - [Running a program](02-running-a-program.md)

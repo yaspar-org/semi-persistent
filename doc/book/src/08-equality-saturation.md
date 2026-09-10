@@ -6,7 +6,7 @@ defines that round order, the forms of `run`, extraction, and run statistics.
 
 ## A round
 
-Before a run with an `:until` goal starts, Semper builds the two ground goal
+Before a run with an `:until` goal starts, the engine builds the two ground goal
 terms. Each iteration then performs these operations in order:
 
 1. Rebuild the e-graph, then test the goal against the current union-find.
@@ -87,7 +87,7 @@ joined the starting term.
 The practical control is always a finite iteration bound, optionally combined
 with an equality goal, followed by checks for the facts the program requires.
 A run that repeatedly reaches its budget should be treated as a property of the
-rule set, not as evidence that Semper will eventually choose to stop.
+rule set, not as evidence that the engine will eventually choose to stop.
 
 ## Extraction
 

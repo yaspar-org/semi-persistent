@@ -28,7 +28,7 @@ without discarding either representation.
 
 ## Reading the partition
 
-Semper has no surface command that prints a partition. For four samples, the
+The engine has no surface command that prints a partition. For four samples, the
 six pairwise checks record it directly. Before the rewrite, the checks assert
 
 ```text
@@ -64,7 +64,7 @@ API. There is no separate clustering API.
 
 ## What the partition depends on
 
-A cluster means that Semper proved its members equal under this program. It
+A cluster means that the engine proved its members equal under this program. It
 does not assert semantic equivalence independently of the program.
 
 | input to the comparison | effect |

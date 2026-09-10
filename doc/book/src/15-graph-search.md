@@ -42,8 +42,8 @@ A playout performs four operations:
    terms into achieved candidates for their parents.
 
 Composition during the final step is how later playouts improve on the initial
-rollout. The full procedure is specified in
-[`19-anti-unification.md`, section 3.3](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+rollout. The full procedure is specified in [`19-anti-unification.md`, section
+3.3](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
 
 ## The same subproblem, reached many ways
 
@@ -52,9 +52,10 @@ state's current value and achieved term. Selection counts remain local to the
 parent-action edge, however, so traffic arriving through another parent does
 not pretend that this parent selected the shared child.
 
-Chapter 14 defines the cycle contexts that distinguish states. The shared-state
-and local-edge bookkeeping is detailed in
-[`19-anti-unification.md`, section 2.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+Chapter 14 defines the cycle contexts that distinguish states. The
+shared-state and local-edge bookkeeping is detailed in
+[`19-anti-unification.md`, section
+2.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
 
 ## Values are recomputed, not accumulated
 
@@ -63,8 +64,8 @@ A child visit count includes visits from parents that the current parent never
 selected, and propagating every child update into every parent would count work
 outside each parent's selected distribution.
 
-Semper keeps `N(n,a)` on the edge from state `n` to action `a`, and recomputes
-values from current child values:
+The engine keeps `N(n,a)` on the edge from state `n` to action `a`, and
+recomputes values from current child values:
 
 ```text
 Q(n)   = (U(n) + sum N(n,a) * Q(a)) / (1 + sum N(n,a))
@@ -88,7 +89,8 @@ closed subgraph, and a closed root stops the run early. Closure means that no
 unresolved action remains. It cannot be inferred merely because a size lower
 bound equals the incumbent size: an equal-size action could still improve
 variant mass. Chapter 14 gives the pruning rule; the closure argument is in
-[`19-anti-unification.md`, section 9.5](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[`19-anti-unification.md`, section
+9.5](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
 
 ## The hybrid
 
@@ -103,14 +105,15 @@ contextual states. A separate Rust configuration can impose a node-entry
 budget on one delegated call. Hybrid correctness has finite differential
 evidence and an implementation argument, not a machine-checked solver proof.
 
-Hybrid selection is available only through the Rust API. The implementation and
-argument are in
+Hybrid selection is available only through the Rust API. The implementation
+and argument are in
 [`mcgs.rs`](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/src/au/mcgs.rs).
 
 ## Configuration
 
-The surface language exposes `:algorithm`, `:playouts`, and `:cycles`.
-Chapter 14 defines the cycle options. Incremental closure, hybrid calls, their
+The surface language exposes `:algorithm`, `:playouts`, and `:cycles`. Chapter
+14 defines the cycle options. Incremental closure, hybrid calls, their
 admission settings, and the other search-policy controls are Rust-API
 configuration. The complete configuration table is in
-[`19-anti-unification.md`, section 7](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[`19-anti-unification.md`, section
+7](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).

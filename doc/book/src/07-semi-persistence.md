@@ -43,11 +43,12 @@ the process output.
 
 ## Why the pop is cheap
 
-Semper uses semi-persistent containers instead of copying the complete e-graph
-at every push. Append-only arenas record their logical lengths and truncate
-new suffixes on restore. Mutable arrays, including union-find parent arrays,
-capture a slot's previous value the first time that slot changes in a scope.
-Restore replays those sparse differences and restores the saved lengths.
+The engine uses semi-persistent containers instead of copying the complete
+e-graph at every push. Append-only arenas record their logical lengths and
+truncate new suffixes on restore. Mutable arrays, including union-find parent
+arrays, capture a slot's previous value the first time that slot changes in a
+scope. Restore replays those sparse differences and restores the saved
+lengths.
 
 Hash-consing tables and other derived indexes are not themselves the logical
 state. On restore, a node cache removes or repairs entries affected by the
@@ -108,7 +109,7 @@ is no longer in the global-name environment at the final check. If an inner
 {{#include ../examples/07-push-pop.egg:shadowed-global}}
 ```
 
-Sort and operator declarations are different. Semper sortchecks the complete
+Sort and operator declarations are different. The engine sortchecks the complete
 program before interpretation and registers declarations in source order, so
 `push` and `pop` do not give declarations a runtime lifetime. Installed rules,
 runtime `let` bindings, e-nodes, and equalities are scoped.
