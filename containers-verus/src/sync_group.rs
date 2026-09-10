@@ -18,9 +18,9 @@
 //! `Vec::restore_frame`); the heterogeneous differential test checks contents
 //! against per-member oracles.
 
-use vstd::prelude::*;
 use crate::history::{GroupToken, History};
 use crate::vec::ShrinkPolicy;
+use vstd::prelude::*;
 
 verus! {
 
@@ -173,6 +173,11 @@ where
             self.store.lemma_wf_captured_len();
         }
         let n = self.store.raw_len();
+        // Nested rather than collapsed into a let-chain: Verus rejects let
+        // expressions ("does not yet support the following Rust feature: let
+        // expressions"), so `clippy::collapsible_if`'s suggestion does not
+        // compile here.
+        #[allow(clippy::collapsible_if)]
         if i < n {
             if let Some(idx) = I::try_from_usize(i) {
                 if let Some(val) = T::try_from_usize(v) {
@@ -475,7 +480,8 @@ static PAR_THREADS: std::sync::Mutex<Option<std::collections::HashSet<usize>>> =
 fn witness_thread() {
     let idx = rayon::current_thread_index().unwrap_or(usize::MAX);
     let mut g = PAR_THREADS.lock().unwrap();
-    g.get_or_insert_with(std::collections::HashSet::new).insert(idx);
+    g.get_or_insert_with(std::collections::HashSet::new)
+        .insert(idx);
 }
 
 #[cfg(test)]
@@ -532,8 +538,7 @@ mod fork_history_tests {
 
         let mut tokens = Vec::new();
         for k in 0..FRAMES {
-            let cold_before: usize =
-                (0..3).map(|j| g.members[j].cold_frames()).sum();
+            let cold_before: usize = (0..3).map(|j| g.members[j].cold_frames()).sum();
             snaps.push((o32.clone(), o64.clone(), o16.clone()));
             let t = g.mark(crate::vec::ShrinkPolicy::Never).expect("headroom");
             tokens.push(t);
@@ -541,8 +546,7 @@ mod fork_history_tests {
                 // H1.2: the mark sealed (except the very first, whose frame is empty
                 // it still seals an empty frame -> count grows too).
             }
-            let cold_after: usize =
-                (0..3).map(|j| g.members[j].cold_frames()).sum();
+            let cold_after: usize = (0..3).map(|j| g.members[j].cold_frames()).sum();
             assert!(
                 cold_after > cold_before || k == 0,
                 "group mark {k} did not seal (cold {cold_before} -> {cold_after})"
@@ -607,7 +611,10 @@ mod fork_history_tests {
         let mut tp = Vec::new();
         for k in 0..FRAMES {
             ts.push(gs.mark(crate::vec::ShrinkPolicy::Never).expect("seq mark"));
-            tp.push(gp.mark_parallel(crate::vec::ShrinkPolicy::Never).expect("par mark"));
+            tp.push(
+                gp.mark_parallel(crate::vec::ShrinkPolicy::Never)
+                    .expect("par mark"),
+            );
             for j in 0..MEMBERS {
                 for i in 0..N {
                     let v = (i * 31 + k * 17 + j * 7) % 251;
@@ -642,7 +649,11 @@ mod fork_history_tests {
         }
 
         // H3.2: the fan-out actually spawned.
-        let seen = super::PAR_THREADS.lock().unwrap().clone().unwrap_or_default();
+        let seen = super::PAR_THREADS
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_default();
         assert!(
             seen.len() > 1,
             "parallel twins ran on {} thread(s); expected > 1",
@@ -672,35 +683,36 @@ mod fork_history_tests {
             }
             g
         };
-        let drive = |g: &mut ForkHistory, parallel: bool| -> (std::time::Duration, std::time::Duration) {
-            let mut toks = Vec::new();
-            let mut mark_total = std::time::Duration::ZERO;
-            for k in 0..FRAMES {
-                let t0 = std::time::Instant::now();
-                let t = if parallel {
-                    g.mark_parallel(crate::vec::ShrinkPolicy::Never)
-                } else {
-                    g.mark(crate::vec::ShrinkPolicy::Never)
-                }
-                .expect("mark");
-                mark_total += t0.elapsed();
-                toks.push(t);
-                for j in 0..MEMBERS {
-                    for i in 0..N {
-                        g.members[j].poke(i, (i + k * 3 + j) % 97);
+        let drive =
+            |g: &mut ForkHistory, parallel: bool| -> (std::time::Duration, std::time::Duration) {
+                let mut toks = Vec::new();
+                let mut mark_total = std::time::Duration::ZERO;
+                for k in 0..FRAMES {
+                    let t0 = std::time::Instant::now();
+                    let t = if parallel {
+                        g.mark_parallel(crate::vec::ShrinkPolicy::Never)
+                    } else {
+                        g.mark(crate::vec::ShrinkPolicy::Never)
+                    }
+                    .expect("mark");
+                    mark_total += t0.elapsed();
+                    toks.push(t);
+                    for j in 0..MEMBERS {
+                        for i in 0..N {
+                            g.members[j].poke(i, (i + k * 3 + j) % 97);
+                        }
                     }
                 }
-            }
-            let t1 = std::time::Instant::now();
-            let ok = if parallel {
-                g.restore_parallel(toks[0])
-            } else {
-                g.restore(toks[0])
+                let t1 = std::time::Instant::now();
+                let ok = if parallel {
+                    g.restore_parallel(toks[0])
+                } else {
+                    g.restore(toks[0])
+                };
+                let restore_total = t1.elapsed();
+                assert!(ok);
+                (mark_total, restore_total)
             };
-            let restore_total = t1.elapsed();
-            assert!(ok);
-            (mark_total, restore_total)
-        };
 
         let mut gs = build();
         let (seq_mark, seq_restore) = drive(&mut gs, false);
@@ -712,9 +724,11 @@ mod fork_history_tests {
         }
         println!(
             "group of {MEMBERS} x {N} cells, {FRAMES} frames:\n  mark    seq {:?}  par {:?}  speedup {:.2}x\n  restore seq {:?}  par {:?}  speedup {:.2}x",
-            seq_mark, par_mark,
+            seq_mark,
+            par_mark,
             seq_mark.as_secs_f64() / par_mark.as_secs_f64().max(1e-12),
-            seq_restore, par_restore,
+            seq_restore,
+            par_restore,
             seq_restore.as_secs_f64() / par_restore.as_secs_f64().max(1e-12),
         );
     }
@@ -730,8 +744,9 @@ mod fork_history_tests {
         const MEMBERS: usize = 10;
         for &depth in &[128usize, 1024, 4096] {
             let mut shared = crate::history::History::new();
-            let mut per_member: Vec<crate::gen_stamps::GenStamps> =
-                (0..MEMBERS).map(|_| crate::gen_stamps::GenStamps::new(0)).collect();
+            let mut per_member: Vec<crate::gen_stamps::GenStamps> = (0..MEMBERS)
+                .map(|_| crate::gen_stamps::GenStamps::new(0))
+                .collect();
             // Drive to `depth`, then a restore-to-half and a re-climb, so the
             // stamp arrays see a branch cut (the workload that grew the old
             // `origins` without bound and that GenStamps holds at O(max depth)).

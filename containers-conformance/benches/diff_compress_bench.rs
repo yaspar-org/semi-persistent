@@ -140,7 +140,7 @@ fn plain_bytes(n: usize) -> usize {
 fn dict_bytes_usize_codes(n: usize, distinct: usize) -> usize {
     distinct * std::mem::size_of::<u32>()      // dict
         + n * std::mem::size_of::<usize>()     // codes (usize, as built)
-        + n * std::mem::size_of::<u32>()       // idxs
+        + n * std::mem::size_of::<u32>() // idxs
 }
 fn dict_bytes_u32_codes(n: usize, distinct: usize) -> usize {
     distinct * std::mem::size_of::<u32>()
@@ -152,7 +152,7 @@ fn dict_bytes_u32_codes(n: usize, distinct: usize) -> usize {
 // per entry). The index column is gone — implied by start + offset.
 fn runs_bytes(n: usize, runs: usize) -> usize {
     runs * std::mem::size_of::<usize>()        // starts
-        + n * std::mem::size_of::<u32>()       // vals (flattened)
+        + n * std::mem::size_of::<u32>() // vals (flattened)
 }
 
 fn report_space() {

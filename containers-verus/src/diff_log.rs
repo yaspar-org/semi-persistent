@@ -20,10 +20,10 @@
 //! because each cold frame is written once. The index column stays whole, so the
 //! value compression is invisible to the capture machinery's `indices()` slice.
 
-use vstd::prelude::*;
-use crate::index_like::IndexLike;
-use crate::diff_compress::{ValFrame, RunCol, ColdFrame, sort_frame_by_index};
 use crate::diff_compress::CompressionMode;
+use crate::diff_compress::{ColdFrame, RunCol, ValFrame, sort_frame_by_index};
+use crate::index_like::IndexLike;
+use vstd::prelude::*;
 
 verus! {
 
@@ -1178,9 +1178,9 @@ impl<T: Copy, I: IndexLike, VC: crate::value_compressor::ValueCompressor<T>> Dif
                     assert(cold_idxs(cold@) =~= cold_idxs(cold0) + fg.idx_seq());
                     let idxseq = fg.idx_seq();
                     // cold_idxs is unchanged below ts and equals the sorted indices above.
-                    assert forall|i: int| 0 <= i < ts implies
+                    assert forall|i: int| #![auto] 0 <= i < ts implies
                         cold_idxs(cold@)[i] == cold_idxs(cold0)[i] by {}
-                    assert forall|q: int| 0 <= q < tl implies
+                    assert forall|q: int| #![auto] 0 <= q < tl implies
                         cold_idxs(cold@)[ts + q] == sorted@[q].1 by {
                         assert(cold_idxs(cold@)[ts + q] == idxseq[q]);
                     }
@@ -1719,7 +1719,7 @@ impl<T: Copy, I: IndexLike, VC: crate::value_compressor::ValueCompressor<T>> Dif
                         // or already saturated.
                     } else {
                         // Overlaps [lo, hi): emit the in-range slice [s, e) of this frame.
-                        let s = if lo > start { lo - start } else { 0 };
+                        let s = lo.saturating_sub(start);
                         let e = if hi < fend { hi - start } else { flen };
                         if s == 0 && e == flen {
                             // Whole frame in range: one bulk decode.

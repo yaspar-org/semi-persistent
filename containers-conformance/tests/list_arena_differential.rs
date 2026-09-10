@@ -22,10 +22,6 @@ fn list_arena_trace(seed: u64, steps: usize) {
 
     let mut rng = Rng::new(seed);
     let mut lists: usize = 0;
-    // Upper bound on node slots ever allocated (drives the CaptureBits ceiling
-    // in the memory-parity assertion below). Only grows — matching the backing
-    // vec's capacity, which restore never shrinks.
-    let mut nodes_pushed: usize = 0;
     // (prod token, verus token, list count at mark time): restore rolls the
     // heads vec back, so the number of live lists reverts with it.
     let mut marks: Vec<(prod::ListArenaToken, verus::ListArenaToken, usize)> = Vec::new();
@@ -57,7 +53,6 @@ fn list_arena_trace(seed: u64, steps: usize) {
                     v.try_prepend(VList::new(l), VElem::new(val))
                         .expect("within id space");
                 }
-                nodes_pushed += 1;
             }
             50..=69 => {
                 if lists == 0 {

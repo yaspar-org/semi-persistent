@@ -45,7 +45,10 @@ fn live_size_is_bounded_by_depth_not_restores() {
     // Same depth, 100x different restore counts: live size must be identical.
     let few = live_bytes_after(depth, 500);
     let many = live_bytes_after(depth, 50_000);
-    assert_eq!(few, many, "live size must be independent of the restore count");
+    assert_eq!(
+        few, many,
+        "live size must be independent of the restore count"
+    );
 
     // And it is depth-scale: one u64 per depth, capacity within 2x of `depth`.
     assert!(
@@ -57,7 +60,10 @@ fn live_size_is_bounded_by_depth_not_restores() {
     // BEFORE (origins, 8 bytes/restore, never reclaimed): 8 * 10^7 = 80 MB.
     // AFTER (this): the measured `many`, kilobytes.
     let before_bytes = 8usize * 10_000_000;
-    assert!(before_bytes / many >= 1000, "reclamation should be >=1000x (MB -> KB)");
+    assert!(
+        before_bytes / many >= 1000,
+        "reclamation should be >=1000x (MB -> KB)"
+    );
     eprintln!(
         "fork history at depth {depth}, 10^7 restores: before ~{} MB, after {} KB ({}x)",
         before_bytes / 1_000_000,

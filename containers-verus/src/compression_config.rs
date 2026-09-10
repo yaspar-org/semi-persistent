@@ -9,8 +9,8 @@
 //! One value, not a type: the SMT profile passes all-`None` and the eq-sat
 //! profile passes a per-column table, from one binary.
 
-use vstd::prelude::*;
 use crate::diff_compress::CompressionMode;
+use vstd::prelude::*;
 
 verus! {
 
@@ -149,11 +149,7 @@ impl ColumnConfig {
             r == self.frames_to_compress_spec(num_frames as nat),
             r <= num_frames,
     {
-        if num_frames > self.keep_hot_frames {
-            num_frames - self.keep_hot_frames
-        } else {
-            0
-        }
+        num_frames.saturating_sub(self.keep_hot_frames)
     }
 
     pub open spec fn frames_to_compress_spec(self, num_frames: nat) -> nat {

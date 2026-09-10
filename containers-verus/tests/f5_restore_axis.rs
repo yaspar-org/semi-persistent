@@ -26,9 +26,15 @@ fn representative_frame() -> Vec<(u32, u32)> {
     let mut d = Vec::with_capacity(ENTRIES);
     let mut seed = 0x9e3779b97f4a7c15u64;
     for r in 0..RUNS {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let start = (seed % (TARGET as u64 - per as u64)) as u32;
-        let len = if r == RUNS - 1 { ENTRIES - per * (RUNS - 1) } else { per };
+        let len = if r == RUNS - 1 {
+            ENTRIES - per * (RUNS - 1)
+        } else {
+            per
+        };
         for k in 0..len as u32 {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
             d.push(((seed % DISTINCT as u64) as u32, start + k));
@@ -65,7 +71,9 @@ fn restore_axis_on_representative_frame() {
     );
 
     let plain: ColdFrame<u32, u32> = ColdFrame::plain_copy(&diffs);
-    time_restore("plain (scattered)", plain.byte_len(), |t| plain.restore_to(t));
+    time_restore("plain (scattered)", plain.byte_len(), |t| {
+        plain.restore_to(t)
+    });
 
     let rc = RunCol::compress_sorted(&diffs);
     let runs_frame: ColdFrame<u32, u32> = ColdFrame::Runs(rc);

@@ -13,10 +13,10 @@
 //! `wf` ties the stored columns to the model entry by entry, `decode()` is
 //! the model, and every compressor proves the model against its input.
 
-use vstd::prelude::*;
+use crate::diff_compress::{RunCol, RunEntry};
 use crate::index_like::IndexLike;
 use crate::value_compressor::ValueCompressor;
-use crate::diff_compress::{RunCol, RunEntry};
+use vstd::prelude::*;
 
 verus! {
 
@@ -561,7 +561,7 @@ impl<T: Copy, I: IndexLike, VC: ValueCompressor<T>> LayeredFrame<T, I, VC> {
                 self.wf(),
                 n == self.decode().len(),
                 out@.len() == t,
-                forall|k: int| 0 <= k < t ==> out@[k] == self.decode()[k],
+                forall|k: int| #![auto] 0 <= k < t ==> out@[k] == self.decode()[k],
             decreases n - t,
         {
             let e = self.decode_at(t);

@@ -12,9 +12,9 @@
 //! and re-check it periodically instead of paying the adaptive decision every
 //! frame.
 
-use vstd::prelude::*;
-use crate::index_like::{IndexLike, IndexFromNat};
 use crate::diff_compress::CompressionMode;
+use crate::index_like::{IndexFromNat, IndexLike};
+use vstd::prelude::*;
 
 verus! {
 

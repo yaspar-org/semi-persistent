@@ -25,9 +25,13 @@ fn gen_expr(depth: usize, seed: u64) -> String {
     if depth == 0 {
         return format!("(Num {})", (seed % 7) + 1);
     }
-    let s1 = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-    let s2 = s1.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-    let op = if s1 % 3 == 0 { "Mul" } else { "Add" };
+    let s1 = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let s2 = s1
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let op = if s1.is_multiple_of(3) { "Mul" } else { "Add" };
     format!(
         "({op} {} {})",
         gen_expr(depth - 1, s1),

@@ -231,6 +231,7 @@ mod oracle {
 
         /// The retired paired meaning (frame live AND depth generation
         /// matches), kept for harnesses that pair a container with a History.
+        #[allow(dead_code)]
         pub fn is_restorable_gen(&self, t: Tok) -> bool {
             if (t.frame as usize) >= self.snaps.len() {
                 return false;

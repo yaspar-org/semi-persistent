@@ -35,7 +35,11 @@ fn check_exact<VC: ValueCompressor<u32>>(
     assert_eq!(frame.entry_len(), diffs.len());
     let mut restored = base.to_vec();
     frame.restore_to(&mut restored);
-    assert_eq!(restored, reference_apply(base, diffs), "restore != reference");
+    assert_eq!(
+        restored,
+        reference_apply(base, diffs),
+        "restore != reference"
+    );
     let _ = frame.byte_len();
 }
 

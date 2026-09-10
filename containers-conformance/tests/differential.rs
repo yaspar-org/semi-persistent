@@ -948,7 +948,7 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
     // operation sequences to be identical on both sides.
     let mut marks: Vec<(prod::VecToken, verus::circular_list::CircularListToken)> = Vec::new();
 
-    for step in 0..steps {
+    for _step in 0..steps {
         match rng.below(100) {
             // Merge two distinct nodes. Splicing already-merged nodes is fine
             // (it splits, which is the same write pattern), so no bookkeeping is

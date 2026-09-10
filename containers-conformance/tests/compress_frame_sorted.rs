@@ -11,8 +11,8 @@ use proptest::prelude::*;
 use std::collections::HashMap;
 
 use semi_persistent_containers_verus as verus;
-use verus::diff_compress::{compress_frame, is_unique_idx};
 use verus::CompressionMode;
+use verus::diff_compress::{compress_frame, is_unique_idx};
 
 // The multiset of writes, as a count per (value, index) pair.
 fn as_multiset(v: &[(u32, u32)]) -> HashMap<(u32, u32), usize> {

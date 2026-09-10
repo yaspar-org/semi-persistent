@@ -29,9 +29,9 @@
 //!   (F3), which lives at the `(value, index)` frame level where the index
 //!   exists.
 
-use vstd::prelude::*;
-use crate::index_like::IndexLike;
 use crate::diff_compress::ValFrame;
+use crate::index_like::IndexLike;
+use vstd::prelude::*;
 
 verus! {
 

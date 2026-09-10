@@ -9,7 +9,7 @@
 //! (a cell rewritten to new content and then rolled BACK to the old one, with
 //! another cell holding that same old content), plus deep restores past
 //! several marks.
-use semi_persistent_containers_verus::hinted_arena::{HintContent, HintedArena};
+use semi_persistent_containers_verus::hinted_arena::HintedArena;
 use semi_persistent_containers_verus::{ShrinkPolicy, StoreKind};
 
 type Node = semi_persistent_containers_verus::Pair<u32, u32>;

@@ -1847,7 +1847,16 @@ mod tests {
         let lhs = parse_pattern("(f x y)");
         let rhs = parse_rhs("(f y x)");
         let rule = compile_rewrite(
-            "test", "", "", &lhs, &rhs, &[], false, eg.ops(), eg.sorts(), &mut rules,
+            "test",
+            "",
+            "",
+            &lhs,
+            &rhs,
+            &[],
+            false,
+            eg.ops(),
+            eg.sorts(),
+            &mut rules,
             &model,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
         )
@@ -1862,8 +1871,12 @@ mod tests {
         assert_eq!(eg.is_class_matchable(fab), Some(false));
         let index = IndexStore::build(&eg);
         let changes = apply_rule(
-            &rule, &mut eg, &index,
-            &crate::schedule::IndexStats::from_index(&index), &model, &ctx,
+            &rule,
+            &mut eg,
+            &index,
+            &crate::schedule::IndexStats::from_index(&index),
+            &model,
+            &ctx,
         )
         .unwrap();
         assert_eq!(changes, 0, "a shielded class must yield no matches");
@@ -1873,8 +1886,12 @@ mod tests {
         assert_eq!(eg.is_class_matchable(fab), Some(true));
         let index = IndexStore::build(&eg);
         let changes = apply_rule(
-            &rule, &mut eg, &index,
-            &crate::schedule::IndexStats::from_index(&index), &model, &ctx,
+            &rule,
+            &mut eg,
+            &index,
+            &crate::schedule::IndexStats::from_index(&index),
+            &model,
+            &ctx,
         )
         .unwrap();
         assert!(changes > 0, "un-shielding must restore the match");

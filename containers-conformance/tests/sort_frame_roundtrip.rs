@@ -12,8 +12,8 @@
 //! full sort->coalesce->decode round-trip reproduces the same SET of writes.
 
 use proptest::prelude::*;
-use std::collections::HashMap;
 use semi_persistent_containers_verus as verus;
+use std::collections::HashMap;
 use verus::diff_compress::{compress_runs_sorted, sort_frame_by_index};
 
 // A unique-index frame: a map from index -> value, as a Vec of pairs in

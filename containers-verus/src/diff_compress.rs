@@ -12,8 +12,8 @@
 //! (run-coalescing / Elias-Fano / delta-varint) composes on top and is a
 //! separate encoder.
 
+use crate::index_like::{IndexFromNat, IndexLike};
 use vstd::prelude::*;
-use crate::index_like::{IndexLike, IndexFromNat};
 
 verus! {
 
@@ -475,7 +475,7 @@ pub fn packed_get(words: &Vec<u64>, bits: u8, i: usize) -> (c: usize)
             requires bits == 1u8 || bits == 2u8 || bits == 4u8;
     }
     let mask = (1u64 << (bits as u64)) - 1;
-    (((words[wi] >> shift) & mask)) as usize
+    ((words[wi] >> shift) & mask) as usize
 }
 
 /// An immutable value-only frame: `dict` plus a narrow/bit-packed `codes` column,
@@ -1648,7 +1648,7 @@ pub fn compress_runs_sorted<T: IndexLike, I: IndexFromNat>(diffs: &Vec<(T, I)>) 
     }
     proof {
         // Strictly ascending: sorted gives <=, uniqueness upgrades to <.
-        assert forall|a: int, b: int| 0 <= a < b < usized@.len() implies
+        assert forall|a: int, b: int| #![auto] 0 <= a < b < usized@.len() implies
             usized@[a].1 < usized@[b].1 by {
             assert(s@[a].1.as_nat() <= s@[b].1.as_nat());
             assert(s@[a].1.as_nat() != s@[b].1.as_nat());
@@ -1661,7 +1661,7 @@ pub fn compress_runs_sorted<T: IndexLike, I: IndexFromNat>(diffs: &Vec<(T, I)>) 
         // rf.decode() == mapped_diffs(usized@) == the (T, nat) projection of s;
         // decode_i maps each nat back via from_nat, recovering s exactly.
         assert(usized@.len() == s@.len());
-        assert forall|t: int| 0 <= t < s@.len() implies
+        assert forall|t: int| #![auto] 0 <= t < s@.len() implies
             rf.decode()[t] == (s@[t].0, s@[t].1.as_nat()) by {
             assert(rf.decode()[t] == (usized@[t].0, usized@[t].1 as nat));
         }
@@ -1812,7 +1812,7 @@ pub fn runs_writeorder_frame<T: IndexLike, I: IndexFromNat>(diffs: &Vec<(T, I)>)
     // diffs; decode_i maps each nat back to I via from_nat, recovering diffs.
     proof {
         assert(usized@.len() == diffs@.len());
-        assert forall|t: int| 0 <= t < diffs@.len() implies
+        assert forall|t: int| #![auto] 0 <= t < diffs@.len() implies
             rf.decode()[t] == (diffs@[t].0, diffs@[t].1.as_nat()) by {
             assert(rf.decode()[t] == (usized@[t].0, usized@[t].1 as nat));
         }
@@ -2364,6 +2364,9 @@ impl<T: Copy, I: IndexLike> RunCol<T, I> {
         }
         let ghost gvals = vals@;
         let entry = RunEntry { start, vals };
+        // Not `vec![entry]`: that macro expands to a let expression, which Verus
+        // does not support.
+        #[allow(clippy::vec_init_then_push)]
         let mut runs: Vec<RunEntry<T, I>> = Vec::new();
         runs.push(entry);
         let r = RunCol { runs, pairs: Ghost(diffs@), len: diffs.len() };
@@ -2562,6 +2565,8 @@ impl<T: Copy, I: IndexLike> CompressedFrame<T, I> for DictFrame<T, I> {
 
     fn decode_at(&self, i: usize) -> (e: (T, I)) { DictFrame::decode_at(self, i) }
 
+    // `g` is incremented past its last exec read: the trailing value is used
+    // only by the proof (`pairs.subrange(0, g as int)`), which rustc cannot see.
     fn restore_to(&self, target: &mut Vec<T>) {
         let ghost base = target@;
         let n = DictFrame::entry_len(self);
@@ -2610,6 +2615,10 @@ impl<T: Copy, I: IndexLike> CompressedFrame<T, I> for RunCol<T, I> {
     /// behind a trusted contract. If the restore benchmarks measure the
     /// memcpy delta, the recorded upgrade is a trusted memcpy fast path
     /// behind this same contract with this loop as the verified reference.
+    // `g` is incremented past its last executable read: the trailing value is
+    // used only by the proof (`pairs.subrange(0, g as int)`), which rustc
+    // cannot see.
+    #[allow(unused_assignments)]
     fn restore_to(&self, target: &mut Vec<T>) {
         let ghost base = target@;
         let ghost pairs = self.pairs@;
@@ -2845,8 +2854,8 @@ impl<T: IndexLike, I: IndexLike> DeltaFrame<T, I> {
             }
             i = i + 1;
         }
-        let r = DeltaFrame { idxs, exceptions, pairs: Ghost(diffs@) };
-        r
+
+        DeltaFrame { idxs, exceptions, pairs: Ghost(diffs@) }
     }
 
     /// Deterministic encoded footprint: the index column plus the exception list.
@@ -3017,8 +3026,8 @@ impl<T: Copy, I: IndexLike, VC: crate::value_compressor::ValueCompressor<T>> Col
                 if rc.byte_len() <= plain_bytes {
                     ColdFrame::Runs(rc)
                 } else {
-                    let f = Self::plain_copy(diffs);
-                    f
+
+                    Self::plain_copy(diffs)
                 }
             }
             None => Self::plain_copy(diffs),

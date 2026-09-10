@@ -201,8 +201,7 @@ proptest! {
 fn vecd_kinds_match_oracle() {
     use semi_persistent_containers_verus::{StoreKind, VecD};
     let kinds = [StoreKind::Inline, StoreKind::Parallel, StoreKind::Trail];
-    let mut cols: Vec<VecD<u32, u32, true>> =
-        kinds.iter().map(|&k| VecD::new_kind(k)).collect();
+    let mut cols: Vec<VecD<u32, u32, true>> = kinds.iter().map(|&k| VecD::new_kind(k)).collect();
     let mut oracle: Vec<u32> = Vec::new();
     let mut snaps: Vec<(Vec<VecToken>, Vec<u32>)> = Vec::new();
 
@@ -263,7 +262,11 @@ fn vecd_kinds_match_oracle() {
             }
         }
         for (k, c) in cols.iter().enumerate() {
-            assert_eq!(c.len() as usize, oracle.len(), "len mismatch kind {k} step {step}");
+            assert_eq!(
+                c.len() as usize,
+                oracle.len(),
+                "len mismatch kind {k} step {step}"
+            );
         }
     }
     for (i, expected) in oracle.iter().enumerate() {

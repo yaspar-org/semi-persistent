@@ -9,6 +9,7 @@
 //!   - eager index-major write-order:  extend the current run if idx is contiguous,
 //!     else start a new run (NO hashing; hot frame is runs, smaller for clustered
 //!     indices)
+//!
 //! plus the resulting hot-frame byte size. This says whether the eager write tax is
 //! worth the smaller/cache-friendlier hot frame, per workload. It does NOT measure
 //! end-to-end e-graph time (a saturation bench does); it measures the write path the
@@ -22,7 +23,11 @@ struct XorShift(u64);
 impl XorShift {
     fn next(&mut self) -> u64 {
         let mut x = self.0;
-        x ^= x << 13; x ^= x >> 7; x ^= x << 17; self.0 = x; x
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
     }
 }
 
@@ -33,7 +38,11 @@ fn writes(n: usize, distinct: u32, contiguous: bool) -> Vec<(u32, u32)> {
     (0..n)
         .map(|t| {
             let v = (rng.next() as u32) % distinct;
-            let i = if contiguous { t as u32 } else { (rng.next() as u32) % 1_000_000 };
+            let i = if contiguous {
+                t as u32
+            } else {
+                (rng.next() as u32) % 1_000_000
+            };
             (v, i)
         })
         .collect()
@@ -65,7 +74,7 @@ fn eager_value_major(ws: &[(u32, u32)]) -> usize {
     // Hot-frame bytes: dict (D * 4) + codes (N, packed to ceil(log2 D) bits) + idxs (N*4).
     let d = dict.len().max(1);
     let bits = (usize::BITS - (d - 1).max(1).leading_zeros()) as usize;
-    dict.len() * 4 + (codes.len() * bits + 7) / 8 + idxs.len() * 4
+    dict.len() * 4 + (codes.len() * bits).div_ceil(8) + idxs.len() * 4
 }
 
 fn eager_index_runs(ws: &[(u32, u32)]) -> usize {
@@ -110,7 +119,9 @@ fn bench_eager(c: &mut Criterion) {
         // Report the resulting hot-frame sizes once (bytes), for the space side.
         eprintln!(
             "  [{shape}] hot bytes: plain {}, eager_value {}, eager_runs {}",
-            plain(ws), eager_value_major(ws), eager_index_runs(ws)
+            plain(ws),
+            eager_value_major(ws),
+            eager_index_runs(ws)
         );
     }
     g.finish();

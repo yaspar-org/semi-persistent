@@ -364,6 +364,44 @@ impl<G: DenseId, O: DenseId, V: DenseId> Tagged for LitNode<G, O, V> {
 }
 
 // ---------------------------------------------------------------------------
+// EqSpec (F2.4): spec-carrying equality for the cache node structs, so the
+// cache columns can instantiate ValueRle. TRUSTED LEAVES: this crate is not
+// verified, so these one-liners carry the obligation that they decide
+// STRUCTURAL equality. Reprs are compared through (from_repr, tag), which
+// equals repr equality on well-formed reprs by Tagged's extensionality axiom;
+// ids compare through their PartialEq (raw-word equality). A wrong answer
+// here degrades only RLE exactness on cache columns, which the cache
+// differential tests (restore == rebuild reference) catch.
+// ---------------------------------------------------------------------------
+
+impl<G: DenseId, O: DenseId, const K: usize> semi_persistent_containers::value_compressor::EqSpec
+    for FixedArityNode<G, O, K>
+{
+    fn eq_exec(&self, other: &Self) -> bool {
+        G::from_repr(&self.global_id) == G::from_repr(&other.global_id)
+            && G::tag(&self.global_id) == G::tag(&other.global_id)
+            && O::from_repr(&self.op) == O::from_repr(&other.op)
+            && O::tag(&self.op) == O::tag(&other.op)
+            && self.flags == other.flags
+            && self.children == other.children
+    }
+}
+
+impl<G: DenseId, O: DenseId> semi_persistent_containers::value_compressor::EqSpec
+    for VariableArityNode<G, O>
+{
+    fn eq_exec(&self, other: &Self) -> bool {
+        G::from_repr(&self.global_id) == G::from_repr(&other.global_id)
+            && G::tag(&self.global_id) == G::tag(&other.global_id)
+            && O::from_repr(&self.op) == O::from_repr(&other.op)
+            && O::tag(&self.op) == O::tag(&other.op)
+            && self.start == other.start
+            && self.end == other.end
+            && self.flags == other.flags
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -480,43 +518,5 @@ mod tests {
             h.finish()
         };
         assert_eq!(hash(a), hash(b));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// EqSpec (F2.4): spec-carrying equality for the cache node structs, so the
-// cache columns can instantiate ValueRle. TRUSTED LEAVES: this crate is not
-// verified, so these one-liners carry the obligation that they decide
-// STRUCTURAL equality. Reprs are compared through (from_repr, tag), which
-// equals repr equality on well-formed reprs by Tagged's extensionality axiom;
-// ids compare through their PartialEq (raw-word equality). A wrong answer
-// here degrades only RLE exactness on cache columns, which the cache
-// differential tests (restore == rebuild reference) catch.
-// ---------------------------------------------------------------------------
-
-impl<G: DenseId, O: DenseId, const K: usize> semi_persistent_containers::value_compressor::EqSpec
-    for FixedArityNode<G, O, K>
-{
-    fn eq_exec(&self, other: &Self) -> bool {
-        G::from_repr(&self.global_id) == G::from_repr(&other.global_id)
-            && G::tag(&self.global_id) == G::tag(&other.global_id)
-            && O::from_repr(&self.op) == O::from_repr(&other.op)
-            && O::tag(&self.op) == O::tag(&other.op)
-            && self.flags == other.flags
-            && self.children == other.children
-    }
-}
-
-impl<G: DenseId, O: DenseId> semi_persistent_containers::value_compressor::EqSpec
-    for VariableArityNode<G, O>
-{
-    fn eq_exec(&self, other: &Self) -> bool {
-        G::from_repr(&self.global_id) == G::from_repr(&other.global_id)
-            && G::tag(&self.global_id) == G::tag(&other.global_id)
-            && O::from_repr(&self.op) == O::from_repr(&other.op)
-            && O::tag(&self.op) == O::tag(&other.op)
-            && self.start == other.start
-            && self.end == other.end
-            && self.flags == other.flags
     }
 }

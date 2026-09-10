@@ -29,7 +29,10 @@ fn bump_invalidates_deep_tokens_keeps_spine() {
     // A fresh mint at depth 5 after the cut is valid again (new generation).
     let t5b = g.stamp(5);
     assert!(g.is_valid(5, t5b));
-    assert!(t5b != t5, "the new generation differs from the abandoned one");
+    assert!(
+        t5b != t5,
+        "the new generation differs from the abandoned one"
+    );
 }
 
 #[test]

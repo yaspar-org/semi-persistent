@@ -571,6 +571,9 @@ pub struct NodeStoreToken {
     lit: CacheToken,
 }
 
+// The profiling instrumentation below is deliberately grouped at the end of
+// the file, after the tests.
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -712,8 +715,8 @@ mod tests {
 
 /// Per-cache restore accounting inside the node store (SEMPER_RESTORE_PROF).
 pub const NODE_PROF_PARTS: [&str; 11] = [
-    "routing", "plain0", "plain1", "plain2", "plain3", "spair", "plain_n",
-    "seq", "mset", "set", "lit",
+    "routing", "plain0", "plain1", "plain2", "plain3", "spair", "plain_n", "seq", "mset", "set",
+    "lit",
 ];
 static NODE_PROF_NS: [std::sync::atomic::AtomicU64; 11] = [
     std::sync::atomic::AtomicU64::new(0),
@@ -735,8 +738,10 @@ fn node_prof_enabled() -> bool {
 }
 
 fn node_prof_record(part: usize, t: &mut std::time::Instant) {
-    NODE_PROF_NS[part]
-        .fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+    NODE_PROF_NS[part].fetch_add(
+        t.elapsed().as_nanos() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     *t = std::time::Instant::now();
 }
 

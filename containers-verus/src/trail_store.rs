@@ -35,7 +35,9 @@ where
 {
     pub(crate) data: Vec<T>,
     /// The capture flags the `DiffStore` contract is phrased over. Ghost:
-    /// no runtime counterpart exists, which is the discipline's point.
+    /// no runtime counterpart exists, which is the discipline's point. Never read
+    /// by executable code for that reason.
+    #[allow(dead_code)]
     pub(crate) captured: Ghost<Seq<bool>>,
     pub(crate) _phantom: core::marker::PhantomData<I>,
 }

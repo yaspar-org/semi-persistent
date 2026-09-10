@@ -458,8 +458,8 @@ where
             match r {
                 Some(id) => id.as_nat() < self.view().len()
                     && T::eq_spec(&self.view()[id.as_nat() as int], t),
-                None => forall|j: int| 0 <= j < self.view().len()
-                    ==> !T::eq_spec(&(#[trigger] self.view()[j]), t),
+                None => forall|j: int| #![trigger self.view()[j]] 0 <= j < self.view().len()
+                    ==> !T::eq_spec(&self.view()[j], t),
             },
     {
         let fp = t.fp();
@@ -471,8 +471,8 @@ where
                     // completeness no live cell can carry this fingerprint -
                     // and a colliding cell would.
                     assert(self.bucket_spec(fp).len() == 0);
-                    assert forall|j: int| 0 <= j < self.view().len()
-                        implies !T::eq_spec(&(#[trigger] self.view()[j]), t) by {
+                    assert forall|j: int| #![trigger self.view()[j]] 0 <= j < self.view().len()
+                        implies !T::eq_spec(&self.view()[j], t) by {
                         if T::eq_spec(&self.view()[j], t) {
                             T::lemma_fp_respects_eq(&self.view()[j], t);
                             assert(self.hinted(self.view()[j].fp_spec(), j as nat));
@@ -523,8 +523,8 @@ where
                     // colliding live cell would be hinted under fp (complete
                     // + fp respects eq), hence appear in this bucket, hence
                     // have been rejected by the scan - contradiction.
-                    assert forall|j: int| 0 <= j < self.view().len()
-                        implies !T::eq_spec(&(#[trigger] self.view()[j]), t) by {
+                    assert forall|j: int| #![trigger self.view()[j]] 0 <= j < self.view().len()
+                        implies !T::eq_spec(&self.view()[j], t) by {
                         if T::eq_spec(&self.view()[j], t) {
                             T::lemma_fp_respects_eq(&self.view()[j], t);
                             assert(self.hinted(fp, j as nat));
@@ -617,6 +617,9 @@ where
             }
             None => {
                 let slot = self.spill.len();
+                // Not `vec![id]`: that macro expands to a let expression, which
+                // Verus does not support.
+                #[allow(clippy::vec_init_then_push)]
                 let mut b: Vec<I> = Vec::new();
                 b.push(id);
                 self.spill.push(b);

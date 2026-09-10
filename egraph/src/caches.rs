@@ -149,9 +149,7 @@ pub enum InsertResult<G, L> {
 /// The hint index needs nothing from it at restore time (restore does no
 /// index work); the frame stack exists to validate and consume tokens.
 #[derive(Clone, Copy, Debug)]
-struct CacheFrame {
-    saved_len: usize,
-}
+struct CacheFrame;
 
 /// Restore rebuilds an append-only value index once the incremental deletions
 /// would exceed `1 / REBUILD_RATIO` of a rebuild. Used by the literal value
@@ -249,8 +247,7 @@ impl<
 {
     pub fn new() -> Self {
         Self {
-            nodes: crate::containers::VecD::new_kind(
-                crate::containers::env_diff_store_kind()),
+            nodes: crate::containers::VecD::new_kind(crate::containers::env_diff_store_kind()),
             index: hashbrown::HashMap::with_hasher(PassthroughBuildHasher),
             spill: Vec::new(),
             history: if PROOFS { Some(VecI::new()) } else { None },
@@ -441,9 +438,7 @@ impl<
             let nodes = &self.nodes;
             let b = &mut self.spill[ix];
             if frameless {
-                b.retain(|&mut e| {
-                    e.as_usize() < live && fold32(nodes.get(e).content_hash()) == fp
-                });
+                b.retain(|&mut e| e.as_usize() < live && fold32(nodes.get(e).content_hash()) == fp);
             } else {
                 b.retain(|&mut e| e.as_usize() < live);
             }
@@ -570,9 +565,7 @@ impl<
             }),
             frame_index: self.frames.len(),
         };
-        self.frames.push(CacheFrame {
-            saved_len: self.nodes.len().as_usize(),
-        });
+        self.frames.push(CacheFrame);
         token
     }
 
@@ -697,10 +690,8 @@ impl<
 {
     pub fn new() -> Self {
         Self {
-            nodes: crate::containers::VecD::new_kind(
-                crate::containers::env_diff_store_kind()),
-            children: crate::containers::VecD::new_kind(
-                crate::containers::env_diff_store_kind()),
+            nodes: crate::containers::VecD::new_kind(crate::containers::env_diff_store_kind()),
+            children: crate::containers::VecD::new_kind(crate::containers::env_diff_store_kind()),
             index: hashbrown::HashMap::with_hasher(PassthroughBuildHasher),
             spill: Vec::new(),
             history_nodes: if PROOFS { Some(VecI::new()) } else { None },
@@ -815,8 +806,7 @@ impl<
             let b = &mut self.spill[ix];
             if frameless {
                 b.retain(|&mut e| {
-                    e.as_usize() < live
-                        && var_children_fingerprint(children, &nodes.get(e)) == fp
+                    e.as_usize() < live && var_children_fingerprint(children, &nodes.get(e)) == fp
                 });
             } else {
                 b.retain(|&mut e| e.as_usize() < live);
@@ -982,9 +972,7 @@ impl<
             }),
             frame_index: self.frames.len(),
         };
-        self.frames.push(CacheFrame {
-            saved_len: self.nodes.len().as_usize(),
-        });
+        self.frames.push(CacheFrame);
         token
     }
 
@@ -1072,7 +1060,6 @@ impl<
         elems.hash(&mut h);
         fold32(h.finish())
     }
-
 }
 
 /// Fingerprint of a variable-arity node's CURRENT content, reading through
@@ -1126,8 +1113,7 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
 {
     pub fn new() -> Self {
         Self {
-            nodes: crate::containers::VecD::new_kind(
-                crate::containers::env_diff_store_kind()),
+            nodes: crate::containers::VecD::new_kind(crate::containers::env_diff_store_kind()),
             index: hashbrown::HashMap::with_hasher(PassthroughBuildHasher),
             spill: Vec::new(),
             frames: Vec::new(),
@@ -1231,9 +1217,7 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
             history: None,
             frame_index: self.frames.len(),
         };
-        self.frames.push(CacheFrame {
-            saved_len: self.nodes.len().as_usize(),
-        });
+        self.frames.push(CacheFrame);
         token
     }
 

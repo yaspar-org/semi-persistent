@@ -88,8 +88,7 @@ fn restore_runwise(frame: &RunFrame<u32>, base: &mut [u32]) {
 
 fn run_bytes(frame: &RunFrame<u32>) -> (usize, usize) {
     let n: usize = frame.vals.iter().map(|v| v.len()).sum();
-    let bytes = frame.starts.len() * std::mem::size_of::<usize>()
-        + n * std::mem::size_of::<u32>();
+    let bytes = frame.starts.len() * std::mem::size_of::<usize>() + n * std::mem::size_of::<u32>();
     (frame.starts.len(), bytes)
 }
 

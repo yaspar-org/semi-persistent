@@ -9,9 +9,9 @@
 
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::containers::ShrinkPolicy;
-use semi_persistent_egraph::take_fanout_witness;
 use semi_persistent_egraph::id::ENodeId;
 use semi_persistent_egraph::literal::NiraLitVal;
+use semi_persistent_egraph::take_fanout_witness;
 
 type Eg = EGraph31<NiraLitVal, true, false>;
 

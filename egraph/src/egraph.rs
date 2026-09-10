@@ -83,7 +83,11 @@ static MARK_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 static RESTORE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static RESTORE_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-fn prof_record(ns: &std::sync::atomic::AtomicU64, calls: &std::sync::atomic::AtomicU64, t: std::time::Instant) {
+fn prof_record(
+    ns: &std::sync::atomic::AtomicU64,
+    calls: &std::sync::atomic::AtomicU64,
+    t: std::time::Instant,
+) {
     use std::sync::atomic::Ordering;
     ns.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
     calls.fetch_add(1, Ordering::Relaxed);
@@ -106,8 +110,9 @@ pub fn take_markrestore_profile() -> (u64, u64, u64, u64) {
 /// interleaves members, so per-member walls would not add up).
 static RESTORE_PROF_ON: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| std::env::var_os("SEMPER_RESTORE_PROF").is_some());
-pub const RESTORE_PROF_MEMBERS: [&str; 8] =
-    ["classes", "nodes", "sorts", "ops", "rules", "axioms", "lits", "maps"];
+pub const RESTORE_PROF_MEMBERS: [&str; 8] = [
+    "classes", "nodes", "sorts", "ops", "rules", "axioms", "lits", "maps",
+];
 static RESTORE_MEMBER_NS: [std::sync::atomic::AtomicU64; 8] = [
     std::sync::atomic::AtomicU64::new(0),
     std::sync::atomic::AtomicU64::new(0),
@@ -120,8 +125,10 @@ static RESTORE_MEMBER_NS: [std::sync::atomic::AtomicU64; 8] = [
 ];
 
 fn restore_prof_record(member: usize, t: std::time::Instant) {
-    RESTORE_MEMBER_NS[member]
-        .fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+    RESTORE_MEMBER_NS[member].fetch_add(
+        t.elapsed().as_nanos() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 /// Read and reset the per-member restore nanoseconds, indexed as
@@ -2309,7 +2316,7 @@ where
         // (This was an O(#ops) registry scan per repair round; measured at
         // the top of the QF_UF forward-path profile, where rounds run per
         // rebuild per assertion and no instance declares an inverse.)
-        if self.inverse_op.len() == 0 {
+        if self.inverse_op.is_empty() {
             return false;
         }
         // Collect first, apply second: `add`/`merge` below mutate the node store that
@@ -3276,15 +3283,42 @@ where
         self.lits_marks.truncate(d + 1);
         self.unit_node_marks.truncate(d + 1);
         self.inverse_op_marks.truncate(d + 1);
-        let classes = self.classes_marks.pop().expect("restore: member stack tracks history depth");
-        let nodes = self.nodes_marks.pop().expect("restore: member stack tracks history depth");
-        let sorts = self.sorts_marks.pop().expect("restore: member stack tracks history depth");
-        let ops = self.ops_marks.pop().expect("restore: member stack tracks history depth");
-        let rules = self.rules_marks.pop().expect("restore: member stack tracks history depth");
-        let axioms = self.axioms_marks.pop().expect("restore: member stack tracks history depth");
-        let lits = self.lits_marks.pop().expect("restore: member stack tracks history depth");
-        let unit_node = self.unit_node_marks.pop().expect("restore: member stack tracks history depth");
-        let inverse_op = self.inverse_op_marks.pop().expect("restore: member stack tracks history depth");
+        let classes = self
+            .classes_marks
+            .pop()
+            .expect("restore: member stack tracks history depth");
+        let nodes = self
+            .nodes_marks
+            .pop()
+            .expect("restore: member stack tracks history depth");
+        let sorts = self
+            .sorts_marks
+            .pop()
+            .expect("restore: member stack tracks history depth");
+        let ops = self
+            .ops_marks
+            .pop()
+            .expect("restore: member stack tracks history depth");
+        let rules = self
+            .rules_marks
+            .pop()
+            .expect("restore: member stack tracks history depth");
+        let axioms = self
+            .axioms_marks
+            .pop()
+            .expect("restore: member stack tracks history depth");
+        let lits = self
+            .lits_marks
+            .pop()
+            .expect("restore: member stack tracks history depth");
+        let unit_node = self
+            .unit_node_marks
+            .pop()
+            .expect("restore: member stack tracks history depth");
+        let inverse_op = self
+            .inverse_op_marks
+            .pop()
+            .expect("restore: member stack tracks history depth");
         if par {
             let (c, n, so, o, r, a, l) = (
                 &mut self.classes,

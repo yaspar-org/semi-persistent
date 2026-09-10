@@ -3760,7 +3760,7 @@ where
                     pre.lemma_diff_start_monotone(k + 1, topg);
                     assert(hi <= ts);
                     assert(self.diff_log@.subrange(lo, hi) =~= pre.diff_log@.subrange(lo, hi)) by {
-                        assert forall|q: int| 0 <= q < hi - lo implies
+                        assert forall|q: int| #![auto] 0 <= q < hi - lo implies
                             self.diff_log@.subrange(lo, hi)[q] == pre.diff_log@.subrange(lo, hi)[q] by {
                             assert(self.diff_log@[lo + q] == self.diff_log@.subrange(0, ts)[lo + q]);
                             assert(pre.diff_log@[lo + q] == pre.diff_log@.subrange(0, ts)[lo + q]);
@@ -3780,7 +3780,7 @@ where
                 let lo = self.frames@[k].diff_start as int;
                 let hi = self.stratum_end(k);
                 if k == topg {
-                    assert forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b
+                    assert forall|a: int, b: int| #![auto] lo <= a < hi && lo <= b < hi && a != b
                         implies self.diff_log@[a].1.as_nat() != self.diff_log@[b].1.as_nat() by {
                         assert(self.diff_log@.subrange(lo, hi)[a - lo] == self.diff_log@[a]);
                         assert(self.diff_log@.subrange(lo, hi)[b - lo] == self.diff_log@[b]);
@@ -3793,7 +3793,7 @@ where
                     assert(pre.frames@[k].diff_start as int == lo);
                     assert(pre.stratum_end(k) == hi);
                     assert(stratum_unique::<T, I>(pre.diff_log@, lo, hi));
-                    assert forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b
+                    assert forall|a: int, b: int| #![auto] lo <= a < hi && lo <= b < hi && a != b
                         implies self.diff_log@[a].1.as_nat() != self.diff_log@[b].1.as_nat() by {
                         assert(self.diff_log@[a] == self.diff_log@.subrange(0, ts)[a]);
                         assert(pre.diff_log@[a] == pre.diff_log@.subrange(0, ts)[a]);
@@ -4561,6 +4561,11 @@ where
     /// value-major columns (union-find `parent`/`rank`) call this. Same contract as
     /// `mark`: `compact_tail` preserves `diff_log@` and `diff_log.wf()`, so the Vec
     /// invariant is unchanged (`lemma_diff_log_rep_change_preserves_wf`).
+    // Verified compaction API with no current caller: the live path uses
+    // `mark`. Retained rather than deleted so its contract stays proved.
+    // Verified compaction API with no current caller: the live path uses
+    // `mark`. Retained rather than deleted so its contract stays proved.
+    #[allow(dead_code)]
     #[verifier::rlimit(400)]
     pub(crate) fn mark_and_compact(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
         requires
@@ -4592,6 +4597,9 @@ where
     /// the alignment a compact-at-every-mark discipline maintains) and that frame's
     /// indices to be unique (first-write-wins); both hold by construction for an
     /// `IndexRunsSorted` column driven only through this entry and `push`.
+    // Verified compaction API with no current caller, like `mark_and_compact`:
+    // retained rather than deleted so its contract stays proved.
+    #[allow(dead_code)]
     #[verifier::rlimit(800)]
     #[verifier::spinoff_prover]
     pub(crate) fn mark_and_compact_sorted(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
@@ -4644,7 +4652,7 @@ where
                     pre.lemma_diff_start_monotone(k + 1, top);
                     assert(hi <= ts);
                     assert(self.diff_log@.subrange(lo, hi) =~= pre.diff_log@.subrange(lo, hi)) by {
-                        assert forall|q: int| 0 <= q < hi - lo implies
+                        assert forall|q: int| #![auto] 0 <= q < hi - lo implies
                             self.diff_log@.subrange(lo, hi)[q] == pre.diff_log@.subrange(lo, hi)[q] by {
                             assert(self.diff_log@[lo + q] == self.diff_log@.subrange(0, ts)[lo + q]);
                             assert(pre.diff_log@[lo + q] == pre.diff_log@.subrange(0, ts)[lo + q]);
@@ -4666,7 +4674,7 @@ where
                 let hi = self.stratum_end(k);
                 if k == top {
                     // The folded stratum is unique (compact_tail_sorted ensures it).
-                    assert forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b
+                    assert forall|a: int, b: int| #![auto] lo <= a < hi && lo <= b < hi && a != b
                         implies self.diff_log@[a].1.as_nat() != self.diff_log@[b].1.as_nat() by {
                         assert(self.diff_log@.subrange(lo, hi)[a - lo] == self.diff_log@[a]);
                         assert(self.diff_log@.subrange(lo, hi)[b - lo] == self.diff_log@[b]);
@@ -4680,7 +4688,7 @@ where
                     assert(pre.stratum_end(k) == hi);
                     assert(stratum_unique::<T, I>(pre.diff_log@, lo, hi));
                     // @ unchanged on [lo, hi); pre is unique there ⇒ self is too.
-                    assert forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b
+                    assert forall|a: int, b: int| #![auto] lo <= a < hi && lo <= b < hi && a != b
                         implies self.diff_log@[a].1.as_nat() != self.diff_log@[b].1.as_nat() by {
                         assert(self.diff_log@[a] == self.diff_log@.subrange(0, ts)[a]);
                         assert(pre.diff_log@[a] == pre.diff_log@.subrange(0, ts)[a]);
@@ -4692,8 +4700,8 @@ where
             }
             self.lemma_diff_log_rep_change_preserves_wf_multiset(pre);
         }
-        let t = self.mark(shrink);
-        t
+
+        self.mark(shrink)
     }
 
     /// Per-frame-adaptive `mark`: fold the open top frame in `mode` (the selector's
@@ -4746,7 +4754,7 @@ where
                     pre.lemma_diff_start_monotone(k + 1, top);
                     assert(hi <= ts);
                     assert(self.diff_log@.subrange(lo, hi) =~= pre.diff_log@.subrange(lo, hi)) by {
-                        assert forall|q: int| 0 <= q < hi - lo implies
+                        assert forall|q: int| #![auto] 0 <= q < hi - lo implies
                             self.diff_log@.subrange(lo, hi)[q] == pre.diff_log@.subrange(lo, hi)[q] by {
                             assert(self.diff_log@[lo + q] == self.diff_log@.subrange(0, ts)[lo + q]);
                             assert(pre.diff_log@[lo + q] == pre.diff_log@.subrange(0, ts)[lo + q]);
@@ -4766,7 +4774,7 @@ where
                 let lo = self.frames@[k].diff_start as int;
                 let hi = self.stratum_end(k);
                 if k == top {
-                    assert forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b
+                    assert forall|a: int, b: int| #![auto] lo <= a < hi && lo <= b < hi && a != b
                         implies self.diff_log@[a].1.as_nat() != self.diff_log@[b].1.as_nat() by {
                         assert(self.diff_log@.subrange(lo, hi)[a - lo] == self.diff_log@[a]);
                         assert(self.diff_log@.subrange(lo, hi)[b - lo] == self.diff_log@[b]);
@@ -4779,7 +4787,7 @@ where
                     assert(pre.frames@[k].diff_start as int == lo);
                     assert(pre.stratum_end(k) == hi);
                     assert(stratum_unique::<T, I>(pre.diff_log@, lo, hi));
-                    assert forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b
+                    assert forall|a: int, b: int| #![auto] lo <= a < hi && lo <= b < hi && a != b
                         implies self.diff_log@[a].1.as_nat() != self.diff_log@[b].1.as_nat() by {
                         assert(self.diff_log@[a] == self.diff_log@.subrange(0, ts)[a]);
                         assert(pre.diff_log@[a] == pre.diff_log@.subrange(0, ts)[a]);
@@ -4791,8 +4799,8 @@ where
             }
             self.lemma_diff_log_rep_change_preserves_wf_multiset(pre);
         }
-        let t = self.mark(shrink);
-        t
+
+        self.mark(shrink)
     }
 
     /// Genealogy-agnostic seal: close the open frame (compressing it per-frame when
@@ -4850,12 +4858,12 @@ where
                 let n = self.diff_log.len();
                 let diffs = self.diff_log.subrange_vec(ds, n);
                 let mode = crate::diff_compress::choose_mode(&diffs);
-                return self.mark_and_compact_adaptive(mode, shrink);
+                self.mark_and_compact_adaptive(mode, shrink)
             } else {
-                return self.mark(shrink);
+                self.mark(shrink)
             }
         } else {
-            return self.mark(shrink);
+            self.mark(shrink)
         }
     }
 }
@@ -4965,7 +4973,8 @@ impl core::fmt::Debug for VecToken {
 // Enumerated in doc/design/02-trust-boundary.md group E.
 // ---------------------------------------------------------------------------
 
-impl<T, I, S, const TRACK: bool, VC: crate::value_compressor::ValueCompressor<T>> Vec<T, I, S, TRACK, VC>
+impl<T, I, S, const TRACK: bool, VC: crate::value_compressor::ValueCompressor<T>>
+    Vec<T, I, S, TRACK, VC>
 where
     T: Sized + Copy,
     I: IndexLike,
@@ -4990,7 +4999,8 @@ where
 /// verified inherent `next` (trust group E). Enables `for x in
 /// vec.view_handle().iter()`; every yielded element comes from the verified
 /// method, whose contract proves in-order enumeration of `view()`.
-impl<'a, T, I, S, const TRACK: bool, VC: crate::value_compressor::ValueCompressor<T>> Iterator for VecViewIter<'a, T, I, S, TRACK, VC>
+impl<'a, T, I, S, const TRACK: bool, VC: crate::value_compressor::ValueCompressor<T>> Iterator
+    for VecViewIter<'a, T, I, S, TRACK, VC>
 where
     T: Sized + Copy,
     I: crate::index_like::IndexLike,
@@ -5033,7 +5043,9 @@ mod value_major_compaction_tests {
     type V = Vec<u32, u32, ParallelStore<u32, u32>, true>;
 
     fn read_back(v: &V) -> std::vec::Vec<u32> {
-        (0..v.len() as usize).map(|i| v.get_index(i as u32)).collect()
+        (0..v.len() as usize)
+            .map(|i| v.get_index(i as u32))
+            .collect()
     }
 
     #[test]
@@ -5061,7 +5073,11 @@ mod value_major_compaction_tests {
                 vp.set(i, k + 1);
             }
             // Same observable contents at every step (A1.2 differential).
-            assert_eq!(read_back(&vc), read_back(&vp), "views diverged at frame {k}");
+            assert_eq!(
+                read_back(&vc),
+                read_back(&vp),
+                "views diverged at frame {k}"
+            );
         }
 
         // A1.3: the compressed diff log is strictly smaller than plain. With D == 1
@@ -5078,7 +5094,11 @@ mod value_major_compaction_tests {
         // to a recent one; contents must still agree (A1.2 through the cold decode).
         vc.restore(tc[3]);
         vp.restore(tp[3]);
-        assert_eq!(read_back(&vc), read_back(&vp), "views diverged after deep restore");
+        assert_eq!(
+            read_back(&vc),
+            read_back(&vp),
+            "views diverged after deep restore"
+        );
     }
 }
 
@@ -5096,7 +5116,9 @@ mod index_major_compaction_tests {
     type V = Vec<u32, u32, ParallelStore<u32, u32>, true>;
 
     fn read_back(v: &V) -> std::vec::Vec<u32> {
-        (0..v.len() as usize).map(|i| v.get_index(i as u32)).collect()
+        (0..v.len() as usize)
+            .map(|i| v.get_index(i as u32))
+            .collect()
     }
 
     #[test]
@@ -5124,7 +5146,11 @@ mod index_major_compaction_tests {
                 vp.set(i, k + 1);
             }
             // Same observable contents at every step (A2 differential).
-            assert_eq!(read_back(&vc), read_back(&vp), "views diverged at frame {k}");
+            assert_eq!(
+                read_back(&vc),
+                read_back(&vp),
+                "views diverged at frame {k}"
+            );
         }
 
         // A2 heap check: the index column is dropped to one run start per frame, so
@@ -5141,7 +5167,11 @@ mod index_major_compaction_tests {
         // and contents must still agree (A2 through the run reconstruction).
         vc.restore(tc[3]);
         vp.restore(tp[3]);
-        assert_eq!(read_back(&vc), read_back(&vp), "views diverged after deep restore");
+        assert_eq!(
+            read_back(&vc),
+            read_back(&vp),
+            "views diverged after deep restore"
+        );
     }
 }
 
@@ -5161,7 +5191,9 @@ mod index_major_sorted_compaction_tests {
     type V = Vec<u32, u32, ParallelStore<u32, u32>, true>;
 
     fn read_back(v: &V) -> std::vec::Vec<u32> {
-        (0..v.len() as usize).map(|i| v.get_index(i as u32)).collect()
+        (0..v.len() as usize)
+            .map(|i| v.get_index(i as u32))
+            .collect()
     }
 
     #[test]
@@ -5204,7 +5236,11 @@ mod index_major_sorted_compaction_tests {
                 vc.set(j, k + 1);
                 vp.set(j, k + 1);
             }
-            assert_eq!(read_back(&vc), read_back(&vp), "views diverged at frame {k}");
+            assert_eq!(
+                read_back(&vc),
+                read_back(&vp),
+                "views diverged at frame {k}"
+            );
         }
         // Fold the last open frame too, so all but the top are sorted-compressed.
         tc.push(vc.mark_and_compact_sorted(ShrinkPolicy::Never));
@@ -5223,7 +5259,11 @@ mod index_major_sorted_compaction_tests {
         // agree, because restore depends on the per-frame write multiset, not order.
         vc.restore(tc[3]);
         vp.restore(tp[3]);
-        assert_eq!(read_back(&vc), read_back(&vp), "views diverged after deep restore");
+        assert_eq!(
+            read_back(&vc),
+            read_back(&vp),
+            "views diverged after deep restore"
+        );
     }
 }
 
@@ -5244,10 +5284,14 @@ mod layered_selector_tests {
     type VDict = Vec<u32, u32, ParallelStore<u32, u32>, true, ValueDictC>;
 
     fn read_plain(v: &VPlain) -> std::vec::Vec<u32> {
-        (0..v.len() as usize).map(|i| v.get_index(i as u32)).collect()
+        (0..v.len() as usize)
+            .map(|i| v.get_index(i as u32))
+            .collect()
     }
     fn read_dict(v: &VDict) -> std::vec::Vec<u32> {
-        (0..v.len() as usize).map(|i| v.get_index(i as u32)).collect()
+        (0..v.len() as usize)
+            .map(|i| v.get_index(i as u32))
+            .collect()
     }
 
     #[test]
@@ -5277,7 +5321,11 @@ mod layered_selector_tests {
                 vd.set(cell, val);
                 vi.set(cell, val);
             }
-            assert_eq!(read_dict(&vd), read_plain(&vi), "views diverged at frame {k}");
+            assert_eq!(
+                read_dict(&vd),
+                read_plain(&vi),
+                "views diverged at frame {k}"
+            );
         }
 
         // The value layer must pay beyond the index layer: same universal
@@ -5292,7 +5340,11 @@ mod layered_selector_tests {
         // Deep restore through the layered cold region: contents agree.
         vd.restore(td[3]);
         vi.restore(ti[3]);
-        assert_eq!(read_dict(&vd), read_plain(&vi), "views diverged after deep restore");
+        assert_eq!(
+            read_dict(&vd),
+            read_plain(&vi),
+            "views diverged after deep restore"
+        );
     }
 }
 
@@ -5305,13 +5357,15 @@ mod adaptive_compaction_tests {
     // heap footprint is strictly smaller than plain. The cold tier holds a MIX of
     // per-frame ColdFrame modes; restore is uniform over the mix (per-frame multiset).
     use super::{ShrinkPolicy, Vec};
-    use crate::diff_compress::{choose_mode, CompressionMode};
+    use crate::diff_compress::{CompressionMode, choose_mode};
     use crate::parallel_store::ParallelStore;
 
     type V = Vec<u32, u32, ParallelStore<u32, u32>, true>;
 
     fn read_back(v: &V) -> std::vec::Vec<u32> {
-        (0..v.len() as usize).map(|i| v.get_index(i as u32)).collect()
+        (0..v.len() as usize)
+            .map(|i| v.get_index(i as u32))
+            .collect()
     }
 
     // Pick the just-closed (open top) frame's mode from its actual captured diffs.
@@ -5384,7 +5438,11 @@ mod adaptive_compaction_tests {
         // Deep restore through the mixed-mode cold region.
         vc.restore(tc[3]);
         vp.restore(tp[3]);
-        assert_eq!(read_back(&vc), read_back(&vp), "views diverged after deep restore");
+        assert_eq!(
+            read_back(&vc),
+            read_back(&vp),
+            "views diverged after deep restore"
+        );
     }
 }
 
@@ -5399,7 +5457,7 @@ mod restore_memcpy_timing {
     // The assertion is deliberately weak (memcpy not slower by more than 2x) so a
     // debug run stays green; the RECORDED comparison is the release print.
     use super::{ShrinkPolicy, Vec};
-    use crate::diff_compress::{choose_mode, CompressionMode};
+    use crate::diff_compress::{CompressionMode, choose_mode};
     use crate::parallel_store::ParallelStore;
 
     type V = Vec<u32, u32, ParallelStore<u32, u32>, true>;
@@ -5454,8 +5512,12 @@ mod restore_memcpy_timing {
         );
 
         // Same result either way.
-        let a: std::vec::Vec<u32> = (0..va.len() as usize).map(|i| va.get_index(i as u32)).collect();
-        let p: std::vec::Vec<u32> = (0..vp.len() as usize).map(|i| vp.get_index(i as u32)).collect();
+        let a: std::vec::Vec<u32> = (0..va.len() as usize)
+            .map(|i| va.get_index(i as u32))
+            .collect();
+        let p: std::vec::Vec<u32> = (0..vp.len() as usize)
+            .map(|i| vp.get_index(i as u32))
+            .collect();
         assert_eq!(a, p, "restore results diverged");
     }
 }
@@ -5484,10 +5546,7 @@ mod forged_token_tests {
         let genuine = v.mark(ShrinkPolicy::Never);
         v.push(100);
 
-        let forged = VecToken {
-            frame_idx: 999,
-            ..genuine
-        };
+        let forged = VecToken { frame_idx: 999 };
         assert!(
             !v.is_valid_token(&forged),
             "forged frame index must be invalid"
@@ -5569,9 +5628,11 @@ mod forged_token_tests {
         v.push(2);
         let forged = VecToken {
             frame_idx: genuine.frame_idx + 100,
-            ..genuine
         };
-        assert!(!v.is_valid_token(&forged), "forged frame idx must be invalid");
+        assert!(
+            !v.is_valid_token(&forged),
+            "forged frame idx must be invalid"
+        );
     }
 }
 
@@ -5686,7 +5747,8 @@ impl PartialEq for VecToken {
 }
 impl Eq for VecToken {}
 
-impl<'a, T, I, S, const TRACK: bool, VC: crate::value_compressor::ValueCompressor<T>> ExactSizeIterator for VecViewIter<'a, T, I, S, TRACK, VC>
+impl<'a, T, I, S, const TRACK: bool, VC: crate::value_compressor::ValueCompressor<T>>
+    ExactSizeIterator for VecViewIter<'a, T, I, S, TRACK, VC>
 where
     T: Sized + Copy,
     I: crate::index_like::IndexLike,

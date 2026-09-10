@@ -72,12 +72,16 @@ fn bench_two_stack(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("none", "nocompress"), &none, |b, &cfg| {
         b.iter(|| black_box(run(cfg, base_bytes, distinct)))
     });
-    g.bench_with_input(BenchmarkId::new("valuedict", "compress_5pct_hot4"), &dict, |b, &cfg| {
-        b.iter(|| black_box(run(cfg, base_bytes, distinct)))
-    });
-    g.bench_with_input(BenchmarkId::new("indexruns", "compress_5pct_hot4"), &runs, |b, &cfg| {
-        b.iter(|| black_box(run(cfg, base_bytes, distinct)))
-    });
+    g.bench_with_input(
+        BenchmarkId::new("valuedict", "compress_5pct_hot4"),
+        &dict,
+        |b, &cfg| b.iter(|| black_box(run(cfg, base_bytes, distinct))),
+    );
+    g.bench_with_input(
+        BenchmarkId::new("indexruns", "compress_5pct_hot4"),
+        &runs,
+        |b, &cfg| b.iter(|| black_box(run(cfg, base_bytes, distinct))),
+    );
     g.finish();
 }
 
@@ -101,15 +105,33 @@ fn report_footprints(
         "\n=== two-stack footprint after {} marks x {} writes (distinct={}, consecutive cells) ===",
         MARKS, WRITES_PER_MARK, distinct
     );
-    eprintln!("  {:>12} {:>12} {:>12} {:>12} {:>8}", "config", "hot_bytes", "cold_bytes", "total", "vs none");
-    eprintln!("  {:>12} {:>12} {:>12} {:>12} {:>8}", "none", nh, nc, nh + nc, "1.00x");
     eprintln!(
-        "  {:>12} {:>12} {:>12} {:>12} {:>7.2}x",
-        "valuedict", dh, dc, dh + dc, (dh + dc) as f64 / nt as f64
+        "  {:>12} {:>12} {:>12} {:>12} {:>8}",
+        "config", "hot_bytes", "cold_bytes", "total", "vs none"
+    );
+    eprintln!(
+        "  {:>12} {:>12} {:>12} {:>12} {:>8}",
+        "none",
+        nh,
+        nc,
+        nh + nc,
+        "1.00x"
     );
     eprintln!(
         "  {:>12} {:>12} {:>12} {:>12} {:>7.2}x",
-        "indexruns", rh, rc, rh + rc, (rh + rc) as f64 / nt as f64
+        "valuedict",
+        dh,
+        dc,
+        dh + dc,
+        (dh + dc) as f64 / nt as f64
+    );
+    eprintln!(
+        "  {:>12} {:>12} {:>12} {:>12} {:>7.2}x",
+        "indexruns",
+        rh,
+        rc,
+        rh + rc,
+        (rh + rc) as f64 / nt as f64
     );
     eprintln!();
 }

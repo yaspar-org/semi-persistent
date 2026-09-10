@@ -14,7 +14,9 @@
 
 use proptest::prelude::*;
 use semi_persistent_containers_verus as verus;
-use verus::diff_compress::{ColdFrame, CompressedFrame, CompressionMode, DeltaFrame, HotFrame, RunCol};
+use verus::diff_compress::{
+    ColdFrame, CompressedFrame, CompressionMode, DeltaFrame, HotFrame, RunCol,
+};
 
 /// Reference restore: apply `(value, index)` pairs to a base column in order,
 /// last write wins. The oracle `restore_runs_into`'s memcpy must reproduce.
@@ -95,8 +97,8 @@ proptest! {
         }
 
         // Random access matches the whole decode at every position.
-        for i in 0..decoded.len() {
-            prop_assert_eq!(col.decode_at(i), decoded[i]);
+        for (i, d) in decoded.iter().enumerate() {
+            prop_assert_eq!(col.decode_at(i), *d);
         }
 
         // memcpy restore == pair-by-pair overlay (both onto the same base column).
@@ -176,7 +178,7 @@ proptest! {
 
         let frame: ColdFrame<u32, u32> = ColdFrame::compress_mode(&diffs, mode);
         let n = frame.entry_len();
-        prop_assert_eq!(n as usize, diffs.len());
+        prop_assert_eq!(n, diffs.len());
 
         // decode_at reconstructs each entry; collect the full decode.
         let mut decoded: Vec<(u32, u32)> = Vec::new();
@@ -269,8 +271,8 @@ proptest! {
         let f: DeltaFrame<u32, u32> = DeltaFrame::compress(&diffs);
         let n = f.entry_len();
         prop_assert_eq!(n, diffs.len());
-        for i in 0..n {
-            prop_assert_eq!(f.decode_at(i), diffs[i]);
+        for (i, d) in diffs.iter().enumerate().take(n) {
+            prop_assert_eq!(f.decode_at(i), *d);
         }
     }
 }
@@ -282,24 +284,29 @@ fn delta_frame_boundaries_and_bytes() {
     // the extremes representable in the test's index domain.
     let all_self: Vec<(u32, u32)> = (0..1000u32).map(|i| (i, i)).collect();
     let f: DeltaFrame<u32, u32> = DeltaFrame::compress(&all_self);
-    for i in 0..1000 {
-        assert_eq!(f.decode_at(i), all_self[i]);
+    for (i, d) in all_self.iter().enumerate() {
+        assert_eq!(f.decode_at(i), *d);
     }
     let edges: Vec<(u32, u32)> = vec![
-        (0, 0),                      // value == index == 0
-        (u32::MAX, 1),               // max value as an exception
-        (0, 2),                      // zero value exception
-        (3, 3),                      // self at small index
-        (u32::MAX, u32::MAX),        // value == index at the top of the domain
+        (0, 0),               // value == index == 0
+        (u32::MAX, 1),        // max value as an exception
+        (0, 2),               // zero value exception
+        (3, 3),               // self at small index
+        (u32::MAX, u32::MAX), // value == index at the top of the domain
     ];
     let fe: DeltaFrame<u32, u32> = DeltaFrame::compress(&edges);
-    for i in 0..edges.len() {
-        assert_eq!(fe.decode_at(i), edges[i]);
+    for (i, d) in edges.iter().enumerate() {
+        assert_eq!(fe.decode_at(i), *d);
     }
 
     // F3.3 measured: an all-self-parented frame's delta bytes against plain.
     let plain = all_self.len() * (4 + 4);
     let delta = f.byte_len();
-    println!("delta frame: {} bytes vs plain {} ({}x)", delta, plain, plain as f64 / delta as f64);
+    println!(
+        "delta frame: {} bytes vs plain {} ({}x)",
+        delta,
+        plain,
+        plain as f64 / delta as f64
+    );
     assert!(delta < plain, "delta {delta} !< plain {plain}");
 }

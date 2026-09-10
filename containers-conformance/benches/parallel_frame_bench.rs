@@ -10,8 +10,8 @@
 //! dispatch, not per-mark thread creation.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 use rayon::prelude::*;
+use std::hint::black_box;
 
 use semi_persistent_containers_verus as verus;
 use verus::diff_compress::compress;
@@ -20,7 +20,11 @@ struct XorShift(u64);
 impl XorShift {
     fn next(&mut self) -> u64 {
         let mut x = self.0;
-        x ^= x << 13; x ^= x >> 7; x ^= x << 17; self.0 = x; x
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
     }
 }
 
@@ -29,7 +33,12 @@ impl XorShift {
 fn frame(n: usize, distinct: u32, seed: u64) -> Vec<(u32, u32)> {
     let mut rng = XorShift(0x9E3779B9 ^ seed);
     (0..n)
-        .map(|_| ((rng.next() as u32) % distinct, (rng.next() as u32) % 1_000_000))
+        .map(|_| {
+            (
+                (rng.next() as u32) % distinct,
+                (rng.next() as u32) % 1_000_000,
+            )
+        })
         .collect()
 }
 
@@ -49,14 +58,14 @@ fn bench_parallel_compress(c: &mut Criterion) {
 
             g.bench_with_input(BenchmarkId::new("sequential", &id), &cols, |b, cols| {
                 b.iter(|| {
-                    let out: Vec<_> = cols.iter().map(|f| compress::<u32, u32>(f)).collect();
+                    let out: Vec<_> = cols.iter().map(compress::<u32, u32>).collect();
                     black_box(out.len())
                 })
             });
 
             g.bench_with_input(BenchmarkId::new("rayon", &id), &cols, |b, cols| {
                 b.iter(|| {
-                    let out: Vec<_> = cols.par_iter().map(|f| compress::<u32, u32>(f)).collect();
+                    let out: Vec<_> = cols.par_iter().map(compress::<u32, u32>).collect();
                     black_box(out.len())
                 })
             });

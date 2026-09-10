@@ -14,10 +14,10 @@
 //! which is what lets `Vec`'s mark/restore proofs, stated over that flat view,
 //! carry across the split.
 
-use vstd::prelude::*;
-use vstd::multiset::Multiset;
-use crate::index_like::{IndexLike, IndexFromNat};
 use crate::diff_compress::{CompressionMode, FrameEncoding, compress_frame};
+use crate::index_like::{IndexFromNat, IndexLike};
+use vstd::multiset::Multiset;
+use vstd::prelude::*;
 
 verus! {
 

@@ -15,12 +15,12 @@
 //! flat view exactly, by the `CompressedStack` push bijection, so no diff is lost
 //! or reordered across the boundary.
 
-use vstd::prelude::*;
-use vstd::multiset::Multiset;
-use crate::index_like::{IndexLike, IndexFromNat};
-use crate::diff_log::DiffLog;
 use crate::compressed_stack::CompressedStack;
 use crate::compression_config::ColumnConfig;
+use crate::diff_log::DiffLog;
+use crate::index_like::{IndexFromNat, IndexLike};
+use vstd::multiset::Multiset;
+use vstd::prelude::*;
 
 verus! {
 
@@ -97,6 +97,9 @@ impl<T: IndexLike, I: IndexFromNat> TwoStackLog<T, I> {
             r@ == Seq::<(T, I)>::empty(),
             r.frame_msets() == seq![Multiset::<(T, I)>::empty()],
     {
+        // Not `vec![0]`: that macro expands to a let expression, which Verus
+        // does not support.
+        #[allow(clippy::vec_init_then_push)]
         let mut hot_starts: Vec<usize> = Vec::new();
         hot_starts.push(0);
         let r = TwoStackLog {

@@ -1269,14 +1269,8 @@ where
     {
         self.parent.push_frame(shrink);
         self.rank.push_frame(shrink);
-        match &mut self.parent_proof {
-            Some(pp) => pp.push_frame(shrink),
-            None => (),
-        }
-        match &mut self.justification {
-            Some(j) => j.push_frame(shrink),
-            None => (),
-        }
+        if let Some(pp) = &mut self.parent_proof { pp.push_frame(shrink) }
+        if let Some(j) = &mut self.justification { j.push_frame(shrink) }
         self.roots_snapshots = Ghost(self.roots_snapshots@.push(self.roots@));
         self.dist_snapshots = Ghost(self.dist_snapshots@.push(self.dist@));
         proof {
@@ -1575,14 +1569,8 @@ where
         }
         self.parent.restore_frame(target);
         self.rank.restore_frame(target);
-        match &mut self.parent_proof {
-            Some(pp) => pp.restore_frame(target),
-            None => (),
-        }
-        match &mut self.justification {
-            Some(j) => j.restore_frame(target),
-            None => (),
-        }
+        if let Some(pp) = &mut self.parent_proof { pp.restore_frame(target) }
+        if let Some(j) = &mut self.justification { j.restore_frame(target) }
         self.roots = Ghost(snap_roots);
         self.dist = Ghost(snap_dist);
         self.roots_snapshots = Ghost(self.roots_snapshots@.subrange(0, f));

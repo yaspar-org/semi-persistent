@@ -13,10 +13,10 @@
 // in later steps, so its methods are not yet called.
 #![allow(dead_code)]
 
-use vstd::prelude::*;
-use crate::index_like::IndexLike;
 use crate::diff_store::DiffStore;
+use crate::index_like::IndexLike;
 use crate::vec::Vec as SpVec;
+use vstd::prelude::*;
 
 verus! {
 

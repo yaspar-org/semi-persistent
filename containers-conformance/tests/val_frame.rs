@@ -15,7 +15,7 @@ proptest! {
     #[test]
     fn valframe_roundtrip(vals in prop::collection::vec(0u32..8, 0..300)) {
         let f = ValFrame::<u32>::compress(&vals);
-        prop_assert_eq!(f.len() as usize, vals.len());
+        prop_assert_eq!(f.len(), vals.len());
         for (i, &v) in vals.iter().enumerate() {
             prop_assert_eq!(f.decode_at(i), v);
         }
@@ -30,7 +30,7 @@ proptest! {
     #[test]
     fn valframe_roundtrip_wide(vals in prop::collection::vec(0u32..100000, 0..200)) {
         let f = ValFrame::<u32>::compress(&vals);
-        prop_assert_eq!(f.len() as usize, vals.len());
+        prop_assert_eq!(f.len(), vals.len());
         for (i, &v) in vals.iter().enumerate() {
             prop_assert_eq!(f.decode_at(i), v);
         }
