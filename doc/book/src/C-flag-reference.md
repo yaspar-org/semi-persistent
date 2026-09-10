@@ -14,6 +14,7 @@ semi-persistent [OPTIONS] <FILE>
 | --- | --- | --- | --- |
 | `--id-bits` | `31`, `63` | `31` | Select 31-bit or 63-bit e-class identifiers. |
 | `--push-pop` | `diff`, `clone` | `diff` | Select scope storage. `diff` uses semi-persistent logs; `clone` is accepted as a value but currently exits with “not yet implemented.” |
+| `--diff-mode` | `inline`, `parallel`, `trail` | `inline` | Select the diff store for the node-cache columns. `inline` and `parallel` capture frame diffs first-write-wins, bounding the log by the number of distinct cells written per frame and composing with sealing and compression. `trail` captures chronologically: writes are branch-free and no frame is finalized, but the log grows with total writes. Every kind carries the same verified contract, so the choice is correctness-invisible. |
 | `--types` | `machine`, `bignum` | `bignum` | Select comma-separated literal groups. `machine,bignum` enables both groups. |
 | `--proofs` | flag | off | Record merge justifications for proof extraction. |
 | `--dump-proofs FILE` | path | none | Write one proof-path record per e-node after execution. Requires `--proofs`. |
@@ -70,3 +71,11 @@ features; they are not command-line flags:
 
 Without the corresponding Cargo feature, setting the environment variable has
 no effect.
+
+## Environment levers
+
+One environment variable is read by every build, not only instrumented ones:
+
+| Environment | Values | Default | Effect |
+| --- | --- | --- | --- |
+| `SEMPER_DIFF` | `inline`, `parallel`, `trail` | `inline` | Select the diff store for `VecD` columns. `--diff-mode` sets this variable, so the flag and the variable are the same lever; an unset or unrecognized value selects `inline`. Read once and cached at first use, so setting it after the engine starts has no effect. |
