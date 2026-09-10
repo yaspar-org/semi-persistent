@@ -12,8 +12,8 @@ for each, why it is trusted rather than proved.*
 
 | configuration | `external_body` markers | axiom fns |
 |---|---|---|
-| default features | **27** (3 structs + 24 functions) | **1** (`builds_valid_hashers::<IndexHasher>`: SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
-| `literal-types` | **32** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
+| default features | **49** (3 structs + 46 functions) | **1** (`builds_valid_hashers::<IndexHasher>`: SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
+| `literal-types` | **54** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
 
 *Counts re-derived by grepping `#[verifier::external_body]` and splitting
 on the `literal-types` gate (`external_specs.rs` is the only gated
@@ -201,7 +201,7 @@ environmental assumption, with finite runtime evidence from
 mint thousands of ids and check end-to-end that one container rejects another's
 token.
 
-## 2. Group B: unmodeled std behavior, 16 items
+## 2. Group B: unmodeled std behavior, 19 items
 
 Verus/vstd model a `Vec`'s element sequence (`@`) but not its **allocation**:
 `capacity()`, `shrink_to`, and `size_of::<T>()` have no specs. Everything that
@@ -210,7 +210,7 @@ primitives (§2d) are the same kind of trust over three other unspecced std
 operations (`get_unchecked`, `select_unpredictable`, `copy_within`). Four
 sub-kinds:
 
-### 2a. Byte reporters (no `ensures`; diagnostic), 8 items
+### 2a. Byte reporters (no `ensures`; diagnostic), 11 items
 
 Production parity: all report the capacity-based allocation
 footprint using exactly production's formulas.
@@ -227,9 +227,9 @@ pub fn tracking_bytes(&self) -> usize {
 pub fn total_bytes(&self) -> usize {
     size_of::<Self>() + self.store.heap_bytes() + self.tracking_bytes()
 }
-// fork_history.rs
+// gen_stamps.rs
 #[verifier::external_body]
-pub fn heap_bytes(&self) -> usize { self.origins.capacity() * size_of::<ForkOrigin>() }
+pub fn heap_bytes(&self) -> usize { self.levels.capacity() * size_of::<u64>() }
 // capture_bits.rs
 #[verifier::external_body]
 pub fn heap_bytes(&self) -> usize { self.words.capacity() * size_of::<u64>() }
@@ -251,6 +251,15 @@ pub fn total_bytes(&self) -> usize {
     self.heads.total_bytes() + self.nodes.total_bytes()
 }
 ```
+
+The diff-compression work added three more of exactly this kind, on the same
+justification and with the same absence of any `ensures`:
+`CompressedStack::heap_bytes`, `DiffLog::heap_bytes` and `RunCol::heap_bytes`
+(`compressed_stack.rs`, `diff_log.rs`, `diff_compress.rs`). Going the other
+way, the fork history's reporter left this group: `History::heap_bytes`
+(previously `ForkHistory`, in the since-renamed `fork_history.rs`) now forwards
+to `GenStamps::heap_bytes` and is verified, so only the `GenStamps` one is
+trusted.
 
 The two `ListArena` reporters are `external_body` only because the `+` would
 otherwise carry an overflow obligation that is not proof content (a real footprint
@@ -573,9 +582,123 @@ acyclicity or explanation correctness. See
 verification task in
 [`../future/conformance-and-release.md`](../future/conformance-and-release.md).
 
+## 3.6. Group F: the diff-compression campaign's additions, 19 items
+
+The diff-stack compression, shared-fork-history and parallel mark/restore work
+added 19 markers. Sixteen carry no `ensures`: they assert nothing, so no proof
+can depend on them and a wrong body produces a wrong diagnostic number rather
+than an unsound theorem. Two carry contracts and are the real trust growth in
+this group. One is a spec-level abstraction rather than a trusted body.
+
+### 3.6a. Diagnostics and shadow instrumentation (no `ensures`), 11 items
+
+Nine in `compression_stats.rs` (`frame_stats`, `mode_name`, `observe_frame`,
+`run_count_sorted`, `run_count_writeorder`, `shadow_emit`, `shadow_enabled`,
+`shadow_log_copy`, `shadow_log_full`) and two in `diff_log.rs` (`shadow_key`,
+`cold_frame_count`). `compression_stats.rs` contains no `ensures` anywhere,
+which is the property that makes the whole file safe to trust: nothing it
+returns is visible to the verifier as a fact.
+
+Three separate reasons keep them external. `frame_stats`,
+`run_count_sorted` and `run_count_writeorder` use `std::collections::HashSet`
+and `sort_unstable`, neither of which Verus models. The four `shadow_*`
+functions do file and stderr I/O through a `OnceLock`. `shadow_key` is
+`self as *const _ as usize`, which is raw pointer identity and therefore
+outside the model by construction.
+
+Two of the eleven have no such excuse. `mode_name` is a pure match returning
+`&'static str` and `cold_frame_count` is a pure match over enum variants
+summing `.len()`. Both could be verified as they stand, and are recorded here
+as dischargeable rather than necessary, so that a later cleanup is a scheduled
+item and not a discovery.
+
+### 3.6b. Environment levers (no `ensures`), 2 items
+
+`env_compress_default` and `env_diff_store_kind` read `SEMPER_COMPRESS` and
+`SEMPER_DIFF` once and cache the result in a `OnceLock`. `std::env` has no
+Verus model. The reason this is sound rather than merely unavoidable is that
+every value each lever selects carries the same verified contract: the store
+kinds are separately proved to refine one model, so the flag chooses between
+representations that are already interchangeable. The flag is
+correctness-invisible by construction, not by inspection.
+
+### 3.6c. `choose_mode` (no `ensures`), 1 item
+
+The decision arithmetic is already verified in `FrameStats::best_mode`. The
+marker covers only the `size_of` and the `HashSet` that the wrapper threads
+through on its way there, so discharging `frame_stats` discharges this with it.
+
+### 3.6d. Parallel mark and restore (contract-carrying), 2 items
+
+`SyncGroup::mark_parallel` and `SyncGroup::restore_parallel` are the group's
+real trust growth, and the only two markers added by this campaign whose
+postconditions enter downstream proofs:
+
+```rust
+pub fn mark_parallel(&mut self, shrink: ShrinkPolicy) -> (r: Option<GroupToken>)
+    requires old(self).wf(),
+    ensures
+        final(self).wf(),
+        final(self).members@.len() == old(self).members@.len(),
+        r is Some ==> {
+            &&& final(self).depth_spec() == old(self).depth_spec() + 1
+            &&& r->Some_0.depth_spec() == old(self).depth_spec()
+            &&& final(self).history.valid_spec(r->Some_0)
+        },
+        r is None ==> final(self).depth_spec() == old(self).depth_spec(),
+```
+
+Everything that calls these reasons from those clauses as though they were
+proved. They are not.
+
+What limits the exposure. Both functions dispatch on a threshold and fall back
+to the verified sequential path below it (`if self.members.len() <
+PAR_MEMBER_MIN { return self.restore(t); }`), so the trusted claim covers the
+parallel branch only. The fan-out is over `self.members`, which own disjoint
+storage: each member carries its own columns, and the split is by member index,
+so no two workers address the same memory. The per-member operation invoked
+inside the fan-out is the same verified `mark`/`restore` used sequentially, and
+the depth and token bookkeeping happens outside the parallel region.
+
+What is genuinely trusted. That the rayon fan-out partitions the members
+disjointly, and that no worker observes another's writes. A mis-split or a data
+race would break `wf()` with no verifier complaint, and because `wf()` is
+assumed rather than checked on return, the violation would propagate silently
+into every proof downstream of the mark.
+
+Why it is not proved. Verus has no model of parallel execution, so this cannot
+be discharged today by any amount of effort on our side. The mitigation is a
+differential test that pins parallel against sequential over the group's
+members, which is evidence and not a theorem. If Verus gains a concurrency
+story, these are the first two items to revisit, and they are the reason this
+group exists as a separate section rather than being folded into Group B.
+
+### 3.6e. `par_sum_canary` (no `ensures`), 1 item
+
+A rayon reduction over a range, used to confirm at runtime that the parallel
+backend is present and functioning. It asserts nothing and is not on any
+correctness path. External for the same reason as 3.6d, with none of the
+consequence.
+
+### 3.6f. `SyncGroup::checksum` (contract-carrying at the trait, `requires` only), 1 item
+
+Declared on the group's member trait with `requires self.wf()` and no
+`ensures`. It exists so a differential harness can compare a production
+container against a verified one without a typed handle. It returns a `u64`
+the verifier knows nothing about, so a wrong checksum weakens a test rather
+than a proof.
+
+### 3.6g. `leaf_cap_spec`, 1 item
+
+Not a trusted body but a spec-level abstraction: an uninterpreted `spec fn` on
+the layout trait, tied to the executable constant by an `ensures` on the
+accessor. This is the intended way to keep the B+tree generic over node
+layouts without the proofs depending on a particular capacity, and it is listed
+here for the count rather than as an item to discharge.
+
 ## 4. Summary table
 
-All 27 default-build `external_body` markers plus the 1 default-build axiom
+All 49 default-build `external_body` markers plus the 1 default-build axiom
 (the `literal-types` additions are listed after):
 
 | # | Item | Group | Trusted because | Provable? |
@@ -585,7 +708,7 @@ All 27 default-build `external_body` markers plus the 1 default-build axiom
 | 3 | `ContainerId::eq` | A | bridges to an intentionally-`uninterp` `id()` | only by un-abstracting; declined |
 | 4 | `Vec::tracking_bytes` | B | capacity + `size_of` unmodeled; no `ensures` | partially: see feature request |
 | 5 | `Vec::total_bytes` | B | same | partially |
-| 6 | `ForkHistory::heap_bytes` | B | same | partially |
+| 6 | `GenStamps::heap_bytes` | B | same. `History::heap_bytes` (formerly `ForkHistory`) is no longer trusted: it forwards to this one and is verified | partially |
 | 7 | `CaptureBits::heap_bytes` | B | same | partially |
 | 8 | `ParallelStore::heap_bytes` | B | same | partially |
 | 9 | `InlineStore::heap_bytes` | B | same | partially |
@@ -607,6 +730,26 @@ All 27 default-build `external_body` markers plus the 1 default-build axiom
 | 16 | `ListHead::white_box_head` | E | contract-free read-only test accessor (unpacks the niche for the white-box walkers; inside `verus!` so it needs the marker; its node-side counterpart `white_box_next` sits outside `verus!` and needs none) | n/a (no contract) |
 | 17 | `ExIndexHasher` registration | D | contract-free opaque registration; names `IndexHasher` in specs so the hasher axiom can trigger on it | n/a (no contract) |
 | 18 | `ExFoldHasher` registration | D | same: names foldhash's `FoldHasher` (`IndexHasher`'s associated `Hasher` type) so the `BuildHasher` impl type-checks under Verus | n/a (no contract) |
+
+The 22 markers added by the diff-compression campaign are argued in §3.6. They
+are tabulated separately rather than renumbered into the list above, so the
+original 27 stay comparable across revisions:
+
+| Item | Group | Trusted because | Provable? |
+|---|---|---|---|
+| `CompressedStack::heap_bytes`, `DiffLog::heap_bytes`, `RunCol::heap_bytes` | B (§2a) | capacity + `size_of` unmodeled; no `ensures` | partially |
+| `frame_stats`, `run_count_sorted`, `run_count_writeorder` | F (§3.6a) | `HashSet` and `sort_unstable` unmodeled; no `ensures` | yes, using this crate's verified set and sort |
+| `shadow_emit`, `shadow_enabled`, `shadow_log_copy`, `shadow_log_full` | F (§3.6a) | file/stderr I/O behind a `OnceLock`; no `ensures` | no (I/O) |
+| `shadow_key` | F (§3.6a) | raw pointer identity (`*const _ as usize`); no `ensures` | no (outside the model) |
+| `observe_frame` | F (§3.6a) | statistics sink; no `ensures` | no (I/O) |
+| `mode_name`, `cold_frame_count` | F (§3.6a) | no `ensures` | **yes, today**: pure matches; recorded as dischargeable |
+| `env_compress_default`, `env_diff_store_kind` | F (§3.6b) | `std::env` unmodeled; no `ensures`; every selectable value carries the same verified contract | no (environment) |
+| `choose_mode` | F (§3.6c) | wraps `size_of` and `frame_stats`; the arithmetic is verified in `FrameStats::best_mode` | yes, once `frame_stats` is |
+| `SyncGroup::mark_parallel`, `SyncGroup::restore_parallel` | F (§3.6d) | **contract-carrying**: rayon fan-out over disjoint members; `wf()`, member count and depth are assumed, not proved | no: Verus has no parallel execution model |
+| `par_sum_canary` | F (§3.6e) | rayon; no `ensures`; not on a correctness path | no (same) |
+| `SyncGroup::checksum` | F (§3.6f) | differential-harness accessor; `requires` only, no `ensures` | n/a (no contract) |
+| `leaf_cap_spec` | F (§3.6g) | spec-level layout abstraction, not a trusted body | n/a (by design) |
+
 | — | `axiom_index_hasher_builds_valid_hashers` | D | `broadcast axiom fn`: mirrors vstd's shipped `axiom_random_state_builds_valid_hashers`; `builds_valid_hashers` asserts only byte-determinism, which `IndexHasher` satisfies at least as strongly as std's `RandomState` (seed stored by value, so `build_hasher` is a pure function of it; §3.5 D-hasher) | no (predicate is `uninterp`; vstd `admit()`s the identical fact for `RandomState`) |
 
 `literal-types` additions (all in `external_specs.rs` / `canonical_keys.rs`):
