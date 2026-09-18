@@ -178,3 +178,42 @@ that either component subsumes the other.
   operation.
 - A production integration requires a demonstrated precision benefit and
   Criterion evidence for its runtime and memory cost.
+
+## 5. IntervalZ (unbounded integers)
+
+### Current state
+
+The shipping interval is a nonempty unsigned machine-word range. Unbounded
+integer sorts (`IBig`) have no domain.
+
+### Task
+
+`IntervalZ` is specified in the practicum §2 / §3.2 and implemented in
+`src/interval_z.rs`:
+
+```text
+Bound     = NegInf | Fin(i64) | PosInf
+IntervalZ = { empty, lo: Bound, hi: Bound }
+values    = every integer z with lo <= z <= hi
+```
+
+Finite endpoints are `i64` (executable stand-in for IBig). Arithmetic is
+exact on endpoints that fit; overflow widens to an infinity or to `top`.
+The lattice has infinite height, so a per-class refinement budget is
+mandatory and is implemented as `refine(fact, budget)`: budget 0 keeps the
+current value (always sound); a positive budget meets.
+
+### Acceptance criteria
+
+- Every enabled transfer has a universal containment postcondition over `int`
+  and a well-formed result.
+- Bottom exists; disjoint meet is bottom.
+- §3.5 meet/join laws verify; `meet` is monotone.
+- `widen` and `narrow` verify; a meet-chain either stabilises or hits the
+  budget.
+- Division proves value containment for every nonzero concrete divisor and
+  alarm membership for the zero cases.
+- `within` / `nonzero` refuse to license bottom.
+- Ordinary Verus verification of the module passes with no project-local
+  admit/assume.
+

@@ -698,6 +698,12 @@ fn book_examples() {
     }
 }
 
+// ── Ramp-up kata 2 ──
+egg_test!(kata2_saturates, "kata2_saturates.egg");
+egg_test!(kata2_diverges, "kata2_diverges.egg");
+egg_test!(kata2_union_by, "kata2_union_by.egg");
+egg_test!(kata2_section2, "kata2_section2.egg");
+
 // ── Cross-engine benchmark corpus (`tests/egg/bench/`) ──
 //
 // The same programs `scripts/egglog-compare/compare.py` times against egglog and

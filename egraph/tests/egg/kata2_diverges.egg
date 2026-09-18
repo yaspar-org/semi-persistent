@@ -1,0 +1,18 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Ramp-up kata 2: a rule set that can grow forever. The bound, not a
+;; fixpoint, is what stops the run. After five rounds, `start` has joined
+;; `up` stacked five `s` deep, but not six.
+
+(sort N)
+(function z () N)
+(function s (N) N)
+(function up (N) N)
+
+(rewrite (up x) (up (s x)))
+
+(let start (up z))
+(run 5)
+(check (= start (up (s (s (s (s (s z))))))))
+(check (!= start (up (s (s (s (s (s (s z)))))))))
+(print-stats)
