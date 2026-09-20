@@ -1,0 +1,68 @@
+;; EXPECT: ok
+;; EVAL: both
+; Constructed translations of one OpenShell-style access requirement.
+; Adapted from NVIDIA's reduced SMT-LIB example, not observed LLM outputs.
+; Source (Apache-2.0), OpenShell-Research commit:
+; 268361f147fec7f265e428930d6bf5e58f0fda32
+; https://nvidia.github.io/OpenShell-Research/dev-notes/posts/2026-09-10-learning-formal-methods-agent-policy-prover/
+;
+; Requirement: allow inspected REST requests made by /usr/bin/gh to
+; api.github.com on port 443 when the method is GET and the path begins
+; with /repos/NVIDIA/OpenShell/issues/. Deny all other requests.
+;
+; Named constants: gh = "/usr/bin/gh", github = "api.github.com",
+; https = 443, rest = "rest", GET = "GET", POST = "POST",
+; issuePrefix = "/repos/NVIDIA/OpenShell/issues/",
+; orgPrefix = "/repos/NVIDIA/".
+; Prefix models the AST of str.prefixof(prefix, path), not a YAML path glob.
+; No string-inclusion reasoning or native policy parsing is performed.
+
+(sort Formula)
+(sort Text)
+(sort Number)
+
+(function Lit (bool) Formula)
+(function And (Formula) Formula :assoc-comm-idem :identity (Lit true))
+(function EqText (Text Text) Formula :comm)
+(function EqNumber (Number Number) Formula :comm)
+(function Prefix (Text Text) Formula)
+
+(function binary () Text)
+(function host () Text)
+(function port () Number)
+(function layer () Text)
+(function method () Text)
+(function path () Text)
+
+(function gh () Text)
+(function github () Text)
+(function https () Number)
+(function rest () Text)
+(function GET () Text)
+(function POST () Text)
+(function issuePrefix () Text)
+(function orgPrefix () Text)
+
+(let candidateA
+  (And
+    (EqText (binary) (gh))
+    (EqText (host) (github))
+    (EqNumber (port) (https))
+    (EqText (layer) (rest))
+    (EqText (method) (GET))
+    (Prefix (issuePrefix) (path))))
+
+; The second translation also reverses the order of the conjuncts.
+(let candidateB
+  (And
+    (Prefix (orgPrefix) (path))
+    (EqText (method) (POST))
+    (EqText (layer) (rest))
+    (EqNumber (port) (https))
+    (EqText (host) (github))
+    (EqText (binary) (gh))))
+
+; Two Variants retain the conflicting method and prefix readings.
+(antiunify candidateA candidateB :algorithm exact)
+(checkau candidateA candidateB :max_size 21 :algorithm exact)
+(check (!= candidateA candidateB))
