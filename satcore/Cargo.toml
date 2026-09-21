@@ -20,4 +20,4 @@ semi-persistent-containers = { package = "semi-persistent-containers-verus", pat
 # The id macros expand to `verus!{}` blocks that name `::vstd` absolutely, so
 # every crate invoking `define_id31!` carries the same pinned vstd (as the
 # egraph crate does).
-vstd = "=0.0.0-2026-08-02-0125"
+vstd = "=0.0.0-2026-09-06-0133"
