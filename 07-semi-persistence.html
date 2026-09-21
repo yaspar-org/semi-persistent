@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a61cca14.js";
+            window.path_to_searchindex_js = "searchindex-30a1758b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-87de0060.js"></script>
@@ -243,9 +243,10 @@ capture a slot’s previous value the first time that slot changes in a scope.
 Restore replays those sparse differences and restores the saved lengths.</p>
 <p>Hash-consing tables and other derived indexes are not themselves the logical
 state. On restore, a node cache removes or repairs entries affected by the
-discarded suffix and by recanonized nodes. It reconstructs the table when that
-is cheaper than incremental repair. Saturation’s matching indexes have
-round-local lifetimes and are built again when needed.</p>
+discarded suffix and by recanonized nodes. The literal interning table is a
+verified semi-persistent map that unwinds the discarded suffix of its index,
+and rebuilds the index instead when that is cheaper. Saturation’s matching
+indexes have round-local lifetimes and are built again when needed.</p>
 <p>Push therefore records coordinated container tokens rather than cloning all
 nodes and classes. Its exact work includes frame and capture bookkeeping, and
 pop work depends on changes made since the mark, discarded suffixes, and cache
