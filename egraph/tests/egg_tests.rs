@@ -675,6 +675,16 @@ fn readme_au_policy_divergence() {
     check("examples/au_policy_divergence.egg");
 }
 
+#[test]
+fn blog_policy_translation_openshell() {
+    check("examples/au_openshell_policy.egg");
+}
+
+#[test]
+fn blog_policy_translation_cel() {
+    check("examples/au_cel_policy.egg");
+}
+
 /// Every program shown in the book is a file in `doc/book/examples/`, and the
 /// chapters `{{#include}}` those files rather than quoting them, so what a reader
 /// copies is what this test ran. Walking the directory instead of listing the
