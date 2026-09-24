@@ -196,10 +196,8 @@ carry universal containment postconditions; their intended composition is not
 a proved Layer 4 theorem until those contracts are added.
 
 The exact contracts implemented by the interval component are listed in
-[`interval-soundness.md`](interval-soundness.md). General division and alarms,
-abstract comparisons and narrowing, wrapped intervals, and strided intervals
-are maintained as future designs in
-[`future/interval-extensions.md`](future/interval-extensions.md).
+[`interval-soundness.md`](interval-soundness.md). Unbounded integer intervals
+are in [`interval-z.md`](interval-z.md).
 
 
 ## Carry Compensation Invariant

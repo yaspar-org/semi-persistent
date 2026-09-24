@@ -1,8 +1,11 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-09-17.
+Last refreshed: 2026-09-23.
 
 ## Current result
+
+The historical crate-wide figure below is the L1–L4 machine domains and does
+**not** include IntervalZ. IntervalZ is reported separately in its section.
 
 ```text
 cargo verus verify
@@ -77,31 +80,40 @@ L4 soundness work.
 from the practicum:
 
 ```text
-Bound     = NegInf | Fin(i64) | PosInf
+Bound     = NegInf | Fin(IBig) | PosInf
 IntervalZ = { empty, lo, hi }
 values    = every int z with lo <= z <= hi
 ```
 
-Finite endpoints are `i64` (an executable stand-in for IBig). Membership and
-every containment contract are over mathematical `int`, so nothing wraps.
-Endpoint overflow widens to ±∞, or to `top` if a lower bound would otherwise
-become `PosInf` (which would look empty). Stopping at `top` is always sound.
-That widening is not monotone; `meet` is monotone and is the operation the
-e-graph iterates.
+Finite endpoints are `IBig` (`num_bigint::BigInt`, spec view `int`). Nothing
+wraps: addition, subtraction and multiplication are exact on endpoints,
+including past `i64`. A product is the min/max of the four extended endpoint
+products. Division splits a divisor that contains 0 at zero, takes the four
+Euclidean endpoint quotients on each side, and joins; `IBig::div_euclid` is
+specified as Verus `int` `/`. UBig is `wf_ubig` (`lo >= 0`) on the same type.
+RBig is `IntervalR`, the same bounds with open/closed endpoints.
 
-Proved:
+`widen` jumps an unstable endpoint to `±∞`. It is not monotone. A meet chain
+either stabilises (fuel unchanged) or spends one unit of fuel per strict
+meet; fuel 0 keeps the current value.
+
+Contracts stated, with no project-local `admit()`/`assume()`:
 
 - explicit bottom; disjoint meet is bottom
-- lattice laws of §3.5 for meet/join (idempotent, commutative, associative,
-  units, zeros), plus `meet` monotone
+- lattice laws of §3.5 for meet/join, plus monotonicity of `meet`, `join`,
+  `add`, `neg`, `sub`, `mul` and `div`
 - containment of `add`, `neg`, `sub`, `mul`, `meet`, `join`
 - `div` value containment for every nonzero concrete divisor, and alarm
-  membership for the zero cases (`NoError` ⟂ `DefiniteError`, join is
-  `MaybeError`)
-- `widen` extensive and over-approximates join; `narrow` refines
-- refinement budget: budget 0 keeps the current value (sound); positive
-  budget takes the meet
-- guards `within` and `nonzero` refuse to license bottom
+  membership (`NoError` ⟂ `DefiniteError`, join is `MaybeError`)
+- `narrow` refines its first argument and stays above the meet
+- `meet_chain` refines the start and is unchanged at fuel 0
+- `within`, `nonzero`, `nonneg` and `fits_u8` refuse to license bottom
 
-`cargo verus verify -- --verify-only-module interval_z` reports 86 verified,
-0 errors. No project-local `admit()`/`assume()`.
+```text
+cargo verus verify -p semi-persistent-abstract-domains -- --verify-only-module ibig --verify-only-module interval_z --rlimit 50
+168 verified, 0 errors
+```
+
+`cargo test -p semi-persistent-abstract-domains --test interval_z` (22 tests)
+covers the executable transfers, the `[-8,-1]/[-4,-2]` quotients, fuel
+exhaustion, UBig and open endpoints.

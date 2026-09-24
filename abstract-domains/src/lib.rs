@@ -14,7 +14,7 @@
 //!   ReducedProduct) - executable u8/u16/u32/u64 implementations. The u128
 //!   instantiation is disabled because its bitvector proofs exceed current
 //!   solver capacity.
-//! - IntervalZ: closed intervals over unbounded integers (NegInf / Fin / PosInf)
+//! - IntervalZ: closed intervals over unbounded integers (NegInf / Fin(IBig) / PosInf)
 
 pub mod anum;
 pub mod bools;
@@ -23,6 +23,7 @@ pub mod demo;
 pub mod div;
 pub mod domains;
 pub mod exec_tnum;
+pub mod ibig;
 pub mod interval_z;
 pub mod kata;
 pub mod kata5;
