@@ -1,8 +1,11 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-08-21.
+Last refreshed: 2026-09-23.
 
 ## Current result
+
+The historical crate-wide figure below is the L1–L4 machine domains and does
+**not** include IntervalZ. IntervalZ is reported separately in its section.
 
 ```text
 cargo verus verify
@@ -55,6 +58,7 @@ The current **universal containment** contracts are:
 | `ExecAnum` | `add`, `div_const` |
 | `ExecUnum` | `top`, `add`, `from_interval`, `mul` |
 | `Interval` | `add`, `meet`, `join`, `div_const` |
+| `IntervalZ` | `add`, `neg`, `sub`, `mul`, `meet`, `join`, `div` (value + alarm), `widen`, `narrow`, `refine` |
 | `ReducedProduct` | `reduce`, `add` |
 
 The `ExecUnum` proofs use native/spec bridge lemmas, the L3 `ChoppedUnum`
@@ -69,3 +73,47 @@ subtraction, multiplication, division, shifts, joins, meets, and negation.
 Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
 L4 soundness work.
+
+## IntervalZ (Task 1 §3.2)
+
+`abstract-domains/src/interval_z.rs` is the unbounded-integer interval domain
+from the practicum:
+
+```text
+Bound     = NegInf | Fin(IBig) | PosInf
+IntervalZ = { empty, lo, hi }
+values    = every int z with lo <= z <= hi
+```
+
+Finite endpoints are `IBig` (`num_bigint::BigInt`, spec view `int`). Nothing
+wraps: addition, subtraction and multiplication are exact on endpoints,
+including past `i64`. A product is the min/max of the four extended endpoint
+products. Division splits a divisor that contains 0 at zero, takes the four
+Euclidean endpoint quotients on each side, and joins; `IBig::div_euclid` is
+specified as Verus `int` `/`. UBig is `wf_ubig` (`lo >= 0`) on the same type.
+RBig is `IntervalR`, the same bounds with open/closed endpoints.
+
+`widen` loops over the four endpoints of its two arguments and returns the least interval built from those endpoints that contains both, which is their convex hull. A meet chain
+either stabilises (fuel unchanged) or spends one unit of fuel per strict
+meet; fuel 0 keeps the current value.
+
+Contracts stated, with no project-local `admit()`/`assume()`:
+
+- explicit bottom; disjoint meet is bottom
+- lattice laws of §3.5 for meet/join, plus monotonicity of `meet`, `join`,
+  `add`, `neg`, `sub`, `mul` and `div`
+- containment of `add`, `neg`, `sub`, `mul`, `meet`, `join`
+- `div` value containment for every nonzero concrete divisor, and alarm
+  membership (`NoError` ⟂ `DefiniteError`, join is `MaybeError`)
+- `narrow` refines its first argument and stays above the meet
+- `meet_chain` refines the start and is unchanged at fuel 0
+- `within`, `nonzero`, `nonneg` and `fits_u8` refuse to license bottom
+
+```text
+cargo verus verify -p semi-persistent-abstract-domains -- --verify-only-module ibig --verify-only-module interval_z --rlimit 50
+173 verified, 0 errors
+```
+
+`cargo test -p semi-persistent-abstract-domains --test interval_z` (22 tests)
+covers the executable transfers, the `[-8,-1]/[-4,-2]` quotients, fuel
+exhaustion, UBig and open endpoints.

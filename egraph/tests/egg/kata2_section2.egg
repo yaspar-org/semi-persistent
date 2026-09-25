@@ -1,0 +1,30 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Ramp-up kata 2: §2's running example, plus the Ite-when-true rewrite
+;; the later lattice analysis is meant to license automatically. Today
+;; the engine fires it only after `(union c (True))` puts a True node
+;; in c's class. `EGRAPH_DUMP_PLAN` / the kata2 plan test explain the
+;; compiled steps.
+
+(sort B)
+(sort I)
+(function True () B)
+(function Lt (I I) B)
+(function Lit (IBig) I)
+(function Add (I I) I)
+(function Ite (B I I) I)
+(function Clamp (I I I) I)
+
+(rewrite (Ite (True) x y) x)
+
+(let three (Lit 3))
+(let ten (Lit 10))
+(let c (Lt three ten))
+(let t (Ite c three ten))
+
+(run 1)
+(check (!= t three))
+
+(union c (True))
+(run 1)
+(check (= t three))

@@ -54,8 +54,8 @@ or strided intervals. The standalone `exec_tnum.rs` experiment has a broader
 Rust surface, but it is not the contract inventory described here. No claim in
 this document applies to the disabled `u128` instantiation.
 
-The maintained designs and proof obligations for those extensions are in
-[`future/interval-extensions.md`](future/interval-extensions.md).
+Unbounded integer intervals, including division and alarms, are in
+[`interval-z.md`](interval-z.md).
 
 The mirror tests in `abstract-domains/tests/fuzz.rs` add finite executable
 evidence. The machine-checked claim comes from:

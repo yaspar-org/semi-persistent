@@ -1,0 +1,25 @@
+;; EXPECT: ok
+;; EVAL: both
+;; UNION_BY: size
+;; Ramp-up kata 2: the asserted equalities do not depend on --union-by.
+;; Survivor identity does — the Rust test `union_by_size_and_uses_pick_different_survivors`
+;; pins that. This file only checks the equalities still hold under `size`.
+
+(sort S)
+(function a () S)
+(function b () S)
+(function c () S)
+(function d () S)
+(function f (S) S)
+
+(let A (a))
+(let B (b))
+(union A (c))
+(union A (d))
+(f B)
+(union A B)
+
+(check (= A B))
+(check (= A (c)))
+(check (= A (d)))
+(check (= (f B) (f A)))

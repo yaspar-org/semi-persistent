@@ -876,6 +876,7 @@ dependencies = [
 name = "semi-persistent-abstract-domains"
 version = "0.3.0"
 dependencies = [
+ "num-bigint",
  "rand 0.10.2",
  "vstd",
 ]
