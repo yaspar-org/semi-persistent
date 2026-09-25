@@ -1390,12 +1390,14 @@ where
         proof { self.lemma_len_bounded(l as int); }
         let ghost old_nodes = self.nodes_view();
         let ghost old_model = self.model@;
-        // Every index is converted once and carried; every value stays in
-        // its typed form. The only range check left is the fresh slot's
-        // `from_usize`, and the `requires` discharges it.
+        // Carry typed indices; ordinary store indexing still checks bounds.
         let li = self.head_ix(l);
         let h0 = self.heads.get_at(li);
-        let was_empty = h0.is_empty_exec();
+        // The cached count agrees with the head's emptiness by cache_ok/cache_len.
+        // Testing it directly lets the increment establish non-emptiness for
+        // the next append without recovering that fact from the packed head.
+        let was_empty = h0.len.as_usize() == 0;
+        proof { self.lemma_cache_ends_at(l as int); }
 
         // The node count arrives validated from `try_append`; it is not
         // re-read here (it equals the current count by precondition).
