@@ -93,7 +93,7 @@ Euclidean endpoint quotients on each side, and joins; `IBig::div_euclid` is
 specified as Verus `int` `/`. UBig is `wf_ubig` (`lo >= 0`) on the same type.
 RBig is `IntervalR`, the same bounds with open/closed endpoints.
 
-`widen` jumps an unstable endpoint to `±∞`. It is not monotone. A meet chain
+`widen` loops over the four endpoints of its two arguments and returns the least interval built from those endpoints that contains both, which is their convex hull. A meet chain
 either stabilises (fuel unchanged) or spends one unit of fuel per strict
 meet; fuel 0 keeps the current value.
 
@@ -111,7 +111,7 @@ Contracts stated, with no project-local `admit()`/`assume()`:
 
 ```text
 cargo verus verify -p semi-persistent-abstract-domains -- --verify-only-module ibig --verify-only-module interval_z --rlimit 50
-168 verified, 0 errors
+173 verified, 0 errors
 ```
 
 `cargo test -p semi-persistent-abstract-domains --test interval_z` (22 tests)

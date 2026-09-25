@@ -12,7 +12,7 @@ with bitwise uncertainty.
 
 The ordinary verification run reports **994 verified conditions and 0
 errors**. That figure does not include IntervalZ. IntervalZ (`ibig` and
-`interval_z`) is a separate run: **168 verified, 0 errors**. A CI source gate rejects executable `admit()` and `assume()` calls in
+`interval_z`) is a separate run: **173 verified, 0 errors**. A CI source gate rejects executable `admit()` and `assume()` calls in
 this crate. The pinned `vstd` dependency contains admitted specifications and
 is part of the trust boundary; a global `--no-cheating` run therefore fails in
 `vstd` before project verification. A separate 32-test Rust mirror suite
@@ -123,7 +123,7 @@ cargo verus verify
 # Verify only the Unum module
 cargo verus verify -- --verify-only-module unum
 
-# Verify IntervalZ (ibig + interval_z): 168 verified, 0 errors
+# Verify IntervalZ (ibig + interval_z): 173 verified, 0 errors
 cargo verus verify -- --verify-only-module ibig --verify-only-module interval_z --rlimit 50
 
 # Per-module timing breakdown
@@ -139,7 +139,7 @@ cargo run --features bin
 ## Verification status
 
 - 994 Verus conditions, 0 errors (machine domains; IntervalZ is separate)
-- IntervalZ: 168 verified, 0 errors (`ibig`, `interval_z`); 22 executable tests
+- IntervalZ: 173 verified, 0 errors (`ibig`, `interval_z`); 22 executable tests
 - no project-local `admit()`/`assume()` calls (CI source gate)
 - pinned `vstd` admitted specifications remain in the trust boundary
 - 32 Rust mirror tests, all passing

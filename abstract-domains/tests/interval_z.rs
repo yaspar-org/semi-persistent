@@ -232,13 +232,14 @@ fn within_guard_licenses_only_contained_ranges() {
 }
 
 #[test]
-fn widen_goes_to_infinity_narrow_recovers() {
+fn widen_searches_endpoints_narrow_recovers() {
     let a = IntervalZ::range(fin(0), fin(5));
     let b = IntervalZ::range(fin(-2), fin(8));
     let w = a.widen(&b);
-    assert_eq!(w.lo, Bound::NegInf);
-    assert_eq!(w.hi, Bound::PosInf);
-    let n = w.narrow(&a);
+    assert_eq!(w.lo, fin(-2));
+    assert_eq!(w.hi, fin(8));
+    let wide = IntervalZ::range(Bound::NegInf, Bound::PosInf);
+    let n = wide.narrow(&a);
     assert_eq!(n.lo, fin(0));
     assert_eq!(n.hi, fin(5));
 }

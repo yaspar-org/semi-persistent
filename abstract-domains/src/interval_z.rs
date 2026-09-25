@@ -18,10 +18,10 @@
 //! by the four Euclidean endpoint quotients, and joins; the alarm is the
 //! concretization lattice (`NoError` ⟂ `DefiniteError`, join `MaybeError`).
 //!
-//! `widen` jumps an unstable endpoint to `±∞` (the operator already in this
-//! module). It is not claimed monotone. Termination of a descending meet
-//! chain is the per-class fuel: a strict meet spends one unit, a stable
-//! meet spends none, and fuel 0 keeps the current value.
+//! `widen` loops over the endpoints of both arguments and keeps the least
+//! interval built from those endpoints that contains both. A descending meet
+//! chain spends one unit of fuel per strict meet, spends none when the meet
+//! is stable, and fuel 0 keeps the current value.
 //!
 //! UBig is the same interval with `lo >= 0` in `wf_ubig`, not a second
 //! domain. RBig is `IntervalR`: the same bounds plus open/closed endpoints.
@@ -797,18 +797,10 @@ impl IntervalZ {
     }
 
     // ----- widen / narrow -----
-    // widen: an endpoint that moved outward jumps to ±∞. Not monotone.
+    // widen: search the four endpoints for the least containing interval.
 
     pub open spec fn widen_spec(self, t: IntervalZ) -> IntervalZ {
-        if self.empty {
-            t
-        } else if t.empty {
-            self
-        } else {
-            let lo = if bound_lt(t.lo, self.lo) { Bound::NegInf } else { self.lo };
-            let hi = if bound_lt(self.hi, t.hi) { Bound::PosInf } else { self.hi };
-            IntervalZ { empty: false, lo, hi }
-        }
+        self.join_spec(t)
     }
 
     pub open spec fn narrow_spec(self, t: IntervalZ) -> IntervalZ {
@@ -841,9 +833,61 @@ impl IntervalZ {
         } else if t.empty {
             self.clone_iv()
         } else {
-            let lo = if t.lo.lt(&self.lo) { Bound::NegInf } else { self.lo.clone_bound() };
-            let hi = if self.hi.lt(&t.hi) { Bound::PosInf } else { self.hi.clone_bound() };
-            let r = IntervalZ { empty: false, lo, hi };
+            let mut lo = self.lo.clone_bound();
+            let mut hi = self.hi.clone_bound();
+            let mut i: u64 = 0;
+            while i < 4
+                invariant
+                    i <= 4,
+                    lo == widen_lo_prefix(*self, *t, i as int),
+                    hi == widen_hi_prefix(*self, *t, i as int),
+                decreases 4 - i,
+            {
+                let e = widen_endpoint_exec(self, t, i);
+                let prev_lo = lo.clone_bound();
+                let prev_hi = hi.clone_bound();
+                let e_le = e.le(&prev_lo);
+                let hi_le = prev_hi.le(&e);
+                if e_le {
+                    lo = e.clone_bound();
+                }
+                if hi_le {
+                    hi = e.clone_bound();
+                }
+                proof {
+                    let old_lo = widen_lo_prefix(*self, *t, i as int);
+                    let old_hi = widen_hi_prefix(*self, *t, i as int);
+                    assert(prev_lo == old_lo && prev_hi == old_hi);
+                    assert(e == widen_endpoint(*self, *t, i as int));
+                    assert(e_le == bound_le(e, prev_lo));
+                    assert(hi_le == bound_le(prev_hi, e));
+                    if e_le {
+                        if bound_le(prev_lo, e) {
+                            bound_le_antisym(e, prev_lo);
+                        }
+                        assert(lo == bound_min(old_lo, e));
+                    } else {
+                        bound_le_total(e, prev_lo);
+                        assert(lo == prev_lo);
+                        assert(lo == bound_min(old_lo, e));
+                    }
+                    if hi_le {
+                        if bound_le(e, prev_hi) {
+                            bound_le_antisym(prev_hi, e);
+                        }
+                        assert(hi == bound_max(old_hi, e));
+                    } else {
+                        bound_le_total(prev_hi, e);
+                        assert(hi == prev_hi);
+                        assert(hi == bound_max(old_hi, e));
+                    }
+                }
+                i = i + 1;
+            }
+            proof {
+                lemma_widen_prefixes(*self, *t);
+            }
+            let r = IntervalZ { empty: false, lo: lo, hi: hi };
             proof {
                 lemma_widen_sound(*self, *t, r);
             }
@@ -2916,6 +2960,97 @@ pub proof fn lemma_div_split_contains(
             lemma_eq_abs_has(r, a.div_one_spec(dneg).join_spec(a.div_one_spec(dpos)), x / y);
         }
     };
+}
+
+pub open spec fn widen_endpoint(a: IntervalZ, b: IntervalZ, i: int) -> Bound {
+    if i == 0 {
+        a.lo
+    } else if i == 1 {
+        a.hi
+    } else if i == 2 {
+        b.lo
+    } else {
+        b.hi
+    }
+}
+
+pub open spec fn widen_lo_prefix(a: IntervalZ, b: IntervalZ, n: int) -> Bound
+    decreases n,
+{
+    if n <= 0 {
+        a.lo
+    } else {
+        bound_min(widen_lo_prefix(a, b, n - 1), widen_endpoint(a, b, n - 1))
+    }
+}
+
+pub open spec fn widen_hi_prefix(a: IntervalZ, b: IntervalZ, n: int) -> Bound
+    decreases n,
+{
+    if n <= 0 {
+        a.hi
+    } else {
+        bound_max(widen_hi_prefix(a, b, n - 1), widen_endpoint(a, b, n - 1))
+    }
+}
+
+fn widen_endpoint_exec(a: &IntervalZ, b: &IntervalZ, i: u64) -> (r: Bound)
+    requires
+        i < 4,
+    ensures
+        r == widen_endpoint(*a, *b, i as int),
+{
+    if i == 0 {
+        a.lo.clone_bound()
+    } else if i == 1 {
+        a.hi.clone_bound()
+    } else if i == 2 {
+        b.lo.clone_bound()
+    } else {
+        b.hi.clone_bound()
+    }
+}
+
+pub proof fn lemma_widen_prefixes(a: IntervalZ, b: IntervalZ)
+    requires
+        a.wf(),
+        b.wf(),
+        !a.empty,
+        !b.empty,
+    ensures
+        widen_lo_prefix(a, b, 4) == bound_min(a.lo, b.lo),
+        widen_hi_prefix(a, b, 4) == bound_max(a.hi, b.hi),
+{
+    reveal_with_fuel(widen_lo_prefix, 5);
+    reveal_with_fuel(widen_hi_prefix, 5);
+    assert(widen_endpoint(a, b, 0) == a.lo);
+    assert(widen_endpoint(a, b, 1) == a.hi);
+    assert(widen_endpoint(a, b, 2) == b.lo);
+    assert(widen_endpoint(a, b, 3) == b.hi);
+    assert(bound_le(a.lo, a.hi));
+    assert(bound_le(b.lo, b.hi));
+    bound_le_refl(a.lo);
+    assert(bound_min(a.lo, a.lo) == a.lo);
+    assert(widen_lo_prefix(a, b, 1) == a.lo);
+    assert(widen_lo_prefix(a, b, 2) == a.lo);
+    assert(widen_lo_prefix(a, b, 3) == bound_min(a.lo, b.lo));
+    lemma_bound_min_le(a.lo, b.lo);
+    lemma_bound_le_trans(bound_min(a.lo, b.lo), b.lo, b.hi);
+    assert(widen_lo_prefix(a, b, 4) == bound_min(a.lo, b.lo));
+    if bound_le(a.hi, a.lo) {
+        bound_le_antisym(a.lo, a.hi);
+        assert(a.lo == a.hi);
+    }
+    assert(bound_max(a.hi, a.lo) == a.hi);
+    assert(widen_hi_prefix(a, b, 1) == a.hi);
+    bound_le_refl(a.hi);
+    assert(widen_hi_prefix(a, b, 2) == a.hi);
+    assert(widen_hi_prefix(a, b, 3) == bound_max(a.hi, b.lo));
+    lemma_bound_max_ge(a.hi, b.lo);
+    lemma_bound_le_trans(b.lo, b.hi, bound_max(a.hi, b.hi));
+    assert(bound_le(b.lo, b.hi));
+    assert(bound_max(bound_max(a.hi, b.lo), b.hi) == bound_max(a.hi, b.hi));
+    assert(widen_hi_prefix(a, b, 4) == bound_max(a.hi, b.hi));
 }
 
 pub proof fn lemma_widen_sound(a: IntervalZ, b: IntervalZ, r: IntervalZ)
