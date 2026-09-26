@@ -284,8 +284,8 @@ impl<T: Tagged, N: DenseId + Tagged> Tagged for ListNode<T, N> {
         ListNode { payload: T::from_repr(&r.a), next_repr: r.b }
     }
     #[inline(always)]
-    fn from_repr_clean(r: &Self::Repr) -> (v: Self) {
-        ListNode { payload: T::from_repr_clean(&r.a), next_repr: r.b }
+    fn from_repr_clean(r: &Self::Repr, tok: crate::tagged::CrateOnly) -> (v: Self) {
+        ListNode { payload: T::from_repr_clean(&r.a, tok), next_repr: r.b }
     }
     fn tag(r: &Self::Repr) -> (b: bool) {
         T::tag(&r.a)

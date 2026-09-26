@@ -32,6 +32,29 @@ use vstd::prelude::*;
 
 verus! {
 
+/// Capability for crate-internal calls. The type is public, because the
+/// implementors of [`Tagged`] in consumer crates (the id macros) must name it
+/// in a method signature, but its field is private and its only constructor
+/// is `pub(crate)`. Code outside this crate therefore cannot create one, and
+/// cannot call a function that takes one: such a function is reachable from
+/// this crate's verified code alone, which discharges its precondition. That
+/// is what lets a public trait method carry a real precondition without
+/// exposing it to unverified callers (tools/check_partial_api.py treats a
+/// function taking `CrateOnly` as internal). Zero-sized; erased at runtime.
+///
+/// An implementor receives the token for the duration of the call; the id
+/// macros ignore it, and a hand-written `Tagged` impl must not pass it on.
+pub struct CrateOnly {
+    _private: (),
+}
+
+impl CrateOnly {
+    #[inline(always)]
+    pub(crate) fn new() -> Self {
+        CrateOnly { _private: () }
+    }
+}
+
 /// Bit-stealing contract for values that can carry a tag bit alongside them.
 ///
 /// prod-parity: `Default` matches production's `Tagged: Copy + Default`
@@ -91,13 +114,12 @@ pub trait Tagged: Sized + Copy + core::default::Default {
     /// value written earlier is recognized when it is read back (an untracked
     /// `InlineStore` never tags, and reads through this).
     ///
-    /// INTERNAL: the only caller is the untracked `InlineStore::get`, whose
-    /// invariant proves the precondition. It is the one public function with
-    /// a non-`wf` precondition (partial-api-allowlist.txt says why and what
-    /// retires it); unverified code must not call it. A total form (test the
-    /// bit, refuse if set) was measured and costs more than it saves.
+    /// Internal: it takes a [`CrateOnly`] token, so only this crate's verified
+    /// code can call it (the untracked `InlineStore::get`, whose invariant
+    /// proves the precondition). A total form (test the bit, refuse if set)
+    /// was measured and costs more than it saves.
     #[doc(hidden)]
-    fn from_repr_clean(r: &Self::Repr) -> (v: Self)
+    fn from_repr_clean(r: &Self::Repr, _tok: CrateOnly) -> (v: Self)
         requires
             Self::repr_wf(*r),
             !Self::tag_of(*r),

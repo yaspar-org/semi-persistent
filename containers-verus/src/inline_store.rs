@@ -148,7 +148,7 @@ where
         if TRACK {
             T::from_repr(&self.data[i.as_usize()])
         } else {
-            T::from_repr_clean(&self.data[i.as_usize()])
+            T::from_repr_clean(&self.data[i.as_usize()], crate::tagged::CrateOnly::new())
         }
     }
 

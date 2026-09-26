@@ -300,7 +300,7 @@ impl Tagged for DenseId31 {
     }
 
     #[inline(always)]
-    fn from_repr_clean(r: &u32) -> (v: DenseId31) {
+    fn from_repr_clean(r: &u32, _tok: crate::tagged::CrateOnly) -> (v: DenseId31) {
         // No tag bit: the mask is the identity, so read the word as is.
         assert(((*r) & 0x8000_0000u32) == 0 ==> ((*r) & 0x7fff_ffffu32) == *r
             && *r < 0x8000_0000u32) by (bit_vector);
@@ -489,7 +489,7 @@ impl Tagged for DenseId63 {
     }
 
     #[inline(always)]
-    fn from_repr_clean(r: &u64) -> (v: DenseId63) {
+    fn from_repr_clean(r: &u64, _tok: crate::tagged::CrateOnly) -> (v: DenseId63) {
         // No tag bit: the mask is the identity, so read the word as is.
         assert(((*r) & 0x8000_0000_0000_0000u64) == 0 ==> ((*r) & 0x7fff_ffff_ffff_ffffu64) == *r
             && *r < 0x8000_0000_0000_0000u64) by (bit_vector);

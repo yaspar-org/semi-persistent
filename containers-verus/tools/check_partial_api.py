@@ -14,7 +14,9 @@ Two checks over src/*.rs:
    only in the enumerated pub(crate) external_body primitives.
 
 "Public" = `pub` without a restriction (`pub(crate)`, `pub(super)`,
-`pub(in ...)` are internal), plus any fn declared inside a `pub trait` block
+`pub(in ...)` are internal, and so is a fn taking the capability token
+`tagged::CrateOnly`, which only this crate can construct), plus any fn declared
+inside a `pub trait` block
 (trait items inherit the trait's visibility). spec/proof fns are skipped:
 spec fns are uncallable from exec code and proof fns are erased.
 
@@ -100,11 +102,17 @@ def scan_file(path: Path):
         i = text.find('(', m.end())
         if i == -1:
             continue
+        args_start = i
         depth = 1
         i += 1
         while i < len(text) and depth:
             depth += {'(': 1, ')': -1}.get(text[i], 0)
             i += 1
+        # A parameter of the crate's capability type `CrateOnly` (constructor
+        # `pub(crate)`, field private) makes the function uncallable outside
+        # the crate: internal, the same class as `pub(crate)`.
+        if re.search(r'\bCrateOnly\b', text[args_start:i]):
+            continue
         sig_start, depth = i, 0
         has_req = False
         while i < len(text):
