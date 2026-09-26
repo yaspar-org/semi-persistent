@@ -16,6 +16,8 @@ bin = []
 
 [dependencies]
 vstd = "=0.0.0-2026-09-20-0158"
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
 
 [package.metadata.verus]
 verify = true

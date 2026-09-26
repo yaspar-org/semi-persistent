@@ -10,10 +10,11 @@ This crate provides **tristate numbers (Tnums)**, **additive tristate numbers (A
 **reduced product TAIU** -- abstract domains for reasoning about bitvector arithmetic
 with bitwise uncertainty.
 
-The ordinary verification run reports **994 verified conditions and 0
+The ordinary verification run reports **1116 verified conditions and 0
 errors**. A CI source gate rejects executable `admit()` and `assume()` calls in
 this crate. The pinned `vstd` dependency contains admitted specifications and
-is part of the trust boundary; a global `--no-cheating` run therefore fails in
+is part of the trust boundary, as are the `IBig` wrapper's `external_body`
+functions and one axiom ([ledger](doc/domain-traits.md#7-trust)); a global `--no-cheating` run therefore fails in
 `vstd` before project verification. A separate 32-test Rust mirror suite
 provides randomized and exhaustive finite evidence; it mirrors the Verus
 definitions rather than constituting a second formal verification.
@@ -92,6 +93,21 @@ theorems currently cover `ExecTnum` bitwise/add/join/meet,
 reduce/add. Other Layer 4 methods currently prove well-formedness only; see
 [the proof-status inventory](doc/proof-status.md).
 
+### Shared domain interface (lattice.rs, word.rs, semantics.rs, transfer.rs)
+
+Every domain implements one interface, specified in
+[doc/domain-traits.md](doc/domain-traits.md):
+
+- domains are bottomless, and `BotOr<D>` is the external bottom (as in Verasco);
+- representations are canonical, and each domain proves `lemma_canonical`;
+- machine domains are generic over `W: Word` (u8..u64);
+- transfer functions are indexed by a `Semantics`: `Unsigned<W>`, `Signed<W>`,
+  `Euclid` or `Trunc`;
+- division reports a `DivZero` flag.
+
+The reference implementations are `Interval<W>` (`interval.rs`) and
+`IntervalZ` over `IBig` (`interval_z.rs`).
+
 ## Key theorems
 
 | Theorem | File | What it says |
@@ -134,13 +150,18 @@ cargo run --features bin
 
 ## Verification status
 
-- 994 Verus conditions, 0 errors
+- 1116 Verus conditions, 0 errors
 - no project-local `admit()`/`assume()` calls (CI source gate)
 - pinned `vstd` admitted specifications remain in the trust boundary
-- 32 Rust mirror tests, all passing
+- `IBig` (`num-bigint` wrapper): 7 `external_body` functions and 1 axiom, listed in the
+  [trust ledger](doc/domain-traits.md#7-trust); machine-word domains do not use it
+- 32 Rust mirror tests and 3 exhaustive reference-domain tests, all passing
 - 4 enabled bit-widths: u8, u16, u32, u64
 
 ## Design documents
+
+- [Domain traits](doc/domain-traits.md): the shared interface every domain implements,
+  the porting checklist, and the `IBig` trust ledger.
 
 - [Unum design](doc/unum-design.md): representation, proved containment
   scope, precision counterexample, conversions, and reduced-product use.

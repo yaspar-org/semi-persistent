@@ -1,7 +1,7 @@
 # Semi-Persistent Abstract Domains
 
 A proved abstract domains library for bitvector arithmetic. The ordinary Verus
-run has 994 verified conditions and 0 errors, and a CI source gate rejects
+run has 1116 verified conditions and 0 errors, and a CI source gate rejects
 project-local `admit()`/`assume()` calls. The pinned `vstd` dependency remains
 inside the trust boundary. A separate 32-test Rust mirror suite supplies finite
 randomized/exhaustive evidence.
