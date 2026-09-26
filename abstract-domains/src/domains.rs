@@ -1286,6 +1286,74 @@ macro_rules! abstract_domain {
             }
 
             // ============================================================
+            // Congruence
+            // ============================================================
+            #[derive(Clone, Copy)]
+            pub struct Congruence {
+                // Bottom -> Tsai-Ching production Bottom design
+                pub modulus: $uint,
+                pub residue: $uint,
+            }
+
+            impl Congruence {
+                // canonical representation:
+                // modulus == 0 represents a singleton;
+                // otherwise residue < modulus
+                pub open spec fn wf(self) -> bool {
+                    self.modulus == 0 || self.residue < self.modulus
+                }
+
+                // membership check
+                pub open spec fn has(self, x: $uint) -> bool {
+                    if self.modulus == 0 {
+                        x == self.residue
+                    } else {
+                        x % self.modulus == self.residue
+                    }
+                }
+
+                // executable membership check
+                pub fn contains(&self, x: $uint) -> (r: bool)
+                    ensures r == self.has(x)
+                {
+                    if self.modulus == 0 {
+                        x == self.residue
+                    } else {
+                        x % self.modulus == self.residue
+                    }
+                }
+
+                pub fn constant(x: $uint) -> Congruence {
+                    // {x}
+                    Congruence {
+                        modulus: 0,
+                        residue: x,
+                    }
+                }
+
+                pub fn top() -> Congruence {
+                    // all values
+                    Congruence {
+                        modulus: 1,
+                        residue: 0,
+                    }
+                }
+
+                // normalization
+                pub fn normalize(&self) -> Congruence {
+                    if self.modulus == 0 {
+                        // Singleton: (0, x)
+                        *self
+                    } else {
+                        Congruence {
+                            modulus: self.modulus,
+                            residue: self.residue % self.modulus,
+                        }
+                    }
+                }
+            }
+
+            // ============================================================
             // ReducedProduct: Tnum x Anum x Interval x Unum reduced product
             // ============================================================
             #[derive(Clone, Copy)]
