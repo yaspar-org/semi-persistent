@@ -329,6 +329,14 @@ macro_rules! define_id_impl {
                 $Name { raw: *r & $MASK }
             }
 
+            #[inline(always)]
+            fn from_repr_clean(r: &$Int) -> (v: $Name) {
+                // No tag bit: the mask is the identity, so read the word as is.
+                assert(((*r) & $CAP) == 0 ==> ((*r) & $MASK) == *r && *r < $CAP) by (bit_vector);
+                proof { $Name::lemma_value_of_raw(*r); }
+                $Name { raw: *r }
+            }
+
             fn tag(r: &$Int) -> (b: bool) {
                 (*r & $CAP) != 0
             }

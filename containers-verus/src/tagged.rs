@@ -84,6 +84,28 @@ pub trait Tagged: Sized + Copy + core::default::Default {
     fn from_repr(r: &Self::Repr) -> (v: Self)
         ensures Self::repr_wf(*r) ==> v == Self::value_of(*r);
 
+    /// Decode a `Repr` that carries no tag. The default is `from_repr`; a
+    /// type whose tag is a stolen bit overrides it with the unmasked read,
+    /// which on an untagged repr is the same value. The point is what the
+    /// optimizer sees: the stored word itself rather than a masked copy, so a
+    /// value written earlier is recognized when it is read back (an untracked
+    /// `InlineStore` never tags, and reads through this).
+    ///
+    /// INTERNAL: the only caller is the untracked `InlineStore::get`, whose
+    /// invariant proves the precondition. It is the one public function with
+    /// a non-`wf` precondition (partial-api-allowlist.txt says why and what
+    /// retires it); unverified code must not call it. A total form (test the
+    /// bit, refuse if set) was measured and costs more than it saves.
+    #[doc(hidden)]
+    fn from_repr_clean(r: &Self::Repr) -> (v: Self)
+        requires
+            Self::repr_wf(*r),
+            !Self::tag_of(*r),
+        ensures v == Self::value_of(*r),
+    {
+        Self::from_repr(r)
+    }
+
     /// Read the tag bit.
     fn tag(r: &Self::Repr) -> (b: bool)
         ensures Self::repr_wf(*r) ==> b == Self::tag_of(*r);

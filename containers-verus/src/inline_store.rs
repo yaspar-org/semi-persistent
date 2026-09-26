@@ -87,6 +87,11 @@ where
         Seq::new(self.data@.len(), |i: int| T::tag_of(self.data@[i]))
     }
 
+    /// Spec helper: no repr carries the tag (the untracked half of `wf`).
+    pub open(crate) spec fn untagged_spec(&self) -> bool {
+        forall|i: int| 0 <= i < self.data@.len() ==> !(#[trigger] T::tag_of(self.data@[i]))
+    }
+
     /// Spec helper: the `DiffStore::wf` body (factored so the open trait-impl
     /// spec fn contains no direct field access — privacy closeout).
     pub open(crate) spec fn wf_spec(&self) -> bool {
@@ -129,11 +134,22 @@ where
 {
     open spec fn data(&self) -> Seq<T> { self.data_spec() }
     open spec fn captured(&self) -> Seq<bool> { self.captured_spec() }
-    open spec fn wf(&self) -> bool { self.wf_spec() }
+    // Untracked, nothing is ever captured, so no repr carries the tag: every
+    // write goes through `into_repr` (tag-clear by contract) and the tag
+    // setters below return early unless `TRACK`. Stated so reads can decode
+    // without the mask.
+    open spec fn wf(&self) -> bool {
+        &&& self.wf_spec()
+        &&& (!TRACK ==> self.untagged_spec())
+    }
 
     #[inline(always)]
     fn get(&self, i: I) -> T {
-        T::from_repr(&self.data[i.as_usize()])
+        if TRACK {
+            T::from_repr(&self.data[i.as_usize()])
+        } else {
+            T::from_repr_clean(&self.data[i.as_usize()])
+        }
     }
 
     #[inline(always)]
@@ -169,6 +185,9 @@ where
     #[inline(always)]
     fn mark_captured(&mut self, i: I) {
         broadcast use crate::diff_store::lemma_inline_discipline;
+        if !TRACK {
+            return;
+        }
         let iu = i.as_usize();
         let mut r = self.data[iu];
         T::set_tag(&mut r);
@@ -489,6 +508,19 @@ where
                             if q == i {
                                 assert(diff_log@[q].1 == idx);
                             }
+                        }
+                    }
+                }
+            }
+            proof {
+                // Untracked: a tag now would be a capture now, hence one before,
+                // and the untracked store had none.
+                if !TRACK {
+                    assert forall|j: int| 0 <= j < self.data@.len()
+                        implies !(#[trigger] T::tag_of(self.data@[j])) by {
+                        if T::tag_of(self.data@[j]) {
+                            assert(self.captured_spec()[j]);
+                            assert(old(self).captured_spec()[j]);
                         }
                     }
                 }

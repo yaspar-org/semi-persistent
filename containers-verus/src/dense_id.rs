@@ -299,6 +299,15 @@ impl Tagged for DenseId31 {
         DenseId31 { raw: *r & 0x7fff_ffffu32 }
     }
 
+    #[inline(always)]
+    fn from_repr_clean(r: &u32) -> (v: DenseId31) {
+        // No tag bit: the mask is the identity, so read the word as is.
+        assert(((*r) & 0x8000_0000u32) == 0 ==> ((*r) & 0x7fff_ffffu32) == *r
+            && *r < 0x8000_0000u32) by (bit_vector);
+        proof { lemma_value_of_view(*r); }
+        DenseId31 { raw: *r }
+    }
+
     fn tag(r: &u32) -> (b: bool) {
         (*r & 0x8000_0000u32) != 0
     }
@@ -477,6 +486,15 @@ impl Tagged for DenseId63 {
         assert(((*r) & 0x7fff_ffff_ffff_ffffu64) < 0x8000_0000_0000_0000u64) by (bit_vector);
         proof { lemma_value_of_view64(*r); }
         DenseId63 { raw: *r & 0x7fff_ffff_ffff_ffffu64 }
+    }
+
+    #[inline(always)]
+    fn from_repr_clean(r: &u64) -> (v: DenseId63) {
+        // No tag bit: the mask is the identity, so read the word as is.
+        assert(((*r) & 0x8000_0000_0000_0000u64) == 0 ==> ((*r) & 0x7fff_ffff_ffff_ffffu64) == *r
+            && *r < 0x8000_0000_0000_0000u64) by (bit_vector);
+        proof { lemma_value_of_view64(*r); }
+        DenseId63 { raw: *r }
     }
 
     fn tag(r: &u64) -> (b: bool) {

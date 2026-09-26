@@ -283,6 +283,10 @@ impl<T: Tagged, N: DenseId + Tagged> Tagged for ListNode<T, N> {
     fn from_repr(r: &Self::Repr) -> (v: Self) {
         ListNode { payload: T::from_repr(&r.a), next_repr: r.b }
     }
+    #[inline(always)]
+    fn from_repr_clean(r: &Self::Repr) -> (v: Self) {
+        ListNode { payload: T::from_repr_clean(&r.a), next_repr: r.b }
+    }
     fn tag(r: &Self::Repr) -> (b: bool) {
         T::tag(&r.a)
     }
@@ -1417,6 +1421,14 @@ where
                 assert(ti.as_nat() == h0.tail_spec() as nat);
             }
             let mut tnode = self.nodes.get_at(ti);
+            // Keep the old tail's rewrite full width: re-encode the payload
+            // through the masked decode (an identity by the Tagged contracts),
+            // so the node is written back as one 8-byte store. Written as a
+            // 4-byte store to the next field alone, with its address loaded
+            // from the head the previous append just stored, it stalls the
+            // backend on Apple M4: +2.8 cycles per append, all ARM_STALL_BACKEND,
+            // no extra instructions (kperf counters, 2026-09-25).
+            tnode.payload = T::from_repr(&tnode.payload.into_repr());
             tnode.set_next_id(slot_id);
             proof { assert(tnode.next_ref() == (NodeRef { some: true, idx: slot })); }
             self.nodes.set_at(ti, tnode);

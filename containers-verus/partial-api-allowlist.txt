@@ -1,8 +1,20 @@
 # Public exec functions that still expose a `requires` clause.
-# Entries may only be removed. The list is EMPTY: every public exec function
-# of the crate is total (its only precondition, if any, is the receiver's own
+# Entries may only be removed. Every other public exec function of the crate
+# is total (its only precondition, if any, is the receiver's own
 # well-formedness `wf()`/`cursor_wf()`/`cursor_ok()`/`cwf(c)`, upheld by every
 # constructor and operation — see tools/check_partial_api.py).
+#
+# The one entry, added 2026-09-25 by owner decision:
+#   - tagged.rs::from_repr_clean (requires an untagged repr). The unmasked
+#     decode that lets the optimizer see a stored id as the value written
+#     (list append 1.04x fixed / 1.03x opaque, past the pre-merge code). Its
+#     only caller is the untracked InlineStore::get, where the store's
+#     invariant proves the precondition. It cannot be sealed onto a
+#     crate-private supertrait like DiffStoreOps: consumer crates implement
+#     `Tagged` through the id macros. The total form (test the bit, refuse)
+#     measured 0.95x on opaque append. Retired by a capability-token
+#     parameter only this crate can mint (callable from verified code alone),
+#     or by verifying the consumers.
 #
 # How the former floors drained (doc/future/total-api-plan.md):
 #   - type-class law (map.rs::new, obeys_key_model): a conditional
@@ -21,3 +33,4 @@
 #     `leaf_fill_keys` already used.
 #   - guard.rs::check_precondition, capture_bits.rs::set_true and the other
 #     internal primitives: `pub(crate)`.
+tagged.rs::from_repr_clean
