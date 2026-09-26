@@ -1531,3 +1531,126 @@ abstract_domain!(d32, u32, 32u32, 0xFFFF_FFFFu32);
 abstract_domain!(d64, u64, 64u32, 0xFFFF_FFFF_FFFF_FFFFu64);
 // d128 disabled: u128 bitvector proofs exceed Z3 capacity
 // abstract_domain!(d128, u128, 128u32, 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128);
+
+use vstd::prelude::*;
+
+verus! {
+
+/// Global wrapper to canonically represent empty sets (unreachability) across all domains.
+#[derive(Copy, PartialEq, Eq)]
+pub enum AbstractValue<D> {
+    Bot,
+    NonBot(D),
+}
+
+// Explicit Clone implementation to satisfy Verus verification contracts
+impl<D: Copy> Clone for AbstractValue<D> {
+    fn clone(&self) -> (res: Self)
+        ensures res == *self
+    {
+        *self
+    }
+}
+
+/// Sign-agnostic wrapped interval parameterized by the integer type.
+/// Guaranteed to be non-empty. Emptiness is now handled by `AbstractValue`.
+#[derive(Copy, PartialEq, Eq)]
+pub enum Wrapped<T> {
+    /// Canonical full set (all values for the type).
+    Top,
+    /// Nonempty arc; call normalize to canonicalize full-circle representations.
+    Arc { lo: T, hi: T },
+}
+
+// Explicit Clone implementation to satisfy Verus verification contracts
+impl<T: Copy> Clone for Wrapped<T> {
+    fn clone(&self) -> (res: Self)
+        ensures res == *self
+    {
+        *self
+    }
+}
+
+} // end verus!
+
+// The macro must live OUTSIDE the main verus! block, and generate its own verus! block
+// inside the expansion so the Verus parser processes it correctly.
+macro_rules! impl_wrapped_domain {
+    ($ty:ty) => {
+        verus! {
+            impl Wrapped<$ty> {
+                /// Membership predicate (concretization): mathematical spec.
+                pub open spec fn has(self, x: $ty) -> bool {
+                    match self {
+                        Wrapped::Top => true,
+                        Wrapped::Arc { lo, hi } => {
+                            if lo <= hi {
+                                lo <= x && x <= hi
+                            } else {
+                                x >= lo || x <= hi
+                            }
+                        }
+                    }
+                }
+
+                /// Executable membership check that provably matches the mathematical `has` spec.
+                pub fn contains(&self, x: $ty) -> (res: bool)
+                    ensures res == self.has(x)
+                {
+                    match *self {
+                        Wrapped::Top => true,
+                        Wrapped::Arc { lo, hi } => {
+                            if lo <= hi {
+                                lo <= x && x <= hi
+                            } else {
+                                x >= lo || x <= hi
+                            }
+                        }
+                    }
+                }
+
+                /// Normalizes the representation by converting full-circle arcs to Top.
+                pub fn normalize(self) -> (res: Self)
+                    ensures
+                        forall|x: $ty| res.has(x) == self.has(x)
+                {
+                    match self {
+                        Wrapped::Arc { lo, hi } => {
+                            if lo == hi.wrapping_add(1) {
+                                Wrapped::Top
+                            } else {
+                                self
+                            }
+                        },
+                        _ => self,
+                    }
+                }
+
+                /// Constructor for a constant / singleton value.
+                pub open spec fn constant(val: $ty) -> Self {
+                    Wrapped::Arc { lo: val, hi: val }
+                }
+
+                /// Check if interval represents the full universe.
+                pub open spec fn is_top(self) -> bool {
+                    match self {
+                        Wrapped::Top => true,
+                        _ => false,
+                    }
+                }
+            }
+        } // end inner verus!
+    }
+}
+
+// Generate implementations for all requested primitive integer types
+impl_wrapped_domain!(u8);
+impl_wrapped_domain!(u16);
+impl_wrapped_domain!(u32);
+impl_wrapped_domain!(u64);
+impl_wrapped_domain!(u128);
+impl_wrapped_domain!(i8);
+impl_wrapped_domain!(i16);
+impl_wrapped_domain!(i32);
+impl_wrapped_domain!(i64);
+impl_wrapped_domain!(i128);

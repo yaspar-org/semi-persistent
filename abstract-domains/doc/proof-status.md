@@ -1,12 +1,12 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-08-21.
+Last refreshed: 2026-09-23.
 
 ## Current result
 
 ```text
 cargo verus verify
-994 verified, 0 errors
+1016 verified, 0 errors
 ```
 
 The project source contains no executable `admit()` or `assume()` calls. CI
@@ -25,7 +25,8 @@ Enabled executable widths:
 
 The `d128` macro invocation remains disabled because its bitvector obligations
 exceed the current solver capacity. Do not describe `u128` as an enabled or
-verified executable instance.
+verified executable instance of the existing d* domains. The separate
+Wrapped<u128>/Wrapped<i128> membership implementations described below do verify.
 
 The separate Rust mirror suite contains 32 tests:
 
@@ -69,3 +70,21 @@ subtraction, multiplication, division, shifts, joins, meets, and negation.
 Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
 L4 soundness work.
+
+
+## Wrapped membership and normalization
+
+`AbstractValue<D>` provides Bot/NonBot; `Wrapped<T>` has only nonempty Top/Arc.
+For u8/u16/u32/u64/u128 and i8/i16/i32/i64/i128, contains verifies
+`result == self.has(x)` and normalize verifies universal exact membership
+preservation. Explicit Clone implementations for Wrapped<T> (T: Copy) and
+AbstractValue<D> (D: Copy) verify equality with the original.
+
+The production harness has 13 test functions: exhaustive u8/i8 membership and
+normalization, boundary/wrapper/Clone suites for ten types, and a u32 adapter.
+Together with 13 oracle self-tests and 32 existing tests, 58 tests pass; one
+doctest is ignored. Tests were regrouped; former counts are not comparable
+one-for-one. Canonicality and idempotence are tested, not separate formal contracts.
+Raw Arc construction can be noncanonical until normalize is called. Test-only
+wrapper lifting does not establish a generic production lifted API or product
+consistency. Join/meet, arithmetic and conversions remain future work.
