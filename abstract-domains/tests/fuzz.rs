@@ -36,6 +36,12 @@ struct Interval {
     hi: u64,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Congruence {
+    modulus: u64,
+    residue: u64,
+}
+
 impl ExecTnum {
     fn wf(&self) -> bool {
         self.val & self.mask == 0
@@ -190,6 +196,61 @@ impl Interval {
             Interval { lo, hi }
         }
     }
+}
+
+impl Congruence {
+    fn constant(x: u64) -> Self {
+        Congruence {
+            modulus: 0,
+            residue: x,
+        }
+    }
+
+    fn top() -> Self {
+        Congruence {
+            modulus: 1,
+            residue: 0,
+        }
+    }
+
+    fn contains(&self, x: u64) -> bool {
+        if self.modulus == 0 {
+            x == self.residue
+        } else {
+            x % self.modulus == self.residue
+        }
+    }
+
+    fn normalize(&self) -> Self {
+        if self.modulus == 0 {
+            *self
+        } else {
+            Congruence {
+                modulus: self.modulus,
+                residue: self.residue % self.modulus,
+            }
+        }
+    }
+}
+
+// Concrete oracle for congruence membership.
+fn congruence_membership_oracle(modulus: u64, residue: u64, x: u64) -> bool {
+    if modulus == 0 {
+        x == residue
+    } else {
+        x % modulus == residue % modulus
+    }
+}
+
+// Concrete oracle for whether two congruence classes share a value.
+fn congruence_classes_compatible(a: Congruence, b: Congruence) -> bool {
+    // Small concrete search space for the Week 4 oracle.
+    for x in 0u64..64 {
+        if a.contains(x) && b.contains(x) {
+            return true;
+        }
+    }
+    false
 }
 
 // ================================================================
@@ -430,6 +491,97 @@ fuzz_binop!(
         if of { 0u64 } else { r } // skip overflow cases
     }
 );
+
+// ----------------------------------------------------------------
+// Congruence tests
+// ----------------------------------------------------------------
+
+// Check a constant contains only its exact value
+#[test]
+fn test_congruence_constant() {
+    let c = Congruence::constant(5);
+
+    assert!(c.contains(5));
+    assert!(!c.contains(4));
+    assert!(!c.contains(6));
+}
+
+// Check top contains every tested value
+#[test]
+fn test_congruence_top() {
+    let c = Congruence::top();
+
+    for x in 0u64..100 {
+        assert!(c.contains(x));
+    }
+}
+
+// Check normalization reduces the residue modulo the modulus
+#[test]
+fn test_congruence_normalize() {
+    let c = Congruence {
+        modulus: 4,
+        residue: 5,
+    };
+
+    let n = c.normalize();
+
+    assert_eq!(n.modulus, 4);
+    assert_eq!(n.residue, 1);
+}
+
+// Exhaustively compare Congruence membership with the concrete oracle.
+#[test]
+fn test_congruence_membership_oracle() {
+    for modulus in 0u64..8 {
+        for residue in 0u64..8 {
+            let c = Congruence {
+                modulus,
+                residue,
+            }
+            .normalize();
+
+            for x in 0u64..16 {
+                assert_eq!(
+                    c.contains(x),
+                    congruence_membership_oracle(modulus, residue, x)
+                );
+            }
+        }
+    }
+}
+
+// Check a pair of compatible congruence classes.
+#[test]
+fn test_congruence_compatible_classes() {
+    let a = Congruence {
+        modulus: 2,
+        residue: 0,
+    };
+
+    let b = Congruence {
+        modulus: 4,
+        residue: 0,
+    };
+
+    assert!(congruence_classes_compatible(a, b));
+}
+
+// Check a pair of incompatible congruence classes.
+#[test]
+fn test_congruence_incompatible_classes() {
+    let a = Congruence {
+        modulus: 2,
+        residue: 0,
+    };
+
+    let b = Congruence {
+        modulus: 2,
+        residue: 1,
+    };
+
+    assert!(!congruence_classes_compatible(a, b));
+}
 
 // ================================================================
 // ExecUnum (Unum) — horizontally composable additive tristate numbers
