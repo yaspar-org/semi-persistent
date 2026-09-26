@@ -3,42 +3,43 @@
 [Current interval contracts](../interval-soundness.md) |
 [Proof status](../proof-status.md)
 
-The shipping interval component is a nonempty, non-wrapping unsigned range with
-proved `add`, `join`, `meet`, and positive-constant division contracts. This
-document specifies extensions that are not implemented on the current branch.
-Nothing here is evidence that the corresponding operation exists or verifies.
+The shipping interval component is a non-wrapping unsigned range with a
+canonical bottom and proved `add`, `join`, `meet`, and positive-constant
+division contracts. This document specifies extensions that are not
+implemented on the current branch. Nothing here is evidence that the
+corresponding operation exists or verifies.
 
 ## 1. Transfer Functions, Division, and Alarms
 
 ### Current state
 
-Reduced-product operations without an interval transfer function use
-`Interval::top()`. General interval-by-interval division is absent. The current
-interval representation also has no bottom value with which to represent an
-operation that has no successful result.
+`Interval::div` returns a value interval and the shared `DivAlarm`, with proved
+nonzero quotient containment and alarm membership. `ReducedProduct::div`
+propagates both results through the reduced product and proves that reduction
+preserves every quotient for a represented nonzero divisor.
 
 ### Gap
 
-The interval component cannot contribute precision for bitwise operations,
-subtraction, multiplication, negation, or shifts, and it cannot distinguish
-division that is safe, may divide by zero, or must divide by zero.
+The interval component has explicit, proved bitwise transfers, but they
+deliberately return `top` for non-bottom operands and therefore contribute no
+bitwise precision. Subtraction, multiplication, negation, and both one-bit
+shifts have proved endpoint transfers; operations conservatively return `top`
+when their results cross the unsigned wrap boundary.
 
 ### Task
 
-First give every reduced-product operation an explicit interval transfer
-contract. A conservative implementation may return `top`; right shift can use
-endpoint monotonicity, and left shift can use a checked endpoint calculation
-with `top` on wrap.
+The division and alarm composition task is complete. The remaining interval
+transfer opportunity is to replace conservative bitwise `top` results with
+proved endpoint bounds when those bounds improve precision.
 
-Add interval division with a value result and a may-error abstraction. For
-unsigned dividend `[a,b]` and divisor `[c,d]`:
+The interval division transfer uses the following cases for unsigned dividend
+`[a,b]` and divisor `[c,d]`:
 
 - `c > 0`: return `[a / d, b / c]` with no-error;
 - `c = 0 < d`: return `[a / d, b]` with maybe-error; and
-- `c = d = 0`: return no value if bottom is added, or `top` with
-  definite-error under the current nonempty representation.
+- `c = d = 0`: return `bottom` with definite-error.
 
-Define alarm meaning by concretization, not by severity alone:
+The alarm domain uses concretization rather than severity:
 
 ```text
 NoError       = {false}
@@ -46,10 +47,10 @@ DefiniteError = {true}
 MaybeError    = {false, true}
 ```
 
-Thus `NoError` and `DefiniteError` are incomparable and their join is
-`MaybeError`. Add an explicit bottom only if unreachable states must be
-represented. Propagate alarms through reduced-product operations and joins
-according to that concretization.
+Thus `NoError` and `DefiniteError` are incomparable and their proved join is
+`MaybeError`. Reduced-product division propagates the alarm according to this
+concretization. Alarm-bearing control-flow joins remain future client-level
+work.
 
 ### Acceptance criteria
 
@@ -92,8 +93,7 @@ Add backward transfer functions for true and false branches. For a true
 unsigned `x < y` branch, narrow with checked forms of
 `x.hi <= y.hi - 1` and `y.lo >= x.lo + 1`, detect an infeasible branch, and run
 the ordinary reduced-product reduction afterward. Represent infeasibility with
-an explicit bottom or a `None` result; do not encode it as an ordinary
-well-formed interval.
+the explicit bottom; do not encode it as an ordinary nonempty interval.
 
 ### Acceptance criteria
 

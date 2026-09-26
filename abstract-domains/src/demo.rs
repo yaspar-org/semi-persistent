@@ -53,6 +53,7 @@ fn show(label: &str, t: &ReducedProduct) {
 /// Narrow ReducedProduct with "value < bound" (branch taken).
 fn assume_lt(t: &ReducedProduct, bound: u8) -> ReducedProduct {
     let iv = Interval {
+        is_bottom: false,
         lo: t.interval.lo,
         hi: if bound == 0 { 0 } else { bound - 1 },
     };
@@ -68,6 +69,7 @@ fn assume_lt(t: &ReducedProduct, bound: u8) -> ReducedProduct {
 /// Narrow ReducedProduct with "value >= bound" (branch taken).
 fn assume_ge(t: &ReducedProduct, bound: u8) -> ReducedProduct {
     let iv = Interval {
+        is_bottom: false,
         lo: bound,
         hi: t.interval.hi,
     };
@@ -83,6 +85,7 @@ fn assume_ge(t: &ReducedProduct, bound: u8) -> ReducedProduct {
 /// AND with constant (precise: forces known-zero bits).
 fn mask(t: &ReducedProduct, c: u8) -> ReducedProduct {
     let iv = Interval {
+        is_bottom: false,
         lo: t.interval.lo & c,
         hi: t.interval.hi.min(c),
     };
@@ -122,7 +125,11 @@ pub fn demo() {
             base: 0,
             span: 0xFF,
         },
-        interval: Interval { lo: 0, hi: 255 },
+        interval: Interval {
+            is_bottom: false,
+            lo: 0,
+            hi: 255,
+        },
         unum: ExecUnum::top(),
     };
     show("x = packet_read():", &x);
@@ -143,7 +150,11 @@ pub fn demo() {
             base: 0,
             span: 0xFF,
         },
-        interval: Interval { lo: 0, hi: 255 },
+        interval: Interval {
+            is_bottom: false,
+            lo: 0,
+            hi: 255,
+        },
         unum: ExecUnum::top(),
     };
     show("ptr = packet_read():", &ptr);
@@ -172,8 +183,16 @@ pub fn demo() {
     let flag = ReducedProduct {
         tnum: ExecTnum { val: 0, mask: 1 },
         anum: ExecAnum { base: 0, span: 1 },
-        interval: Interval { lo: 0, hi: 1 },
-        unum: ExecUnum::from_interval(&Interval { lo: 0, hi: 1 }),
+        interval: Interval {
+            is_bottom: false,
+            lo: 0,
+            hi: 1,
+        },
+        unum: ExecUnum::from_interval(&Interval {
+            is_bottom: false,
+            lo: 0,
+            hi: 1,
+        }),
     };
     let mut x_val = flag;
     let two = ReducedProduct::constant(2);
@@ -223,8 +242,16 @@ pub fn demo() {
             base: 0,
             span: 0x0F,
         },
-        interval: Interval { lo: 0, hi: 15 },
-        unum: ExecUnum::from_interval(&Interval { lo: 0, hi: 15 }),
+        interval: Interval {
+            is_bottom: false,
+            lo: 0,
+            hi: 15,
+        },
+        unum: ExecUnum::from_interval(&Interval {
+            is_bottom: false,
+            lo: 0,
+            hi: 15,
+        }),
     };
     show("hdr_len = pkt[0] & 0x0F:", &hdr_len);
 
@@ -254,8 +281,16 @@ pub fn demo() {
             base: 0,
             span: 0b11111000,
         },
-        interval: Interval { lo: 0, hi: 248 },
-        unum: ExecUnum::from_interval(&Interval { lo: 0, hi: 248 }),
+        interval: Interval {
+            is_bottom: false,
+            lo: 0,
+            hi: 248,
+        },
+        unum: ExecUnum::from_interval(&Interval {
+            is_bottom: false,
+            lo: 0,
+            hi: 248,
+        }),
     };
     show("base (8-aligned):", &base);
     let field = base.add(&ReducedProduct::constant(4));

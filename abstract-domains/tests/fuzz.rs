@@ -5,6 +5,11 @@
 /// Pure Rust — no Verus. Reimplements the domain ops for testing.
 use rand::rngs::StdRng;
 use rand::{Rng, RngExt, SeedableRng};
+use semi_persistent_abstract_domains::domains::DivAlarm;
+use semi_persistent_abstract_domains::domains::d8::{
+    ExecAnum as D8ExecAnum, ExecTnum as D8ExecTnum, ExecUnum as D8ExecUnum, Interval as D8Interval,
+    ReducedProduct as D8ReducedProduct,
+};
 
 const DEFAULT_TEST_SEED: u64 = 0x5eed_5eed;
 
@@ -32,6 +37,7 @@ struct ExecAnum {
 }
 #[derive(Clone, Copy, Debug)]
 struct Interval {
+    is_bottom: bool,
     lo: u64,
     hi: u64,
 }
@@ -176,18 +182,140 @@ impl ExecAnum {
 
 impl Interval {
     fn wf(&self) -> bool {
-        self.lo <= self.hi
+        if self.is_bottom {
+            self.lo == 0 && self.hi == 0
+        } else {
+            self.lo <= self.hi
+        }
     }
     fn contains(&self, x: u64) -> bool {
-        self.lo <= x && x <= self.hi
+        !self.is_bottom && self.lo <= x && x <= self.hi
+    }
+    fn bottom() -> Interval {
+        Interval {
+            is_bottom: true,
+            lo: 0,
+            hi: 0,
+        }
+    }
+    fn top() -> Interval {
+        Interval {
+            is_bottom: false,
+            lo: 0,
+            hi: !0,
+        }
+    }
+    fn bw_or(&self, t: &Interval) -> Interval {
+        if self.is_bottom || t.is_bottom {
+            Interval::bottom()
+        } else {
+            Interval::top()
+        }
+    }
+    fn bw_and(&self, t: &Interval) -> Interval {
+        if self.is_bottom || t.is_bottom {
+            Interval::bottom()
+        } else {
+            Interval::top()
+        }
+    }
+    fn bw_xor(&self, t: &Interval) -> Interval {
+        if self.is_bottom || t.is_bottom {
+            Interval::bottom()
+        } else {
+            Interval::top()
+        }
     }
     fn add(&self, t: &Interval) -> Interval {
+        if self.is_bottom || t.is_bottom {
+            return Interval::bottom();
+        }
         let lo = self.lo.wrapping_add(t.lo);
         let hi = self.hi.wrapping_add(t.hi);
         if lo < self.lo || hi < self.hi || hi < lo {
-            Interval { lo: 0, hi: !0 }
+            Interval::top()
         } else {
-            Interval { lo, hi }
+            Interval {
+                is_bottom: false,
+                lo,
+                hi,
+            }
+        }
+    }
+    fn sub(&self, t: &Interval) -> Interval {
+        if self.is_bottom || t.is_bottom {
+            return Interval::bottom();
+        }
+        if self.lo < t.hi {
+            return Interval::top();
+        }
+        Interval {
+            is_bottom: false,
+            lo: self.lo.wrapping_sub(t.hi),
+            hi: self.hi.wrapping_sub(t.lo),
+        }
+    }
+    fn mul(&self, t: &Interval) -> Interval {
+        if self.is_bottom || t.is_bottom {
+            return Interval::bottom();
+        }
+        let hi = match self.hi.checked_mul(t.hi) {
+            Some(value) => value,
+            None => return Interval::top(),
+        };
+        let lo = match self.lo.checked_mul(t.lo) {
+            Some(value) => value,
+            None => return Interval::top(),
+        };
+        Interval {
+            is_bottom: false,
+            lo,
+            hi,
+        }
+    }
+    fn neg(&self) -> Interval {
+        if self.is_bottom {
+            return Interval::bottom();
+        }
+        if self.lo == 0 {
+            return if self.hi == 0 {
+                Interval {
+                    is_bottom: false,
+                    lo: 0,
+                    hi: 0,
+                }
+            } else {
+                Interval::top()
+            };
+        }
+        Interval {
+            is_bottom: false,
+            lo: 0u64.wrapping_sub(self.hi),
+            hi: 0u64.wrapping_sub(self.lo),
+        }
+    }
+    fn rsh(&self) -> Interval {
+        if self.is_bottom {
+            Interval::bottom()
+        } else {
+            Interval {
+                is_bottom: false,
+                lo: self.lo >> 1,
+                hi: self.hi >> 1,
+            }
+        }
+    }
+    fn lsh(&self) -> Interval {
+        if self.is_bottom {
+            return Interval::bottom();
+        }
+        if self.hi > u64::MAX >> 1 {
+            return Interval::top();
+        }
+        Interval {
+            is_bottom: false,
+            lo: self.lo << 1,
+            hi: self.hi << 1,
         }
     }
 }
@@ -210,9 +338,17 @@ fn rand_ean(rng: &mut impl Rng) -> ExecAnum {
 fn rand_interval(rng: &mut impl Rng) -> Interval {
     let (a, b): (u64, u64) = (rng.random(), rng.random());
     if a <= b {
-        Interval { lo: a, hi: b }
+        Interval {
+            is_bottom: false,
+            lo: a,
+            hi: b,
+        }
     } else {
-        Interval { lo: b, hi: a }
+        Interval {
+            is_bottom: false,
+            lo: b,
+            hi: a,
+        }
     }
 }
 fn sample_etn(tn: &ExecTnum, rng: &mut impl Rng) -> u64 {
@@ -419,6 +555,33 @@ fn fuzz_ean_div() {
 
 // Interval
 fuzz_binop!(
+    fuzz_iv_or,
+    Interval,
+    rand_interval,
+    sample_interval,
+    contains,
+    bw_or,
+    |x: u64, y: u64| x | y
+);
+fuzz_binop!(
+    fuzz_iv_and,
+    Interval,
+    rand_interval,
+    sample_interval,
+    contains,
+    bw_and,
+    |x: u64, y: u64| x & y
+);
+fuzz_binop!(
+    fuzz_iv_xor,
+    Interval,
+    rand_interval,
+    sample_interval,
+    contains,
+    bw_xor,
+    |x: u64, y: u64| x ^ y
+);
+fuzz_binop!(
     fuzz_iv_plus,
     Interval,
     rand_interval,
@@ -429,6 +592,45 @@ fuzz_binop!(
         let (r, of) = x.overflowing_add(y);
         if of { 0u64 } else { r } // skip overflow cases
     }
+);
+fuzz_binop!(
+    fuzz_iv_sub,
+    Interval,
+    rand_interval,
+    sample_interval,
+    contains,
+    sub,
+    |x: u64, y: u64| x.wrapping_sub(y)
+);
+fuzz_binop!(
+    fuzz_iv_mul,
+    Interval,
+    rand_interval,
+    sample_interval,
+    contains,
+    mul,
+    |x: u64, y: u64| x.wrapping_mul(y)
+);
+fuzz_unop!(
+    fuzz_iv_neg,
+    rand_interval,
+    sample_interval,
+    neg,
+    |x: u64| x.wrapping_neg()
+);
+fuzz_unop!(
+    fuzz_iv_rsh,
+    rand_interval,
+    sample_interval,
+    rsh,
+    |x: u64| x >> 1
+);
+fuzz_unop!(
+    fuzz_iv_lsh,
+    rand_interval,
+    sample_interval,
+    lsh,
+    |x: u64| x << 1
 );
 
 // ================================================================
@@ -1005,6 +1207,507 @@ fn fuzz_eun_plus_assoc() {
 // ----------------------------------------------------------------
 // Identity elements
 // ----------------------------------------------------------------
+
+#[test]
+fn division_alarm_truth_table_and_join_laws() {
+    use DivAlarm::{DefiniteError, MaybeError, NoError};
+
+    assert!(NoError.has(false));
+    assert!(!NoError.has(true));
+    assert!(!DefiniteError.has(false));
+    assert!(DefiniteError.has(true));
+    assert!(MaybeError.has(false));
+    assert!(MaybeError.has(true));
+
+    let alarms = [NoError, DefiniteError, MaybeError];
+    for left in alarms {
+        assert!(left.join(&left) == left);
+        for right in alarms {
+            let joined = left.join(&right);
+            assert!(joined == right.join(&left));
+            for error in [false, true] {
+                assert_eq!(joined.has(error), left.has(error) || right.has(error));
+            }
+            for third in alarms {
+                assert!(left.join(&right).join(&third) == left.join(&right.join(&third)));
+            }
+        }
+    }
+
+    assert!(NoError.join(&DefiniteError) == MaybeError);
+    assert!(NoError.join(&MaybeError) == MaybeError);
+    assert!(DefiniteError.join(&MaybeError) == MaybeError);
+}
+
+#[test]
+fn production_interval_bottom_is_empty_and_canonical() {
+    let bottom = D8Interval::bottom();
+    assert!(bottom.is_bottom);
+    assert_eq!(bottom.lo, 0);
+    assert_eq!(bottom.hi, 0);
+
+    let seven = D8Interval::constant(7);
+    assert!(bottom.add(&seven).is_bottom);
+    assert!(bottom.meet(&seven).is_bottom);
+    assert!(bottom.div_const(1).is_bottom);
+
+    let joined = bottom.join(&seven);
+    assert!(!joined.is_bottom);
+    assert_eq!(joined.lo, 7);
+    assert_eq!(joined.hi, 7);
+
+    let disjoint = D8Interval::constant(1).meet(&D8Interval::constant(2));
+    assert!(disjoint.is_bottom);
+}
+
+fn d8_interval_eq(a: &D8Interval, b: &D8Interval) -> bool {
+    a.is_bottom == b.is_bottom && a.lo == b.lo && a.hi == b.hi
+}
+
+fn d8_interval_contains(iv: &D8Interval, value: u8) -> bool {
+    !iv.is_bottom && iv.lo <= value && value <= iv.hi
+}
+
+fn d8_reduced_from_interval(interval: D8Interval) -> D8ReducedProduct {
+    D8ReducedProduct {
+        tnum: D8ExecTnum::top(),
+        anum: D8ExecAnum::top(),
+        interval,
+        unum: D8ExecUnum::top(),
+    }
+}
+
+fn d8_reduced_div_result_contains(value: &D8ReducedProduct, concrete: u8) -> bool {
+    let tnum_contains = concrete & !value.tnum.mask == value.tnum.val;
+    let anum_contains =
+        concrete >= value.anum.base && (concrete - value.anum.base) & !value.anum.span == 0;
+    let unum_contains =
+        concrete >= value.unum.base && concrete - value.unum.base <= value.unum.extent;
+    tnum_contains
+        && anum_contains
+        && d8_interval_contains(&value.interval, concrete)
+        && unum_contains
+}
+
+fn small_d8_intervals() -> Vec<D8Interval> {
+    let mut intervals = vec![D8Interval::bottom(), D8Interval::top()];
+    for lo in 0u8..=7 {
+        for hi in lo..=7 {
+            intervals.push(D8Interval {
+                is_bottom: false,
+                lo,
+                hi,
+            });
+        }
+    }
+    intervals
+}
+
+#[test]
+fn production_interval_lattice_laws_small_exhaustive() {
+    let intervals = small_d8_intervals();
+    let bottom = D8Interval::bottom();
+    let top = D8Interval::top();
+
+    for a in &intervals {
+        assert!(d8_interval_eq(&a.meet(a), a));
+        assert!(d8_interval_eq(&a.join(a), a));
+        assert!(d8_interval_eq(&a.meet(&top), a));
+        assert!(d8_interval_eq(&a.join(&bottom), a));
+        assert!(d8_interval_eq(&a.meet(&bottom), &bottom));
+        assert!(d8_interval_eq(&a.join(&top), &top));
+
+        for b in &intervals {
+            let ab_meet = a.meet(b);
+            let ab_join = a.join(b);
+            assert!(d8_interval_eq(&ab_meet, &b.meet(a)));
+            assert!(d8_interval_eq(&ab_join, &b.join(a)));
+
+            for value in u8::MIN..=u8::MAX {
+                assert_eq!(
+                    d8_interval_contains(&ab_meet, value),
+                    d8_interval_contains(a, value) && d8_interval_contains(b, value),
+                );
+                assert!(!d8_interval_contains(a, value) || d8_interval_contains(&ab_join, value));
+                assert!(!d8_interval_contains(b, value) || d8_interval_contains(&ab_join, value));
+            }
+
+            for c in &intervals {
+                let ab_c_meet = ab_meet.meet(c);
+                let a_bc_meet = a.meet(&b.meet(c));
+                assert!(d8_interval_eq(&ab_c_meet, &a_bc_meet));
+
+                let ab_c_join = ab_join.join(c);
+                let a_bc_join = a.join(&b.join(c));
+                assert!(d8_interval_eq(&ab_c_join, &a_bc_join));
+            }
+        }
+    }
+}
+
+#[test]
+fn production_interval_rsh_small_exhaustive() {
+    let bottom = D8Interval::bottom().rsh();
+    assert!(bottom.is_bottom);
+    assert_eq!(bottom.lo, 0);
+    assert_eq!(bottom.hi, 0);
+
+    let top = D8Interval::top().rsh();
+    assert!(!top.is_bottom);
+    assert_eq!(top.lo, 0);
+    assert_eq!(top.hi, u8::MAX >> 1);
+
+    for interval in small_d8_intervals() {
+        let shifted = interval.rsh();
+        if interval.is_bottom {
+            assert!(shifted.is_bottom);
+            continue;
+        }
+
+        assert!(!shifted.is_bottom);
+        assert_eq!(shifted.lo, interval.lo >> 1);
+        assert_eq!(shifted.hi, interval.hi >> 1);
+        for value in u8::MIN..=u8::MAX {
+            if d8_interval_contains(&interval, value) {
+                assert!(d8_interval_contains(&shifted, value >> 1));
+            }
+        }
+    }
+}
+
+#[test]
+fn production_interval_lsh_u8_exhaustive() {
+    let bottom = D8Interval::bottom().lsh();
+    assert!(bottom.is_bottom);
+    assert_eq!(bottom.lo, 0);
+    assert_eq!(bottom.hi, 0);
+
+    let top = D8Interval::top();
+    for lo in u8::MIN..=u8::MAX {
+        for hi in lo..=u8::MAX {
+            let interval = D8Interval {
+                is_bottom: false,
+                lo,
+                hi,
+            };
+            let shifted = interval.lsh();
+            if hi > u8::MAX >> 1 {
+                assert!(d8_interval_eq(&shifted, &top));
+            } else {
+                assert!(!shifted.is_bottom);
+                assert_eq!(shifted.lo, lo << 1);
+                assert_eq!(shifted.hi, hi << 1);
+            }
+
+            for value in lo..=hi {
+                assert!(d8_interval_contains(&shifted, value << 1));
+            }
+        }
+    }
+}
+
+fn arithmetic_d8_intervals() -> Vec<D8Interval> {
+    let mut intervals = small_d8_intervals();
+    intervals.extend([
+        D8Interval {
+            is_bottom: false,
+            lo: 127,
+            hi: 128,
+        },
+        D8Interval {
+            is_bottom: false,
+            lo: 128,
+            hi: u8::MAX,
+        },
+        D8Interval {
+            is_bottom: false,
+            lo: 254,
+            hi: u8::MAX,
+        },
+        D8Interval::constant(u8::MAX),
+    ]);
+    intervals
+}
+
+#[test]
+fn production_interval_bitwise_small_exhaustive() {
+    let intervals = arithmetic_d8_intervals();
+    let bottom = D8Interval::bottom();
+    let top = D8Interval::top();
+
+    for left in &intervals {
+        for right in &intervals {
+            let or_result = left.bw_or(right);
+            let and_result = left.bw_and(right);
+            let xor_result = left.bw_xor(right);
+            if left.is_bottom || right.is_bottom {
+                assert!(d8_interval_eq(&or_result, &bottom));
+                assert!(d8_interval_eq(&and_result, &bottom));
+                assert!(d8_interval_eq(&xor_result, &bottom));
+                continue;
+            }
+
+            assert!(d8_interval_eq(&or_result, &top));
+            assert!(d8_interval_eq(&and_result, &top));
+            assert!(d8_interval_eq(&xor_result, &top));
+            for x in left.lo..=left.hi {
+                for y in right.lo..=right.hi {
+                    assert!(d8_interval_contains(&or_result, x | y));
+                    assert!(d8_interval_contains(&and_result, x & y));
+                    assert!(d8_interval_contains(&xor_result, x ^ y));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn production_interval_division_cases() {
+    use DivAlarm::{DefiniteError, MaybeError, NoError};
+
+    let dividend = D8Interval {
+        is_bottom: false,
+        lo: 10,
+        hi: 20,
+    };
+
+    let safe = dividend.div(&D8Interval {
+        is_bottom: false,
+        lo: 2,
+        hi: 5,
+    });
+    assert!(!safe.value.is_bottom);
+    assert_eq!(safe.value.lo, 2);
+    assert_eq!(safe.value.hi, 10);
+    assert!(safe.alarm == NoError);
+
+    let mixed = dividend.div(&D8Interval {
+        is_bottom: false,
+        lo: 0,
+        hi: 5,
+    });
+    assert!(!mixed.value.is_bottom);
+    assert_eq!(mixed.value.lo, 2);
+    assert_eq!(mixed.value.hi, 20);
+    assert!(mixed.alarm == MaybeError);
+
+    let zero_only = dividend.div(&D8Interval::constant(0));
+    assert!(zero_only.value.is_bottom);
+    assert!(zero_only.alarm == DefiniteError);
+
+    let unreachable = D8Interval::bottom().div(&D8Interval::constant(0));
+    assert!(unreachable.value.is_bottom);
+    assert!(unreachable.alarm == NoError);
+}
+
+#[test]
+fn production_interval_division_small_exhaustive() {
+    use DivAlarm::{DefiniteError, MaybeError, NoError};
+
+    let intervals = arithmetic_d8_intervals();
+    let bottom = D8Interval::bottom();
+
+    for dividend in &intervals {
+        for divisor in &intervals {
+            let result = dividend.div(divisor);
+            if dividend.is_bottom || divisor.is_bottom {
+                assert!(d8_interval_eq(&result.value, &bottom));
+                assert!(result.alarm == NoError);
+                continue;
+            }
+
+            if divisor.hi == 0 {
+                assert!(d8_interval_eq(&result.value, &bottom));
+                assert!(result.alarm == DefiniteError);
+            } else if divisor.lo == 0 {
+                assert!(!result.value.is_bottom);
+                assert_eq!(result.value.lo, dividend.lo / divisor.hi);
+                assert_eq!(result.value.hi, dividend.hi);
+                assert!(result.alarm == MaybeError);
+            } else {
+                assert!(!result.value.is_bottom);
+                assert_eq!(result.value.lo, dividend.lo / divisor.hi);
+                assert_eq!(result.value.hi, dividend.hi / divisor.lo);
+                assert!(result.alarm == NoError);
+            }
+
+            for x in dividend.lo..=dividend.hi {
+                for y in divisor.lo..=divisor.hi {
+                    assert!(result.alarm.has(y == 0));
+                    if y != 0 {
+                        assert!(d8_interval_contains(&result.value, x / y));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn production_reduced_product_division_cases() {
+    use DivAlarm::{DefiniteError, MaybeError, NoError};
+
+    let dividend = d8_reduced_from_interval(D8Interval {
+        is_bottom: false,
+        lo: 10,
+        hi: 20,
+    });
+
+    let safe = dividend.div(&d8_reduced_from_interval(D8Interval {
+        is_bottom: false,
+        lo: 2,
+        hi: 5,
+    }));
+    assert_eq!(safe.value.interval.lo, 2);
+    assert_eq!(safe.value.interval.hi, 10);
+    assert!(safe.alarm == NoError);
+
+    let mixed = dividend.div(&d8_reduced_from_interval(D8Interval {
+        is_bottom: false,
+        lo: 0,
+        hi: 5,
+    }));
+    assert_eq!(mixed.value.interval.lo, 2);
+    assert_eq!(mixed.value.interval.hi, 20);
+    assert!(mixed.alarm == MaybeError);
+
+    let zero_only = dividend.div(&D8ReducedProduct::constant(0));
+    assert!(zero_only.value.interval.is_bottom);
+    assert!(zero_only.alarm == DefiniteError);
+
+    let unreachable =
+        d8_reduced_from_interval(D8Interval::bottom()).div(&D8ReducedProduct::constant(0));
+    assert!(unreachable.value.interval.is_bottom);
+    assert!(unreachable.alarm == NoError);
+}
+
+#[test]
+fn production_reduced_product_division_small_exhaustive() {
+    let intervals = arithmetic_d8_intervals();
+
+    for dividend_interval in &intervals {
+        for divisor_interval in &intervals {
+            let dividend = d8_reduced_from_interval(*dividend_interval);
+            let divisor = d8_reduced_from_interval(*divisor_interval);
+            let result = dividend.div(&divisor);
+
+            if dividend_interval.is_bottom || divisor_interval.is_bottom {
+                assert!(result.value.interval.is_bottom);
+                assert!(result.alarm == DivAlarm::NoError);
+                continue;
+            }
+
+            for x in dividend_interval.lo..=dividend_interval.hi {
+                for y in divisor_interval.lo..=divisor_interval.hi {
+                    assert!(result.alarm.has(y == 0));
+                    if y != 0 {
+                        assert!(d8_reduced_div_result_contains(&result.value, x / y));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn production_interval_sub_small_exhaustive() {
+    let intervals = arithmetic_d8_intervals();
+    let bottom = D8Interval::bottom();
+    let top = D8Interval::top();
+
+    for left in &intervals {
+        for right in &intervals {
+            let difference = left.sub(right);
+            if left.is_bottom || right.is_bottom {
+                assert!(d8_interval_eq(&difference, &bottom));
+                continue;
+            }
+
+            if left.lo < right.hi {
+                assert!(d8_interval_eq(&difference, &top));
+            } else {
+                assert!(!difference.is_bottom);
+                assert_eq!(difference.lo, left.lo.wrapping_sub(right.hi));
+                assert_eq!(difference.hi, left.hi.wrapping_sub(right.lo));
+            }
+
+            for x in left.lo..=left.hi {
+                for y in right.lo..=right.hi {
+                    assert!(d8_interval_contains(&difference, x.wrapping_sub(y)));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn production_interval_mul_small_exhaustive() {
+    let intervals = arithmetic_d8_intervals();
+    let bottom = D8Interval::bottom();
+    let top = D8Interval::top();
+
+    for left in &intervals {
+        for right in &intervals {
+            let product = left.mul(right);
+            if left.is_bottom || right.is_bottom {
+                assert!(d8_interval_eq(&product, &bottom));
+                continue;
+            }
+
+            match left.hi.checked_mul(right.hi) {
+                Some(hi) => {
+                    assert!(!product.is_bottom);
+                    assert_eq!(product.lo, left.lo * right.lo);
+                    assert_eq!(product.hi, hi);
+                }
+                None => assert!(d8_interval_eq(&product, &top)),
+            }
+
+            for x in left.lo..=left.hi {
+                for y in right.lo..=right.hi {
+                    assert!(d8_interval_contains(&product, x.wrapping_mul(y)));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn production_interval_neg_u8_exhaustive() {
+    let bottom = D8Interval::bottom().neg();
+    assert!(bottom.is_bottom);
+    assert_eq!(bottom.lo, 0);
+    assert_eq!(bottom.hi, 0);
+
+    let top = D8Interval::top();
+    for lo in u8::MIN..=u8::MAX {
+        for hi in lo..=u8::MAX {
+            let interval = D8Interval {
+                is_bottom: false,
+                lo,
+                hi,
+            };
+            let negated = interval.neg();
+            if lo == 0 {
+                if hi == 0 {
+                    assert!(!negated.is_bottom);
+                    assert_eq!(negated.lo, 0);
+                    assert_eq!(negated.hi, 0);
+                } else {
+                    assert!(d8_interval_eq(&negated, &top));
+                }
+            } else {
+                assert!(!negated.is_bottom);
+                assert_eq!(negated.lo, 0u8.wrapping_sub(hi));
+                assert_eq!(negated.hi, 0u8.wrapping_sub(lo));
+            }
+
+            for value in lo..=hi {
+                assert!(d8_interval_contains(&negated, value.wrapping_neg()));
+            }
+        }
+    }
+}
 
 #[test]
 fn fuzz_eun_plus_zero_identity() {

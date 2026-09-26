@@ -1,12 +1,12 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-08-21.
+Last refreshed: 2026-09-21.
 
 ## Current result
 
 ```text
 cargo verus verify
-994 verified, 0 errors
+1145 verified, 0 errors
 ```
 
 The project source contains no executable `admit()` or `assume()` calls. CI
@@ -27,7 +27,7 @@ The `d128` macro invocation remains disabled because its bitvector obligations
 exceed the current solver capacity. Do not describe `u128` as an enabled or
 verified executable instance.
 
-The separate Rust mirror suite contains 32 tests:
+The separate Rust mirror suite contains 53 tests:
 
 ```text
 cargo test -p semi-persistent-abstract-domains --test fuzz
@@ -54,18 +54,26 @@ The current **universal containment** contracts are:
 | `ExecTnum` | `bw_or`, `bw_and`, `bw_xor`, `add`, `join`, `meet` |
 | `ExecAnum` | `add`, `div_const` |
 | `ExecUnum` | `top`, `add`, `from_interval`, `mul` |
-| `Interval` | `add`, `meet`, `join`, `div_const` |
-| `ReducedProduct` | `reduce`, `add` |
+| `Interval` | `bw_or`, `bw_and`, `bw_xor`, `add`, `sub`, `mul`, `neg`, `meet`, `join`, `rsh`, `lsh`, `div_const`, `div` |
+| `ReducedProduct` | `reduce`, `add`, `div` |
 
 The `ExecUnum` proofs use native/spec bridge lemmas, the L3 `ChoppedUnum`
 soundness theorems, explicit overflow-to-top cases, and interval-to-Unum range
 lemmas. `ReducedProduct::add` composes the four component containment
 postconditions and then applies the proved containment of `reduce`.
 
+`DivAlarm` has executable membership and join operations linked to their
+specifications. Its join is proved sound, idempotent, commutative, and
+associative.
+
+`ReducedProduct::div` composes the proved interval quotient and alarm, widens
+the remaining components to `top`, and applies the proved containment of
+`reduce`.
+
 Other executable methods currently prove well-formedness only. In particular,
 this includes Tnum multiplication, shifts, negation and subtraction, most
 Unum conversions/arithmetic helpers, and ReducedProduct bitwise operations,
-subtraction, multiplication, division, shifts, joins, meets, and negation.
-Their implementations and finite mirror tests are evidence, but not universal
-containment theorems. Adding those postconditions and proofs is the remaining
-L4 soundness work.
+subtraction, multiplication, constant division, shifts, joins, meets, and
+negation. Their implementations and finite mirror tests are evidence, but not
+universal containment theorems. Adding those postconditions and proofs is the
+remaining L4 soundness work.

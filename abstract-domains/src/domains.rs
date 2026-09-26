@@ -15,10 +15,82 @@
 /// let y = ReducedProduct::constant(10);
 /// let sum = x.add(&y);  // ReducedProduct with Tnum=00110100, Anum=52, Iv=52
 /// ```
+use vstd::prelude::*;
+
+verus! {
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DivAlarm {
+    NoError,
+    DefiniteError,
+    MaybeError,
+}
+
+impl DivAlarm {
+    pub open spec fn has_spec(self, error: bool) -> bool {
+        match self {
+            DivAlarm::NoError => !error,
+            DivAlarm::DefiniteError => error,
+            DivAlarm::MaybeError => true,
+        }
+    }
+
+    pub open spec fn join_spec(self, t: DivAlarm) -> DivAlarm {
+        match (self, t) {
+            (DivAlarm::NoError, DivAlarm::NoError) => DivAlarm::NoError,
+            (DivAlarm::DefiniteError, DivAlarm::DefiniteError) => DivAlarm::DefiniteError,
+            _ => DivAlarm::MaybeError,
+        }
+    }
+
+    #[inline]
+    pub fn has(&self, error: bool) -> (r: bool)
+        ensures r == self.has_spec(error)
+    {
+        match self {
+            DivAlarm::NoError => !error,
+            DivAlarm::DefiniteError => error,
+            DivAlarm::MaybeError => true,
+        }
+    }
+
+    #[inline]
+    pub fn join(&self, t: &DivAlarm) -> (r: DivAlarm)
+        ensures r == self.join_spec(*t)
+    {
+        match (self, t) {
+            (DivAlarm::NoError, DivAlarm::NoError) => DivAlarm::NoError,
+            (DivAlarm::DefiniteError, DivAlarm::DefiniteError) => DivAlarm::DefiniteError,
+            _ => DivAlarm::MaybeError,
+        }
+    }
+
+    pub proof fn join_sound(self, t: DivAlarm)
+        ensures forall|error: bool| #![auto]
+            self.join_spec(t).has_spec(error)
+                <==> (self.has_spec(error) || t.has_spec(error))
+    {}
+
+    pub proof fn join_idempotent(self)
+        ensures self.join_spec(self) == self
+    {}
+
+    pub proof fn join_commutative(self, t: DivAlarm)
+        ensures self.join_spec(t) == t.join_spec(self)
+    {}
+
+    pub proof fn join_associative(self, t: DivAlarm, u: DivAlarm)
+        ensures self.join_spec(t).join_spec(u) == self.join_spec(t.join_spec(u))
+    {}
+}
+
+}
+
 macro_rules! abstract_domain {
     ($mod_name:ident, $uint:ty, $bits:expr, $max_val:expr) => {
         pub mod $mod_name {
             use vstd::prelude::*;
+            use super::DivAlarm;
             use crate::bools::Bit;
             use crate::nats::*;
             use crate::tnum::Tnum;
@@ -1198,35 +1270,232 @@ macro_rules! abstract_domain {
             // Interval
             // ============================================================
             #[derive(Clone, Copy)]
-            pub struct Interval { pub lo: $uint, pub hi: $uint }
+            pub struct Interval {
+                pub is_bottom: bool,
+                pub lo: $uint,
+                pub hi: $uint,
+            }
+            #[derive(Clone, Copy)]
+            pub struct IntervalDivResult {
+                pub value: Interval,
+                pub alarm: DivAlarm,
+            }
             impl Interval {
-                pub open spec fn wf(self) -> bool { self.lo <= self.hi }
-                pub open spec fn has(self, x: $uint) -> bool { self.lo <= x && x <= self.hi }
-                #[inline] pub fn constant(n: $uint) -> (r: Interval) ensures r.wf() { Interval { lo: n, hi: n } }
-                #[inline] pub fn top() -> (r: Interval) ensures r.wf() { Interval { lo: 0, hi: !(0 as $uint) } }
+                pub open spec fn wf(self) -> bool {
+                    if self.is_bottom { self.lo == 0 && self.hi == 0 }
+                    else { self.lo <= self.hi }
+                }
+                pub open spec fn has(self, x: $uint) -> bool { !self.is_bottom && self.lo <= x && x <= self.hi }
+                pub open spec fn refines(self, t: Interval) -> bool {
+                    forall|x: $uint| self.has(x) ==> t.has(x)
+                }
+                pub open spec fn meet_spec(self, t: Interval) -> Interval {
+                    if self.is_bottom || t.is_bottom {
+                        Interval { is_bottom: true, lo: 0, hi: 0 }
+                    } else {
+                        let lo = if self.lo > t.lo { self.lo } else { t.lo };
+                        let hi = if self.hi < t.hi { self.hi } else { t.hi };
+                        if hi < lo {
+                            Interval { is_bottom: true, lo: 0, hi: 0 }
+                        } else {
+                            Interval { is_bottom: false, lo, hi }
+                        }
+                    }
+                }
+                pub open spec fn join_spec(self, t: Interval) -> Interval {
+                    if self.is_bottom {
+                        t
+                    } else if t.is_bottom {
+                        self
+                    } else {
+                        Interval {
+                            is_bottom: false,
+                            lo: if self.lo < t.lo { self.lo } else { t.lo },
+                            hi: if self.hi > t.hi { self.hi } else { t.hi },
+                        }
+                    }
+                }
+                pub proof fn meet_idempotent(self)
+                    requires self.wf()
+                    ensures self.meet_spec(self) == self
+                {}
+                pub proof fn meet_commutative(self, t: Interval)
+                    requires self.wf(), t.wf()
+                    ensures self.meet_spec(t) == t.meet_spec(self)
+                {}
+                pub proof fn meet_associative(self, t: Interval, u: Interval)
+                    requires self.wf(), t.wf(), u.wf()
+                    ensures self.meet_spec(t).meet_spec(u) == self.meet_spec(t.meet_spec(u))
+                {}
+                pub proof fn meet_top_identity(self)
+                    requires self.wf()
+                    ensures self.meet_spec(Interval {
+                        is_bottom: false,
+                        lo: 0,
+                        hi: !(0 as $uint),
+                    }) == self
+                {
+                    let hi = self.hi;
+                    assert(!(0 as $uint) >= hi) by(bit_vector);
+                }
+                pub proof fn meet_bottom_absorbing(self)
+                    requires self.wf()
+                    ensures self.meet_spec(Interval {
+                        is_bottom: true,
+                        lo: 0,
+                        hi: 0,
+                    }) == (Interval {
+                        is_bottom: true,
+                        lo: 0,
+                        hi: 0,
+                    })
+                {}
+                pub proof fn join_idempotent(self)
+                    requires self.wf()
+                    ensures self.join_spec(self) == self
+                {}
+                pub proof fn join_commutative(self, t: Interval)
+                    requires self.wf(), t.wf()
+                    ensures self.join_spec(t) == t.join_spec(self)
+                {}
+                pub proof fn join_associative(self, t: Interval, u: Interval)
+                    requires self.wf(), t.wf(), u.wf()
+                    ensures self.join_spec(t).join_spec(u) == self.join_spec(t.join_spec(u))
+                {}
+                pub proof fn join_bottom_identity(self)
+                    requires self.wf()
+                    ensures self.join_spec(Interval {
+                        is_bottom: true,
+                        lo: 0,
+                        hi: 0,
+                    }) == self
+                {}
+                pub proof fn join_top_absorbing(self)
+                    requires self.wf()
+                    ensures self.join_spec(Interval {
+                        is_bottom: false,
+                        lo: 0,
+                        hi: !(0 as $uint),
+                    }) == (Interval {
+                        is_bottom: false,
+                        lo: 0,
+                        hi: !(0 as $uint),
+                    })
+                {
+                    let hi = self.hi;
+                    assert(!(0 as $uint) >= hi) by(bit_vector);
+                }
+                #[inline] pub fn constant(n: $uint) -> (r: Interval)
+                    ensures r.wf(), r.has(n)
+                {
+                    Interval { is_bottom: false, lo: n, hi: n }
+                }
+                #[inline] pub fn bottom() -> (r: Interval)
+                    ensures r.wf(), r.is_bottom,
+                        forall|x: $uint| #![auto] !r.has(x)
+                {
+                    Interval { is_bottom: true, lo: 0, hi: 0 }
+                }
+                #[inline] pub fn top() -> (r: Interval)
+                    ensures r.wf(),
+                        forall|x: $uint| #![auto] r.has(x)
+                {
+                    let r = Interval { is_bottom: false, lo: 0, hi: !(0 as $uint) };
+                    proof {
+                        assert forall|x: $uint| #![auto] r.has(x) by {
+                            Self::top_has(x);
+                        };
+                    }
+                    r
+                }
                 /// top contains everything.
                 pub proof fn top_has(x: $uint)
-                    ensures (Interval { lo: 0, hi: !(0 as $uint) }).has(x)
+                    ensures (Interval { is_bottom: false, lo: 0, hi: !(0 as $uint) }).has(x)
                 {
                     assert(!(0 as $uint) >= x) by(bit_vector);
                 }
+                #[inline] pub fn bw_or(&self, t: &Interval) -> (r: Interval)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(),
+                        forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2) ==> r.has(c1 | c2)
+                {
+                    if self.is_bottom || t.is_bottom { return Interval::bottom(); }
+                    let r = Interval::top();
+                    proof {
+                        assert forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2) implies r.has(c1 | c2) by {
+                            Self::top_has(c1 | c2);
+                        };
+                    }
+                    r
+                }
+                #[inline] pub fn bw_and(&self, t: &Interval) -> (r: Interval)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(),
+                        forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2) ==> r.has(c1 & c2)
+                {
+                    if self.is_bottom || t.is_bottom { return Interval::bottom(); }
+                    let r = Interval::top();
+                    proof {
+                        assert forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2) implies r.has(c1 & c2) by {
+                            Self::top_has(c1 & c2);
+                        };
+                    }
+                    r
+                }
+                #[inline] pub fn bw_xor(&self, t: &Interval) -> (r: Interval)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(),
+                        forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2) ==> r.has(c1 ^ c2)
+                {
+                    if self.is_bottom || t.is_bottom { return Interval::bottom(); }
+                    let r = Interval::top();
+                    proof {
+                        assert forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2) implies r.has(c1 ^ c2) by {
+                            Self::top_has(c1 ^ c2);
+                        };
+                    }
+                    r
+                }
                 #[inline] pub fn add(&self, t: &Interval) -> (r: Interval)
+                    requires self.wf(), t.wf()
                     ensures r.wf(),
                         forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_add(c2))
                 {
+                    if self.is_bottom || t.is_bottom {
+                        let r = Interval::bottom();
+                        proof {
+                            assert forall|c1: $uint, c2: $uint| #![auto]
+                                self.has(c1) && t.has(c2)
+                                implies r.has(c1.wrapping_add(c2)) by {
+                                if self.is_bottom {
+                                    assert(!self.has(c1));
+                                } else {
+                                    assert(t.is_bottom);
+                                    assert(!t.has(c2));
+                                }
+                            };
+                        }
+                        return r;
+                    }
                     let slo = self.lo; let shi = self.hi; let tlo = t.lo; let thi = t.hi;
                     let lo = slo.wrapping_add(tlo);
                     let hi = shi.wrapping_add(thi);
                     if lo < slo || hi < shi || hi < lo {
                         proof {
-                            assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies (Interval { lo: 0, hi: !(0 as $uint) }).has(c1.wrapping_add(c2)) by {
+                            assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies (Interval { is_bottom: false, lo: 0, hi: !(0 as $uint) }).has(c1.wrapping_add(c2)) by {
                                 Self::top_has(c1.wrapping_add(c2));
                             };
                         }
-                        Interval { lo: 0, hi: !(0 as $uint) }
+                        Interval::top()
                     } else {
                         proof {
-                            assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies (Interval { lo, hi }).has(c1.wrapping_add(c2)) by {
+                            assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies (Interval { is_bottom: false, lo, hi }).has(c1.wrapping_add(c2)) by {
                                 // In non-overflow branch: lo >= slo, hi >= shi, hi >= lo
                                 // c1 <= shi, c2 <= thi, shi+thi = hi doesn't wrap
                                 // So c1+c2 <= shi+thi doesn't wrap either
@@ -1240,48 +1509,385 @@ macro_rules! abstract_domain {
                                     requires c1 <= shi, c2 <= thi, c1.wrapping_add(c2) >= c2, hi == shi.wrapping_add(thi), hi >= shi;
                             };
                         }
-                        Interval { lo, hi }
+                        Interval { is_bottom: false, lo, hi }
                     }
                 }
-                #[inline] pub fn meet(&self, t: &Interval) -> (r: Interval)
+                #[inline] pub fn sub(&self, t: &Interval) -> (r: Interval)
+                    requires self.wf(), t.wf()
                     ensures r.wf(),
-                        forall|x: $uint| #![auto] self.has(x) && t.has(x) ==> r.has(x)
+                        forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_sub(c2))
                 {
-                    let lo = if self.lo > t.lo { self.lo } else { t.lo };
-                    let hi = if self.hi < t.hi { self.hi } else { t.hi };
-                    if hi < lo {
+                    if self.is_bottom || t.is_bottom { return Interval::bottom(); }
+                    let slo = self.lo; let shi = self.hi;
+                    let tlo = t.lo; let thi = t.hi;
+                    if slo < thi {
+                        let r = Interval::top();
                         proof {
-                            assert forall|x: $uint| #![auto] self.has(x) && t.has(x) implies (Interval { lo: 0, hi: !(0 as $uint) }).has(x) by {
-                                Self::top_has(x);
+                            assert forall|c1: $uint, c2: $uint| #![auto]
+                                self.has(c1) && t.has(c2)
+                                implies r.has(c1.wrapping_sub(c2)) by {
+                                Self::top_has(c1.wrapping_sub(c2));
                             };
                         }
-                        Interval::top()
-                    } else { Interval { lo, hi } }
+                        return r;
+                    }
+                    let lo = slo.wrapping_sub(thi);
+                    let hi = shi.wrapping_sub(tlo);
+                    let r = Interval { is_bottom: false, lo, hi };
+                    proof {
+                        assert(lo <= hi) by(bit_vector)
+                            requires slo <= shi, tlo <= thi, slo >= thi,
+                                lo == slo.wrapping_sub(thi),
+                                hi == shi.wrapping_sub(tlo);
+                        assert forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2)
+                            implies r.has(c1.wrapping_sub(c2)) by {
+                            assert(lo <= c1.wrapping_sub(c2)
+                                && c1.wrapping_sub(c2) <= hi) by(bit_vector)
+                                requires slo <= c1, c1 <= shi,
+                                    tlo <= c2, c2 <= thi, slo >= thi,
+                                    lo == slo.wrapping_sub(thi),
+                                    hi == shi.wrapping_sub(tlo);
+                        };
+                    }
+                    r
+                }
+                pub fn mul(&self, t: &Interval) -> (r: Interval)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(),
+                        forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_mul(c2))
+                {
+                    if self.is_bottom || t.is_bottom { return Interval::bottom(); }
+                    let slo = self.lo; let shi = self.hi;
+                    let tlo = t.lo; let thi = t.hi;
+                    let hi = match shi.checked_mul(thi) {
+                        Some(value) => value,
+                        None => {
+                            let r = Interval::top();
+                            proof {
+                                assert forall|c1: $uint, c2: $uint| #![auto]
+                                    self.has(c1) && t.has(c2)
+                                    implies r.has(c1.wrapping_mul(c2)) by {
+                                    Self::top_has(c1.wrapping_mul(c2));
+                                };
+                            }
+                            return r;
+                        }
+                    };
+                    let lo = match slo.checked_mul(tlo) {
+                        Some(value) => value,
+                        None => {
+                            let r = Interval::top();
+                            proof {
+                                assert forall|c1: $uint, c2: $uint| #![auto]
+                                    self.has(c1) && t.has(c2)
+                                    implies r.has(c1.wrapping_mul(c2)) by {
+                                    Self::top_has(c1.wrapping_mul(c2));
+                                };
+                            }
+                            return r;
+                        }
+                    };
+                    let r = Interval { is_bottom: false, lo, hi };
+                    proof {
+                        let width = $bits as nat;
+                        mul_exact(shi, thi, hi);
+                        mul_exact(slo, tlo, lo);
+                        assert(lo <= hi) by(nonlinear_arith)
+                            requires slo <= shi, tlo <= thi,
+                                lo as nat == (slo as nat) * (tlo as nat),
+                                hi as nat == (shi as nat) * (thi as nat);
+                        assert forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2)
+                            implies r.has(c1.wrapping_mul(c2)) by {
+                            let concrete = c1.wrapping_mul(c2);
+                            vstd::arithmetic::mul::lemma_mul_upper_bound(
+                                slo as int,
+                                c1 as int,
+                                tlo as int,
+                                c2 as int,
+                            );
+                            vstd::arithmetic::mul::lemma_mul_upper_bound(
+                                c1 as int,
+                                shi as int,
+                                c2 as int,
+                                thi as int,
+                            );
+                            assert(prod(slo as nat, tlo as nat)
+                                <= prod(c1 as nat, c2 as nat));
+                            assert(prod(c1 as nat, c2 as nat)
+                                <= prod(shi as nat, thi as nat));
+                            assert(prod(shi as nat, thi as nat) == hi as nat);
+                            assert((hi as nat) < exp(width));
+                            chop_id(prod(c1 as nat, c2 as nat), width);
+                            bridge_mul(c1, c2);
+                            assert(concrete as nat == prod(c1 as nat, c2 as nat));
+                            assert(lo <= concrete && concrete <= hi);
+                        };
+                    }
+                    r
+                }
+                #[inline] pub fn neg(&self) -> (r: Interval)
+                    requires self.wf()
+                    ensures r.wf(),
+                        forall|x: $uint| #![auto]
+                            self.has(x) ==> r.has((0 as $uint).wrapping_sub(x))
+                {
+                    if self.is_bottom { return Interval::bottom(); }
+                    let slo = self.lo; let shi = self.hi;
+                    if slo == 0 {
+                        if shi == 0 {
+                            let r = Interval::constant(0);
+                            proof {
+                                assert forall|x: $uint| #![auto]
+                                    self.has(x)
+                                    implies r.has((0 as $uint).wrapping_sub(x)) by {
+                                    assert(x == 0);
+                                    assert((0 as $uint).wrapping_sub(x) == 0) by(bit_vector)
+                                        requires x == 0;
+                                };
+                            }
+                            return r;
+                        }
+                        let r = Interval::top();
+                        proof {
+                            assert forall|x: $uint| #![auto]
+                                self.has(x)
+                                implies r.has((0 as $uint).wrapping_sub(x)) by {
+                                Self::top_has((0 as $uint).wrapping_sub(x));
+                            };
+                        }
+                        return r;
+                    }
+                    let lo = (0 as $uint).wrapping_sub(shi);
+                    let hi = (0 as $uint).wrapping_sub(slo);
+                    let r = Interval { is_bottom: false, lo, hi };
+                    proof {
+                        assert(lo <= hi) by(bit_vector)
+                            requires 0 < slo, slo <= shi,
+                                lo == (0 as $uint).wrapping_sub(shi),
+                                hi == (0 as $uint).wrapping_sub(slo);
+                        assert forall|x: $uint| #![auto]
+                            self.has(x)
+                            implies r.has((0 as $uint).wrapping_sub(x)) by {
+                            assert(lo <= (0 as $uint).wrapping_sub(x)
+                                && (0 as $uint).wrapping_sub(x) <= hi) by(bit_vector)
+                                requires 0 < slo, slo <= x, x <= shi,
+                                    lo == (0 as $uint).wrapping_sub(shi),
+                                    hi == (0 as $uint).wrapping_sub(slo);
+                        };
+                    }
+                    r
+                }
+                #[inline] pub fn meet(&self, t: &Interval) -> (r: Interval)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(), r == self.meet_spec(*t),
+                        forall|x: $uint| #![auto] self.has(x) && t.has(x) ==> r.has(x)
+                {
+                    if self.is_bottom || t.is_bottom { return Interval::bottom(); }
+                    let lo = if self.lo > t.lo { self.lo } else { t.lo };
+                    let hi = if self.hi < t.hi { self.hi } else { t.hi };
+                    if hi < lo { Interval::bottom() }
+                    else { Interval { is_bottom: false, lo, hi } }
                 }
                 #[inline] pub fn join(&self, t: &Interval) -> (r: Interval)
                     requires self.wf(), t.wf()
-                    ensures r.wf(),
+                    ensures r.wf(), r == self.join_spec(*t),
                         forall|x: $uint| #![auto] self.has(x) ==> r.has(x),
                         forall|x: $uint| #![auto] t.has(x) ==> r.has(x)
                 {
-                    Interval {
-                        lo: if self.lo < t.lo { self.lo } else { t.lo },
-                        hi: if self.hi > t.hi { self.hi } else { t.hi },
+                    if self.is_bottom { *t }
+                    else if t.is_bottom { *self }
+                    else {
+                        Interval {
+                            is_bottom: false,
+                            lo: if self.lo < t.lo { self.lo } else { t.lo },
+                            hi: if self.hi > t.hi { self.hi } else { t.hi },
+                        }
                     }
+                }
+                #[inline] pub fn rsh(&self) -> (r: Interval)
+                    requires self.wf()
+                    ensures r.wf(),
+                        forall|x: $uint| #![auto] self.has(x) ==> r.has(x >> 1)
+                {
+                    if self.is_bottom { return Interval::bottom(); }
+                    let slo = self.lo; let shi = self.hi;
+                    let lo = slo >> 1;
+                    let hi = shi >> 1;
+                    let r = Interval { is_bottom: false, lo, hi };
+                    proof {
+                        assert(lo <= hi) by(bit_vector)
+                            requires slo <= shi, lo == slo >> 1, hi == shi >> 1;
+                        assert forall|x: $uint| #![auto] self.has(x) implies r.has(x >> 1) by {
+                            assert(lo <= x >> 1 && x >> 1 <= hi) by(bit_vector)
+                                requires slo <= x, x <= shi,
+                                    lo == slo >> 1, hi == shi >> 1;
+                        };
+                    }
+                    r
+                }
+                #[inline] pub fn lsh(&self) -> (r: Interval)
+                    requires self.wf()
+                    ensures r.wf(),
+                        forall|x: $uint| #![auto] self.has(x) ==> r.has(x << 1)
+                {
+                    if self.is_bottom { return Interval::bottom(); }
+                    let slo = self.lo; let shi = self.hi;
+                    let max = !(0 as $uint);
+                    if shi > max >> 1 {
+                        let r = Interval::top();
+                        proof {
+                            assert forall|x: $uint| #![auto] self.has(x) implies r.has(x << 1) by {
+                                Self::top_has(x << 1);
+                            };
+                        }
+                        return r;
+                    }
+                    let lo = slo << 1;
+                    let hi = shi << 1;
+                    let r = Interval { is_bottom: false, lo, hi };
+                    proof {
+                        assert(lo <= hi) by(bit_vector)
+                            requires slo <= shi, shi <= max >> 1,
+                                lo == slo << 1, hi == shi << 1;
+                        assert forall|x: $uint| #![auto] self.has(x) implies r.has(x << 1) by {
+                            assert(lo <= x << 1 && x << 1 <= hi) by(bit_vector)
+                                requires slo <= x, x <= shi, shi <= max >> 1,
+                                    lo == slo << 1, hi == shi << 1;
+                        };
+                    }
+                    r
                 }
                 #[inline] pub fn div_const(&self, d: $uint) -> (r: Interval)
                     requires self.wf(), d > 0
                     ensures r.wf(),
                         forall|x: $uint| #![auto] self.has(x) ==> r.has(x / d)
                 {
+                    if self.is_bottom { return Interval::bottom(); }
                     proof {
                         vstd::arithmetic::div_mod::lemma_div_is_ordered(self.lo as int, self.hi as int, d as int);
-                        assert forall|x: $uint| #![auto] self.has(x) implies Interval { lo: self.lo / d, hi: self.hi / d }.has(x / d) by {
+                        assert forall|x: $uint| #![auto] self.has(x) implies Interval { is_bottom: false, lo: self.lo / d, hi: self.hi / d }.has(x / d) by {
                             vstd::arithmetic::div_mod::lemma_div_is_ordered(self.lo as int, x as int, d as int);
                             vstd::arithmetic::div_mod::lemma_div_is_ordered(x as int, self.hi as int, d as int);
                         };
                     }
-                    Interval { lo: self.lo / d, hi: self.hi / d }
+                    Interval { is_bottom: false, lo: self.lo / d, hi: self.hi / d }
+                }
+                pub fn div(&self, divisor: &Interval) -> (r: IntervalDivResult)
+                    requires self.wf(), divisor.wf()
+                    ensures r.value.wf(),
+                        forall|x: $uint, y: $uint| #![auto]
+                            self.has(x) && divisor.has(y) && y != 0
+                                ==> r.value.has(x / y),
+                        forall|x: $uint, y: $uint| #![auto]
+                            self.has(x) && divisor.has(y)
+                                ==> r.alarm.has_spec(y == 0)
+                {
+                    if self.is_bottom || divisor.is_bottom {
+                        return IntervalDivResult {
+                            value: Interval::bottom(),
+                            alarm: DivAlarm::NoError,
+                        };
+                    }
+                    let slo = self.lo; let shi = self.hi;
+                    let dlo = divisor.lo; let dhi = divisor.hi;
+                    if dhi == 0 {
+                        let r = IntervalDivResult {
+                            value: Interval::bottom(),
+                            alarm: DivAlarm::DefiniteError,
+                        };
+                        proof {
+                            assert forall|x: $uint, y: $uint| #![auto]
+                                self.has(x) && divisor.has(y)
+                                implies r.alarm.has_spec(y == 0) by {
+                                assert(y == 0);
+                            };
+                        }
+                        return r;
+                    }
+                    if dlo == 0 {
+                        let lo = slo / dhi;
+                        let hi = shi;
+                        let r = IntervalDivResult {
+                            value: Interval { is_bottom: false, lo, hi },
+                            alarm: DivAlarm::MaybeError,
+                        };
+                        proof {
+                            vstd::arithmetic::div_mod::lemma_div_nonincreasing(
+                                slo as int,
+                                dhi as int,
+                            );
+                            assert(lo <= hi);
+                            assert forall|x: $uint, y: $uint| #![auto]
+                                self.has(x) && divisor.has(y) && y != 0
+                                implies r.value.has(x / y) by {
+                                vstd::arithmetic::div_mod::lemma_div_is_ordered(
+                                    slo as int,
+                                    x as int,
+                                    dhi as int,
+                                );
+                                vstd::arithmetic::div_mod::lemma_div_is_ordered_by_denominator(
+                                    x as int,
+                                    y as int,
+                                    dhi as int,
+                                );
+                                vstd::arithmetic::div_mod::lemma_div_nonincreasing(
+                                    x as int,
+                                    y as int,
+                                );
+                                assert(lo <= x / y && x / y <= hi);
+                            };
+                        }
+                        return r;
+                    }
+                    let lo = slo / dhi;
+                    let hi = shi / dlo;
+                    let r = IntervalDivResult {
+                        value: Interval { is_bottom: false, lo, hi },
+                        alarm: DivAlarm::NoError,
+                    };
+                    proof {
+                        vstd::arithmetic::div_mod::lemma_div_is_ordered(
+                            slo as int,
+                            shi as int,
+                            dhi as int,
+                        );
+                        vstd::arithmetic::div_mod::lemma_div_is_ordered_by_denominator(
+                            shi as int,
+                            dlo as int,
+                            dhi as int,
+                        );
+                        assert(lo <= hi);
+                        assert forall|x: $uint, y: $uint| #![auto]
+                            self.has(x) && divisor.has(y) && y != 0
+                            implies r.value.has(x / y) by {
+                            vstd::arithmetic::div_mod::lemma_div_is_ordered(
+                                slo as int,
+                                x as int,
+                                dhi as int,
+                            );
+                            vstd::arithmetic::div_mod::lemma_div_is_ordered_by_denominator(
+                                x as int,
+                                y as int,
+                                dhi as int,
+                            );
+                            vstd::arithmetic::div_mod::lemma_div_is_ordered(
+                                x as int,
+                                shi as int,
+                                y as int,
+                            );
+                            vstd::arithmetic::div_mod::lemma_div_is_ordered_by_denominator(
+                                shi as int,
+                                dlo as int,
+                                y as int,
+                            );
+                            assert(lo <= x / y && x / y <= hi);
+                        };
+                    }
+                    r
                 }
             }
 
@@ -1290,6 +1896,11 @@ macro_rules! abstract_domain {
             // ============================================================
             #[derive(Clone, Copy)]
             pub struct ReducedProduct { pub tnum: ExecTnum, pub anum: ExecAnum, pub interval: Interval, pub unum: ExecUnum }
+            #[derive(Clone, Copy)]
+            pub struct ReducedProductDivResult {
+                pub value: ReducedProduct,
+                pub alarm: DivAlarm,
+            }
             impl ReducedProduct {
                 pub open spec fn wf(self) -> bool { self.tnum.wf() && self.interval.wf() }
                 pub open spec fn has(self, x: $uint) -> bool {
@@ -1298,7 +1909,7 @@ macro_rules! abstract_domain {
                 pub open spec fn top_spec() -> ReducedProduct {
                     ReducedProduct { tnum: ExecTnum { val: 0, mask: !(0 as $uint) },
                         anum: ExecAnum { base: 0, span: !(0 as $uint) },
-                        interval: Interval { lo: 0, hi: !(0 as $uint) },
+                        interval: Interval { is_bottom: false, lo: 0, hi: !(0 as $uint) },
                         unum: ExecUnum { base: 0, walls: 0, extent: !(0 as $uint) } }
                 }
                 #[inline] pub fn constant(n: $uint) -> (r: ReducedProduct) ensures r.wf() {
@@ -1311,7 +1922,7 @@ macro_rules! abstract_domain {
                     }
                     ReducedProduct { tnum: ExecTnum { val: 0, mask: !(0 as $uint) },
                         anum: ExecAnum { base: 0, span: !(0 as $uint) },
-                        interval: Interval { lo: 0, hi: !(0 as $uint) },
+                        interval: Interval { is_bottom: false, lo: 0, hi: !(0 as $uint) },
                         unum: ExecUnum { base: 0, walls: 0, extent: !(0 as $uint) } }
                 }
                 proof fn top_has(c: $uint)
@@ -1331,13 +1942,14 @@ macro_rules! abstract_domain {
                     }
                     ReducedProduct { tnum: ExecTnum { val: 0, mask: !(0 as $uint) },
                         anum: ExecAnum { base: 0, span: !(0 as $uint) },
-                        interval: Interval { lo: 0, hi: !(0 as $uint) },
+                        interval: Interval { is_bottom: false, lo: 0, hi: !(0 as $uint) },
                         unum: ExecUnum { base: 0, walls: 0, extent: !(0 as $uint) } }
                 }
                 pub fn reduce(&self) -> (r: ReducedProduct)
                     requires self.wf()
                     ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c)
                 {
+                    if self.interval.is_bottom { return *self; }
                     // Step 1: Tighten interval from Tnum, Anum, and Unum bounds
                     let tmin = self.tnum.min_val(); let tmax = self.tnum.max_val();
                     let amin = self.anum.min_val(); let amax = self.anum.max_val();
@@ -1394,8 +2006,8 @@ macro_rules! abstract_domain {
                         Self::top_ret()
                     }
                     else {
-                        let un = ExecUnum::from_interval(&Interval { lo: lo2, hi: hi2 });
-                        let r = ReducedProduct { tnum: tn, anum: an, interval: Interval { lo: lo2, hi: hi2 }, unum: un };
+                        let un = ExecUnum::from_interval(&Interval { is_bottom: false, lo: lo2, hi: hi2 });
+                        let r = ReducedProduct { tnum: tn, anum: an, interval: Interval { is_bottom: false, lo: lo2, hi: hi2 }, unum: un };
                         proof {
                             assert(hi >= lo);
                             assert(hi <= amax);
@@ -1449,13 +2061,13 @@ macro_rules! abstract_domain {
                     }
                 }
                 #[inline] pub fn bw_or(&self, t: &ReducedProduct) -> (r: ReducedProduct) requires self.wf(), t.wf() ensures r.wf() {
-                    ReducedProduct { tnum: self.tnum.bw_or(&t.tnum), anum: ExecAnum::top(), interval: Interval::top(), unum: ExecUnum::top() }.reduce()
+                    ReducedProduct { tnum: self.tnum.bw_or(&t.tnum), anum: ExecAnum::top(), interval: self.interval.bw_or(&t.interval), unum: ExecUnum::top() }.reduce()
                 }
                 #[inline] pub fn bw_and(&self, t: &ReducedProduct) -> (r: ReducedProduct) requires self.wf(), t.wf() ensures r.wf() {
-                    ReducedProduct { tnum: self.tnum.bw_and(&t.tnum), anum: ExecAnum::top(), interval: Interval::top(), unum: ExecUnum::top() }.reduce()
+                    ReducedProduct { tnum: self.tnum.bw_and(&t.tnum), anum: ExecAnum::top(), interval: self.interval.bw_and(&t.interval), unum: ExecUnum::top() }.reduce()
                 }
                 #[inline] pub fn bw_xor(&self, t: &ReducedProduct) -> (r: ReducedProduct) requires self.wf(), t.wf() ensures r.wf() {
-                    ReducedProduct { tnum: self.tnum.bw_xor(&t.tnum), anum: ExecAnum::top(), interval: Interval::top(), unum: ExecUnum::top() }.reduce()
+                    ReducedProduct { tnum: self.tnum.bw_xor(&t.tnum), anum: ExecAnum::top(), interval: self.interval.bw_xor(&t.interval), unum: ExecUnum::top() }.reduce()
                 }
                 #[inline] pub fn add(&self, t: &ReducedProduct) -> (r: ReducedProduct)
                     requires self.wf(), t.wf()
@@ -1480,19 +2092,66 @@ macro_rules! abstract_domain {
                     r
                 }
                 #[inline] pub fn sub(&self, t: &ReducedProduct) -> (r: ReducedProduct) requires self.wf(), t.wf() ensures r.wf() {
-                    ReducedProduct { tnum: self.tnum.sub(&t.tnum), anum: self.anum.sub(&t.anum), interval: Interval::top(), unum: self.unum.sub(&t.unum) }.reduce()
+                    ReducedProduct { tnum: self.tnum.sub(&t.tnum), anum: self.anum.sub(&t.anum), interval: self.interval.sub(&t.interval), unum: self.unum.sub(&t.unum) }.reduce()
                 }
                 pub fn mul(&self, t: &ReducedProduct) -> (r: ReducedProduct) requires self.wf(), t.wf() ensures r.wf() {
-                    ReducedProduct { tnum: self.tnum.mul(&t.tnum), anum: ExecAnum::top(), interval: Interval::top(), unum: self.unum.mul(&t.unum) }.reduce()
+                    ReducedProduct { tnum: self.tnum.mul(&t.tnum), anum: ExecAnum::top(), interval: self.interval.mul(&t.interval), unum: self.unum.mul(&t.unum) }.reduce()
                 }
                 pub fn div_const(&self, d: $uint) -> (r: ReducedProduct) requires self.wf(), d > 0 ensures r.wf() {
                     ReducedProduct { tnum: ExecTnum::top(), anum: self.anum.div_const(d), interval: self.interval.div_const(d), unum: ExecUnum::top() }.reduce()
                 }
+                pub fn div(&self, divisor: &ReducedProduct) -> (r: ReducedProductDivResult)
+                    requires self.wf(), divisor.wf()
+                    ensures r.value.wf(),
+                        forall|x: $uint, y: $uint| #![auto]
+                            self.has(x) && divisor.has(y) && y != 0
+                                ==> r.value.has(x / y),
+                        forall|x: $uint, y: $uint| #![auto]
+                            self.has(x) && divisor.has(y)
+                                ==> r.alarm.has_spec(y == 0)
+                {
+                    let interval_result = self.interval.div(&divisor.interval);
+                    let combined = ReducedProduct {
+                        tnum: ExecTnum { val: 0, mask: !(0 as $uint) },
+                        anum: ExecAnum { base: 0, span: !(0 as $uint) },
+                        interval: interval_result.value,
+                        unum: ExecUnum { base: 0, walls: 0, extent: !(0 as $uint) },
+                    };
+                    proof {
+                        assert((0 as $uint) & (!(0 as $uint)) == (0 as $uint)) by(bit_vector);
+                    }
+                    let value = combined.reduce();
+                    let r = ReducedProductDivResult {
+                        value,
+                        alarm: interval_result.alarm,
+                    };
+                    proof {
+                        assert forall|x: $uint, y: $uint| #![auto]
+                            self.has(x) && divisor.has(y) && y != 0
+                            implies r.value.has(x / y) by {
+                            let quotient = x / y;
+                            assert(self.interval.has(x));
+                            assert(divisor.interval.has(y));
+                            assert(interval_result.value.has(quotient));
+                            ExecTnum::top_has(quotient);
+                            ExecAnum::top_has(quotient);
+                            ExecUnum::top_has(quotient);
+                            assert(combined.has(quotient));
+                        };
+                        assert forall|x: $uint, y: $uint| #![auto]
+                            self.has(x) && divisor.has(y)
+                            implies r.alarm.has_spec(y == 0) by {
+                            assert(self.interval.has(x));
+                            assert(divisor.interval.has(y));
+                        };
+                    }
+                    r
+                }
                 #[inline] pub fn rsh(&self) -> (r: ReducedProduct) requires self.wf() ensures r.wf() {
-                    ReducedProduct { tnum: self.tnum.rsh(), anum: ExecAnum::top(), interval: Interval::top(), unum: ExecUnum::top() }.reduce()
+                    ReducedProduct { tnum: self.tnum.rsh(), anum: ExecAnum::top(), interval: self.interval.rsh(), unum: ExecUnum::top() }.reduce()
                 }
                 #[inline] pub fn lsh(&self) -> (r: ReducedProduct) requires self.wf() ensures r.wf() {
-                    ReducedProduct { tnum: self.tnum.lsh(), anum: ExecAnum::top(), interval: Interval::top(), unum: ExecUnum::top() }.reduce()
+                    ReducedProduct { tnum: self.tnum.lsh(), anum: ExecAnum::top(), interval: self.interval.lsh(), unum: ExecUnum::top() }.reduce()
                 }
                 pub fn join(&self, t: &ReducedProduct) -> (r: ReducedProduct) requires self.wf(), t.wf() ensures r.wf() {
                     ReducedProduct { tnum: self.tnum.join(&t.tnum), anum: ExecAnum::top(), interval: self.interval.join(&t.interval), unum: ExecUnum::top() }.reduce()
@@ -1501,9 +2160,9 @@ macro_rules! abstract_domain {
                     ReducedProduct { tnum: self.tnum.meet(&t.tnum), anum: ExecAnum::top(), interval: self.interval.meet(&t.interval), unum: ExecUnum::top() }.reduce()
                 }
                 #[inline] pub fn neg(&self) -> (r: ReducedProduct) requires self.wf() ensures r.wf() {
-                    ReducedProduct { tnum: self.tnum.neg(), anum: ExecAnum::top(), interval: Interval::top(), unum: self.unum.neg() }.reduce()
+                    ReducedProduct { tnum: self.tnum.neg(), anum: ExecAnum::top(), interval: self.interval.neg(), unum: self.unum.neg() }.reduce()
                 }
-                #[inline] pub fn is_const(&self) -> bool { self.tnum.is_const() && self.interval.lo == self.interval.hi }
+                #[inline] pub fn is_const(&self) -> bool { !self.interval.is_bottom && self.tnum.is_const() && self.interval.lo == self.interval.hi }
                 #[inline] pub fn min_val(&self) -> $uint {
                     let a = self.tnum.min_val(); let b = self.interval.lo;
                     let c = self.anum.min_val(); let d = self.unum.min_val();
