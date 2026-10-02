@@ -543,10 +543,10 @@ fn si_points(a: &SI8) -> Vec<u8> {
     (0..=255u8).filter(|&x| has_si(a, x)).collect()
 }
 
-/// Every concrete sum and difference lands in the abstract
+/// Every concrete sum, difference and negation lands in the abstract
 /// result. Exact (the result is exactly the set of concrete results) when
 /// the operands share a grid (equal strides, or a singleton) and no result
-/// wraps or every result wraps.
+/// wraps or every result wraps; `neg` is exact whenever 0 is not in the set.
 /// Bounds near 0, the middle and 255 (so sums and differences wrap all
 /// ways), with sets capped at 32 points to keep the pair loop fast; Top is
 /// added back explicitly.
@@ -574,6 +574,12 @@ fn strided_unsigned_arith() {
     let s = strided_arith_samples();
     for a in &s {
         let pa = si_points(a);
+        let n = <SI8 as Arith<U>>::neg(a);
+        let negs: Vec<u8> = pa.iter().map(|&x| x.wrapping_neg()).collect();
+        assert!(negs.iter().all(|&v| has_si(&n, v)));
+        if !has_si(a, 0) {
+            assert_eq!(si_points(&n).len(), negs.len());
+        }
         for b in &s {
             let pb = si_points(b);
             let (sa, _, _) = a.bounds();
@@ -613,6 +619,7 @@ fn strided_unsigned_arith() {
 fn strided_unsigned_arith_examples() {
     let add = <SI8 as Arith<U>>::add;
     let sub = <SI8 as Arith<U>>::sub;
+    let neg = <SI8 as Arith<U>>::neg;
     // no wrap: shift both bounds, keep the stride.
     assert_eq!(add(&si(4, 0, 8), &si(0, 3, 3)).bounds(), (4, 3, 11));
     // every sum wraps: both bounds come back down by 256.
@@ -624,4 +631,9 @@ fn strided_unsigned_arith_examples() {
     assert_eq!(add(&si(4, 0, 252), &si(0, 8, 8)).bounds(), (1, 0, 255));
     // every difference is negative: both bounds go up by 256.
     assert_eq!(sub(&si(0, 1, 1), &si(2, 3, 7)).bounds(), (2, 250, 254));
+    // neg reverses the grid; {0} stays {0}.
+    assert_eq!(neg(&si(3, 1, 7)).bounds(), (3, 249, 255));
+    assert_eq!(neg(&si(0, 0, 0)).bounds(), (0, 0, 0));
+    // 0 maps to 0, the rest to 256 - x: {0} joined with (4, 248, 252).
+    assert_eq!(neg(&si(4, 0, 8)).bounds(), (4, 0, 252));
 }

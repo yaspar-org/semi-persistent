@@ -1428,8 +1428,38 @@ impl<W: Word> StridedInterval<W> {
             }
         }
     }
-}
 
+    /// Exact negation of a set without 0: `x` maps to `modulus - x`, which
+    /// reverses the grid.
+    fn neg_positive(a: &Self) -> (r: Self)
+        requires
+            a.wf(),
+            a.lo().view() > 0,
+        ensures
+            r.wf(),
+            forall|x: W| a.gamma(x) ==> #[trigger] r.gamma(Unsigned::<W>::neg(x)),
+    {
+        let r = StridedInterval {
+            stride: a.stride,
+            lo: a.hi.neg_nonzero(),
+            hi: a.lo.neg_nonzero(),
+        };
+        proof {
+            assert forall|x: W| a.gamma(x) implies #[trigger] r.gamma(Unsigned::<W>::neg(x)) by {
+                x.lemma_view_bounded();
+                lemma_from_wrapped_down::<W>(-(x.view() as int));
+                if a.stride.view() > 0 {
+                    Self::lemma_mod_zero_diff(
+                        a.hi.view() as int - a.lo.view() as int,
+                        x.view() as int - a.lo.view() as int,
+                        a.stride.view() as int,
+                    );
+                }
+            }
+        }
+        r
+    }
+}
 
 impl<W: Word> Arith<Unsigned<W>> for StridedInterval<W> {
     /// Exact on the common grid when no sum wraps or every sum wraps; Top
@@ -1524,9 +1554,54 @@ impl<W: Word> Arith<Unsigned<W>> for StridedInterval<W> {
         }
     }
 
-    /// Sound but imprecise for now: Top.
+    /// `x` maps to `modulus - x` except `0`, which stays. Exact when 0 is
+    /// not in the set; otherwise `{0}` joined with the negated rest.
     fn neg(&self) -> (r: Self) {
-        Self::top()
+        if !self.lo.eq(W::zero()) {
+            Self::neg_positive(self)
+        } else if self.hi.eq(W::zero()) {
+            proof {
+                W::lemma_modulus();
+                lemma_from_small::<W>(0);
+                assert forall|x: W| self.gamma(x) implies #[trigger] self.gamma(Unsigned::<W>::neg(x)) by {}
+            }
+            self.dup()
+        } else {
+            // `self` is `{0, s, 2s, .., hi}`; negate `{s, .., hi}` exactly.
+            let s = self.stride;
+            proof {
+                Self::lemma_divisor_le(self.hi.view() as int, s.view() as int);
+                lemma_mod_self_0(s.view() as int);
+                Self::lemma_mod_zero_diff(self.hi.view() as int, s.view() as int, s.view() as int);
+            }
+            let rest = if self.hi.eq(s) {
+                StridedInterval { stride: W::zero(), lo: s, hi: s }
+            } else {
+                StridedInterval { stride: s, lo: s, hi: self.hi }
+            };
+            let neg_rest = Self::neg_positive(&rest);
+            let z = W::zero();
+            let zero = Self::constant(z);
+            let r = zero.join(&neg_rest);
+            proof {
+                W::lemma_modulus();
+                lemma_from_small::<W>(0);
+                assert forall|x: W| self.gamma(x) implies #[trigger] r.gamma(Unsigned::<W>::neg(x)) by {
+                    if x.view() == 0 {
+                        W::lemma_view_injective(Unsigned::<W>::neg(x), z);
+                        assert(zero.gamma(Unsigned::<W>::neg(x)));
+                    } else {
+                        Self::lemma_divisor_le(x.view() as int, s.view() as int);
+                        if rest.stride.view() > 0 {
+                            Self::lemma_mod_zero_diff(x.view() as int, s.view() as int, s.view() as int);
+                        }
+                        assert(rest.gamma(x));
+                        assert(neg_rest.gamma(Unsigned::<W>::neg(x)));
+                    }
+                }
+            }
+            r
+        }
     }
 }
 
