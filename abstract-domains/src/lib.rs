@@ -37,3 +37,5 @@ pub mod tnum;
 pub mod transfer;
 pub mod unum;
 pub mod word;
+
+pub mod wrapped;
