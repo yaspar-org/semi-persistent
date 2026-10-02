@@ -538,3 +538,90 @@ fn strided_meet_and_widen_results_are_canonical() {
         }
     }
 }
+
+fn si_points(a: &SI8) -> Vec<u8> {
+    (0..=255u8).filter(|&x| has_si(a, x)).collect()
+}
+
+/// Every concrete sum and difference lands in the abstract
+/// result. Exact (the result is exactly the set of concrete results) when
+/// the operands share a grid (equal strides, or a singleton) and no result
+/// wraps or every result wraps.
+/// Bounds near 0, the middle and 255 (so sums and differences wrap all
+/// ways), with sets capped at 32 points to keep the pair loop fast; Top is
+/// added back explicitly.
+fn strided_arith_samples() -> Vec<SI8> {
+    let pts = [0u8, 1, 2, 7, 100, 128, 250, 254, 255];
+    let strides = [0u8, 1, 2, 3, 4, 6, 64];
+    let mut out = vec![SI8::top()];
+    for &lo in &pts {
+        for &hi in &pts {
+            for &st in &strides {
+                if lo <= hi {
+                    let v = si(st, lo, hi);
+                    if si_points(&v).len() <= 32 && !out.iter().any(|o| o.bounds() == v.bounds()) {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn strided_unsigned_arith() {
+    let s = strided_arith_samples();
+    for a in &s {
+        let pa = si_points(a);
+        for b in &s {
+            let pb = si_points(b);
+            let (sa, _, _) = a.bounds();
+            let (sb, _, _) = b.bounds();
+            let same_grid = sa == sb || sa == 0 || sb == 0;
+            for (r, f) in [
+                (
+                    <SI8 as Arith<U>>::add(a, b),
+                    u8::wrapping_add as fn(u8, u8) -> u8,
+                ),
+                (<SI8 as Arith<U>>::sub(a, b), u8::wrapping_sub),
+            ] {
+                let mut results = std::collections::BTreeSet::new();
+                let mut wraps = std::collections::BTreeSet::new();
+                for &x in &pa {
+                    for &y in &pb {
+                        let v = f(x, y);
+                        assert!(has_si(&r, v));
+                        results.insert(v);
+                        let wide = if f(1, 1) == 2 {
+                            x as i32 + y as i32
+                        } else {
+                            x as i32 - y as i32
+                        };
+                        wraps.insert(!(0..=255).contains(&wide));
+                    }
+                }
+                if same_grid && wraps.len() == 1 {
+                    assert_eq!(si_points(&r).len(), results.len());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn strided_unsigned_arith_examples() {
+    let add = <SI8 as Arith<U>>::add;
+    let sub = <SI8 as Arith<U>>::sub;
+    // no wrap: shift both bounds, keep the stride.
+    assert_eq!(add(&si(4, 0, 8), &si(0, 3, 3)).bounds(), (4, 3, 11));
+    // every sum wraps: both bounds come back down by 256.
+    assert_eq!(
+        add(&si(4, 200, 208), &si(0, 100, 100)).bounds(),
+        (4, 44, 52)
+    );
+    // some sums wrap: Top.
+    assert_eq!(add(&si(4, 0, 252), &si(0, 8, 8)).bounds(), (1, 0, 255));
+    // every difference is negative: both bounds go up by 256.
+    assert_eq!(sub(&si(0, 1, 1), &si(2, 3, 7)).bounds(), (2, 250, 254));
+}

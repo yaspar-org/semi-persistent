@@ -1255,4 +1255,279 @@ impl<W: Word> Canonical for StridedInterval<W> {
     }
 }
 
+/// `from_int` subtracts one modulus from a value that wrapped up once.
+proof fn lemma_from_wrapped_up<W: Word>(i: int)
+    requires
+        W::modulus() as int <= i < 2 * W::modulus() as int,
+    ensures
+        W::from_int(i).view() == i - W::modulus() as int,
+{
+    let m = W::modulus() as int;
+    W::lemma_from_int(i);
+    lemma_mod_sub_multiples_vanish(i, m);
+    lemma_small_mod((i - m) as nat, m as nat);
+}
+
+/// `from_int` adds one modulus to a value that wrapped down once.
+proof fn lemma_from_wrapped_down<W: Word>(i: int)
+    requires
+        -(W::modulus() as int) <= i < 0,
+    ensures
+        W::from_int(i).view() == i + W::modulus() as int,
+{
+    let m = W::modulus() as int;
+    W::lemma_from_int(i);
+    lemma_mod_add_multiples_vanish(i, m);
+    lemma_small_mod((i + m) as nat, m as nat);
+}
+
+impl<W: Word> StridedInterval<W> {
+    /// `gamma` on an unbounded integer, before reduction modulo the width.
+    pub open spec fn gamma_int(&self, v: int) -> bool {
+        self.lo().view() as int <= v && v <= self.hi().view() as int && (self.stride().view()
+            == 0 || (v - self.lo().view() as int) % (self.stride().view() as int) == 0)
+    }
+
+    /// A grid both strides are multiples of, 0 only when both are 0. The
+    /// best is `gcd(sa, sb)` (#112); until then, either stride when it
+    /// divides the other, else 1.
+    fn common_stride(sa: W, sb: W) -> (g: W)
+        ensures
+            g.view() == 0 <==> (sa.view() == 0 && sb.view() == 0),
+            g.view() > 0 ==> sa.view() as int % (g.view() as int) == 0 && sb.view() as int % (
+            g.view() as int) == 0,
+    {
+        if sa.eq(W::zero()) {
+            proof {
+                if sb.view() > 0 {
+                    lemma_mod_multiples_basic(0, sb.view() as int);
+                    lemma_mod_self_0(sb.view() as int);
+                }
+            }
+            sb
+        } else if sb.eq(W::zero()) {
+            proof {
+                lemma_mod_multiples_basic(0, sa.view() as int);
+                lemma_mod_self_0(sa.view() as int);
+            }
+            sa
+        } else if sb.urem(sa).eq(W::zero()) {
+            proof {
+                lemma_mod_self_0(sa.view() as int);
+            }
+            sa
+        } else if sa.urem(sb).eq(W::zero()) {
+            proof {
+                lemma_mod_self_0(sb.view() as int);
+            }
+            sb
+        } else {
+            proof {
+                assert(sa.view() as int % 1 == 0) by (nonlinear_arith);
+                assert(sb.view() as int % 1 == 0) by (nonlinear_arith);
+            }
+            W::one()
+        }
+    }
+
+    /// `r` is `[a.lo + b.lo, a.hi + b.hi] - shift` on the common grid `g`,
+    /// so it holds every `x + y - shift`.
+    proof fn lemma_add_grid(a: &Self, b: &Self, g: W, r: &Self, shift: int)
+        requires
+            a.wf(),
+            b.wf(),
+            g.view() == 0 <==> (a.stride().view() == 0 && b.stride().view() == 0),
+            g.view() > 0 ==> a.stride().view() as int % (g.view() as int) == 0
+                && b.stride().view() as int % (g.view() as int) == 0,
+            r.stride() == g,
+            r.lo().view() as int == a.lo().view() as int + b.lo().view() as int - shift,
+            r.hi().view() as int == a.hi().view() as int + b.hi().view() as int - shift,
+        ensures
+            r.wf(),
+            forall|x: W, y: W|
+                #![trigger a.gamma(x), b.gamma(y)]
+                a.gamma(x) && b.gamma(y) ==> r.gamma_int(x.view() as int + y.view() as int - shift),
+    {
+        if g.view() > 0 {
+            let gi = g.view() as int;
+            lemma_mod_multiples_basic(0, gi);
+            a.lemma_contains_bounds();
+            b.lemma_contains_bounds();
+            Self::lemma_on_grid(a, a.lo.view() as int, gi, a.hi);
+            Self::lemma_on_grid(b, b.lo.view() as int, gi, b.hi);
+            Self::lemma_mod_zero_sum(
+                a.hi.view() as int - a.lo.view() as int,
+                b.hi.view() as int - b.lo.view() as int,
+                gi,
+            );
+            assert forall|x: W, y: W|
+                #![trigger a.gamma(x), b.gamma(y)]
+                a.gamma(x) && b.gamma(y) implies r.gamma_int(
+                x.view() as int + y.view() as int - shift,
+            ) by {
+                Self::lemma_on_grid(a, a.lo.view() as int, gi, x);
+                Self::lemma_on_grid(b, b.lo.view() as int, gi, y);
+                Self::lemma_mod_zero_sum(
+                    x.view() as int - a.lo.view() as int,
+                    y.view() as int - b.lo.view() as int,
+                    gi,
+                );
+            }
+        }
+    }
+
+    /// `r` is `[a.lo - b.hi, a.hi - b.lo] + shift` on the common grid `g`,
+    /// so it holds every `x - y + shift`.
+    proof fn lemma_sub_grid(a: &Self, b: &Self, g: W, r: &Self, shift: int)
+        requires
+            a.wf(),
+            b.wf(),
+            g.view() == 0 <==> (a.stride().view() == 0 && b.stride().view() == 0),
+            g.view() > 0 ==> a.stride().view() as int % (g.view() as int) == 0
+                && b.stride().view() as int % (g.view() as int) == 0,
+            r.stride() == g,
+            r.lo().view() as int == a.lo().view() as int - b.hi().view() as int + shift,
+            r.hi().view() as int == a.hi().view() as int - b.lo().view() as int + shift,
+        ensures
+            r.wf(),
+            forall|x: W, y: W|
+                #![trigger a.gamma(x), b.gamma(y)]
+                a.gamma(x) && b.gamma(y) ==> r.gamma_int(x.view() as int - y.view() as int + shift),
+    {
+        if g.view() > 0 {
+            let gi = g.view() as int;
+            lemma_mod_multiples_basic(0, gi);
+            a.lemma_contains_bounds();
+            b.lemma_contains_bounds();
+            Self::lemma_on_grid(a, a.lo.view() as int, gi, a.hi);
+            Self::lemma_on_grid(b, b.lo.view() as int, gi, b.hi);
+            Self::lemma_mod_zero_sum(
+                a.hi.view() as int - a.lo.view() as int,
+                b.hi.view() as int - b.lo.view() as int,
+                gi,
+            );
+            assert forall|x: W, y: W|
+                #![trigger a.gamma(x), b.gamma(y)]
+                a.gamma(x) && b.gamma(y) implies r.gamma_int(
+                x.view() as int - y.view() as int + shift,
+            ) by {
+                Self::lemma_on_grid(a, a.lo.view() as int, gi, x);
+                Self::lemma_on_grid(b, b.lo.view() as int, gi, y);
+                Self::lemma_mod_zero_diff(
+                    b.hi.view() as int - b.lo.view() as int,
+                    y.view() as int - b.lo.view() as int,
+                    gi,
+                );
+                Self::lemma_mod_zero_sum(
+                    x.view() as int - a.lo.view() as int,
+                    b.hi.view() as int - y.view() as int,
+                    gi,
+                );
+                assert(x.view() as int - y.view() as int + shift - r.lo.view() as int == (
+                x.view() as int - a.lo.view() as int) + (b.hi.view() as int - y.view() as int));
+            }
+        }
+    }
+}
+
+
+impl<W: Word> Arith<Unsigned<W>> for StridedInterval<W> {
+    /// Exact on the common grid when no sum wraps or every sum wraps; Top
+    /// when only some do.
+    fn add(&self, o: &Self) -> (r: Self) {
+        let g = Self::common_stride(self.stride, o.stride);
+        proof {
+            W::lemma_modulus();
+            self.hi.lemma_view_bounded();
+            o.hi.lemma_view_bounded();
+        }
+        match self.hi.checked_add(o.hi) {
+            Some(hi) => {
+                proof {
+                    hi.lemma_view_bounded();
+                }
+                let lo = self.lo.checked_add(o.lo).expect("lo sum <= hi sum");
+                let r = StridedInterval { stride: g, lo, hi };
+                proof {
+                    Self::lemma_add_grid(self, o, g, &r, 0);
+                    assert forall|x: W, y: W| self.gamma(x) && o.gamma(y) implies #[trigger] r.gamma(
+                        Unsigned::<W>::add(x, y),
+                    ) by {
+                        lemma_from_small::<W>(x.view() as int + y.view() as int);
+                    }
+                }
+                r
+            },
+            None => match self.lo.checked_add(o.lo) {
+                Some(_) => Self::top(),
+                None => {
+                    // Every sum wraps exactly once: subtract the modulus
+                    // from both bounds as `x - (modulus - y)`.
+                    let lo = self.lo.checked_sub(o.lo.neg_nonzero()).expect("lo sum wraps");
+                    let hi = self.hi.checked_sub(o.hi.neg_nonzero()).expect("hi sum wraps");
+                    let r = StridedInterval { stride: g, lo, hi };
+                    proof {
+                        let m = W::modulus() as int;
+                        Self::lemma_add_grid(self, o, g, &r, m);
+                        assert forall|x: W, y: W| self.gamma(x) && o.gamma(y) implies #[trigger] r.gamma(
+                            Unsigned::<W>::add(x, y),
+                        ) by {
+                            x.lemma_view_bounded();
+                            y.lemma_view_bounded();
+                            lemma_from_wrapped_up::<W>(x.view() as int + y.view() as int);
+                        }
+                    }
+                    r
+                },
+            },
+        }
+    }
+
+    /// Exact on the common grid when no difference wraps or every
+    /// difference wraps; Top when only some do.
+    fn sub(&self, o: &Self) -> (r: Self) {
+        let g = Self::common_stride(self.stride, o.stride);
+        if o.hi.le(self.lo) {
+            let lo = self.lo.checked_sub(o.hi).expect("o.hi <= self.lo");
+            let hi = self.hi.checked_sub(o.lo).expect("o.lo <= self.hi");
+            let r = StridedInterval { stride: g, lo, hi };
+            proof {
+                Self::lemma_sub_grid(self, o, g, &r, 0);
+                self.hi.lemma_view_bounded();
+                assert forall|x: W, y: W| self.gamma(x) && o.gamma(y) implies #[trigger] r.gamma(
+                    Unsigned::<W>::sub(x, y),
+                ) by {
+                    x.lemma_view_bounded();
+                    lemma_from_small::<W>(x.view() as int - y.view() as int);
+                }
+            }
+            r
+        } else if self.hi.lt(o.lo) {
+            // Every difference is negative: add the modulus to both bounds
+            // as `modulus - (b - a)`.
+            let lo = o.hi.checked_sub(self.lo).expect("self.lo < o.hi").neg_nonzero();
+            let hi = o.lo.checked_sub(self.hi).expect("self.hi < o.lo").neg_nonzero();
+            let r = StridedInterval { stride: g, lo, hi };
+            proof {
+                let m = W::modulus() as int;
+                Self::lemma_sub_grid(self, o, g, &r, m);
+                assert forall|x: W, y: W| self.gamma(x) && o.gamma(y) implies #[trigger] r.gamma(
+                    Unsigned::<W>::sub(x, y),
+                ) by {
+                    y.lemma_view_bounded();
+                    lemma_from_wrapped_down::<W>(x.view() as int - y.view() as int);
+                }
+            }
+            r
+        } else {
+            Self::top()
+        }
+    }
+
+    /// Sound but imprecise for now: Top.
+    fn neg(&self) -> (r: Self) {
+        Self::top()
+    }
+}
+
 } // verus!
