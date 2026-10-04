@@ -1053,7 +1053,9 @@ macro_rules! abstract_domain {
                 /// We need -d which ranges from -max to 0.
                 /// So result.base = -v - total_max, result uncertainty = same structure.
                 #[inline] pub fn neg(&self) -> ExecUnum {
-                    if self.base.wrapping_add(self.extent) < self.base {
+                    // The negated range wraps when the input range does, or when it
+                    // holds 0 and something else: -[0, e] = {0} u [-e, MAX].
+                    if self.base.wrapping_add(self.extent) < self.base || (self.base == 0 && self.extent != 0) {
                         return ExecUnum::top();
                     }
                     let new_v = (0 as $uint).wrapping_sub(self.base).wrapping_sub(self.extent);
