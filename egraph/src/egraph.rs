@@ -173,6 +173,17 @@ pub struct EGraph<
     inverse_op_marks: Vec<crate::containers::MapToken>,
     worklist: Vec<(Cfg::UL, Cfg::G)>,
     collisions: Vec<(Cfg::G, Cfg::G)>,
+    /// EUF-derived merges captured for Nelson-Oppen equality export, recorded
+    /// only when `record_merges` is set. Each entry is a `(survivor, absorbed)`
+    /// class-root pair as of merge time, teed from the single `merge_in_classes`
+    /// chokepoint so direct, congruence, and completion merges are all caught.
+    /// The caller drains it with `take_merged_log` before every decision-level
+    /// advance, so it holds at most one level's merges and needs no
+    /// semi-persistent backtracking: `restore` clears it.
+    merged_log: Vec<(Cfg::G, Cfg::G)>,
+    /// Gate for `merged_log`. Off by default, so EUF-only runs record nothing;
+    /// the adapter enables it via `set_record_merges`.
+    record_merges: bool,
     /// Reusable scratch for a node's child ids as bare `G` (the canonical-children buffer for
     /// every representation except MSet). Paired with `mset_buf`, which holds the MSet variant.
     g_buf: Vec<Cfg::G>,
@@ -374,6 +385,8 @@ where
             inverse_op_marks: Vec::new(),
             worklist: Vec::new(),
             collisions: Vec::new(),
+            merged_log: Vec::new(),
+            record_merges: false,
             g_buf: Vec::new(),
             mset_buf: Vec::new(),
             touched: Vec::new(),
@@ -1438,7 +1451,37 @@ where
             };
             self.touched.extend(absorbed);
         }
+        // Tee every merge (direct, congruence, completion — all route through
+        // here) to the Nelson-Oppen export log. Captured at merge time with the
+        // pre-merge roots, because after congruence closure the two classes are
+        // one and the pairing cannot be recovered from `find`.
+        if self.record_merges {
+            self.merged_log.push((m.survivor, m.absorbed));
+        }
         Some(m)
+    }
+
+    /// Enable or disable capture of EUF-derived merges into `merged_log` for
+    /// Nelson-Oppen equality export. Off by default. Disabling clears whatever
+    /// was captured.
+    pub fn set_record_merges(&mut self, enabled: bool) {
+        self.record_merges = enabled;
+        if !enabled {
+            self.merged_log.clear();
+        }
+    }
+
+    /// Whether merge capture is currently on.
+    pub fn record_merges(&self) -> bool {
+        self.record_merges
+    }
+
+    /// Take and clear the merges captured since the last call. Each is a
+    /// `(survivor, absorbed)` class-root pair as of merge time. The caller must
+    /// drain before advancing the decision level: merges from a level that is
+    /// later popped are meaningless, and `restore` clears the log regardless.
+    pub fn take_merged_log(&mut self) -> Vec<(Cfg::G, Cfg::G)> {
+        std::mem::take(&mut self.merged_log)
     }
 
     pub fn merge_justified(
@@ -3411,6 +3454,10 @@ where
         self.worklist.clear();
         self.collisions.clear();
         self.touched.clear();
+        // Merges captured before this restore belong to the discarded scope.
+        // The drain-before-advance discipline keeps this empty in practice;
+        // clearing makes restore-safety hold unconditionally.
+        self.merged_log.clear();
         // The repair watermark is a pair of counters over the *pre-restore* graph, and
         // restore moves both (touched cleared, classes regrown). Drop it so the next
         // `rebuild` rescans rather than trusting a comparison against a discarded state.
@@ -4356,6 +4403,64 @@ mod tests {
         eg.merge(x, y);
         eg.rebuild();
         assert_eq!(eg.find(fx), eg.find(fy));
+    }
+
+    // Acceptance #1 for the Nelson-Oppen export: `merged_log` captures BOTH the
+    // directly-asserted merge and the congruence-derived merge, at the single
+    // `merge_in_classes` chokepoint; with capture off it records nothing.
+    #[test]
+    fn merged_log_captures_direct_and_congruence() {
+        let (ref mut eg, th) = eg::<true, false>();
+        let x = eg.add(th.x, &[]);
+        let y = eg.add(th.y, &[]);
+        let fx = eg.add(th.f, &[x]);
+        let fy = eg.add(th.f, &[y]);
+
+        // Off by default: nothing to drain.
+        assert!(!eg.record_merges());
+        eg.set_record_merges(true);
+        assert!(eg.take_merged_log().is_empty());
+
+        // Direct merge x=y, then rebuild derives the congruence f(x)=f(y).
+        let direct = eg.merge(x, y).expect("x and y start in distinct classes");
+        eg.rebuild();
+        assert_eq!(eg.find(fx), eg.find(fy), "congruence must unify f(x), f(y)");
+
+        let log = eg.take_merged_log();
+        assert!(
+            log.len() >= 2,
+            "expected the direct and the congruence merge, got {log:?}"
+        );
+
+        // The direct merge is captured verbatim as merge() returned it.
+        assert!(
+            log.contains(&direct),
+            "direct merge {direct:?} missing from {log:?}"
+        );
+
+        // A congruence-derived merge is captured too: a distinct entry whose
+        // pre-merge roots now canonicalize into the shared f(x)/f(y) class.
+        let froot = eg.find(fx);
+        assert!(
+            log.iter()
+                .any(|&(s, a)| (s, a) != direct && (eg.find(s) == froot || eg.find(a) == froot)),
+            "no congruence-derived merge for f(x)=f(y) in {log:?}"
+        );
+
+        // Draining is a take: a second drain is empty.
+        assert!(eg.take_merged_log().is_empty());
+
+        // With capture off, further merges record nothing.
+        eg.set_record_merges(false);
+        let z = eg.add(th.z, &[]);
+        let fz = eg.add(th.f, &[z]);
+        eg.merge(x, z);
+        eg.rebuild();
+        assert_eq!(eg.find(fx), eg.find(fz));
+        assert!(
+            eg.take_merged_log().is_empty(),
+            "capture off must record nothing"
+        );
     }
 
     #[test]
