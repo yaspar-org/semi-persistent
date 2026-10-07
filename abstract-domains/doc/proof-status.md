@@ -138,36 +138,31 @@ wf values with the same concretization are the same value. `leq`, `join`,
 `meet`, and `widen` are all proved sound against `gamma`, and `leq` is
 also proved complete (`b <==> gamma(self) ⊆ gamma(o)`). `new` exports
 exactly which set it builds, and `constant(c)` builds `{c}`. No other
-contract states optimality or exactness. Known precision gaps, none of
-which is a soundness bug:
+contract states optimality or exactness. Precision of each operation:
 
-- `meet` is not proved exact: its `Val` contract only says the result
-  contains the intersection. It is exact (and `Bot` exactly when the
-  intersection is empty) when one operand is a singleton or one stride
-  divides the other, which includes `meet(top(), x) == x`; the tests
-  check this on a sample of u8 values. When neither stride divides
-  the other, `meet` clips the larger-stride operand to the common bounds,
-  which may keep points off the other grid and may return a value for an
-  empty intersection. `meet` is commutative in all cases.
-- When both operands share a nonzero stride and residue class, `join`
-  is the least upper bound but **not** the exact union --
-  widening the range can span a gap neither operand covers. `join(si(3,
-  2,8), si(3,14,17))` claims `11`, which is in neither operand
-  (`strided_join_same_residue_is_not_always_exact` in
-  `tests/domain_traits.rs` pins this down after "the same-stride join is
-  exact" was flagged as a misleading claim in review). `join` is exact
-  in some cases, for example two distinct singletons (a two-point set has
-  no gap) and `{4} ⊔ (2,0,10) = (2,0,10)`. In general `join` keeps the
-  bounds `[min lo, max hi]` and uses an operand's stride when it divides
-  the other stride and the distance between the `lo`s, else stride 1.
+- `meet` is the exact intersection by test, though its `Val` contract
+  only states containment. Two non-singletons meet through `crt_merge`:
+  every point of an operand has residue `lo % stride`, so the intersection
+  is the CRT class of the two residues clipped to the common bounds, and
+  `Bot` when CRT finds no solution or the class misses the bounds. The
+  tests check exactness on every pair of a sample of u8 values
+  (`strided_meet_is_exact`).
+- `join` is the Balakrishnan & Reps join: `[min lo, max hi]` with stride
+  `gcd(gcd(s1, s2), |lo1 - lo2|)`. Its contract states containment; the
+  tests check that it is the least upper bound on a sample of u8 values
+  (`strided_join_is_least`). It is **not** the exact union -- widening the
+  range can span a gap neither operand covers. `join(si(3, 2,8),
+  si(3,14,17))` claims `11`, which is in neither operand
+  (`strided_join_same_residue_is_not_always_exact`). `join` is exact in
+  some cases, for example two distinct singletons (a two-point set has no
+  gap) and `{4} ⊔ (2,0,10) = (2,0,10)`.
 - `widen` keeps the join's stride and moves an unstable bound to the last
   grid point before the end of the range rather than to 0/MAX, which
   would usually be off the grid. On `i = 0; while i < 200 { i += 4 }` it
   reaches `(4,0,252)`, and one decreasing iteration gives `(4,0,200)`
   (`strided_widen_keeps_the_stride`).
 
-- `Arith<Unsigned<W>>`: `add` and `sub` use a common grid of the two
-  strides (an operand's stride when it divides the other, else 1) and
+- `Arith<Unsigned<W>>`: `add` and `sub` use the grid `gcd(s1, s2)` and
   shift the bounds. Their contracts state containment. By test (sampled
   u8), they are exact when the strides are equal or one operand is a
   singleton, and no result wraps or every result wraps; other strides can
@@ -177,10 +172,7 @@ which is a soundness bug:
   `{0}` with the exact negation of the rest. Signedness lives in the
   semantics, so `Arith<Signed<W>>` on the same carrier is still open.
 
-The tight join stride is `gcd(s1, s2, |lo1 - lo2|)` (Balakrishnan &
-Reps), and the same gcd gives the tight `add`/`sub` stride; the exact
-meet for non-dividing strides needs CRT. Both come
-from the `gcd`/`crt_merge` helpers in #112, which has not landed yet.
+`gcd` and `crt_merge` come from the shared helpers below (#112).
 `DivRem`, bitwise operations, shifts, casts, comparisons, and reduction into a
 `Product` are still open.
 
