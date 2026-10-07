@@ -11,6 +11,7 @@
 //! `checked_sub` + `urem` instead of the div/mul reasoning the old
 //! `normalize()` needed.
 #![allow(unused_imports, unused_variables)]
+use crate::arithmetic::*;
 use crate::lattice::*;
 use crate::semantics::*;
 use crate::transfer::*;
@@ -729,29 +730,32 @@ impl<W: Word> StridedInterval<W> {
         lemma_mul_is_commutative(s, q + 1);
     }
 
-    /// The points of `a` inside `[l, h]`, encoded canonically: `l` is
-    /// rounded up onto `a`'s grid and `mk` rounds `h` down. `Bot` when no
-    /// grid point of `a` lies in `[l, h]`.
-    fn clip(a: &Self, l: W, h: W) -> (r: BotOr<Self>)
+    /// `c` is on the grid `base + k*s`.
+    pub open spec fn on_grid(c: W, base: W, s: W) -> bool {
+        (c.view() as int - base.view() as int) % (s.view() as int) == 0
+    }
+
+    /// The grid points `base + k*s` inside `[l, h]`, encoded canonically:
+    /// `l` is rounded up onto the grid and `mk` rounds `h` down. `Bot` when
+    /// no grid point lies in `[l, h]`.
+    fn clip(s: W, base: W, l: W, h: W) -> (r: BotOr<Self>)
         requires
-            a.wf(),
-            a.stride().view() > 0,
-            a.lo().view() <= l.view(),
+            s.view() > 0,
+            base.view() <= l.view(),
             l.view() <= h.view(),
-            h.view() <= a.hi().view(),
         ensures
             match r {
                 BotOr::Bot => forall|c: W| #[trigger]
-                    a.gamma(c) ==> !(l.view() <= c.view() && c.view() <= h.view()),
+                    Self::on_grid(c, base, s) ==> !(l.view() <= c.view() && c.view() <= h.view()),
                 BotOr::Val(m) => m.wf() && forall|c: W| #[trigger]
-                    m.gamma(c) <== a.gamma(c) && l.view() <= c.view() && c.view() <= h.view(),
+                    Self::on_grid(c, base, s) ==> (l.view() <= c.view() && c.view() <= h.view()
+                        ==> m.gamma(c)),
             },
     {
-        let s = a.stride;
-        let off = l.checked_sub(a.lo).expect("a.lo <= l");
+        let off = l.checked_sub(base).expect("base <= l");
         let rem = off.urem(s);
         proof {
-            assert(rem.view() as int == (l.view() as int - a.lo.view() as int) % (s.view()
+            assert(rem.view() as int == (l.view() as int - base.view() as int) % (s.view()
                 as int));
             lemma_mod_pos_bound(off.view() as int, s.view() as int);
         }
@@ -764,11 +768,12 @@ impl<W: Word> StridedInterval<W> {
                 None => {
                     proof {
                         assert forall|c: W| #[trigger]
-                            a.gamma(c) implies !(l.view() <= c.view() && c.view() <= h.view()) by {
+                            Self::on_grid(c, base, s) implies !(l.view() <= c.view() && c.view()
+                            <= h.view()) by {
                             c.lemma_view_bounded();
                             if l.view() <= c.view() && c.view() <= h.view() {
                                 Self::lemma_round_up(
-                                    a.lo.view() as int,
+                                    base.view() as int,
                                     l.view() as int,
                                     s.view() as int,
                                     c.view() as int,
@@ -780,75 +785,56 @@ impl<W: Word> StridedInterval<W> {
                 },
             }
         };
-        // Every point of `a` in `[l, h]` is a grid point `>= lo`.
+        // Every grid point in `[l, h]` is a grid point `>= lo`.
         proof {
             assert forall|c: W|
-                a.gamma(c) && l.view() <= c.view() && c.view() <= h.view() implies lo.view()
-                <= #[trigger] c.view() && (c.view() as int - lo.view() as int) % (s.view() as int)
-                == 0 by {
+                Self::on_grid(c, base, s) && l.view() <= c.view() && c.view() <= h.view()
+                implies lo.view() <= #[trigger] c.view() && (c.view() as int - lo.view() as int)
+                % (s.view() as int) == 0 by {
                 if rem.view() != 0 {
                     Self::lemma_round_up(
-                        a.lo.view() as int,
+                        base.view() as int,
                         l.view() as int,
                         s.view() as int,
                         c.view() as int,
                     );
                 }
                 Self::lemma_mod_zero_diff(
-                    c.view() as int - a.lo.view() as int,
-                    lo.view() as int - a.lo.view() as int,
+                    c.view() as int - base.view() as int,
+                    lo.view() as int - base.view() as int,
                     s.view() as int,
                 );
-                assert(c.view() as int - lo.view() as int == (c.view() as int - a.lo.view()
-                    as int) - (lo.view() as int - a.lo.view() as int));
+                assert(c.view() as int - lo.view() as int == (c.view() as int - base.view()
+                    as int) - (lo.view() as int - base.view() as int));
             }
         }
         if h.lt(lo) {
             proof {
                 assert forall|c: W| #[trigger]
-                    a.gamma(c) implies !(l.view() <= c.view() && c.view() <= h.view()) by {}
+                    Self::on_grid(c, base, s) implies !(l.view() <= c.view() && c.view()
+                    <= h.view()) by {}
             }
             return BotOr::Bot;
-        }
-        if h.eq(a.hi) {
-            // `a.hi` is already on the grid, so no `urem` is needed to snap it.
-            let m = if lo.eq(h) {
-                StridedInterval { stride: W::zero(), lo, hi: h }
-            } else {
-                StridedInterval { stride: s, lo, hi: h }
-            };
-            proof {
-                a.lemma_contains_bounds();
-                assert((h.view() as int - lo.view() as int) % (s.view() as int) == 0);
-                assert forall|c: W|
-                    a.gamma(c) && l.view() <= c.view() && c.view() <= h.view() implies #[trigger]
-                    m.gamma(c) by {}
-            }
-            return BotOr::Val(m);
         }
         let m = Self::mk(s, lo, h);
         proof {
             assert forall|c: W|
-                a.gamma(c) && l.view() <= c.view() && c.view() <= h.view() implies #[trigger]
-                m.gamma(c) by {}
+                #[trigger] Self::on_grid(c, base, s) && l.view() <= c.view() && c.view()
+                    <= h.view() implies m.gamma(c) by {}
         }
         BotOr::Val(m)
     }
 
-    /// Meet for two non-singletons with `a.stride > b.stride`. When
-    /// `b.stride` divides `a.stride`, all of `a`'s points share one residue
-    /// mod `b.stride`, so either none of them is on `b`'s grid (`Bot`) or
-    /// all are, and clipping `a` to the common bounds is exact. Otherwise
-    /// clipping `a` is sound but may keep points off `b`'s grid; the exact
-    /// answer needs `crt_merge` (#112).
-    fn meet_unequal_strides(a: &Self, b: &Self) -> (r: BotOr<Self>)
+    /// Exact meet of two non-singletons with any strides. Every point of
+    /// `a` has residue `a.lo % a.stride`, and likewise for `b`, so the
+    /// intersection is the CRT class of the two residues (`crt_merge`, #112)
+    /// clipped to the common bounds.
+    fn meet_crt(a: &Self, b: &Self) -> (r: BotOr<Self>)
         requires
             a.wf(),
             b.wf(),
-            a.stride().view() > b.stride().view(),
+            a.stride().view() > 0,
             b.stride().view() > 0,
-            a.lo().view() <= b.hi().view(),
-            b.lo().view() <= a.hi().view(),
         ensures
             match r {
                 BotOr::Bot => forall|c: W| #[trigger] a.gamma(c) ==> !b.gamma(c),
@@ -856,35 +842,8 @@ impl<W: Word> StridedInterval<W> {
                     m.gamma(c) <== a.gamma(c) && b.gamma(c),
             },
     {
-        if a.stride.urem(b.stride).eq(W::zero()) {
-            let abs_diff = if a.lo.le(b.lo) {
-                b.lo.checked_sub(a.lo).expect("a.lo <= b.lo")
-            } else {
-                a.lo.checked_sub(b.lo).expect("b.lo <= a.lo")
-            };
-            if !abs_diff.urem(b.stride).eq(W::zero()) {
-                proof {
-                    Self::lemma_abs_diff_residue(a.lo, b.lo, abs_diff, b.stride);
-                    assert forall|c: W| #[trigger] a.gamma(c) implies !b.gamma(c) by {
-                        if b.gamma(c) {
-                            Self::lemma_mod_zero_transitive(
-                                c.view() as int - a.lo.view() as int,
-                                a.stride.view() as int,
-                                b.stride.view() as int,
-                            );
-                            Self::lemma_mod_zero_diff(
-                                c.view() as int - b.lo.view() as int,
-                                c.view() as int - a.lo.view() as int,
-                                b.stride.view() as int,
-                            );
-                            assert(a.lo.view() as int - b.lo.view() as int == (c.view() as int
-                                - b.lo.view() as int) - (c.view() as int - a.lo.view() as int));
-                        }
-                    }
-                }
-                return BotOr::Bot;
-            }
-        }
+        let ra = a.lo.urem(a.stride);
+        let rb = b.lo.urem(b.stride);
         let l = if a.lo.le(b.lo) {
             b.lo
         } else {
@@ -895,20 +854,126 @@ impl<W: Word> StridedInterval<W> {
         } else {
             b.hi
         };
-        match Self::clip(a, l, h) {
-            BotOr::Bot => {
+        proof {
+            assert forall|c: W| a.gamma(c) && b.gamma(c) implies #[trigger]
+                is_common_congruence_solution(
+                c.view() as int,
+                a.stride.view(),
+                ra.view(),
+                b.stride.view(),
+                rb.view(),
+            ) by {
+                lemma_mod_equivalence(
+                    c.view() as int,
+                    a.lo.view() as int,
+                    a.stride.view() as int,
+                );
+                lemma_mod_twice(a.lo.view() as int, a.stride.view() as int);
+                lemma_mod_equivalence(
+                    c.view() as int,
+                    b.lo.view() as int,
+                    b.stride.view() as int,
+                );
+                lemma_mod_twice(b.lo.view() as int, b.stride.view() as int);
+            }
+        }
+        let merged = crt_merge(a.stride, ra, b.stride, rb);
+        match merged {
+            CrtMergeResult::Empty => {
                 proof {
-                    assert forall|c: W| #[trigger] a.gamma(c) implies !b.gamma(c) by {}
+                    assert forall|c: W| #[trigger] a.gamma(c) implies !b.gamma(c) by {
+                        if b.gamma(c) {
+                            assert(is_common_congruence_solution(
+                                c.view() as int,
+                                a.stride.view(),
+                                ra.view(),
+                                b.stride.view(),
+                                rb.view(),
+                            ));
+                            assert(merged.has(c));
+                        }
+                    }
                 }
                 BotOr::Bot
             },
-            BotOr::Val(m) => {
+            CrtMergeResult::Singleton { value } => {
                 proof {
-                    assert forall|c: W| a.gamma(c) && b.gamma(c) implies #[trigger] m.gamma(
-                        c,
-                    ) by {}
+                    assert forall|c: W| a.gamma(c) && b.gamma(c) implies c == value by {
+                        assert(is_common_congruence_solution(
+                            c.view() as int,
+                            a.stride.view(),
+                            ra.view(),
+                            b.stride.view(),
+                            rb.view(),
+                        ));
+                        assert(merged.has(c));
+                    }
                 }
-                BotOr::Val(m)
+                if a.contains(value) && b.contains(value) {
+                    BotOr::Val(Self::constant(value))
+                } else {
+                    BotOr::Bot
+                }
+            },
+            CrtMergeResult::Class { modulus: m, residue: r } => {
+                // Every common point `c` has `c % m == r`, so it is on the grid
+                // `r + k*m` and at least `r`.
+                proof {
+                    assert forall|c: W| a.gamma(c) && b.gamma(c) implies #[trigger] Self::on_grid(
+                        c,
+                        r,
+                        m,
+                    ) && r.view() <= c.view() by {
+                        assert(is_common_congruence_solution(
+                            c.view() as int,
+                            a.stride.view(),
+                            ra.view(),
+                            b.stride.view(),
+                            rb.view(),
+                        ));
+                        assert(merged.has(c));
+                        lemma_small_mod(r.view(), m.view());
+                        lemma_mod_equivalence(c.view() as int, r.view() as int, m.view() as int);
+                        lemma_mod_decreases(c.view(), m.view());
+                    }
+                }
+                let l2 = if l.le(r) {
+                    r
+                } else {
+                    l
+                };
+                if h.lt(l2) {
+                    proof {
+                        assert forall|c: W| #[trigger] a.gamma(c) implies !b.gamma(c) by {
+                            if b.gamma(c) {
+                                assert(Self::on_grid(c, r, m));
+                            }
+                        }
+                    }
+                    return BotOr::Bot;
+                }
+                match Self::clip(m, r, l2, h) {
+                    BotOr::Bot => {
+                        proof {
+                            assert forall|c: W| #[trigger] a.gamma(c) implies !b.gamma(c) by {
+                                if b.gamma(c) {
+                                    assert(Self::on_grid(c, r, m));
+                                }
+                            }
+                        }
+                        BotOr::Bot
+                    },
+                    BotOr::Val(v) => {
+                        proof {
+                            assert forall|c: W| a.gamma(c) && b.gamma(c) implies #[trigger] v.gamma(
+                                c,
+                            ) by {
+                                assert(Self::on_grid(c, r, m));
+                            }
+                        }
+                        BotOr::Val(v)
+                    },
+                }
             },
         }
     }
@@ -1132,23 +1197,8 @@ impl<W: Word> Domain for StridedInterval<W> {
                 }
                 BotOr::Bot
             }
-        } else if o.stride.lt(self.stride) {
-            Self::meet_unequal_strides(self, o)
         } else {
-            let r = Self::meet_unequal_strides(o, self);
-            proof {
-                match &r {
-                    BotOr::Bot => {
-                        assert forall|c: W| #[trigger] self.gamma(c) implies !o.gamma(c) by {}
-                    },
-                    BotOr::Val(m) => {
-                        assert forall|c: W| self.gamma(c) && o.gamma(c) implies #[trigger] m.gamma(
-                            c,
-                        ) by {}
-                    },
-                }
-            }
-            r
+            Self::meet_crt(self, o)
         }
     }
 

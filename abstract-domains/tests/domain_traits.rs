@@ -430,19 +430,13 @@ fn strided_meet_is_commutative() {
     }
 }
 
-/// When one stride divides the other (or either operand is a singleton),
-/// meet is the exact intersection, `Bot` exactly when it is empty.
+/// Meet is the exact intersection for every pair, `Bot` exactly when it
+/// is empty: the CRT class of the two residues, clipped to the common bounds.
 #[test]
-fn strided_meet_is_exact_when_one_stride_divides_the_other() {
+fn strided_meet_is_exact() {
     let s = strided_samples();
     for a in &s {
         for b in &s {
-            let (sa, _, _) = a.bounds();
-            let (sb, _, _) = b.bounds();
-            let divides = sa == 0 || sb == 0 || sa % sb == 0 || sb % sa == 0;
-            if !divides {
-                continue;
-            }
             let m = a.meet(b);
             for x in 0..=255u8 {
                 assert_eq!(bot_has_si(&m, x), has_si(a, x) && has_si(b, x));
@@ -451,18 +445,18 @@ fn strided_meet_is_exact_when_one_stride_divides_the_other() {
     }
 }
 
-/// Neither of 4 and 6 divides the other, so the exact meet needs CRT
-/// (#112); until then meet keeps the larger-stride operand's grid clipped
-/// to the common bounds. Exact would be `(12, 8, 32)` = {8, 20, 32}.
+/// Neither of 4 and 6 divides the other: CRT merges `0 mod 4` and
+/// `2 mod 6` into `8 mod 12`, and `0 mod 4` with `3 mod 6` has no solution.
 #[test]
-fn strided_meet_non_dividing_strides_clips_to_common_bounds() {
+fn strided_meet_non_dividing_strides_uses_crt() {
     let a = si(4, 0, 40);
-    let b = si(6, 2, 32);
-    assert_eq!(bot_bounds_si(&a.meet(&b)), Some((6, 2, 32)));
-    let c = si(6, 3, 33);
-    // 4 and 6 share the factor 2, and 0 and 3 differ mod 2: disjoint, but
-    // still reported as a value.
-    assert_eq!(bot_bounds_si(&a.meet(&c)), Some((6, 3, 33)));
+    assert_eq!(bot_bounds_si(&a.meet(&si(6, 2, 32))), Some((12, 8, 32)));
+    assert_eq!(bot_bounds_si(&a.meet(&si(6, 3, 33))), None);
+    // a single common point.
+    assert_eq!(
+        bot_bounds_si(&si(4, 0, 12).meet(&si(6, 2, 14))),
+        Some((0, 8, 8))
+    );
 }
 
 /// `i = 0; while i < 200 { i += 4 }`: widening keeps stride 4 by jumping
