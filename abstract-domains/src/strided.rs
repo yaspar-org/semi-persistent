@@ -574,35 +574,6 @@ impl<W: Word> StridedInterval<W> {
         assert(r.gamma(self_.hi) && r.gamma(o.hi));
     }
 
-    proof fn lemma_join_two_points(self_: &Self, o: &Self, r: &Self)
-        requires
-            self_.wf(),
-            o.wf(),
-            self_.lo().view() == self_.hi().view(),
-            o.lo().view() == o.hi().view(),
-            self_.lo().view() != o.lo().view(),
-            r.lo().view() == if self_.lo().view() <= o.lo().view() {
-                self_.lo().view()
-            } else {
-                o.lo().view()
-            },
-            r.hi().view() == if self_.lo().view() <= o.lo().view() {
-                o.lo().view()
-            } else {
-                self_.lo().view()
-            },
-            r.stride().view() == r.hi().view() - r.lo().view(),
-        ensures
-            r.wf(),
-            forall|c: W| #[trigger] self_.gamma(c) ==> r.gamma(c),
-            forall|c: W| #[trigger] o.gamma(c) ==> r.gamma(c),
-    {
-        lemma_mod_self_0(r.stride().view() as int);
-        lemma_mod_multiples_basic(0, r.stride().view() as int);
-        assert forall|c: W| #[trigger] self_.gamma(c) implies r.gamma(c) by {}
-        assert forall|c: W| #[trigger] o.gamma(c) implies r.gamma(c) by {}
-    }
-
     proof fn lemma_meet_same_stride(self_: &Self, o: &Self, abs_diff: W, r: &Self)
         requires
             self_.wf(),
@@ -1074,47 +1045,41 @@ impl<W: Word> Domain for StridedInterval<W> {
         divides
     }
 
-    /// `[min lo, max hi]` on a grid `g` dividing both strides and the
-    /// distance between the `lo`s. The best `g` is `gcd(s1, s2, |lo1 - lo2|)`
-    /// (Balakrishnan & Reps), which needs `gcd` from #112; until then `g` is
-    /// whichever operand's stride works, else 1.
+    /// The Balakrishnan & Reps join: `[min lo, max hi]` on the grid
+    /// `g = gcd(gcd(s1, s2), |lo1 - lo2|)`, the coarsest grid holding both
+    /// operands. This covers two distinct singletons too (`g` is their
+    /// distance); `g == 0` only when both are the same singleton.
     fn join(&self, o: &Self) -> (r: Self) {
         let abs_diff = if self.lo.le(o.lo) {
             o.lo.checked_sub(self.lo).expect("self.lo <= o.lo")
         } else {
             self.lo.checked_sub(o.lo).expect("o.lo <= self.lo")
         };
-        if self.stride.eq(W::zero()) && o.stride.eq(W::zero()) {
-            if abs_diff.eq(W::zero()) {
-                // the same singleton.
-                return self.dup();
-            }
-            // two distinct singletons: exact as a two-point stride.
-            let (lo, hi) = if self.lo.le(o.lo) {
-                (self.lo, o.lo)
-            } else {
-                (o.lo, self.lo)
-            };
-            let r = StridedInterval { stride: abs_diff, lo, hi };
+        let g1 = Self::common_stride(self.stride, o.stride);
+        let g = gcd(g1, abs_diff);
+        if g.eq(W::zero()) {
+            // Both strides and the distance are 0: the same singleton.
             proof {
-                Self::lemma_join_two_points(self, o, &r);
+                assert(!is_common_divisor(0, g1.view(), abs_diff.view()));
+                assert(g1.view() == 0 && abs_diff.view() == 0);
             }
-            return r;
+            return self.dup();
         }
-        let g = if !self.stride.eq(W::zero()) && o.stride.urem(self.stride).eq(W::zero())
-            && abs_diff.urem(self.stride).eq(W::zero()) {
-            self.stride
-        } else if !o.stride.eq(W::zero()) && self.stride.urem(o.stride).eq(W::zero())
-            && abs_diff.urem(o.stride).eq(W::zero()) {
-            o.stride
-        } else {
-            proof {
-                assert(self.stride.view() as int % 1 == 0) by (nonlinear_arith);
-                assert(o.stride.view() as int % 1 == 0) by (nonlinear_arith);
-                assert(abs_diff.view() as int % 1 == 0) by (nonlinear_arith);
+        proof {
+            let gn = g.view();
+            lemma_mod_multiples_basic(0, gn as int);
+            if !(g1.view() == 0 && abs_diff.view() == 0) {
+                assert(is_common_divisor(gn, g1.view(), abs_diff.view()));
             }
-            W::one()
-        };
+            if g1.view() > 0 {
+                lemma_divides_transitive(self.stride.view(), g1.view(), gn);
+                lemma_divides_transitive(o.stride.view(), g1.view(), gn);
+            }
+            // `lo == hi` would make both the same singleton, so `g == 0`.
+            if self.lo.view() == o.hi.view() && o.lo.view() == self.hi.view() {
+                assert(self.lo.view() == self.hi.view());
+            }
+        }
         let lo = if self.lo.le(o.lo) {
             self.lo
         } else {
@@ -1338,46 +1303,21 @@ impl<W: Word> StridedInterval<W> {
             == 0 || (v - self.lo().view() as int) % (self.stride().view() as int) == 0)
     }
 
-    /// A grid both strides are multiples of, 0 only when both are 0. The
-    /// best is `gcd(sa, sb)` (#112); until then, either stride when it
-    /// divides the other, else 1.
+    /// `gcd(sa, sb)`: the coarsest grid both strides are multiples of, 0
+    /// only when both are 0.
     fn common_stride(sa: W, sb: W) -> (g: W)
         ensures
             g.view() == 0 <==> (sa.view() == 0 && sb.view() == 0),
             g.view() > 0 ==> sa.view() as int % (g.view() as int) == 0 && sb.view() as int % (
             g.view() as int) == 0,
     {
-        if sa.eq(W::zero()) {
-            proof {
-                if sb.view() > 0 {
-                    lemma_mod_multiples_basic(0, sb.view() as int);
-                    lemma_mod_self_0(sb.view() as int);
-                }
+        let g = gcd(sa, sb);
+        proof {
+            if !(sa.view() == 0 && sb.view() == 0) {
+                assert(is_common_divisor(g.view(), sa.view(), sb.view()));
             }
-            sb
-        } else if sb.eq(W::zero()) {
-            proof {
-                lemma_mod_multiples_basic(0, sa.view() as int);
-                lemma_mod_self_0(sa.view() as int);
-            }
-            sa
-        } else if sb.urem(sa).eq(W::zero()) {
-            proof {
-                lemma_mod_self_0(sa.view() as int);
-            }
-            sa
-        } else if sa.urem(sb).eq(W::zero()) {
-            proof {
-                lemma_mod_self_0(sb.view() as int);
-            }
-            sb
-        } else {
-            proof {
-                assert(sa.view() as int % 1 == 0) by (nonlinear_arith);
-                assert(sb.view() as int % 1 == 0) by (nonlinear_arith);
-            }
-            W::one()
         }
+        g
     }
 
     /// `r` is `[a.lo + b.lo, a.hi + b.hi] - shift` on the common grid `g`,

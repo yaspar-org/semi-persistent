@@ -391,9 +391,7 @@ fn strided_join_keeps_a_dividing_stride() {
     assert_eq!(si(6, 0, 12).join(&si(3, 3, 9)).bounds(), (3, 0, 12));
 }
 
-/// Neither stride divides the other: the tight stride is
-/// `gcd(3, 5, 0) = 1` here anyway, but in general it needs `gcd` from
-/// #112. Join falls back to stride 1 and keeps the bounds.
+/// `gcd(3, 5, 0) = 1`: the least upper bound of these two is stride 1.
 #[test]
 fn strided_join_incompatible_strides_keeps_bounds() {
     let a = si(3, 0, 9);
@@ -630,4 +628,29 @@ fn strided_unsigned_arith_examples() {
     assert_eq!(neg(&si(0, 0, 0)).bounds(), (0, 0, 0));
     // 0 maps to 0, the rest to 256 - x: {0} joined with (4, 248, 252).
     assert_eq!(neg(&si(4, 0, 8)).bounds(), (4, 0, 252));
+}
+
+/// The B&R join uses `gcd(gcd(s1, s2), |lo1 - lo2|)`: `{0, 6, 12}` and
+/// `{2, 6, 10}` share the grid `2k`.
+#[test]
+fn strided_join_uses_gcd_stride() {
+    assert_eq!(si(6, 0, 12).join(&si(4, 2, 10)).bounds(), (2, 0, 12));
+    assert_eq!(si(6, 0, 12).join(&si(9, 3, 21)).bounds(), (3, 0, 21));
+}
+
+/// Join is the least upper bound: every sample containing both operands
+/// contains the join.
+#[test]
+fn strided_join_is_least() {
+    let s = strided_samples();
+    for a in &s {
+        for b in &s {
+            let j = a.join(b);
+            for c in &s {
+                if a.leq(c) && b.leq(c) {
+                    assert!(j.leq(c));
+                }
+            }
+        }
+    }
 }
