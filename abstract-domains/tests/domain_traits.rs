@@ -7,7 +7,7 @@ use semi_persistent_abstract_domains::ibig::IBig;
 use semi_persistent_abstract_domains::interval::Interval;
 use semi_persistent_abstract_domains::interval_z::{Hi, IntervalZ, Lo};
 use semi_persistent_abstract_domains::lattice::{BotOr, Domain};
-use semi_persistent_abstract_domains::semantics::{Euclid, Unsigned};
+use semi_persistent_abstract_domains::semantics::{Euclid, Trunc, Unsigned};
 use semi_persistent_abstract_domains::transfer::{Arith, DivRem, DivZero, Mul};
 use semi_persistent_abstract_domains::word::Word;
 
@@ -242,9 +242,17 @@ fn interval_z_lattice_and_arith() {
             let m = a.meet(b);
             let add = <IntervalZ as Arith<Euclid>>::add(a, b);
             let sub = <IntervalZ as Arith<Euclid>>::sub(a, b);
-            let (q, f) = <IntervalZ as DivRem<Euclid>>::div(a, b);
-            match f {
-                DivZero::Always => assert!(matches!(q, BotOr::Bot)),
+            let (qe, fe) = <IntervalZ as DivRem<Euclid>>::div(a, b);
+            let (re, _) = <IntervalZ as DivRem<Euclid>>::rem(a, b);
+            let (qt, ft) = <IntervalZ as DivRem<Trunc>>::div(a, b);
+            let (rt, _) = <IntervalZ as DivRem<Trunc>>::rem(a, b);
+            match fe {
+                DivZero::Always => assert!(matches!(qe, BotOr::Bot)),
+                DivZero::Never => assert!(!zhas(b, 0)),
+                DivZero::Maybe => assert!(zhas(b, 0)),
+            }
+            match ft {
+                DivZero::Always => assert!(matches!(qt, BotOr::Bot)),
                 DivZero::Never => assert!(!zhas(b, 0)),
                 DivZero::Maybe => assert!(zhas(b, 0)),
             }
@@ -259,6 +267,14 @@ fn interval_z_lattice_and_arith() {
                 for &y in &probe {
                     if in_a && zhas(b, y) {
                         assert!(zhas(&add, x + y) && zhas(&sub, x - y));
+                        let prod = <IntervalZ as Mul<Euclid>>::mul(a, b);
+                        assert!(zhas(&prod, x * y));
+                        if y != 0 {
+                            assert!(matches!(&qe, BotOr::Val(v) if zhas(v, x.div_euclid(y))));
+                            assert!(matches!(&re, BotOr::Val(v) if zhas(v, x.rem_euclid(y))));
+                            assert!(matches!(&qt, BotOr::Val(v) if zhas(v, x / y)));
+                            assert!(matches!(&rt, BotOr::Val(v) if zhas(v, x % y)));
+                        }
                     }
                 }
             }
