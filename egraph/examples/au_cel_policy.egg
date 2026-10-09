@@ -1,0 +1,56 @@
+;; EXPECT: ok
+;; EVAL: both
+; Constructed translations of one requirement, adapted from Google's CEL post.
+; https://opensource.googleblog.com/2026/08/securing-the-agentic-era-introducing-formal-verification-for-cel.html
+; The source is a refactoring example; these are not observed LLM samples.
+;
+; Requirement: allow a request exactly when it is in production and its port
+; is either 80 or 443.
+;
+; Candidate A: (is_prod && port == 80) || (is_prod && port == 443)
+; Candidate B: is_prod && port == 80 || port == 443
+; Corrected:   is_prod && (port == 80 || port == 443)
+;
+; isProd names a supplied Boolean input, port a supplied integer input,
+; and port80/port443 the corresponding literals. All operands are total.
+; This AST encoding does not model unknowns, missing attributes, custom
+; functions, or comprehensions, and does not invoke the CEL-Java verifier.
+
+(sort Formula)
+(sort Number)
+
+(function Lit (bool) Formula)
+(function And (Formula) Formula :assoc-comm-idem :identity (Lit true))
+(function Or (Formula) Formula :assoc-comm-idem :identity (Lit false))
+(function Eq (Number Number) Formula :comm)
+(function port () Number)
+(function port80 () Number)
+(function port443 () Number)
+(function isProd () Formula)
+
+(let candidateA
+  (Or
+    (And (isProd) (Eq (port) (port80)))
+    (And (isProd) (Eq (port) (port443)))))
+
+(let candidateB
+  (Or
+    (And (isProd) (Eq (port) (port80)))
+    (Eq (port) (port443))))
+
+(let corrected
+  (And
+    (isProd)
+    (Or (Eq (port) (port80)) (Eq (port) (port443)))))
+
+; One Variants aligns the missing production guard against true.
+(antiunify candidateA candidateB :algorithm exact)
+(checkau candidateA candidateB :max_size 13 :algorithm exact)
+
+; Supply distributivity explicitly to recognize the corrected factorization.
+(rewrite (And a (Or b c)) (Or (And a b) (And a c)))
+(run 2)
+(check (= candidateA corrected))
+(check (!= candidateA candidateB))
+(antiunify candidateA corrected :algorithm exact)
+(checkau candidateA corrected :max_size 9 :algorithm exact)
