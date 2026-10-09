@@ -1,6 +1,6 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-10-01.
+Last refreshed: 2026-10-08.
 
 ## Current result
 
@@ -50,10 +50,11 @@ The current **universal containment** contracts are:
 
 | Type | Operations with universal containment contracts |
 | --- | --- |
-| `ExecTnum` | `bw_or`, `bw_and`, `bw_xor`, `add`, `join`, `meet` |
-| `ExecAnum` | `add`, `div_const` |
-| `ExecUnum` | `top`, `add`, `from_interval`, `mul` |
+| `ExecTnum` | `constant`, `bw_or`, `bw_and`, `bw_xor`, `add`, `join`, `meet`, `rsh`, `lsh` |
+| `ExecAnum` | `constant`, `add`, `div_const` |
+| `ExecUnum` | `constant`, `top`, `add`, `from_interval`, `mul` |
 | `Interval` | `add`, `meet`, `join`, `div_const` |
+| `Interval<W>` | every operation: `Domain`, `meet_exact`, `add`, `sub`, `neg`, `mul`, `div`, `rem`, `and`, `or`, `xor`, `not`, `shl`, `shr` |
 
 The `ExecUnum` proofs use native/spec bridge lemmas, the L3 `ChoppedUnum`
 soundness theorems, explicit overflow-to-top cases, and interval-to-Unum range
@@ -61,7 +62,7 @@ lemmas. #123 removed `ReducedProduct`, whose `reduce` and `add` carried
 containment theorems; `reduce::Product` replaces it.
 
 Other executable methods currently prove well-formedness only. In particular,
-this includes Tnum multiplication, shifts, negation and subtraction, most
+this includes Tnum multiplication, negation and subtraction, most
 and Unum conversions/arithmetic helpers.
 Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
