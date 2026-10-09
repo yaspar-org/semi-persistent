@@ -36,6 +36,7 @@ pub mod exec_tnum;
 pub mod facts;
 pub mod facts_ops;
 pub mod facts_z;
+pub mod grid;
 pub mod ibig;
 pub mod interval;
 pub mod interval_z;
