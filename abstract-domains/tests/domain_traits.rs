@@ -8,7 +8,7 @@ use semi_persistent_abstract_domains::interval::Interval;
 use semi_persistent_abstract_domains::interval_z::{Hi, IntervalZ, Lo};
 use semi_persistent_abstract_domains::lattice::{BotOr, Domain};
 use semi_persistent_abstract_domains::semantics::{Euclid, Unsigned};
-use semi_persistent_abstract_domains::transfer::{Arith, DivRem, DivZero, Mul};
+use semi_persistent_abstract_domains::transfer::{Arith, Bitwise, DivRem, DivZero, Mul, Shift};
 use semi_persistent_abstract_domains::word::Word;
 
 type I8 = Interval<u8>;
@@ -120,6 +120,55 @@ fn interval_unsigned_transfers() {
 }
 
 #[test]
+fn interval_bitwise_transfers() {
+    let s = samples();
+    for a in &s {
+        let n = <I8 as Bitwise<u8>>::not(a);
+        let (lo, hi) = a.bounds();
+        // not is exact
+        assert_eq!(n.bounds(), (!hi, !lo));
+        for b in &s {
+            let and = <I8 as Bitwise<u8>>::and(a, b);
+            let or = <I8 as Bitwise<u8>>::or(a, b);
+            let xor = <I8 as Bitwise<u8>>::xor(a, b);
+            for x in (0..=255u8).filter(|&x| has(a, x)) {
+                for y in (0..=255u8).filter(|&y| has(b, y)) {
+                    assert!(has(&and, x & y));
+                    assert!(has(&or, x | y));
+                    assert!(has(&xor, x ^ y));
+                }
+            }
+        }
+    }
+}
+
+/// Every in-range amount is covered; amounts >= 8 are excluded, and only
+/// amounts >= 8 give `Bot`.
+#[test]
+fn interval_shift_transfers() {
+    let s = samples();
+    let amounts: Vec<I8> = (0..=9u8)
+        .flat_map(|a| (a..=9).map(move |b| iv(a, b)))
+        .chain([iv(0, 255), iv(7, 255), iv(8, 255)])
+        .collect();
+    for a in &s {
+        for k in &amounts {
+            let shl = <I8 as Shift<U>>::shl(a, k);
+            let shr = <I8 as Shift<U>>::shr(a, k);
+            let (klo, _) = k.bounds();
+            assert_eq!(matches!(shl, BotOr::Bot), klo >= 8);
+            assert_eq!(matches!(shr, BotOr::Bot), klo >= 8);
+            for x in (0..=255u8).filter(|&x| has(a, x)) {
+                for sh in (0..8u8).filter(|&sh| has(k, sh)) {
+                    assert!(bot_has(&shl, x << sh), "{} << {}", x, sh);
+                    assert!(bot_has(&shr, x >> sh), "{} >> {}", x, sh);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn interval_precision_cases() {
     // every sum wraps once: [200,210] + [100,110] = [44,64]
     assert_eq!(
@@ -145,6 +194,24 @@ fn interval_precision_cases() {
         <I8 as Mul<U>>::mul(&iv(3, 5), &iv(10, 20)).bounds(),
         (30, 100)
     );
+    let bits = |a: I8, b: I8| {
+        (
+            <I8 as Bitwise<u8>>::and(&a, &b).bounds(),
+            <I8 as Bitwise<u8>>::or(&a, &b).bounds(),
+            <I8 as Bitwise<u8>>::xor(&a, &b).bounds(),
+        )
+    };
+    assert_eq!(bits(iv(0, 15), iv(16, 40)), ((0, 15), (16, 63), (0, 63)));
+    assert_eq!(one(&<I8 as Shift<U>>::shl(&iv(3, 5), &iv(1, 2))), (6, 20));
+    assert_eq!(
+        one(&<I8 as Shift<U>>::shr(&iv(64, 200), &iv(2, 9))),
+        (0, 50)
+    );
+    // shl wraps for 200 << 1: top
+    assert_eq!(
+        one(&<I8 as Shift<U>>::shl(&iv(100, 200), &iv(1, 1))),
+        (0, 255)
+    );
 }
 
 /// A small deterministic generator (high bits only; see the LCG note in the
@@ -160,10 +227,28 @@ fn next(s: &mut u128) -> u128 {
 fn word_primitives_match_native() {
     for x in 0..=255u8 {
         assert_eq!(<u8 as Word>::trailing_zeros(x), x.trailing_zeros());
+        assert_eq!(<u8 as Word>::bit_not(x), !x);
+        let smear = <u8 as Word>::smear(x);
+        assert_eq!(
+            smear,
+            if x == 0 {
+                0
+            } else {
+                u8::MAX >> x.leading_zeros()
+            }
+        );
+        assert_eq!(<u8 as Word>::to_shift(x), (x < 8).then_some(x as u32));
+        for k in 0..8u32 {
+            assert_eq!(<u8 as Word>::shr(x, k), x >> k);
+            assert_eq!(<u8 as Word>::checked_shl(x, k), x.checked_mul(1 << k));
+        }
         for y in 0..=255u8 {
             assert_eq!(<u8 as Word>::wrapping_add(x, y), x.wrapping_add(y));
             assert_eq!(<u8 as Word>::wrapping_sub(x, y), x.wrapping_sub(y));
             assert_eq!(<u8 as Word>::checked_mul(x, y), x.checked_mul(y));
+            assert_eq!(<u8 as Word>::bit_and(x, y), x & y);
+            assert_eq!(<u8 as Word>::bit_or(x, y), x | y);
+            assert_eq!(<u8 as Word>::bit_xor(x, y), x ^ y);
         }
     }
     let mut s = 7u128;
@@ -189,6 +274,11 @@ fn word_primitives_match_native() {
                 want
             );
         }
+    }
+    for k in 0..128u32 {
+        assert_eq!(<u128 as Word>::checked_shl(1, k), Some(1u128 << k));
+        assert_eq!(<u128 as Word>::checked_shl(3, k), 3u128.checked_mul(1 << k));
+        assert_eq!(<u128 as Word>::smear(1u128 << k), u128::MAX >> (127 - k));
     }
     assert_eq!(<u128 as Word>::trailing_zeros(0), 128);
     assert_eq!(<u128 as Word>::half(), 1u128 << 127);
