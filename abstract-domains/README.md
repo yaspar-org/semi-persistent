@@ -150,7 +150,7 @@ cargo run --features bin
 - pinned `vstd` admitted specifications remain in the trust boundary
 - `IBig` (`num-bigint` wrapper): 7 `external_body` functions and 1 axiom, listed in the
   [trust ledger](doc/domain-traits.md#7-trust); machine-word domains do not use it
-- 32 Rust mirror tests and 3 exhaustive reference-domain tests, all passing
+- 32 Rust mirror tests, 3 reference-domain tests, and 4 real Congruence tests, all passing
 - 4 enabled bit-widths: u8, u16, u32, u64
 
 ## Design documents
