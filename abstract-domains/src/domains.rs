@@ -1277,6 +1277,11 @@ macro_rules! abstract_domain {
                 }
             }
 
+            // ============================================================
+            // Congruence
+            // ============================================================
+            pub type Congruence = crate::congruence::Congruence<$uint>;
+
             } // verus!
         }
     };
