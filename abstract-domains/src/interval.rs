@@ -520,7 +520,7 @@ impl<W: Word> DivRem<Unsigned<W>> for Interval<W> {
         };
         let q = self.lo.udiv(d.hi);
         let same_q = q.eq(self.hi.udiv(dlo1));
-        if let (true, Some(qh), Some(ql)) = (same_q, q.checked_mul(d.hi), q.checked_mul(dlo1)) {
+        if same_q {
             {
                 proof {
                     lemma_fundamental_div_mod(self.lo.view() as int, d.hi.view() as int);
@@ -530,7 +530,28 @@ impl<W: Word> DivRem<Unsigned<W>> for Interval<W> {
                     lemma_mul_inequality(dlo1.view() as int, d.hi.view() as int, q.view() as int);
                     lemma_mul_is_commutative(q.view() as int, d.hi.view() as int);
                     lemma_mul_is_commutative(q.view() as int, dlo1.view() as int);
+                    self.lo.lemma_view_bounded();
+                    self.hi.lemma_view_bounded();
                 }
+                // q * d.hi <= lo and q * d.lo' <= hi, so neither product wraps.
+                let qh = match q.checked_mul(d.hi) {
+                    Some(v) => v,
+                    None => {
+                        proof {
+                            assert(false);
+                        }
+                        z
+                    },
+                };
+                let ql = match q.checked_mul(dlo1) {
+                    Some(v) => v,
+                    None => {
+                        proof {
+                            assert(false);
+                        }
+                        z
+                    },
+                };
                 let lo_r = match self.lo.checked_sub(qh) {
                     Some(v) => v,
                     None => { return (BotOr::Val(Self::top()), flag); },  // unreachable
