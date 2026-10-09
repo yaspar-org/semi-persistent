@@ -575,6 +575,17 @@ impl Unum {
         }
     }
 
+    /// A zero offset fits a zero extent, whatever the walls.
+    pub proof fn zero_offset_admitted(w: nat, first: bool)
+        ensures field_admits(w, 0, 0, Bit::f(), first)
+        decreases w
+    { reveal_with_fuel(field_admits, 1);
+        if w != 0 {
+            assert(hd(0 as nat).n() == 0 && tl(0 as nat) == 0 as nat);
+            Self::zero_offset_admitted(tl(w), false);
+        }
+    }
+
     /// Converse of field_admits_leq: d <= x implies field_admits(0, x, d, F, true).
     pub proof fn offset_from_bound(x: nat, d: nat)
         requires d <= x

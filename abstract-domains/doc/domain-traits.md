@@ -82,6 +82,14 @@ next threshold) and document the measure it uses.
   `checked_add`, `checked_sub`, `checked_mul`, `wrapping_add`, `wrapping_sub`,
   `neg_nonzero`, `udiv`, `urem`, `trailing_zeros` (the 2-adic valuation,
   stated as `tz_spec`: `x = q * 2^t` with `q` odd) and `mulmod`.
+- **Bits:** spec `and`, `or`, `xor`, `not` and `ones_above` (the least
+  `2^k - 1` at or above a word) with exec `bit_and`, `bit_or`, `bit_xor`,
+  `bit_not` and `smear`, and the lemmas the interval transfers need:
+  `x & y` is at most either operand, `x | y` at least either one, operands at
+  most `m` keep `x | y` and `x ^ y` at most `ones_above(m)`, and
+  `!x = 2^N - 1 - x`.
+- **Shifts:** `to_shift` (the word as a `u32` amount when it is below `bits`),
+  `shr` (`x / 2^k`) and `checked_shl` (`x * 2^k` when it does not wrap).
 
 `impl_word!` discharges the obligations once per width, for u8, u16, u32, u64
 and u128. `signed_view` is the two's-complement reading.
@@ -96,9 +104,10 @@ against 13 ns for u64). vstd specifies `trailing_zeros` up to u64; the u128
 version splits the word into two u64 halves.
 
 Width-specific facts go in the trait as lemmas proved in `impl_word!`. They are
-not re-proved inside domain code. Domains that need `by (bit_vector)`
-reasoning (Tnum, bitwise transfers) will extend `Word` with bitwise lemmas in
-the same way. The per-width `abstract_domain!` stamping in `domains.rs` is the
+not re-proved inside domain code. The bit lemmas are proved there `by
+(bit_vector)` at every width, u128 included. `shr` and `checked_shl` shift
+natively up to u64, with `x <= MAX >> k` as the overflow test; vstd has no
+u128 shift lemma, so at u128 `checked_shl` multiplies by `1 << k`. The per-width `abstract_domain!` stamping in `domains.rs` is the
 pattern being replaced.
 
 ## 4. Semantics (`semantics.rs`)
@@ -112,6 +121,12 @@ A `Semantics` names a value type `V` and gives the spec meaning of `zero`,
 | `Signed<W>`   | `W`   | wrapping mod 2^N | truncated on two's complement (MIN / -1 wraps) |
 | `Euclid`      | `int` | exact | Euclidean (Verus `/`, SMT-LIB `div`) |
 | `Trunc`       | `int` | exact | truncated toward zero (C, Rust) |
+
+Shifts are meaningful only for amounts with `shift_ok(k)`: `k < N` for words,
+because C makes larger amounts undefined and Rust panics on them, and `k >= 0`
+for `int`. `shl` multiplies by `2^k` (wrapping for words). `shr` is logical for
+`Unsigned<W>` and arithmetic, rounding down, for `Signed<W>`, `Euclid` and
+`Trunc`.
 
 This follows Jourdan's machine-integer layer (thesis ch. 5). Operators that
 commute with reduction mod 2^N (add, sub, mul, neg, and, or, not) mean the same
@@ -136,13 +151,18 @@ implements it once per semantics it supports.
 
   The flag is the division-by-zero alarm. An analyzer reports `Maybe` and
   `Always` as alarms and continues with the value.
+- `Bitwise<W>`: `and`, `or`, `xor`, `not`, against `W`'s bit operators, with
+  the `Arith` contract shape. Bit operators act on bit patterns, which
+  signedness does not change, so this trait is indexed by the word.
+- `Shift<S>`: `shl`, `shr` by an abstract amount of the same domain. They
+  return `BotOr<Self>`, which covers every shift by an amount with
+  `S::shift_ok` and is `Bot` only when no amount in the argument has it. An
+  analyzer reports an alarm when the amount is not contained in `[0, N - 1]`.
 
 Planned next, with the same shape:
 
 - `Compare<S>`: forward comparisons, plus backward refinement returning
   `BotOr<(Self, Self)>`.
-- `Bitwise`.
-- `Shift<S>`.
 - `Cast`: truncation, zero extension and sign extension between widths.
 - `Product<A, B>` with `reduce -> BotOr`: done in `reduce.rs`, see
   doc/reduced-product.md.
@@ -163,7 +183,14 @@ Planned next, with the same shape:
   remainder `[lo - q * d.hi, min(hi - q * d.lo', d.hi - 1)]` when every
   quotient is the same `q` (which makes it exact on singletons and the
   identity when `hi < d.lo`), `[0, min(hi, d.hi - 1)]` otherwise;
-- `DivRem<Signed<W>>`: sound placeholder (top plus the exact zero flag).
+- `DivRem<Signed<W>>`: sound placeholder (top plus the exact zero flag);
+- `Bitwise<W>`: `and` in `[0, min(hi, o.hi)]`, `or` in
+  `[max(lo, o.lo), ones_above(max(hi, o.hi))]`, `xor` in
+  `[0, ones_above(max(hi, o.hi))]`, and `not` exact as `[MAX - hi, MAX - lo]`.
+  Warren's minOR/maxOR (Hacker's Delight §4-3) would make `and` and `or` exact;
+- `Shift<Unsigned<W>>`: over the in-range amounts `[a, b]` of the argument,
+  `shr` is `[lo >> b, hi >> a]` and `shl` is `[lo << a, hi << b]` when
+  `hi << b` does not wrap, top otherwise. Signed shifts are not implemented yet.
 
 **`IntervalZ`** (`interval_z.rs`) has `enum Lo { NegInf, Fin(IBig) }` and
 `enum Hi { Fin(IBig), PosInf }`, private fields, and `lo <= hi` when both are
