@@ -541,34 +541,110 @@ fn mulmod_u128(a: u128, b: u128, m: u128) -> (r: u128)
     r
 }
 
-/// Two's-complement reading of the bit pattern.
-/// 2^k as a u128, assembled from u64 shifts (vstd proves `shl` only up to u64).
+/// 2^k as a u128. vstd proves `shl` only up to u64, so the shifted value is
+/// pinned by two right shifts: `(1 << k) >> k == 1` and `((1 << k) - 1) >> k == 0`.
 fn pow2_u128(k: u32) -> (r: u128)
     requires
         k < 128,
     ensures
         r == pow2(k as nat),
 {
-    if k < 64 {
-        proof {
-            vstd::bits::lemma_u64_pow2_no_overflow(k as nat);
-            vstd::bits::lemma_u64_shl_is_mul(1, k as u64);
-        }
-        (1u64 << (k as u64)) as u128
-    } else {
-        let j = k - 64;
-        proof {
-            vstd::bits::lemma_u64_pow2_no_overflow(j as nat);
-            vstd::bits::lemma_u64_shl_is_mul(1, j as u64);
-            lemma_pow2_adds(j as nat, 64);
-            lemma2_to64();
-            lemma_pow2_strictly_increases(k as nat, 128);
-            lemma_pow2_word(128);
-        }
-        ((1u64 << (j as u64)) as u128) * 0x1_0000_0000_0000_0000u128
+    let s = k as u128;
+    let x = 1u128 << s;
+    proof {
+        assert(x >> s == 1 && ((x - 1) as u128) >> s == 0 && x >= 1) by (bit_vector)
+            requires
+                x == 1u128 << s,
+                s < 128,
+        ;
+        vstd::bits::lemma_u128_shr_is_div(x, s);
+        vstd::bits::lemma_u128_shr_is_div((x - 1) as u128, s);
+        let p = pow2(k as nat) as int;
+        lemma_pow2_pos(k as nat);
+        // x / p == 1 gives x >= p.
+        assert(x as int / p == 1);
+        lemma_fundamental_div_mod(x as int, p);
+        lemma_mod_pos_bound(x as int, p);
+        assert(x as int >= p);
+        // (x - 1) / p == 0 gives x - 1 < p.
+        assert((x - 1) as int / p == 0);
+        lemma_fundamental_div_mod((x - 1) as int, p);
+        lemma_mod_pos_bound((x - 1) as int, p);
+        assert(x as int <= p);
     }
+    x
 }
 
+/// `x << k` for u128 when it does not wrap: vstd has no u128 shift lemma, so
+/// this multiplies by 2^k.
+fn checked_shl_u128(x: u128, k: u32) -> (r: Option<u128>)
+    requires
+        k < 128,
+    ensures
+        match r {
+            Some(s) => s as nat == x * pow2(k as nat),
+            None => x * pow2(k as nat) > u128::MAX,
+        },
+{
+    x.checked_mul(pow2_u128(k))
+}
+
+/// `x << k` when it does not wrap, by a native shift: `x * 2^k <= MAX`
+/// exactly when `x <= MAX >> k`.
+macro_rules! shl_native {
+    ($name:ident, $t:ty, $shl_is_mul:path, $le_iff:path) => {
+        verus! {
+            fn $name(x: $t, k: u32) -> (r: Option<$t>)
+                requires
+                    k < <$t>::BITS,
+                ensures
+                    match r {
+                        Some(s) => s as nat == x * pow2(k as nat),
+                        None => x * pow2(k as nat) > <$t>::MAX,
+                    },
+            {
+                proof {
+                    $le_iff(x, k as $t, <$t>::MAX);
+                }
+                if x <= (<$t>::MAX >> (k as $t)) {
+                    proof {
+                        $shl_is_mul(x, k as $t);
+                    }
+                    Some(x << (k as $t))
+                } else {
+                    None
+                }
+            }
+        }
+    };
+}
+
+shl_native!(
+    checked_shl_u8,
+    u8,
+    vstd::bits::lemma_u8_shl_is_mul,
+    vstd::bits::lemma_u8_mul_pow2_le_max_iff_max_shr
+);
+shl_native!(
+    checked_shl_u16,
+    u16,
+    vstd::bits::lemma_u16_shl_is_mul,
+    vstd::bits::lemma_u16_mul_pow2_le_max_iff_max_shr
+);
+shl_native!(
+    checked_shl_u32,
+    u32,
+    vstd::bits::lemma_u32_shl_is_mul,
+    vstd::bits::lemma_u32_mul_pow2_le_max_iff_max_shr
+);
+shl_native!(
+    checked_shl_u64,
+    u64,
+    vstd::bits::lemma_u64_shl_is_mul,
+    vstd::bits::lemma_u64_mul_pow2_le_max_iff_max_shr
+);
+
+/// Two's-complement reading of the bit pattern.
 pub open spec fn signed_view<W: Word>(w: W) -> int {
     if w.view() < W::modulus() / 2 {
         w.view() as int
@@ -669,7 +745,7 @@ tz_native!(
 );
 
 macro_rules! impl_word {
-    ($t:ty, $bits:expr, $modulus:expr, $tz_ty:ty, $tz:ident, $mm_ty:ty, $mulmod:ident, $shr_is_div:path) => {
+    ($t:ty, $bits:expr, $modulus:expr, $tz_ty:ty, $tz:ident, $mm_ty:ty, $mulmod:ident, $shr_is_div:path, $checked_shl:ident) => {
         verus! {
             impl Word for $t {
                 open spec fn bits() -> nat {
@@ -927,12 +1003,7 @@ macro_rules! impl_word {
                 }
 
                 fn checked_shl(self, k: u32) -> (r: Option<Self>) {
-                    let p = pow2_u128(k);
-                    proof {
-                        lemma_pow2_word($bits);
-                        lemma_pow2_strictly_increases(k as nat, $bits);
-                    }
-                    self.checked_mul(p as $t)
+                    $checked_shl(self, k)
                 }
             }
         }
@@ -947,7 +1018,8 @@ impl_word!(
     tz_u8,
     u64,
     mulmod_via_u64,
-    vstd::bits::lemma_u8_shr_is_div
+    vstd::bits::lemma_u8_shr_is_div,
+    checked_shl_u8
 );
 impl_word!(
     u16,
@@ -957,7 +1029,8 @@ impl_word!(
     tz_u16,
     u64,
     mulmod_via_u64,
-    vstd::bits::lemma_u16_shr_is_div
+    vstd::bits::lemma_u16_shr_is_div,
+    checked_shl_u16
 );
 impl_word!(
     u32,
@@ -967,7 +1040,8 @@ impl_word!(
     tz_u32,
     u64,
     mulmod_via_u64,
-    vstd::bits::lemma_u32_shr_is_div
+    vstd::bits::lemma_u32_shr_is_div,
+    checked_shl_u32
 );
 impl_word!(
     u64,
@@ -977,7 +1051,8 @@ impl_word!(
     tz_u64,
     u64,
     mulmod_u64,
-    vstd::bits::lemma_u64_shr_is_div
+    vstd::bits::lemma_u64_shr_is_div,
+    checked_shl_u64
 );
 impl_word!(
     u128,
@@ -987,5 +1062,6 @@ impl_word!(
     tz_u128,
     u128,
     mulmod_u128,
-    vstd::bits::lemma_u128_shr_is_div
+    vstd::bits::lemma_u128_shr_is_div,
+    checked_shl_u128
 );
