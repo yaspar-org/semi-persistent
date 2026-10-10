@@ -9,7 +9,9 @@
 //! atoms. A separate [`MatchIterator`] provides lazy pull execution of a static plan
 //! with an explicit DFS stack.
 
-use crate::ast::{CmpOp, LitValVarId, MsetVarId, MultVarId, SeqVarId, SetVarId, VarId};
+use crate::ast::{
+    CmpOp, LitSeqVarId, LitValVarId, MsetVarId, MultVarId, SeqVarId, SetVarId, VarId,
+};
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::containers::IndexLike;
@@ -156,6 +158,15 @@ fn span_range<Cfg: EGraphConfig>(span: PoolSpan<Cfg>) -> core::ops::Range<usize>
 // Binding environment
 // ---------------------------------------------------------------------------
 
+/// `Match::mark`'s record.
+pub(crate) struct PoolMark<Cfg: EGraphConfig> {
+    lens: [usize; 4],
+    seq_spans: Vec<PoolSpan<Cfg>>,
+    set_spans: Vec<PoolSpan<Cfg>>,
+    mset_spans: Vec<PoolSpan<Cfg>>,
+    lit_seq_spans: Vec<PoolSpan<Cfg>>,
+}
+
 #[derive(Debug)]
 pub struct Match<Cfg: EGraphConfig> {
     /// E-node bindings indexed by VarId.
@@ -176,6 +187,11 @@ pub struct Match<Cfg: EGraphConfig> {
     pub mset_pool: Vec<Cfg::C>,
     /// Span (start, len) into mset_pool, indexed by MsetVarId.
     pub mset_spans: Vec<PoolSpan<Cfg>>,
+    /// Literal-sequence pool: the literal columns of a sequence pattern's filters,
+    /// packed contiguously (`doc/sequence-patterns.md`, Typing).
+    pub lit_seq_pool: Vec<Cfg::V>,
+    /// Span (start, len) into lit_seq_pool, indexed by LitSeqVarId.
+    pub lit_seq_spans: Vec<PoolSpan<Cfg>>,
 }
 
 impl<Cfg: EGraphConfig> Clone for Match<Cfg> {
@@ -190,6 +206,8 @@ impl<Cfg: EGraphConfig> Clone for Match<Cfg> {
             set_spans: self.set_spans.clone(),
             mset_pool: self.mset_pool.clone(),
             mset_spans: self.mset_spans.clone(),
+            lit_seq_pool: self.lit_seq_pool.clone(),
+            lit_seq_spans: self.lit_seq_spans.clone(),
         }
     }
 
@@ -210,6 +228,8 @@ impl<Cfg: EGraphConfig> Clone for Match<Cfg> {
         self.set_spans.clone_from(&source.set_spans);
         self.mset_pool.clone_from(&source.mset_pool);
         self.mset_spans.clone_from(&source.mset_spans);
+        self.lit_seq_pool.clone_from(&source.lit_seq_pool);
+        self.lit_seq_spans.clone_from(&source.lit_seq_spans);
     }
 }
 
@@ -225,7 +245,45 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
             set_spans: vec![empty_span::<Cfg>(); shape.num_set_vars()],
             mset_pool: Vec::new(),
             mset_spans: vec![empty_span::<Cfg>(); shape.num_mset_vars()],
+            lit_seq_pool: Vec::new(),
+            lit_seq_spans: vec![empty_span::<Cfg>(); shape.num_lit_seq_vars()],
         }
+    }
+    /// The pools' lengths and every span, for `restore`: the `Collect` step writes a
+    /// whole assembled match into the pools and must leave them as it found them.
+    pub(crate) fn mark(&self) -> PoolMark<Cfg> {
+        PoolMark {
+            lens: [
+                self.seq_pool.len(),
+                self.set_pool.len(),
+                self.mset_pool.len(),
+                self.lit_seq_pool.len(),
+            ],
+            seq_spans: self.seq_spans.clone(),
+            set_spans: self.set_spans.clone(),
+            mset_spans: self.mset_spans.clone(),
+            lit_seq_spans: self.lit_seq_spans.clone(),
+        }
+    }
+    pub(crate) fn restore(&mut self, m: &PoolMark<Cfg>) {
+        self.seq_pool.truncate(m.lens[0]);
+        self.set_pool.truncate(m.lens[1]);
+        self.mset_pool.truncate(m.lens[2]);
+        self.lit_seq_pool.truncate(m.lens[3]);
+        self.seq_spans.clone_from(&m.seq_spans);
+        self.set_spans.clone_from(&m.set_spans);
+        self.mset_spans.clone_from(&m.mset_spans);
+        self.lit_seq_spans.clone_from(&m.lit_seq_spans);
+    }
+    // Literal sequences
+    pub fn lit_seq_slice(&self, v: LitSeqVarId) -> &[Cfg::V] {
+        &self.lit_seq_pool[span_range::<Cfg>(self.lit_seq_spans[v.idx()])]
+    }
+    pub fn push_lit_seq(&mut self, v: LitSeqVarId, data: &[Cfg::V]) {
+        let start = self.lit_seq_pool.len();
+        self.lit_seq_pool.extend_from_slice(data);
+        self.lit_seq_spans[v.idx()] =
+            pool_span::<Cfg>(start, self.lit_seq_pool.len(), "Match::lit_seq_pool");
     }
     // Node bindings
     pub fn get(&self, v: VarId) -> Cfg::G {
@@ -405,6 +463,40 @@ pub struct MatchPool<Cfg: EGraphConfig> {
     /// partial on one assignment is usually partial on many, so the rest would
     /// be noise.
     guard_fault: Option<EvalError>,
+    /// The `Collect` step's state (`crate::seq_engine`): the pool its filter
+    /// probes run in, the nodes skipped for exceeding the match bound, and the first
+    /// fault it met (a match it could not assemble), which ends the rule's pass.
+    collect_scratch: Option<Box<MatchPool<Cfg>>>,
+    pub(crate) collect_skipped: usize,
+    pub(crate) collect_fault: Option<String>,
+    /// A filter drive's nodes, part 1 and part 2, summed over the query just run: the
+    /// measurement of `doc/goal-flatten-and-engine-completion.md`, task 5.
+    pub(crate) collect_driven: (usize, usize),
+    /// Semi-filter's test (`crate::seq_engine::Keep`): a root node the `Collect` step
+    /// is offered is assembled only if it passes. Set by the caller for one query, and
+    /// not reset by a run; `None` assembles every node.
+    pub(crate) collect_keep: Option<Box<crate::seq_engine::Keep<Cfg::O>>>,
+    /// When set, the root nodes the `Collect` step was offered and the ones it
+    /// assembled, for the query just run (`doc/goal-semi-naive-sequence-rules.md`,
+    /// step 3).
+    pub(crate) collect_trace: Option<(Vec<Cfg::G>, Vec<Cfg::G>)>,
+    /// The round's filter rows shared across rules (`crate::seq_engine::RowCache`),
+    /// when the caller keeps one; not reset by a run.
+    pub(crate) collect_rows: Option<crate::seq_engine::RowCache<Cfg::G, Cfg::V>>,
+    /// The `Flatten` steps' view registers, indexed by `ViewReg`, and their
+    /// enumerators, lent by move as `id_bufs` are: a nested flattened atom takes a
+    /// second one while the outer one is iterating its views.
+    views: Vec<Vec<(Cfg::G, Cfg::M)>>,
+    /// Per register, which matches its view admits (`crate::flatten::Demand`).
+    view_demand: Vec<crate::flatten::Demand<Cfg::G>>,
+    flatten_scratch: Vec<crate::flatten::FlattenScratch<Cfg::G, Cfg::M>>,
+    /// Nodes the `Flatten` step skipped for exceeding a bound
+    /// (`crate::flatten::OVER_BOUND`), for the query just run.
+    flatten_skipped: usize,
+    /// Flattened views and openings skipped for a multiplicity beyond the configured width
+    /// (`crate::flatten::MULT_OVERFLOW`), for the query just run, and the first of them.
+    flatten_overflowed: usize,
+    first_flatten_overflow: Option<crate::flatten::FlattenOverflow<Cfg::G, Cfg::M>>,
 }
 
 impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
@@ -422,7 +514,104 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
             steps: 0,
             op_filter_policy: OpFilterPolicy::Adaptive,
             guard_fault: None,
+            collect_scratch: None,
+            collect_skipped: 0,
+            collect_fault: None,
+            collect_driven: (0, 0),
+            collect_keep: None,
+            collect_trace: None,
+            collect_rows: None,
+            views: Vec::new(),
+            view_demand: Vec::new(),
+            flatten_scratch: Vec::new(),
+            flatten_skipped: 0,
+            flatten_overflowed: 0,
+            first_flatten_overflow: None,
         }
+    }
+
+    /// Nodes the `Flatten` step skipped for exceeding a bound, for the query just run.
+    pub fn flatten_skipped(&self) -> usize {
+        self.flatten_skipped
+    }
+
+    /// Flattened views and openings skipped for a multiplicity beyond the configured
+    /// width, for the query just run.
+    pub fn flatten_overflowed(&self) -> usize {
+        self.flatten_overflowed
+    }
+
+    /// The first of them, with the nesting that produced the count.
+    pub fn first_flatten_overflow(
+        &self,
+    ) -> Option<&crate::flatten::FlattenOverflow<Cfg::G, Cfg::M>> {
+        self.first_flatten_overflow.as_ref()
+    }
+
+    fn take_flatten_scratch(&mut self) -> crate::flatten::FlattenScratch<Cfg::G, Cfg::M> {
+        self.flatten_scratch.pop().unwrap_or_default()
+    }
+
+    fn give_flatten_scratch(&mut self, s: crate::flatten::FlattenScratch<Cfg::G, Cfg::M>) {
+        self.flatten_scratch.push(s);
+    }
+
+    /// Write view `i` of `fl` and its demand into register `r`.
+    fn write_view(
+        &mut self,
+        r: crate::schedule::ViewReg,
+        fl: &crate::flatten::FlattenScratch<Cfg::G, Cfg::M>,
+        i: usize,
+    ) {
+        if self.views.len() <= r.0 {
+            self.views.resize_with(r.0 + 1, Vec::new);
+            self.view_demand.resize_with(r.0 + 1, Default::default);
+        }
+        let b = &mut self.views[r.0];
+        b.clear();
+        b.extend_from_slice(fl.view(i));
+        fl.demand_into(i, &mut self.view_demand[r.0]);
+    }
+
+    /// Whether the decomposition at `step` keeps a match taking `taken`: always, unless
+    /// the step reads a flattened view whose demand rejects it
+    /// (`doc/goal-canonical-flatten-views.md`, decision 2).
+    fn demand_accepts<O, I, V>(
+        &self,
+        step: &crate::schedule::Step<O, I, V>,
+        taken: impl Iterator<Item = Cfg::G>,
+    ) -> bool {
+        use crate::schedule::Step;
+        let (Step::ExpandA { view: Some(r), .. }
+        | Step::DecomposeAC { view: Some(r), .. }
+        | Step::DecomposeACI { view: Some(r), .. }) = step
+        else {
+            return true;
+        };
+        match self.view_demand.get(r.0) {
+            Some(d) if !d.unconditional => d.accepts(&taken.collect::<Vec<_>>()),
+            _ => true,
+        }
+    }
+
+    /// The view register `r` holds, or `None` if no `Flatten` step wrote it.
+    fn view(&self, r: crate::schedule::ViewReg) -> Option<&[(Cfg::G, Cfg::M)]> {
+        self.views.get(r.0).map(|v| v.as_slice())
+    }
+
+    /// Borrow the `Collect` step's probe pool, by move (see `take_id_buf`).
+    pub(crate) fn take_collect_scratch(&mut self) -> Box<MatchPool<Cfg>> {
+        self.collect_scratch.take().unwrap_or_default()
+    }
+
+    pub(crate) fn give_collect_scratch(&mut self, p: Box<MatchPool<Cfg>>) {
+        self.collect_scratch = Some(p);
+    }
+
+    /// Nodes the `Collect` step skipped for exceeding the match bound, and its
+    /// first fault, for the query just run.
+    pub fn collect_report(&self) -> (usize, Option<&str>) {
+        (self.collect_skipped, self.collect_fault.as_deref())
     }
 
     /// Adopt a query's shape, dropping stored matches and keeping every flat
@@ -467,7 +656,17 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
             set_spans: vec![empty_span::<Cfg>(); s.set_stride],
             mset_pool: Vec::new(),
             mset_spans: vec![empty_span::<Cfg>(); s.mset_stride],
+            lit_seq_pool: Vec::new(),
+            lit_seq_spans: vec![empty_span::<Cfg>(); s.lit_seq_stride],
         };
+        for i in 0..s.lit_seq_stride {
+            let span = s.lit_seq_spans[j * s.lit_seq_stride + i];
+            let start = m.lit_seq_pool.len();
+            m.lit_seq_pool
+                .extend_from_slice(&s.lit_seq_pool[span_range::<Cfg>(span)]);
+            m.lit_seq_spans[i] =
+                pool_span::<Cfg>(start, m.lit_seq_pool.len(), "clone_match:lit_seq");
+        }
         for i in 0..s.seq_stride {
             let span = s.seq_spans[j * s.seq_stride + i];
             let start = m.seq_pool.len();
@@ -558,15 +757,19 @@ pub struct MatchSet<Cfg: EGraphConfig> {
     seq_stride: usize,
     set_stride: usize,
     mset_stride: usize,
+    lit_seq_stride: usize,
     nodes: Vec<Cfg::G>,
     mults: Vec<Cfg::M>,
     lit_vals: Vec<Cfg::V>,
     seq_spans: Vec<PoolSpan<Cfg>>,
     set_spans: Vec<PoolSpan<Cfg>>,
     mset_spans: Vec<PoolSpan<Cfg>>,
+    lit_seq_spans: Vec<PoolSpan<Cfg>>,
     seq_pool: Vec<Cfg::G>,
     set_pool: Vec<Cfg::G>,
     mset_pool: Vec<Cfg::C>,
+    /// A sequence pattern's literal columns (`Match::lit_seq_pool`).
+    lit_seq_pool: Vec<Cfg::V>,
 }
 
 impl<Cfg: EGraphConfig> MatchSet<Cfg> {
@@ -579,15 +782,18 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
             seq_stride: shape.num_seq_vars(),
             set_stride: shape.num_set_vars(),
             mset_stride: shape.num_mset_vars(),
+            lit_seq_stride: shape.num_lit_seq_vars(),
             nodes: Vec::new(),
             mults: Vec::new(),
             lit_vals: Vec::new(),
             seq_spans: Vec::new(),
             set_spans: Vec::new(),
             mset_spans: Vec::new(),
+            lit_seq_spans: Vec::new(),
             seq_pool: Vec::new(),
             set_pool: Vec::new(),
             mset_pool: Vec::new(),
+            lit_seq_pool: Vec::new(),
         }
     }
 
@@ -603,15 +809,18 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
             seq_stride: 0,
             set_stride: 0,
             mset_stride: 0,
+            lit_seq_stride: 0,
             nodes: Vec::new(),
             mults: Vec::new(),
             lit_vals: Vec::new(),
             seq_spans: Vec::new(),
             set_spans: Vec::new(),
             mset_spans: Vec::new(),
+            lit_seq_spans: Vec::new(),
             seq_pool: Vec::new(),
             set_pool: Vec::new(),
             mset_pool: Vec::new(),
+            lit_seq_pool: Vec::new(),
         }
     }
 
@@ -624,6 +833,7 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         self.seq_stride = shape.num_seq_vars();
         self.set_stride = shape.num_set_vars();
         self.mset_stride = shape.num_mset_vars();
+        self.lit_seq_stride = shape.num_lit_seq_vars();
         self.count = 0;
         self.nodes.clear();
         self.mults.clear();
@@ -631,9 +841,11 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         self.seq_spans.clear();
         self.set_spans.clear();
         self.mset_spans.clear();
+        self.lit_seq_spans.clear();
         self.seq_pool.clear();
         self.set_pool.clear();
         self.mset_pool.clear();
+        self.lit_seq_pool.clear();
     }
 
     /// Append one match.
@@ -678,6 +890,16 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
                 "MatchSet::mset_pool",
             ));
         }
+        for &span in &m.lit_seq_spans {
+            let start = self.lit_seq_pool.len();
+            self.lit_seq_pool
+                .extend_from_slice(&m.lit_seq_pool[span_range::<Cfg>(span)]);
+            self.lit_seq_spans.push(pool_span::<Cfg>(
+                start,
+                self.lit_seq_pool.len(),
+                "MatchSet::lit_seq_pool",
+            ));
+        }
         self.count += 1;
     }
 
@@ -716,6 +938,10 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         let span = self.mset_spans[j * self.mset_stride + v.idx()];
         &self.mset_pool[span_range::<Cfg>(span)]
     }
+    pub fn lit_seq_slice(&self, v: LitSeqVarId, j: usize) -> &[Cfg::V] {
+        let span = self.lit_seq_spans[j * self.lit_seq_stride + v.idx()];
+        &self.lit_seq_pool[span_range::<Cfg>(span)]
+    }
 
     /// Drop the stored matches without releasing storage (the `MatchPool`
     /// warm-reuse discipline, for consumers that keep a `MatchSet` across
@@ -728,9 +954,11 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         self.seq_spans.clear();
         self.set_spans.clear();
         self.mset_spans.clear();
+        self.lit_seq_spans.clear();
         self.seq_pool.clear();
         self.set_pool.clear();
         self.mset_pool.clear();
+        self.lit_seq_pool.clear();
     }
 }
 
@@ -749,6 +977,11 @@ pub trait MatchView<Cfg: EGraphConfig> {
     fn seq_slice(&self, v: SeqVarId) -> &[Cfg::G];
     fn set_slice(&self, v: SetVarId) -> &[Cfg::G];
     fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C];
+    /// A literal column of a sequence pattern. Views over ordinary queries, which have
+    /// none, keep the default.
+    fn lit_seq_slice(&self, _v: LitSeqVarId) -> &[Cfg::V] {
+        &[]
+    }
 }
 
 impl<Cfg: EGraphConfig> MatchView<Cfg> for Match<Cfg> {
@@ -769,6 +1002,9 @@ impl<Cfg: EGraphConfig> MatchView<Cfg> for Match<Cfg> {
     }
     fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C] {
         Match::mset_slice(self, v)
+    }
+    fn lit_seq_slice(&self, v: LitSeqVarId) -> &[Cfg::V] {
+        Match::lit_seq_slice(self, v)
     }
 }
 
@@ -796,6 +1032,9 @@ impl<'a, Cfg: EGraphConfig> MatchView<Cfg> for MatchRow<'a, Cfg> {
     }
     fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C] {
         self.set.mset_slice(v, self.j)
+    }
+    fn lit_seq_slice(&self, v: LitSeqVarId) -> &[Cfg::V] {
+        self.set.lit_seq_slice(v, self.j)
     }
 }
 
@@ -859,7 +1098,7 @@ where
 /// built with, not the e-graph's live one.
 ///
 /// Matching is specified against the e-graph as of the round's index build
-/// (chapter 09). The e-graph keeps changing inside a round: every rule's
+/// (§7.4). The e-graph keeps changing inside a round: every rule's
 /// actions merge classes and add nodes before the next rule matches, while the
 /// index buckets stay keyed by the reprs of the build. Canonicalizing with the
 /// live union-find and then probing a bucket keyed at build time therefore
@@ -892,6 +1131,62 @@ where
     }
 }
 
+/// [`canon`] for callers outside the matcher that compare classes against a round's
+/// snapshot: the sequence engine's filter rows (`crate::seq_query`).
+pub fn round_canon<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    index: &VariantIndex<'_, Cfg>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    id: Cfg::G,
+) -> Cfg::G
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    canon(index, eg, id)
+}
+
+/// [`run_query_into`] from a partial binding: each `(v, class)` of `seeds` is bound
+/// before the first step. The plan must have been scheduled with those variables
+/// bound (`schedule::schedule_with_bound`), so that no step reads an unbound one and
+/// none rebinds a seed without restoring it.
+pub fn run_query_seeded_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    pool: &mut MatchPool<Cfg>,
+    seeds: &[(VarId, Cfg::G)],
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    pool.reshape(&plan.shape);
+    pool.steps = 0;
+    pool.op_filter_policy = op_filter_policy();
+    pool.guard_fault = None;
+    pool.collect_skipped = 0;
+    pool.collect_fault = None;
+    pool.collect_driven = (0, 0);
+    if let Some((offered, assembled)) = &mut pool.collect_trace {
+        offered.clear();
+        assembled.clear();
+    }
+    pool.flatten_skipped = 0;
+    pool.flatten_overflowed = 0;
+    pool.first_flatten_overflow = None;
+    let mut env = Match::new(&plan.shape);
+    for &(v, g) in seeds {
+        env.set(v, g);
+    }
+    let exec = Exec::<Cfg, L, S>::static_plan(&plan.steps);
+    run_step(&exec, 0, eg, index, globals, &mut env, pool);
+    add_match_steps(pool.steps);
+}
+
 /// Collect all matches of `plan` into `pool`, reusing its storage.
 ///
 /// The pool is cleared first, so a caller may hand the same pool to every query
@@ -912,6 +1207,16 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     pool.steps = 0;
     pool.op_filter_policy = op_filter_policy();
     pool.guard_fault = None;
+    pool.collect_skipped = 0;
+    pool.collect_fault = None;
+    pool.collect_driven = (0, 0);
+    if let Some((offered, assembled)) = &mut pool.collect_trace {
+        offered.clear();
+        assembled.clear();
+    }
+    pool.flatten_skipped = 0;
+    pool.flatten_overflowed = 0;
+    pool.first_flatten_overflow = None;
     let mut env = Match::new(&plan.shape);
     let exec = Exec::<Cfg, L, S>::static_plan(&plan.steps);
     run_step(&exec, 0, eg, index, globals, &mut env, pool);
@@ -946,6 +1251,16 @@ pub fn run_query_scheduled_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS
     pool.steps = 0;
     pool.op_filter_policy = op_filter_policy();
     pool.guard_fault = None;
+    pool.collect_skipped = 0;
+    pool.collect_fault = None;
+    pool.collect_driven = (0, 0);
+    if let Some((offered, assembled)) = &mut pool.collect_trace {
+        offered.clear();
+        assembled.clear();
+    }
+    pool.flatten_skipped = 0;
+    pool.flatten_overflowed = 0;
+    pool.first_flatten_overflow = None;
     let mut env = Match::new(&rq.shape);
     let adaptive = Adaptive::new(rq);
     let exec = Exec::adaptive(&adaptive);
@@ -996,7 +1311,7 @@ pub fn set_runtime_scheduling(on: bool) {
     RUNTIME_SCHEDULING.with(|c| c.set(on));
 }
 
-/// How the per-binding atom-order choice is selected (design chapter 20).
+/// How the per-binding atom-order choice is selected (design §8.3).
 ///
 /// `Static` and `Runtime` fix [`runtime_scheduling`] for the whole run (the
 /// two existing flags). `Auto` decides per rule per round: the saturation
@@ -1097,7 +1412,12 @@ struct Adaptive<'q, Cfg: EGraphConfig, L: LitVal, S: Copy> {
 impl<'q, Cfg: EGraphConfig, L: LitVal, S: Copy> Adaptive<'q, Cfg, L, S> {
     /// Whether `rq` fits the mask width; see [`ADAPTIVE_MAX_WIDTH`].
     fn fits(rq: &crate::resolve::ResolvedQuery<Cfg::O, S, L>) -> bool {
-        rq.atoms.len() <= ADAPTIVE_MAX_WIDTH && rq.shape.num_vars() <= ADAPTIVE_MAX_WIDTH
+        rq.atoms.len() <= ADAPTIVE_MAX_WIDTH
+            && rq.shape.num_vars() <= ADAPTIVE_MAX_WIDTH
+            // A sequence pattern's `Collect` and a flattened query's `Flatten` steps are
+            // lowered by the static scheduler only.
+            && !rq.atoms.iter().any(|a| matches!(a, crate::resolve::RAtom::Collect { .. }))
+            && !rq.flatten
     }
 
     fn new(rq: &'q crate::resolve::ResolvedQuery<Cfg::O, S, L>) -> Self {
@@ -1144,7 +1464,7 @@ impl<'q, Cfg: EGraphConfig, L: LitVal, S: Copy> Adaptive<'q, Cfg, L, S> {
             crate::schedule::lower_eager(self.atoms, used_arr, bound_arr, &mut steps);
         } else {
             let ai = chosen as usize;
-            crate::schedule::emit_atom(&self.atoms[ai], ai, bound_arr, &mut steps);
+            crate::schedule::emit_atom(&self.atoms[ai], ai, false, bound_arr, &mut steps);
             used_arr[ai] = true;
         }
         let seg = Segment {
@@ -1204,7 +1524,7 @@ impl<'a, Cfg: EGraphConfig, L: LitVal, S: Copy> Exec<'a, Cfg, L, S> {
 
 /// Decide what runs next, at the end of a runtime-scheduled block.
 ///
-/// The two phases of the static scheduling loop (chapter 08), one iteration per
+/// The two phases of the static scheduling loop (§7.3), one iteration per
 /// call, with the environment live: the eager pass to fixpoint, then the
 /// cheapest remaining atom. The order is the same as the static one because it
 /// is the same code lowering the same atoms; only the choice in phase B is made
@@ -1265,7 +1585,7 @@ fn advance<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 /// The static scheduler prices an atom by its relation scaled by one measured
 /// mean fan-out per bound key (`schedule::estimate_cost`); those means are
 /// averages over skewed distributions, so they are right about the workload and
-/// wrong about the binding (chapter 20, Fact 2). Here the atom is priced by the
+/// wrong about the binding (§8.3, Fact 2). Here the atom is priced by the
 /// length of the shortest bucket its join would actually open, which is the
 /// leapfrog intersection's own bound on the candidates it can propose: an upper
 /// bound on the work, exact for a single-lookup join, and read from the buckets
@@ -1372,6 +1692,75 @@ where
     best
 }
 
+/// Whether the `Collect` step assembles root node `n`: semi-filter's test when one is
+/// set, recorded in the trace when one is kept.
+fn collect_admits<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    results: &mut MatchPool<Cfg>,
+    n: Cfg::G,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+) -> bool
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    let pass = results
+        .collect_keep
+        .as_deref()
+        .is_none_or(|k| k.passes(n, eg, index));
+    if let Some((offered, assembled)) = &mut results.collect_trace {
+        offered.push(n);
+        if pass {
+            assembled.push(n);
+        }
+    }
+    pass
+}
+
+/// Emit a `Collect` step's matches at one node: write each into the pools, continue
+/// with the next step, and restore the pools and node scalars on every path. A node over
+/// the match bound is skipped and counted ("§Edge cases 2"); any other failure is the
+/// query's fault, reported once.
+#[allow(clippy::too_many_arguments)]
+fn collect_emit<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    exec: &Exec<'_, Cfg, L, S>,
+    step_idx: usize,
+    plan: &crate::seq_engine::CollectPlan<Cfg::O, Cfg::Index, L>,
+    envs: Result<Vec<crate::seq_collect::Env<Cfg::G, Cfg::V>>, String>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &mut Match<Cfg>,
+    results: &mut MatchPool<Cfg>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    match envs {
+        Ok(envs) => {
+            for e in &envs {
+                let mark = env.mark();
+                match crate::seq_engine::fill(&plan.asm, e, env) {
+                    Ok(()) => run_step(exec, step_idx + 1, eg, index, globals, env, results),
+                    Err(f) => {
+                        results.collect_fault.get_or_insert(f);
+                    }
+                }
+                crate::seq_engine::unfill(&plan.asm, env);
+                env.restore(&mark);
+            }
+        }
+        Err(e) if crate::seq_collect::is_over_bound(&e) => results.collect_skipped += 1,
+        Err(e) => {
+            results.collect_fault.get_or_insert(e);
+        }
+    }
+}
+
 fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
@@ -1412,6 +1801,69 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         } => {
             run_join(
                 exec, step_idx, *target, lookups, *atom_id, eg, index, globals, env, results,
+            );
+        }
+        Step::Collect { node, plan } => {
+            // Unbound: a filter drive. The step lists its own nodes, binds each, and
+            // assembles there, restoring the binding afterwards.
+            let Some(n) = env.get_opt(*node) else {
+                let mut scratch = results.take_collect_scratch();
+                let mut cache = results.collect_rows.take();
+                let driven = crate::seq_engine::drive(
+                    &plan.0,
+                    eg,
+                    index,
+                    globals,
+                    &mut scratch,
+                    cache.as_mut(),
+                );
+                results.collect_rows = cache;
+                let driven = match driven {
+                    Ok(d) => d,
+                    Err(e) => {
+                        results.give_collect_scratch(scratch);
+                        results.collect_fault.get_or_insert(e);
+                        return;
+                    }
+                };
+                results.collect_driven.0 += driven.part1.len();
+                results.collect_driven.1 += driven.part2.len();
+                let nodes = driven
+                    .part1
+                    .iter()
+                    .map(|&n| (n, false))
+                    .chain(driven.part2.iter().map(|&n| (n, true)));
+                for (n, in_part2) in nodes.collect::<Vec<_>>() {
+                    if !collect_admits(results, n, eg, index) {
+                        continue;
+                    }
+                    let envs = crate::seq_engine::collect_driven(
+                        &plan.0,
+                        n,
+                        in_part2,
+                        &driven,
+                        eg,
+                        index,
+                        globals,
+                        &mut scratch,
+                    );
+                    env.set(*node, n);
+                    collect_emit(
+                        exec, step_idx, &plan.0, envs, eg, index, globals, env, results,
+                    );
+                    env.clear(*node);
+                }
+                results.give_collect_scratch(scratch);
+                return;
+            };
+            if !collect_admits(results, n, eg, index) {
+                return;
+            }
+            let mut scratch = results.take_collect_scratch();
+            let envs = crate::seq_engine::collect_at(&plan.0, n, eg, index, globals, &mut scratch);
+            results.give_collect_scratch(scratch);
+            collect_emit(
+                exec, step_idx, &plan.0, envs, eg, index, globals, env, results,
             );
         }
         Step::ExtractChild {
@@ -1459,17 +1911,74 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             run_step(exec, step_idx + 1, eg, index, globals, env, results);
             env.clear(*target);
         }
+        Step::Flatten {
+            node,
+            op,
+            kind,
+            out,
+        } => {
+            let n = env.get(*node);
+            let mut fl = results.take_flatten_scratch();
+            let snap = crate::flatten::Snapshot { eg, index };
+            // Demand pruning: when every item of the decomposition that reads this view
+            // is already bound, only their classes can be taken.
+            let items: Vec<PatVar> = match exec.steps.get(step_idx + 1) {
+                Some(Step::ExpandA { children, .. }) => children.clone(),
+                Some(Step::DecomposeAC { elems, .. }) => elems.iter().map(|e| e.0).collect(),
+                Some(Step::DecomposeACI { elems, .. }) => elems.clone(),
+                _ => Vec::new(),
+            };
+            let bound: Option<Vec<Cfg::G>> = items
+                .iter()
+                .map(|pv| match *pv {
+                    PatVar::Global(g) => Some(canon(index, eg, globals.binding(g))),
+                    PatVar::Local(v) => env.nodes[v.idx()].map(|c| canon(index, eg, c)),
+                })
+                .collect();
+            let takeable = |c: Cfg::G| bound.as_ref().is_none_or(|b| b.contains(&c));
+            match crate::flatten::enumerate(&snap, n, *op, *kind, takeable, &mut fl) {
+                Ok(()) => {
+                    // A view past the width is skipped inside the enumeration; the node's
+                    // other views still run, and the first overflow is kept for the report.
+                    if fl.overflows() > 0 {
+                        results.flatten_overflowed =
+                            results.flatten_overflowed.saturating_add(fl.overflows());
+                        if results.first_flatten_overflow.is_none() {
+                            results.first_flatten_overflow = fl.take_first_overflow();
+                        }
+                    }
+                    for i in 0..fl.len() {
+                        results.write_view(*out, &fl, i);
+                        run_step(exec, step_idx + 1, eg, index, globals, env, results);
+                    }
+                }
+                Err(e) if e == crate::flatten::MULT_OVERFLOW => results.flatten_overflowed += 1,
+                Err(_) => results.flatten_skipped += 1,
+            }
+            results.give_flatten_scratch(fl);
+        }
         Step::ExpandA {
             node,
             children,
             pre,
             suf,
+            view,
         } => {
             let node_id = env.get(*node);
             // Recycled through the pool: this step runs once per candidate node, so a
             // fresh `Vec` here was one allocation per match step (E14).
             let mut buf = results.take_id_buf();
-            eg.seq_children(node_id, &mut buf);
+            match view {
+                None => eg.seq_children(node_id, &mut buf),
+                Some(r) => {
+                    buf.clear();
+                    let Some(v) = results.view(*r) else {
+                        results.give_id_buf(buf);
+                        return;
+                    };
+                    buf.extend(v.iter().map(|e| e.0));
+                }
+            }
             run_expand_a(
                 exec, step_idx, children, *pre, *suf, &buf, eg, index, globals, env, results,
             );
@@ -1480,10 +1989,21 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             elems,
             rest,
             idempotent: _,
+            view,
         } => {
             let node_id = env.get(*node);
             let mut residual = results.take_mset_buf();
-            eg.mset_children(node_id, &mut residual);
+            match view {
+                None => eg.ac_children(node_id, &mut residual),
+                Some(r) => {
+                    residual.clear();
+                    let Some(v) = results.view(*r) else {
+                        results.give_mset_buf(residual);
+                        return;
+                    };
+                    residual.extend_from_slice(v);
+                }
+            }
             for entry in &mut residual {
                 entry.0 = canon(index, eg, entry.0);
             }
@@ -1501,10 +2021,25 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             );
             results.give_mset_buf(residual);
         }
-        Step::DecomposeACI { node, elems, rest } => {
+        Step::DecomposeACI {
+            node,
+            elems,
+            rest,
+            view,
+        } => {
             let node_id = env.get(*node);
             let mut residual = results.take_id_buf();
-            eg.set_children(node_id, &mut residual);
+            match view {
+                None => eg.set_children(node_id, &mut residual),
+                Some(r) => {
+                    residual.clear();
+                    let Some(v) = results.view(*r) else {
+                        results.give_id_buf(residual);
+                        return;
+                    };
+                    residual.extend(v.iter().map(|e| e.0));
+                }
+            }
             for entry in &mut residual {
                 *entry = canon(index, eg, *entry);
             }
@@ -1730,7 +2265,10 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
             }
         }
     }
-    run_step(exec, step_idx + 1, eg, index, globals, env, results);
+    let taken = seq[offset..offset + children.len()].iter().copied();
+    if results.demand_accepts(&exec.steps[step_idx], taken) {
+        run_step(exec, step_idx + 1, eg, index, globals, env, results);
+    }
     unbind(env, &bound);
 }
 
@@ -1743,20 +2281,21 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
 /// Var with constraint: avail must be >= 1, satisfy the constraint,
 /// and if the mult variable is already bound (non-zero), avail must
 /// equal the bound value (non-linear variable consistency).
-fn mult_matches(mult: &RMult, avail: u64, bound_mult: Option<u64>) -> bool {
+fn mult_matches<M: MultiplicityLike>(mult: &RMult, avail: M, bound_mult: Option<M>) -> bool {
+    use std::cmp::Ordering::{Equal, Greater, Less};
     match mult {
-        // Compared at the surface width. Narrowing `*n` to the configured
-        // multiplicity width instead would make a literal above that width
-        // alias onto a small multiplicity (`x:4294967297` matching 1); a
-        // literal the configuration cannot represent simply never matches.
-        RMult::Exact(n) => avail == *n,
+        // Compared against the surface literal without converting the stored count
+        // (`cmp_u64`). Narrowing `*n` to the configured width instead would make a
+        // literal above that width alias onto a small multiplicity (`x:4294967297`
+        // matching 1); a literal the configuration cannot represent never matches.
+        RMult::Exact(n) => avail.cmp_u64(*n) == Equal,
         RMult::Var { constraint, .. } => {
-            if avail < 1 {
+            if avail == M::ZERO {
                 return false;
             }
             // Non-linear: if already bound, must match
             if let Some(prev) = bound_mult
-                && prev > 0
+                && prev != M::ZERO
                 && avail != prev
             {
                 return false;
@@ -1764,14 +2303,14 @@ fn mult_matches(mult: &RMult, avail: u64, bound_mult: Option<u64>) -> bool {
             match constraint {
                 None => true,
                 Some((op, val)) => {
-                    let v = *val;
+                    let c = avail.cmp_u64(*val);
                     match op {
-                        CmpOp::Ge => avail >= v,
-                        CmpOp::Gt => avail > v,
-                        CmpOp::Le => avail <= v,
-                        CmpOp::Lt => avail < v,
-                        CmpOp::Eq => avail == v,
-                        CmpOp::Ne => avail != v,
+                        CmpOp::Ge => c != Less,
+                        CmpOp::Gt => c == Greater,
+                        CmpOp::Le => c != Greater,
+                        CmpOp::Lt => c == Less,
+                        CmpOp::Eq => c == Equal,
+                        CmpOp::Ne => c != Equal,
                     }
                 }
             }
@@ -1781,12 +2320,12 @@ fn mult_matches(mult: &RMult, avail: u64, bound_mult: Option<u64>) -> bool {
 
 /// Get the currently bound multiplicity for a mult variable, if any.
 /// Returns Some(val) where val > 0 if already bound, None otherwise.
-fn bound_mult_val<Cfg: EGraphConfig>(mult: &RMult, env: &Match<Cfg>) -> Option<u64> {
+fn bound_mult_val<Cfg: EGraphConfig>(mult: &RMult, env: &Match<Cfg>) -> Option<Cfg::M> {
     match mult {
         RMult::Exact(_) => None,
         RMult::Var { var, .. } => {
-            let v = env.get_mult(*var).to_u64();
-            if v > 0 { Some(v) } else { None }
+            let v = env.get_mult(*var);
+            (v != Cfg::M::ZERO).then_some(v)
         }
     }
 }
@@ -1832,6 +2371,11 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 {
     let zero = Cfg::M::ZERO;
     if ei >= elems.len() {
+        // An item takes a whole entry, so the entries it took are the zeroed ones.
+        let taken = residual.iter().filter(|e| e.1 == zero).map(|e| e.0);
+        if !results.demand_accepts(&exec.steps[step_idx], taken) {
+            return;
+        }
         if let Some(rv) = rest {
             env.push_mset_residual(rv, residual);
             run_step(exec, step_idx + 1, eg, index, globals, env, results);
@@ -1850,9 +2394,10 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     };
 
     if let Some(repr) = bound_repr {
-        if let Some(pos) = residual.iter().position(|&(r, m)| {
-            r == repr && mult_matches(mult, m.to_u64(), bound_mult_val(mult, env))
-        }) {
+        if let Some(pos) = residual
+            .iter()
+            .position(|&(r, m)| r == repr && mult_matches(mult, m, bound_mult_val(mult, env)))
+        {
             let actual = residual[pos].1;
             let was_unbound = match mult {
                 RMult::Var { var: mv, .. } => env.get_mult(*mv) == Cfg::M::ZERO,
@@ -1895,7 +2440,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     let n = residual.len();
     for ri in 0..n {
         let (repr, avail) = residual[ri];
-        if !mult_matches(mult, avail.to_u64(), bound_mult_val(mult, env)) {
+        if !mult_matches(mult, avail, bound_mult_val(mult, env)) {
             continue;
         }
         let PatVar::Local(vid) = *var else {
@@ -1985,6 +2530,12 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
 {
     if ei >= elems.len() {
+        let taken = (0..residual.len())
+            .filter(|&i| used.test(i))
+            .map(|i| residual[i]);
+        if !results.demand_accepts(&exec.steps[step_idx], taken) {
+            return;
+        }
         if let Some(rv) = rest {
             env.push_set_residual(rv, residual, used);
             run_step(exec, step_idx + 1, eg, index, globals, env, results);
@@ -2078,7 +2629,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 /// The first condition prevents a per-candidate test when the operator relation
 /// is small enough to be the better intersection driver. The second prevents
 /// the test from scaling with an enormous candidate bucket after the relation
-/// side has become the tighter bound. Chapter 20 records the design boundary;
+/// side has become the tighter bound. §8.3 records the design boundary;
 /// deterministic tests pin the rule and set equivalence.
 const OP_FILTER_RELATION_PER_CANDIDATE: usize = 512;
 
@@ -2613,6 +3164,16 @@ where
     /// Try to enter `plan.steps[self.cursor]`.
     fn enter(&mut self) -> Enter {
         match &self.plan.steps[self.cursor] {
+            // The pull engine does not assemble sequence patterns: their queries run
+            // on the push engine only (`crate::seq_engine`), so none reaches here, and
+            // one that did would have no match rather than a wrong one.
+            Step::Collect { .. } => Enter::Failed,
+            // Likewise for a flattened query (`Adaptive::fits` and the push engine's
+            // static plans are the only route a `Flatten` step takes).
+            Step::Flatten { .. }
+            | Step::ExpandA { view: Some(_), .. }
+            | Step::DecomposeAC { view: Some(_), .. }
+            | Step::DecomposeACI { view: Some(_), .. } => Enter::Failed,
             Step::ExtractChild {
                 target,
                 parent,
@@ -2686,6 +3247,7 @@ where
                 children,
                 pre,
                 suf,
+                view: None,
             } => {
                 let node_id = self.env.get(*node);
                 let mut seq = Vec::new();
@@ -2696,7 +3258,11 @@ where
                 self.enter_expand_a(&children, pre, suf, seq)
             }
             Step::DecomposeAC {
-                node, elems, rest, ..
+                node,
+                elems,
+                rest,
+                view: None,
+                ..
             } => {
                 let node_id = self.env.get(*node);
                 let mut residual = Vec::new();
@@ -2708,7 +3274,12 @@ where
                 let rest = *rest;
                 self.enter_ac(&elems, rest, residual)
             }
-            Step::DecomposeACI { node, elems, rest } => {
+            Step::DecomposeACI {
+                node,
+                elems,
+                rest,
+                view: None,
+            } => {
                 let node_id = self.env.get(*node);
                 let mut residual = Vec::new();
                 self.eg.set_children(node_id, &mut residual);
@@ -3234,11 +3805,7 @@ where
         if let Some(repr) = bound_repr {
             for ri in start..residual.len() {
                 if residual[ri].0 == repr
-                    && mult_matches(
-                        mult,
-                        residual[ri].1.to_u64(),
-                        bound_mult_val(mult, &self.env),
-                    )
+                    && mult_matches(mult, residual[ri].1, bound_mult_val(mult, &self.env))
                 {
                     let take: Cfg::M = match mult {
                         // Matched at the surface width, so the literal equals
@@ -3258,7 +3825,7 @@ where
 
         for ri in start..residual.len() {
             let (repr, avail) = residual[ri];
-            if !mult_matches(mult, avail.to_u64(), bound_mult_val(mult, &self.env)) {
+            if !mult_matches(mult, avail, bound_mult_val(mult, &self.env)) {
                 continue;
             }
             let PatVar::Local(vid) = *var else {
@@ -5868,7 +6435,7 @@ mod tests {
     /// `match_keys` runs the query three ways and asserts all three agree, so
     /// this is the sweep of shapes rather than the comparison itself. The
     /// property is not an accident of these patterns: the match set is a
-    /// function of the round's index and the query (chapter 09, "Which
+    /// function of the round's index and the query (§7.4, "Which
     /// Snapshot"), which is exactly what makes an order change a performance
     /// change. This is that guarantee held to the strongest oracle available.
     #[test]

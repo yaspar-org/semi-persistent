@@ -1,0 +1,20 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// Each node costs 1, plus 4 per unit of each child's multiplicity, plus its first
+// payload integer: all exact, with no Roto `u64` arithmetic.
+fn cost(g: Graph) {
+    let four = g.ubig(4);
+    for n in g.nodes() {
+        let total = g.ubig(1);
+        for k in n.children() {
+            total = total.plus(k.count().times(four));
+        }
+        match n.num(0) {
+            Some(v) => {
+                total = total.plus(v.to_ubig());
+            }
+            None => {}
+        }
+        n.chosen().charge_if_big(total);
+    }
+}

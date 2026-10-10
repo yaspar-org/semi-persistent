@@ -26,7 +26,6 @@ use crate::canon::{MSetCanon, VarCanon};
 use crate::config::{AuIds, EGraphConfig};
 use crate::containers::{DenseId, IndexLike};
 use crate::literal::LitVal;
-use crate::multiplicity::MultiplicityLike;
 
 use super::ac_repr;
 use super::actions::ActionCache;
@@ -178,12 +177,12 @@ where
             let term = results
                 .best_term(or)
                 .expect("every reachable child OR node was solved");
-            child_terms.push((term, pair.count.to_u64()));
+            child_terms.push((term, crate::au::au_count(pair.count)));
         }
         let candidate = pool.intern_action_result(
             TermOp::EGraph(action.op),
             &child_terms,
-            snap.op_is_commutative(action.op),
+            snap.child_form(action.op),
         );
         let quality = pool.quality(candidate);
         if quality < best_quality {

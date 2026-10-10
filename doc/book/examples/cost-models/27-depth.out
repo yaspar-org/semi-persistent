@@ -1,0 +1,9 @@
+; cost 1 proved at rung selection (0 solves, 0 cycle exclusions)
+; solver lower bound 1
+(And (V "a") (V "b") (V "c") (V "d"))
+; cost 1 proved at rung levels (0 solves, 0 cycle exclusions)
+; solver lower bound 1
+(And (V "a") (V "b") (V "c") (V "d"))
+; cost 2 proved at rung binary (0 solves, 0 cycle exclusions)
+; solver lower bound 2
+(And (And (V "a") (V "c")) (And (V "b") (V "d")))

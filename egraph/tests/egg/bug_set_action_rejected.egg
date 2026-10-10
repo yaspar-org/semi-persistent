@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; MESSAGE: the `set` action (on 'g') is not implemented
+;; Bug #4: a rule with a `set` action was accepted and then reached a `todo!` in apply.rs
+;; when it fired. It is refused when the rule is installed.
+(sort E)
+(function a () E)
+(function f (E) E)
+(function g (E) E)
+(let x (f (a)))
+(rule ((f y)) ((set (g y) (a))))
+(run 1)

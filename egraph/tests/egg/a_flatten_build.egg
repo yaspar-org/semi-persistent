@@ -1,6 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; TYPES: machine
-;; Build-side A-only flattening (design 04-canonization "A-Only Operators"): an
+;; Build-side A-only flattening (design 05-algebraic-operators §5.2, "A-Only Operators"): an
 ;; associative-but-not-commutative operator has the flat *sequence* normal form, so a
 ;; nested same-op term flattens on the way in. Order is preserved — associativity
 ;; licenses re-association, not reordering. Plain canonicalization in `add`; no rules,

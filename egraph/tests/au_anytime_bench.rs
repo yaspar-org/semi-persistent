@@ -964,7 +964,7 @@ fn anytime_gap_pilot() {
         } else {
             nonzero_gaps.iter().sum::<f64>() / nonzero_gaps.len() as f64
         };
-        let certified = at.iter().filter(|r| r.mcgs.certified).count();
+        let proven = at.iter().filter(|r| r.mcgs.certified).count();
         let mut ratios: Vec<f64> = at.iter().map(|r| r.mcgs.ms / r.exact.ms).collect();
         ratios.sort_by(|a, b| a.partial_cmp(b).unwrap());
         println!(
@@ -973,7 +973,7 @@ fn anytime_gap_pilot() {
             n,
             zero as f64 / n as f64,
             mean_rel,
-            certified as f64 / n as f64,
+            proven as f64 / n as f64,
             median(&ratios)
         );
     }

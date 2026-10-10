@@ -38,7 +38,7 @@ Four contributions:
    delegation have finite oracle/property evidence. The Verus crate proves
    objective and positional lower-bound lemmas; it does not yet prove
    `D* = OPT` or refine the Rust AC/ACI solver.
-   ([chapter 19](egraph/doc/design/19-anti-unification.md))
+   ([chapter 12](egraph/doc/design/12-anti-unification.md))
 
 `TRACK=false` and `PROOFS=false` eliminate work guarded by those const
 generics. The generic structs still retain empty diff/frame/fork fields and

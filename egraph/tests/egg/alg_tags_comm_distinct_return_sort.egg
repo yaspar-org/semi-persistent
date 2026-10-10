@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; A commutative operator's arguments must share a sort, but its return sort may differ.
 (sort E)

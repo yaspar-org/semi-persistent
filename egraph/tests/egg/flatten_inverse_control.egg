@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; TYPES: machine
+;; The control for flatten_inverse.egg: without `:flatten` the rule reads the stored
+;; children {a, K}, so it never pairs b with c, and the check fails.
+(sort E)
+(function zero () E)
+(function a () E) (function b () E) (function c () E) (function Kc () E)
+(function neg (E) E)
+(function add (E) E :assoc :comm :identity (zero) :inverse neg)
+(function Pair (E E) E)
+(let k (Kc))
+(let top (add (a) k))
+(union k (add (neg (a)) (b) (c)))
+(rewrite (add x y) (Pair x y))
+(run 1)
+(check (= top (Pair (b) (c))))

@@ -20,7 +20,7 @@ use crate::containers::Tagged;
 /// Per-node control flags stored in the `flags` field.
 ///
 /// `FLAG_SUBSUMED` and `FLAG_AC_COLLAPSED` are deliberately distinct concepts (see
-/// `doc/design/ac-congruence-completeness.md` §6b):
+/// `doc/design/06-ac-congruence-closure.md` §6b):
 /// - `FLAG_SUBSUMED` — user-level `(subsume …)`: "do not *match* this node." The
 ///   matcher's indices skip it.
 /// - `FLAG_AC_COLLAPSED` — AC completion's inter-reduction: "do not use this node as a
@@ -29,11 +29,45 @@ use crate::containers::Tagged;
 ///   reduced form is in the same class — and stays a legal child of other nodes; only
 ///   AC completion's active rule set excludes it.
 ///
-/// A node may carry either, both, or neither. Completion's active set is the AC nodes
-/// with *neither* flag; the matcher's visible set is the nodes without `FLAG_SUBSUMED`.
+/// - `FLAG_CONGRUENT_DUP` — congruence closure: "this node's canonical form equals that
+///   of another member of its class which does not carry this flag." Purely
+///   representational, and the only flag no user action sets: recanonicalization can
+///   make an existing node's content coincide with another's, the hash-cons collision
+///   merges their classes, and the loser stays a member because the store never removes
+///   a node (ids are monotone, and the union-find, the use lists and the class ring all
+///   still reference it). A consumer that enumerates a class's members as *distinct
+///   alternatives* may therefore skip it without losing any content, choice, or cost: an
+///   identical unflagged twin is present by the invariant below. Skipping it is what makes
+///   a naive and a semi-naive round, which build such copies at different rates, report the
+///   same node counts and the same extraction search space.
+///
+///   The matcher is **not** such a consumer, and deliberately keeps it. The semi-naive
+///   delta index is built from the round's touched nodes; the node that recanonicalized
+///   onto its twin's content is touched while the twin usually is not, so skipping it would
+///   leave that content unrepresented in the delta and the variant would lose matches
+///   (pinned by `index::tests::congruent_dup_is_the_only_delta_representative` and the
+///   nested-growth property in `saturate::tests::prop`). This is a soundness requirement,
+///   not an optimisation choice: `doc/design/09-saturation.md` §9.2, "A soundness
+///   requirement on every index filter". Matching a duplicate only repeats its twin's bindings, which the match
+///   deduplication collapses, so keeping it costs work and changes no result.
+///
+/// A node may carry any combination. Completion's active set is the AC nodes with
+/// neither `FLAG_SUBSUMED` nor `FLAG_AC_COLLAPSED`; the matcher's visible set remains the
+/// nodes without `FLAG_SUBSUMED`; the dump and both extractors additionally skip
+/// `FLAG_CONGRUENT_DUP`.
+///
+/// **The `FLAG_CONGRUENT_DUP` invariant, and the one rule that maintains it.** Every
+/// content group within a class keeps at least one unflagged member, so skipping the
+/// flagged ones never empties a class (which extraction reports as infeasible rather
+/// than degrading, `extract.rs`). It is maintained by a single rule in `caches.rs`: a
+/// flagged node never has a hash-cons hint pushed for it. A collision probe therefore
+/// only ever returns an unflagged node, so the survivor of every collision is unflagged,
+/// and a chain of copies cannot flag its own last member. Because the rule lives at the
+/// one place the flag is set, no consumer's correctness depends on where that is.
 pub const FLAG_SUBSUMED: u8 = 1 << 0;
 pub const FLAG_CONSTRUCTOR: u8 = 1 << 1;
 pub const FLAG_AC_COLLAPSED: u8 = 1 << 2;
+pub const FLAG_CONGRUENT_DUP: u8 = 1 << 3;
 
 // ---------------------------------------------------------------------------
 // FixedArityNode<G, O, K>

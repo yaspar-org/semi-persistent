@@ -20,7 +20,7 @@ The engine also answers more than equality questions. An anti-unification query
 returns a term that preserves shared structure and marks the remaining
 disagreements with `Variants` nodes.
 
-## The four parts
+## The five parts
 
 In Part I, we build the binary, write and run a program, declare operators with
 algebraic properties, and write rules over ordinary, sequence, multiset, and
@@ -37,6 +37,11 @@ In Part IV, we apply the engine to autoformalization. We sample a formalizer
 several times, cluster the samples by equality saturation, and anti-unify across
 clusters to explain the remaining differences.
 
+In Part V, we extract terms under cost models: costs written as scripts, in
+Rust, as answer-set programs, or in MiniZinc, solved by an internal or an
+external solver. [Chapter 24](24-extraction-under-cost-models.md) opens the
+part.
+
 ## What you need to know already
 
 We assume that you are familiar with first-order terms and rewrite rules. We do
@@ -46,13 +51,18 @@ canonization, or anti-unification; we introduce each of them from scratch.
 ## The examples
 
 Every program shown in this book lives in `doc/book/examples/` and is included
-in its chapter directly from that file. The test suite executes every `.egg`
-file in the directory.
+in its chapter directly from that file. The `book_examples` test executes every
+`.egg` file at the top level of that directory. The `book_cost_model_examples`
+test runs the Part V programs in `examples/cost-models/` and compares each
+output with its `.out` file. It skips a program whose external solver is not
+installed.
 
-Each example ends with `check` or `checkau` assertions that state the behavior
-the chapter relies on. A change in engine behavior therefore fails a test
-instead of silently invalidating the book. Every number, size, ratio, and error
-message quoted in the book was captured by running the corresponding file.
+Each example states the behavior the chapter relies on, either with `check` or
+`checkau` assertions or, for a program the book shows being rejected, with an
+`EXPECT` directive naming the failure. A change in engine behavior therefore
+fails a test instead of silently invalidating the book. Every number, size,
+ratio, and error message quoted in the book was captured by running the
+corresponding file.
 
 ## What this book is not
 

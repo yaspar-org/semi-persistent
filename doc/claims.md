@@ -166,7 +166,7 @@ The maintained theorem, refinement, and validation acceptance criteria are in
 - The `dec` family is not a hardness family.
 - The old sparse span-table install-cost claim is retracted. The current
   stamped-arena tradeoff is recorded in
-  [the index design](../egraph/doc/design/06-index.md#the-span-arena);
+  [the index design](../egraph/doc/design/08-indexes-and-leapfrog.md#the-span-arena);
   revival requires the evidence in
   [the runtime validation specification](../egraph/doc/future/performance-validation.md#6-evidence-triggered-work).
 

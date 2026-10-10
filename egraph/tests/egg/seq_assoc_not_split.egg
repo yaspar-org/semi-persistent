@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; TYPES: machine
+;; Maximality: the run does not stop short of an F child the gap after it would
+;; hold, so `(F a)` alone is never wrapped with `(F b)` left in the gap.
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function H (E) E)
+(function Cat (E) E :assoc)
+(let e (Cat a (F a) (F b) b))
+(rewrite (Cat ..pre (..fs (F x)) ..suf) (Cat ..pre (H (Cat ..fs)) ..suf)
+  :when ((>= (count fs) 1)))
+(run 1)
+(check (= e (Cat a (H (F a)) (F b) b)))

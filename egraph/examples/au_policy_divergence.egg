@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ; Autoformalization divergence: cross-region replication policy.
 ;
 ; "A cross-region replication request is permitted only if the source bucket

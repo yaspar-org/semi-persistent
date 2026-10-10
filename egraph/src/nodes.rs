@@ -149,8 +149,10 @@ impl crate::config::EGraphConfig for Config64 {
     type Index = u64;
     type G = ENodeId64;
     type ClassKey = EClassKey64;
-    type O = OpId64;
-    type S = SortId64;
+    // Operator and sort counts are the program's declarations, so 31 bits as in every
+    // configuration (`EGraphConfig::O`).
+    type O = crate::id::OpId;
+    type S = crate::id::SortId;
     type V = LitValId64;
     type UL = UseListId64;
     type UN = UseNodeId64;

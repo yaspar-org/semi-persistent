@@ -14,11 +14,11 @@ fn check_margins(p: &TransportProblem, sol: &TransportSolution) {
     let rows = p.row_supply.len();
     let cols = p.col_demand.len();
     for i in 0..rows {
-        let row_sum: u32 = sol.flow[i].iter().sum();
+        let row_sum: u64 = sol.flow[i].iter().sum();
         assert_eq!(row_sum, p.row_supply[i], "row {i} margin violated");
     }
     for j in 0..cols {
-        let col_sum: u32 = sol.flow.iter().map(|r| r[j]).sum();
+        let col_sum: u64 = sol.flow.iter().map(|r| r[j]).sum();
         assert_eq!(col_sum, p.col_demand[j], "col {j} margin violated");
     }
 }
@@ -99,8 +99,9 @@ fn arb_problem(max_dim: usize, max_margin: u32) -> impl Strategy<Value = Transpo
                 (Just(rs), Just(cd), cost)
             })
             .prop_map(|(row_supply, col_demand, cost)| TransportProblem {
-                row_supply,
-                col_demand,
+                // Generated at u32, solved at the solver's u64 margins.
+                row_supply: row_supply.into_iter().map(u64::from).collect(),
+                col_demand: col_demand.into_iter().map(u64::from).collect(),
                 cost,
             })
     })
@@ -196,13 +197,13 @@ proptest! {
         let feasible = solve_transport(&p).is_some();
         if feasible && k > 0 {
             let scaled = TransportProblem {
-                row_supply: p.row_supply.iter().map(|&m| m.saturating_mul(k)).collect(),
-                col_demand: p.col_demand.iter().map(|&n| n.saturating_mul(k)).collect(),
+                row_supply: p.row_supply.iter().map(|&m| m.saturating_mul(u64::from(k))).collect(),
+                col_demand: p.col_demand.iter().map(|&n| n.saturating_mul(u64::from(k))).collect(),
                 cost: p.cost.clone(),
             };
             // Check totals still match after saturation.
-            let st: u64 = scaled.row_supply.iter().map(|&m| m as u64).sum();
-            let dt: u64 = scaled.col_demand.iter().map(|&n| n as u64).sum();
+            let st: u64 = scaled.row_supply.iter().sum();
+            let dt: u64 = scaled.col_demand.iter().sum();
             if st == dt {
                 prop_assert!(
                     solve_transport(&scaled).is_some(),
@@ -264,8 +265,8 @@ proptest! {
             return Ok(()); // skip: can't fit in a single u32 demand
         }
         let p = TransportProblem {
-            row_supply: vec![m1, m2],
-            col_demand: vec![m1, m2], // diagonal feasible
+            row_supply: vec![u64::from(m1), u64::from(m2)],
+            col_demand: vec![u64::from(m1), u64::from(m2)], // diagonal feasible
             cost: vec![
                 vec![Cell::Cost(s1, v1), Cell::Cost(s2, v2)],
                 vec![Cell::Cost(s2, v2), Cell::Cost(s1, v1)],
@@ -287,13 +288,13 @@ fn exhaustive_min(p: &TransportProblem) -> Option<(u128, u128)> {
     let rows = p.row_supply.len();
     let cols = p.col_demand.len();
     let mut best: Option<(u128, u128)> = None;
-    let mut matrix = vec![vec![0u32; cols]; rows];
+    let mut matrix = vec![vec![0u64; cols]; rows];
     let mut col_residual = p.col_demand.clone();
 
     fn rec(
         p: &TransportProblem,
-        matrix: &mut Vec<Vec<u32>>,
-        col_residual: &mut Vec<u32>,
+        matrix: &mut Vec<Vec<u64>>,
+        col_residual: &mut Vec<u64>,
         row: usize,
         best: &mut Option<(u128, u128)>,
     ) {
@@ -327,11 +328,11 @@ fn exhaustive_min(p: &TransportProblem) -> Option<(u128, u128)> {
         }
         fn dist(
             p: &TransportProblem,
-            matrix: &mut Vec<Vec<u32>>,
-            col_residual: &mut Vec<u32>,
+            matrix: &mut Vec<Vec<u64>>,
+            col_residual: &mut Vec<u64>,
             row: usize,
             col: usize,
-            remaining: u32,
+            remaining: u64,
             best: &mut Option<(u128, u128)>,
         ) {
             let cols = p.col_demand.len();

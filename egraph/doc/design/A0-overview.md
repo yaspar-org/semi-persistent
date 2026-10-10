@@ -3,6 +3,10 @@
 [← Table of Contents](00-table-of-contents.md) · [Language Guide →](A1-language-guide.md)
 
 
+For the handling of associative and commutative operators, which is where Semper
+departs most from a plain e-graph, start with
+[Appendix A4](05-algebraic-operators.md).
+
 ## Why a New E-Graph?
 
 E-graphs have a long history in automated reasoning, but their
@@ -136,7 +140,7 @@ outcome reports that one full implementation round made no change), and **lazy**
 completion inside a semi-persistent transaction and the restore
 discards everything it minted). `--union-by` selects the merge
 survivor policy on the verified per-class counters. See
-[AC Congruence Completeness](ac-congruence-completeness.md) §13 for
+[AC Congruence Closure](06-ac-congruence-closure.md) §13 for
 the modes and [Future Work](A3-future-work.md) for the verification
 plan.
 
@@ -152,7 +156,7 @@ argument evaluation, so the effect is only across statements. Nothing
 unsound follows — a reordering never produces a *false* equality, only a
 missing one — but a program that needs AC consequences should enable
 `--derive-ac-eqs` or `--lazy-ac-eqs` rather than rely on plain mode.
-`ac-congruence-completeness.md` §6c records why every way of removing
+Chapter 6 §6c records why every way of removing
 the dependence at build time is worse, and
 `egraph/tests/egg/ac_flatten_order_dependence*.egg` pins the behaviour
 in both orders and under completion. Associativity-only (`:assoc`)
@@ -167,7 +171,7 @@ worst-case-optimal leapfrog triejoin over four sorted index families
 scheduler orders atoms from estimated selectivity in the default `Static`
 mode. Optional `Runtime` scheduling chooses the next schedulable atom from live
 bucket lengths for each partial binding, so it can execute middle-out and choose
-different orders for sibling bindings. The production push matcher explores
+different orders for sibling bindings. The push matcher explores
 the resulting lowered steps with depth-first continuation execution; that
 control flow is not top-down pattern traversal.
 
@@ -287,21 +291,28 @@ the complete type has zero or minimum layout or no general check overhead.
 The chapters that follow describe each layer in detail:
 
 - **Foundations** (dense ids, semi-persistent vectors and containers): documented in the `semi-persistent-containers` crate
-- Chapters 1–5: E-graph core (nodes, classes, union-find, caches, canonization, rebuild)
-- Chapters 6-9: Matching engine (indexes, leapfrog join, scheduling, pattern execution)
-- Chapters 10-12: Language and compilation (surface syntax, sortcheck, rule application)
-- Chapters 13-14: Literal model and soundness
-- Chapters 15-16: Proofs and extraction
-- Chapter 17: Interpreter and saturation loop
-- Chapter 18: Semi-naive evaluation (`saturate_semi`: match only what changed each round, via the `touched` log, delta indexes, and the k-variant delta decomposition)
-- Chapter 19: Anti-unification (exact memoized solver and Monte-Carlo graph search over the AND/OR graph of e-class-pair subproblems)
-- Chapter 20: Index selectivity and adaptive matching (size-biased fan-outs,
+- Chapters 1–4: E-graph core (nodes, classes, union-find, caches, rebuild)
+- Chapters 5–6: Algebra (canonization of A, C, AC, and ACI operators, their
+  algebraic properties and the per-op pool; why multiset canonization breaks
+  congruence completeness, and the Kapur-style completion that repairs it, with the
+  maintained `min_monomial` candidate, diagnostics, and a clause-by-clause
+  implementation correspondence)
+- Chapter 7: Rules and pattern matching (surface syntax, sortcheck, scheduling,
+  pattern execution, matching completeness over nesting for A, AC, and ACI operators
+  under `:flatten`, sequence patterns with the `Collect` step, and rule application;
+  the superseded collection-rules design is recorded in §7.6)
+- Chapter 8: Indexes, leapfrog join, and index selectivity (size-biased fan-outs,
   per-binding operator restriction and atom scheduling, sampled selectivity,
   and deferred watermark delta suffixes)
-- [ac-algebraic-properties.md](ac-algebraic-properties.md) and [ac-congruence-completeness.md](ac-congruence-completeness.md): why multiset canonization breaks congruence completeness, and the Kapur-style completion that repairs it
-- [ac-completion-spec.md](ac-completion-spec.md): the maintained
-  `min_monomial` candidate, diagnostics, and a clause-by-clause implementation
-  correspondence
+- Chapter 9: Interpreter, saturation loop, and semi-naive evaluation (`saturate_semi`:
+  match only what changed each round, via the `touched` log, delta indexes, and the
+  k-variant delta decomposition)
+- Chapter 10: Literal model
+- Chapter 11: Extraction (additive extraction, and extraction under cost models inside
+  Semper: `(cost-model …)`, `(extract … :cost …)`, the rung ladder, the CNF, OPB, ASP,
+  and MiniZinc targets, certificates)
+- Chapter 12: Anti-unification (exact memoized solver and Monte-Carlo graph search over the AND/OR graph of e-class-pair subproblems)
+- Chapters 13–14: Soundness and proof logging
 
 ## References
 

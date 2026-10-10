@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; "§Edge cases 3": an A sequence spliced under an AC operator gives each element
+;; multiplicity 1, so an element occurring twice has multiplicity 2 in the result.
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function Cat (E) E :assoc)
+(function And (E) E :assoc-comm-idem)
+(function Plus (E) E :assoc-comm)
+(let e (Cat (F a) (F a) b))
+(rewrite (Cat (..fs (F x)) ..suf) (Plus ..fs))
+(run 1)
+(check (= e (Plus (F a) (F a))))

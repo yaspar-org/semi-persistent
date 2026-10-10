@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; MESSAGE: unsatisfiable multiplicity
+;; `k > u64::MAX` has no value: the interval check reports it at install. It computed
+;; `val + 1` unchecked (a debug panic, and in release a wrap that made the rule fire).
+(sort E)
+(function Add (E) E :assoc-comm)
+(function A () E) (function Got (E) E)
+(let t (Add (A) (A) (A)))
+(rewrite (Add x:k>18446744073709551615 ..rest) (Got x))
+(run 1)

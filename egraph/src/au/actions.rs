@@ -1048,7 +1048,7 @@ fn distribute_row<O: DenseId, A: AuIds, M: MultiplicityLike>(
 /// fail. It is still spelled as a checked conversion with the reason attached rather than
 /// an `as` cast, because that argument is what makes it safe and an `as` would hide it.
 fn descending_upto<M: MultiplicityLike>(max: M) -> impl Iterator<Item = M> {
-    (0..=max.to_u64()).rev().map(|v| {
+    (0..=crate::au::au_count(max)).rev().map(|v| {
         M::try_from_u64(v).expect("a value at or below `max` fits the width `max` came from")
     })
 }

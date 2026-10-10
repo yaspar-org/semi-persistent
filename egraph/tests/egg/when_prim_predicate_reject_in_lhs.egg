@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: sort-error
 ;; TYPES: machine
 ;; A primitive names a function on values, not a relation the e-graph stores, so it may

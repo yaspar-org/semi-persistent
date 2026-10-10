@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; `:flatten` under `:assoc`: the view splices an opened member's children in place, so
+;; Seq[a, K] with K ≡ Seq[b, c] reads [a, b, c], and Seq[K, a] reads [b, c, a]. The
+;; three-child rule sees each order and no other.
+(sort E)
+(function a () E) (function b () E) (function c () E) (function Kc () E) (function Lc () E)
+(function Seq (E) E :assoc)
+(function Tri (E E E) E)
+(let k (Kc))
+(let l (Lc))
+(let front (Seq (a) k))
+(let back (Seq l (a)))
+(union k (Seq (b) (c)))
+(union l (Seq (b) (c)))
+(rewrite (Seq x y z) (Tri x y z) :flatten)
+(run 1)
+(check (= front (Tri (a) (b) (c))))
+(check (= back (Tri (b) (c) (a))))
+(check (!= front (Tri (b) (c) (a))))
+(check (!= back (Tri (a) (b) (c))))

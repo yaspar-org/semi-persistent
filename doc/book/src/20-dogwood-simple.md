@@ -122,7 +122,7 @@ main correspondences are:
 Here is the complete executable model:
 
 ```lisp
-{{#include ../examples/20-dogwood-simple.egg}}
+{{#include ../examples/20-dogwood-simple.egg:3:}}
 ```
 
 The encoding retains each candidate's original time unit. The rewrite from
@@ -176,13 +176,9 @@ points:
                     (Variants request response)
                     (args
                       (arg (fld fCallerPrincipal fnil) scopePrincipal)
-                      (arg
-                        (fld fOutput (fld fStatusCode fnil))
-                        (tInt 200))))))))
+                      (arg (fld fOutput (fld fStatusCode fnil)) (tInt 200))))))))
           (tInt 1)))
-      (Variants
-        (eEq (eCtx (fld fInput (fld fPath fnil))) (eStr vDeploy))
-        eTrue))))
+      (Variants (eEq (eCtx (fld fInput (fld fPath fnil))) (eStr vDeploy)) eTrue))))
 ```
 
 The first variation asks whether the historical event is a `request` or a

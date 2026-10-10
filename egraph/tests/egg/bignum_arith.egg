@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; TYPES: bignum
 (datatype Math (Num IBig) (Add Math Math) (Mul Math Math))

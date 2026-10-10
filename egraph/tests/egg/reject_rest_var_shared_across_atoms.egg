@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: sort-error
 ;; A rest variable shared by two atoms has no lowering: both `ExpandA` steps write
 ;; SeqVarId(0), the second overwrites the first, and the equality the repeated name asks

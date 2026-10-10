@@ -12,9 +12,9 @@ search completes within the available resources. Select UCT when a fixed
 playout budget is required. Neither algorithm is generally faster; their costs
 depend on the action graph.
 
-UCT always performs a deterministic initial rollout. A budget of
-`:playouts 0` therefore returns that initial achieved result rather than no
-result. Further playouts can improve it or exhaust the graph. The output reports
+Unless the root state is already terminal, UCT performs a deterministic
+initial rollout before its first playout. A budget of `:playouts 0` therefore
+returns that initial achieved result rather than no result. Further playouts can improve it or exhaust the graph. The output reports
 `:completion budget` in the first case and `:completion exact` in the second.
 
 The following query reuses Chapter 14's cyclic construction. With 10,000
@@ -43,7 +43,7 @@ A playout performs four operations:
 
 Composition during the final step is how later playouts improve on the initial
 rollout. The full procedure is specified in
-[`19-anti-unification.md`, section 3.3](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[design chapter 12, section 3.3](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md).
 
 ## The same subproblem, reached many ways
 
@@ -54,7 +54,7 @@ not pretend that this parent selected the shared child.
 
 Chapter 14 defines the cycle contexts that distinguish states. The shared-state
 and local-edge bookkeeping is detailed in
-[`19-anti-unification.md`, section 2.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[design chapter 12, section 2.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md).
 
 ## Values are recomputed, not accumulated
 
@@ -82,13 +82,15 @@ A structural completion check asks whether every reachable action has been
 handled and every realized child has completed. If so, a children-first pass
 recomposes all shared parents before the root is reported exact.
 
-The Rust API can additionally maintain closure incrementally. A completed
-shared state notifies every parent through reverse edges, selection skips its
-closed subgraph, and a closed root stops the run early. Closure means that no
+The opt-in `closed_bit` setting of the Rust API, off by default, maintains
+closure incrementally. A completed shared state then notifies every parent
+through reverse edges, selection skips its closed subgraph, and a closed root
+stops the run early. Without that setting, including every surface command,
+the run spends its full playout budget. Closure means that no
 unresolved action remains. It cannot be inferred merely because a size lower
 bound equals the incumbent size: an equal-size action could still improve
 variant mass. Chapter 14 gives the pruning rule; the closure argument is in
-[`19-anti-unification.md`, section 9.5](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[design chapter 12, section 9.5](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md).
 
 ## The hybrid
 
@@ -113,4 +115,4 @@ The surface language exposes `:algorithm`, `:playouts`, and `:cycles`.
 Chapter 14 defines the cycle options. Incremental closure, hybrid calls, their
 admission settings, and the other search-policy controls are Rust-API
 configuration. The complete configuration table is in
-[`19-anti-unification.md`, section 7](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[design chapter 12, section 7](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md).

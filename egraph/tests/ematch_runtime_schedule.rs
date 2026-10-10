@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! A workload that separates plan-time atom ordering from per-binding atom
-//! ordering (design chapter 20).
+//! ordering (design §8.3).
 //!
 //! **The shape.** `(f x y)` together with two probe atoms, `(p w x)` over the
 //! first child and `(q y v)` over the second. The `f` atom is the cheapest

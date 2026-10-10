@@ -1,0 +1,7 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+fn cost(g: Graph) {
+    let x = g.constant(9223372036854775807);
+    let y = g.constant(1);
+    g.sum([x.over(), y.over()]).charge();
+}

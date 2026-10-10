@@ -1,0 +1,13 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// The pipeline wait in the algebra: an over-estimate less an under-estimate.
+fn cost(g: Graph) {
+    let lat = g.node_values();
+    let late = g.attribute_max(lat);
+    let early = g.attribute_max_under(lat);
+    for c in g.classes() {
+        let peers = [late.of(c).when(c.chosen())];
+        g.max_over(peers).minus(early.of(c)).clamp(0).charge();
+        c.chosen().charge_if(1);
+    }
+}

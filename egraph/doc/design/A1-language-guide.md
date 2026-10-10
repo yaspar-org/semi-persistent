@@ -19,7 +19,7 @@ union, check, extract, push/pop, and run) and extends it with:
 - Comprehension expressions and splicing (`..{body for x in rest}`,
   `..[body for x in rest]`) for processing rest variables in rule
   actions.
-- Namespaced builtin operator names (`IBig::+`, `i64::<<`, `RBig::neg`)
+- Namespaced builtin operator names (`IBig::+`, `i64::<`, `RBig::neg`)
   to disambiguate when multiple numeric types are in scope.
 - Predicate guards (`:when ((i64::< a b))`): a primitive computation over
   bound literal values, evaluated at match time rather than matched.
@@ -32,9 +32,13 @@ Every term in the engine has a sort. Sorts are declared explicitly:
 (sort Expr)
 ```
 
-Concrete sorts (IBig, RBig, bool, String) are registered
-automatically by the literal model and cannot be declared by the
-user.
+Concrete sorts are registered automatically by the literal model that
+`--types` selects. The default `bignum` group registers `bool`, `IBig`,
+`UBig`, and `RBig`; the `machine` group registers `bool`, `i64`, `u64`,
+`f64`, `usize`, and `String`; `--types machine,bignum` registers both sets.
+The examples below that use `i64` or its primitives need `--types machine`.
+A `(sort IBig)` declaration returns the existing sort and has no effect. No
+declared operator may return a concrete sort: sortcheck rejects it.
 
 Operators map argument sorts to a return sort:
 
@@ -45,8 +49,8 @@ Operators map argument sorts to a return sort:
 ```
 
 `(constructor …)` declares the same operator as `(function …)` (same
-congruence, same matching) and additionally marks it a term former,
-which is the declaration extraction tags belong on:
+congruence, same matching) and additionally marks it a term former. The
+extraction tags `:cost` and `:unextractable` parse and take effect on either keyword:
 
 ```
 (constructor Num (IBig) Expr)
@@ -55,7 +59,7 @@ which is the declaration extraction tags belong on:
 ```
 
 `:cost n` defaults to 1, which is the unweighted node-count model, so a
-program that declares no cost extracts exactly as before. See Chapter 16
+program that declares no cost extracts exactly as before. See §11.1
 for the cost model.
 
 The `datatype` command is sugar for a sort declaration plus one
@@ -91,8 +95,8 @@ individual datatype variants:
 ```
 (datatype Expr
   (Num IBig)
-  (Add Expr Expr :assoc-comm)
-  (Or  Expr Expr :assoc-comm-idem))
+  (Add Expr :assoc-comm)
+  (Or  Expr :assoc-comm-idem))
 ```
 
 ## Ground Terms and Let Bindings
@@ -122,7 +126,7 @@ Under lazy mode, `(check (!= ...))` passes only when the implemented bounded
 completion/rule search reaches its operational fixpoint without deriving the
 equality. That is the command's operational criterion, not a proved statement
 of semantic non-equality in the abstract AC theory. The two flags are mutually exclusive;
-`ac-congruence-completeness.md` §13 has the trade-offs.
+Chapter 6 §13 has the trade-offs.
 
 A bare S-expression at the top level is an insertion; there is no
 separate insert command:
@@ -142,7 +146,7 @@ pattern variable. The semantics: a global in a pattern position means
 global identifier's current binding."
 
 ```
-(datatype Expr (V i64) (Add Expr Expr) (Dbl Expr))
+(datatype Expr (V i64) (Add Expr Expr) (Mul Expr Expr) (Dbl Expr) (Pair Expr Expr))
 (let a (V 1))
 
 ;; 'a' in the LHS is not a fresh variable — it refers to the
@@ -206,7 +210,7 @@ patterns share a root, rather than being a cross product over two independent
 matches:
 
 ```
-;; fires only when (ncols A) and (nrows C) are the SAME class
+;; fires only when (ncols a) and (nrows c) are the SAME class
 (rewrite (MMul (Kron a b) (Kron c d))
          (Kron (MMul a c) (MMul b d))
   :when ((= p (ncols a)) (= p (nrows c))
@@ -215,8 +219,9 @@ matches:
 
 The bound name is an ordinary pattern variable: it can be reused in child
 positions, appear in the right-hand side, and take its sort from the pattern it
-names. `=` is reserved for this form, so an operator declared `=` does not
-shadow it.
+names. `=` is reserved for this form, and the flattener recognizes it by
+name; no operator named `=` can be declared, because declaration names are
+identifiers.
 
 ### Conditional Rewrites
 
@@ -382,7 +387,7 @@ multiplicity, which must satisfy the element's annotation. A bare
 variable `x` (and a bare concrete element like `(Zero)`) implicitly
 means `:1`: it only binds a child whose total multiplicity is exactly
 one. Children not bound by any element go to the rest variable, again
-with their whole multiplicity. Chapter 9 (Pattern Matching Execution)
+with their whole multiplicity. §7.5 (Matching A, AC, ACI, and C operators)
 is the normative statement of these semantics. The accepted forms are:
 
 - Exact: `(Add x (Zero) y)`. Total multiplicities must match
@@ -458,8 +463,9 @@ wherever an `i64` is expected: as a primitive argument
 (`(Const (i64::* a k))`) and in a literal position (`(Const k)`).
 
 RHS elements of a variadic operator also take a multiplicity, either
-a literal or a checked u64 expression over bound multiplicities
-(`u64::+ u64::- u64::* u64::/ u64::% u64::min u64::max`):
+a literal or a checked binary expression over bound multiplicities
+(`u64::+ u64::- u64::* u64::/ u64::% u64::min u64::max`), evaluated in the
+configured multiplicity width (`u32` under `--bits 32`, `u64` under `--bits 64`):
 
 ```
 (rewrite (Mul (Add b ..s):k ..rest)
@@ -467,14 +473,16 @@ a literal or a checked u64 expression over bound multiplicities
               (Mul (Add ..s) (Add b ..s):(u64::- k 1) ..rest)))
 ```
 
-A multiplicity of 0 omits the element without evaluating it, so at
+A computed multiplicity of 0 omits the element without evaluating it (a
+written `:0` is refused: the element would not occur), so at
 `k = 1` this rule is ordinary distributivity and at `k >= 2` it keeps
 `k-1` copies of the repeated factor. The expression is interval-checked
 at rule install against the LHS constraints: with a bare `:k` the
 multiplicity is only known to be at least 1, so `(u64::- k 2)` is
 rejected until the element is annotated `:k>=2`. Division and remainder
-need a divisor provably nonzero; overflow stays a runtime trap, checked
-like the literal primitives.
+need a divisor provably nonzero. Overflow, or a literal too wide for the
+configured width, is reported at runtime, and the error stops the run, as a
+fault in a checked literal primitive does.
 
 Non-linear multiplicity variables (same `:k` on multiple elements)
 must bind to the same value:
@@ -486,7 +494,7 @@ must bind to the same value:
 
 ### Caveat: migrating binary rules to AC patterns
 
-Partition semantics (chapter 9): the elements plus the rest variable
+Partition semantics (§7.5): the elements plus the rest variable
 partition the node's distinct children, and no two elements may bind
 the same child. A binary pattern has no such constraint, because its
 two positions are independent. So a rule that was written against a
@@ -697,7 +705,7 @@ once, before the run: the same nodes a `(check …)` of the goal would add.
 ## Statistics
 
 ```
-(print-size)                      ;; node count per operator, then the total
+(print-size)                      ;; node count per operator with nodes, then the total
 (print-size Add)                  ;; one operator's node count
 (print-stats)                     ;; last run's counters, on stdout
 (print-stats :file "stats.json")  ;; the same numbers, as JSON
@@ -740,8 +748,9 @@ LHS patterns go through two sub-steps:
 
 `flatten_surface` walks the pattern tree, assigns fresh synthetic
 variables to nested applications, and produces a flat list of atoms.
-Each atom is classified by operator kind (Plain, C, A/APrefix/ASuffix/
-ABoth, ACExact/ACSub, ACIExact/ACISub). Invalid combinations (e.g.,
+Each atom is classified by operator kind (Plain, AExact/APrefix/ASuffix/
+ABoth, ACExact/ACSub, ACIExact/ACISub); a commutative or literal operator
+yields a `Plain` atom, and resolve turns a commutative one into `RAtom::Comm`. Invalid combinations (e.g.,
 prefix rest on an AC operator, multiplicity on an ACI operator)
 produce clear error messages. Two forms are recognized by name first:
 `(= p q)`, which flattens both sides and emits one `Eq` between their
@@ -826,7 +835,11 @@ ident       = letter , { letter | digit } ;
 symbol      = '<<' | '>>' | '<=' | '>=' | '!=' | '==' | '=>'
             | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '&' | '|' | '^' | '~' ;
 qualified   = ident , '::' , ( ident | symbol ) ;       (* e.g. IBig::+, RBig::neg *)
-op          = qualified | ident | symbol ;
+token       = { char - delim }- ;                     (* a run of non-delimiter characters *)
+delim       = '(' | ')' | '[' | ']' | '{' | '}' | '"' | ';' | ':' | whitespace ;
+op          = qualified | token ;
+kw          = letter , { letter | digit | '-' } ;      (* command head; may contain '-' *)
+model_name  = letter , { letter | digit | '_' | '-' } ;
 prim_op     = op ;                (* one of the literal model's primitives *)
 comment     = ';' , { char - '\n' } , '\n' ;
 
@@ -844,8 +857,12 @@ literal     = rat_lit | float_lit | int_lit | bool_lit | string_lit ;
 (* ── Ground terms ── *)
 
 term        = literal
-            | ident
-            | '(' , op , term* , ')' ;
+            | ident                                       (* a global or a nullary op *)
+            | '(' , op , term_child* , ')' ;
+term_child  = term , ':' , uint_lit                       (* counted child, no space
+                                                             before ':'; at least 1;
+                                                             A or AC only *)
+            | term ;
 
 (* ── Patterns (LHS) ── *)
 (* Dispatch by operator kind at resolve time, not parse time. *)
@@ -857,15 +874,22 @@ pattern     = literal
                                                              top-level only *)
             | '(' , op , pat_child* , ')' ;
 
-pat_child   = '..' , ident                               (* rest variable *)
+pat_child   = '..' , ident                               (* rest variable; between
+                                                             children, a bare sequence
+                                                             of a sequence rule *)
+            | '(' , '..' , ident , ( ':' , mult_spec )? ,
+                    pattern , ( ':except' , ident )? , ')'  (* filter: sequence rules,
+                                                             at the root of a rewrite *)
             | pattern , ':' , mult_spec                   (* element + multiplicity *)
             | pattern ;
 
-mult_spec   = int_lit                                     (* exact: x:2 *)
+mult_spec   = uint_lit                                    (* exact: x:2; at least 1 *)
             | ident                                       (* bind: x:k *)
-            | ident , cmp_op , int_lit ;                  (* constrained: x:k>=2 *)
+            | ident , cmp_op , uint_lit ;                 (* constrained: x:k>=2 *)
 
 cmp_op      = '>=' | '<=' | '==' | '!=' | '>' | '<' ;
+
+seq_pattern = pattern ;          (* one that contains a filter or a bare sequence *)
 
 (* ── RHS terms ── *)
 
@@ -874,6 +898,7 @@ rhs         = literal
             | '(' , op , rhs_child* , ')' ;
 
 rhs_child   = '..' , splice
+            | rhs , ':' , mult_expr                       (* element with multiplicity *)
             | rhs ;
 
 splice      = ident                                       (* plain: ..rest *)
@@ -882,8 +907,13 @@ splice      = ident                                       (* plain: ..rest *)
                     mcomp_tail , '}'                       (* multiset comprehension *)
             | '[' , rhs , comp_tail , ']' ;               (* sequence comprehension *)
 
-comp_tail   = 'for' , ident , 'in' , ident , filter? ;
-mcomp_tail  = 'for' , ident , ':' , ident , 'in' , ident , filter? ;
+comp_tail   = 'for' , binder , 'in' , source , filter? ;
+mcomp_tail  = 'for' , ident , ':' , ident , 'in' , source , filter? ;
+binder      = ident | ident , ':' , ( ident | '_' )       (* element, with multiplicity *)
+            | '(' , binder+ , ')' ;                       (* tuple: sequence rules only *)
+source      = ident                                       (* a rest or a filter *)
+            | '(' , seq_prim , rhs* , ')' ;               (* sequence rules only *)
+seq_prim    = 'zip' | 'concat' | 'union-by' | 'narrow' | 'narrowed' ;
 mult_expr   = uint_lit
             | ident
             | '(' , mult_op , mult_expr , mult_expr , ')' ;
@@ -896,26 +926,32 @@ filter      = 'if' , rhs ;
 program     = command* ;
 
 command     = '(' , 'sort' , ident , ')'
-            | '(' , 'function' , op , '(' , ident* , ')' , ident , decl_tag* , ')'
-            | '(' , 'constructor' , op , '(' , ident* , ')' , ident , decl_tag* , ')'
+            | '(' , 'function' , ident , '(' , ident* , ')' , ident , decl_tag* , ')'
+            | '(' , 'constructor' , ident , '(' , ident* , ')' , ident , decl_tag* , ')'
             | '(' , 'datatype' , ident , variant* , ')'
             | '(' , 'ruleset' , ident , ')'
             | '(' , 'rewrite' , pattern , rhs , rewrite_tag* , ')'
+            | '(' , 'rewrite' , seq_pattern , rhs , seq_rewrite_tag* , ')'
+                                                          (* LHS with a sequence pattern *)
             | '(' , 'birewrite' , pattern , pattern , birewrite_tag* , ')'
             | '(' , 'rule' , '(' , pattern* , ')' , '(' , action* , ')' ,
-                    ruleset_tag* , ')'
+                    rule_tag* , ')'
             | '(' , 'let' , ident , term , ')'
             | '(' , 'union' , term , term , ')'
-            | '(' , 'run' , ident? , int_lit , until? , ')'
+            | '(' , 'run' , ident? , uint_lit , until? , ')'
             | '(' , 'check' , check_body , ')'
             | '(' , 'extract' , term , ')'
+            | '(' , 'cost-model' , model_name ,
+                    ( ':script' | ':rust' | ':asp' | ':minizinc' ) , string_lit , ')'
+            | '(' , 'extract' , term , extract_opt+ , ')'    (* any order; :cost required *)
+            | '(' , 'dump-egraph' , term , ':file' , string_lit , ')'
             | '(' , 'print-size' , op? , ')'
             | '(' , 'print-stats' , ( ':file' , string_lit )? , ')'
             | '(' , 'antiunify' , term , term , au_option* , ')'
             | '(' , 'checkau' , term , term , checkau_option* , ')'
             | '(' , 'push' , ':shrink'? , ')'
             | '(' , 'pop' , ')'
-            | '(' , op , term* , ')' ;                    (* sugar: ground term insertion *)
+            | '(' , kw , term_child* , ')' ;              (* sugar: ground term insertion *)
 
 variant     = '(' , ident , ident* , decl_tag* , ')' ;
 
@@ -923,32 +959,45 @@ decl_tag    = alg_attr | extract_tag ;
 
 alg_attr    = ':assoc-comm-idem' | ':assoc-comm' | ':assoc-left'
             | ':assoc-right' | ':assoc' | ':comm' | ':idempotent'
-            | ':nilpotent' , int_lit? | ':identity' , term
+            | ':nilpotent' , uint_lit? | ':identity' , term  (* order 2..=255 *)
             | ':cancellative' | ':inverse' , ident ;
 
-extract_tag = ':cost' , int_lit | ':unextractable' ;
+extract_tag = ':cost' , uint_lit | ':unextractable' ;   (* :cost fits in u32 *)
 
-rewrite_tag = when_clause | subsume | ruleset_tag ;
-birewrite_tag = when_clause | ruleset_tag ;
+extract_opt = ':cost' , model_name
+            | ':rung' , ( 'selection' | 'levels' | 'splits' | 'binary' | 'orders' )
+            | ':budget' , uint_lit
+            | ':solver' , ( 'internal' | 'dpw' | 'roundingsat' | 'greedy'
+                          | '(' , ( 'opb' | 'asp' | 'minizinc' ) , string_lit+ , ')' )
+            | ':file' , string_lit | ':proof' , string_lit
+            | ':band' , uint_lit , uint_lit | ':count' , uint_lit ;
+
+rewrite_tag = when_clause | subsume | flatten | ruleset_tag ;
+seq_rewrite_tag = seq_when | let_clause | flatten | ruleset_tag ;
+seq_when    = ':when' , '(' , rhs* , ')' ;
+let_clause  = ':let' , '(' , ( '(' , ident , rhs , ')' )* , ')' ;
+birewrite_tag = when_clause | flatten | ruleset_tag ;
+rule_tag    = flatten | ruleset_tag ;
 when_clause = ':when' , '(' , pattern* , ')' ;
 subsume     = ':subsume' ;                                (* not on birewrite *)
+flatten     = ':flatten' ;                                (* at most once per rule *)
 ruleset_tag = ':ruleset' , ident ;
 
 until       = ':until' , '(' , ( '=' | '!=' ) , term , term , ')' ;
 
-au_option   = ':playouts' , int_lit
+au_option   = ':playouts' , uint_lit
             | ':algorithm' , ( 'exact' | 'uct' )
             | ':cycles' , ( 'sides' | 'sides-current' | 'pair' ) ;
 
-checkau_option = au_option | ':max_size' , int_lit ;
+checkau_option = au_option | ':max_size' , uint_lit ;   (* fits in u32 *)
 
 check_body  = '(' , '='  , term , term , ')'
             | '(' , '!=' , term , term , ')'
             | term ;
 
 action      = '(' , 'union' , rhs , rhs , ')'
-            | '(' , 'set' , '(' , ident , rhs* , ')' , rhs , ')'
-            | '(' , op , rhs_child* , ')' ;
+            | '(' , 'set' , '(' , ident , rhs* , ')' , rhs , ')'   (* rejected at resolve *)
+            | '(' , op , ( '..' , splice | rhs )* , ')' ;  (* insert; no :mult here *)
 ```
 
 ---

@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; The header is the default (32-bit) outcome; tests/config_matrix.rs checks both widths.
+;; (a):2^64-1 and (a) sum to 2^64, past u64: a reported multiplicity overflow at 32 and
+;; at 64 bits, never a wrapped count.
+(sort E)
+(function a () E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (a):18446744073709551615 (a)))
+(check (= t (Plus (a):18446744073709551616)))
+(check (!= t (Plus (a):18446744073709551615)))

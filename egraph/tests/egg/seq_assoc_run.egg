@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; A run under an associative operator: the maximal run of F children between two
+;; gaps is wrapped; the gaps keep their children in order (doc/sequence-patterns.md).
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function H (E) E)
+(function Cat (E) E :assoc)
+(let e (Cat a (F a) (F b) b (F a)))
+(rewrite (Cat ..pre (..fs (F x)) ..suf) (Cat ..pre (H (Cat ..fs)) ..suf)
+  :when ((>= (count fs) 2)))
+(run 1)
+(check (= e (Cat a (H (Cat (F a) (F b))) b (F a))))

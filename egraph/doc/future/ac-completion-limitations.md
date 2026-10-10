@@ -13,7 +13,7 @@ Lazy mode is real on-demand completion. It is not incremental completion
 performed silently during ordinary insertion.
 
 The implemented correspondence is summarized in
-[the completion specification](../design/ac-completion-spec.md). This file
+[the completion specification](../design/06-ac-congruence-closure.md#part-iii-min_monomial-a-matcher-invariant-and-implementation-correspondence). This file
 records permanent scope limits and concrete work that is not yet discharged.
 Each open item states the current implementation, the remaining gap, the task,
 and acceptance criteria.

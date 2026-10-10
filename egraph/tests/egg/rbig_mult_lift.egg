@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine,bignum
 ;; A bound multiplicity lifted into exact rational arithmetic: k copies of a
 ;; rational summand fold to k*a (RBig::scale), k factors to a^k (RBig::pow),

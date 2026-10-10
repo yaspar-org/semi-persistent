@@ -1,0 +1,6 @@
+; cost 39 proved at rung selection (0 solves, 0 cycle exclusions)
+; certificate Bounds { lower: 38 }: veripb proofs/call000.opb proofs/call000.pbp
+(And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
+; cost 37 proved at rung splits (0 solves, 0 cycle exclusions)
+; certificate Bounds { lower: 36 }: veripb proofs-splits/call000.opb proofs-splits/call000.pbp
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))

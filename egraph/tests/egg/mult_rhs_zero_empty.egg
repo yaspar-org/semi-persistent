@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: 1 rule action(s) not applied
+;; A count computed to 0 drops its child. Here it drops the only child, and Add has no
+;; identity, so the right-hand side `(Add)` would be meaningless: it is not built, the
+;; action is skipped, and the run warns. Found by tests/counted_stress.rs.
+(sort E)
+(function a () E) (function w () E) (function G (E) E)
+(function Add (E) E :assoc-comm)
+(let t (Add (a):2))
+(rewrite (Add x:k>=2) (G (Add x:(u64::- k 2))))
+(run 1)
+(check (!= t (G (a))))

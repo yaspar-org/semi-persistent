@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine
 ;; Native dual of the generated AC benchmark: Add is variadic :assoc-comm, the
 ;; two reassociation rules are deleted, and both association chains flatten to

@@ -1,0 +1,4 @@
+* #variable= 2 #constraint= 1
+* The optimum is x2 alone, cost 1; x1 costs 2^70. A solver that wraps or saturates 2^70 can pick x1.
+min: +1180591620717411303424 x1 +1 x2 ;
++1 x1 +1 x2 >= 1 ;

@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: an AC multiplicity in the right-hand side is undefined on (Plus)
+;; A spliced `..rest` holding F(a):4294967295 next to one more F(a): the sum is 2^32, past
+;; the multiplicity width, so the rule reports it and the run stops.
+(sort E)
+(function a () E) (function b () E) (function W () E)
+(function F (E) E) (function G (E) E)
+(function Plus (E) E :assoc-comm)
+(let w (W))
+(rewrite (W) (Plus (F (a)):4294967295 (b)))
+(rewrite (Plus (b) ..rest) (G (Plus (F (a)) ..rest)))
+(run 2)

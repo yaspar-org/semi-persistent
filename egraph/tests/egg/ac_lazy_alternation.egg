@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine
 ;; LAZY_AC_EQS: on
 ;; Lazy AC completion, phase 2 (alternation): the checked equality is not in

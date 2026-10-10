@@ -1,0 +1,4 @@
+; cost 18 proved at rung selection (2 solves, 0 cycle exclusions)
+(And (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
+; cost 3 proved at rung selection (2 solves, 0 cycle exclusions)
+(Plus (V "a"):2 (V "b"))

@@ -16,7 +16,6 @@ use crate::config::EGraphConfig;
 use crate::containers::DenseId;
 use crate::id::ENodeKind;
 use crate::literal::LitVal;
-use crate::multiplicity::MultiplicityLike;
 
 use super::egraph_api::{AuSnapshot, ClassOf};
 
@@ -80,7 +79,7 @@ where
             eg.mset_children(member_id, &mut buf);
             canonize(
                 buf.iter()
-                    .map(|(g, m)| (snap.class_of(*g).unwrap(), m.to_u64()))
+                    .map(|(g, m)| (snap.class_of(*g).unwrap(), crate::au::au_count(*m)))
                     .collect(),
             )
         } else {

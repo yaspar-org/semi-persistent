@@ -1,0 +1,11 @@
+; 4 terms with cost in [37, 40] at rung splits
+; cost 39 in band at rung splits
+(And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
+; cost 40 in band at rung splits
+(And (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Global 0 9 (Var "a0")))
+; cost 40 in band at rung splits
+(And (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0"))) (Global 0 9 (Var "a0")))
+; cost 37 in band at rung splits
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 39 proved at rung selection (2 solves, 0 cycle exclusions)
+(And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))

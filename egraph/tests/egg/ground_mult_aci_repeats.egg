@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; Repeating an element under an ACI operator is accepted: idempotence reduces it, so
+;; `(And a a a)` is `(And a)`, which is `a`. Only a written count is refused, since a set
+;; has no multiplicities (ground_mult_aci_refused.egg).
+(sort E)
+(function a () E) (function b () E)
+(function And (E) E :assoc-comm-idem)
+(let t (And (a) (a) (a)))
+(check (= t (And (a))))
+(check (= t (a)))
+(let u (And (a) (a) (b)))
+(check (= u (And (a) (b))))

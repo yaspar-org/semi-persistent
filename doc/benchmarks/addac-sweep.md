@@ -1,7 +1,7 @@
 # add-ac width-scaling sweep
 
 Part (b) of the convergence target in
-`egraph/doc/design/20-index-selectivity-and-delta-suffixes.md`: demonstrated separation
+`egraph/doc/design/08-indexes-and-leapfrog.md` §8.3: demonstrated separation
 under native AC canonization, as a width-scaling sweep of the `add-ac` block over
 n = 7..20. The target's claim is that the rules encoding and egglog grow super-linearly
 in the sum width while native AC stays flat. This file records what the sweep measured

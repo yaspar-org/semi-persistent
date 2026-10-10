@@ -1,0 +1,12 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Ends in an error, so the book test does not run it.
+;; ANCHOR: solver-range
+(sort E)
+(function V (String) E)
+(let e (V "a"))
+
+(cost-model heavy :script "28-solver-range.roto")
+(extract e :cost heavy)
+(extract e :cost heavy :solver (asp "clingo"))
+;; ANCHOR_END: solver-range

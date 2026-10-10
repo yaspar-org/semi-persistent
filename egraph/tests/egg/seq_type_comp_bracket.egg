@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: 'Cat' is associative: its comprehension is ordered, written `..[ … ]`
+;; TYPES: machine
+;; "Multiplicities and `zip`": the comprehension's bracket is the target operator's
+;; kind. `..{ … }` under the associative `Cat` would leave the order of its output
+;; unstated.
+(sort E)
+(function a () E)
+(function F (E) E)
+(function G (E) E)
+(function Cat (E) E :assoc)
+(rewrite (Cat (..fs (F x)) ..rest) (Cat ..{ (G x) for f in fs } ..rest))

@@ -37,7 +37,7 @@ mod test {
         assert_eq!(buf.steps.len(), 19);
     }
 
-    /// The deep expansion is memoized (design chapter 15, `explain_deep`).
+    /// The deep expansion is memoized (design chapter 14, `explain_deep`).
     /// A nested diamond `g(t, t)` shares every child pair between two
     /// positions, so an unmemoized walk doubles its work per level and, when
     /// a child pair's forest path routes through the congruence edge being

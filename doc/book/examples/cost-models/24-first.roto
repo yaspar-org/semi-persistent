@@ -1,0 +1,15 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// ANCHOR: cost
+// The term's size as a DAG: every node of the term is paid once, however many
+// parents share it. `Twice` costs 3, every other operator 1.
+fn cost(g: Graph) {
+    for n in g.nodes() {
+        if n.is("Twice") {
+            n.chosen().charge_if(3);
+        } else {
+            n.chosen().charge_if(1);
+        }
+    }
+}
+// ANCHOR_END: cost

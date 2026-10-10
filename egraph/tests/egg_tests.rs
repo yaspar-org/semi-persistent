@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! File-based integration tests for the interpreter.
 //!
-//! Each `.egg` file in `tests/egg/` is run through the interpreter. The first six lines may
-//! carry directive comments. The feature directives mirror the CLI flags, so a test file is
+//! Each `.egg` file in `tests/egg/` is run through the interpreter. The first eight lines (the
+//! two copyright lines, then six) may carry directive comments. The feature directives mirror the CLI flags, so a test file is
 //! self-contained, no env var needed:
 //!   ;; EXPECT: ok|check-failed|parse-error|sort-error|error   outcome (default: ok)
 //! No fixture expects a panic: an outcome a program can provoke is reported through
@@ -13,6 +13,9 @@
 //!   ;; DERIVE_AC_EQS: on                                  eager AC completion (default off)
 //!   ;; LAZY_AC_EQS: on                                    lazy AC completion at checks (default off)
 //!   ;; UNION_BY: rank|size|uses|sum                       merge survivor policy (default rank)
+//!   ;; MESSAGE: text                                      the outcome's message contains `text`
+//!   ;; WARNING: text|none                                 some warning contains `text` (one line
+//!                                                         per expected warning), or none is raised
 //!   ;; CHECK_AC_BASIS: on                                 enable + assert the reduced-basis
 //!                                                         invariants post-run (default off)
 //!
@@ -26,7 +29,7 @@ use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::*;
 use semi_persistent_egraph::saturate::SaturationStrategy;
 
-/// Directives parsed from a `.egg` file's first six lines.
+/// Directives parsed from a `.egg` file's first eight lines.
 struct Directives {
     expect: String,
     types: String,
@@ -36,6 +39,11 @@ struct Directives {
     lazy_ac_eqs: bool,
     check_ac_basis: bool,
     union_by: semi_persistent_egraph::UnionBy,
+    /// `;; MESSAGE:`: text the outcome's message must contain.
+    message: Option<String>,
+    /// `;; WARNING:`: texts that each some warning must contain; `none` asks for no
+    /// warning at all, recorded as `Some(vec![])`.
+    warnings: Option<Vec<String>>,
 }
 
 fn parse_directives(src: &str) -> Directives {
@@ -47,11 +55,22 @@ fn parse_directives(src: &str) -> Directives {
         lazy_ac_eqs: false,
         check_ac_basis: false,
         union_by: semi_persistent_egraph::UnionBy::Rank,
+        message: None,
+        warnings: None,
     };
-    for line in src.lines().take(6) {
+    for line in src.lines().take(8) {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix(";; EXPECT:") {
             d.expect = rest.trim().to_string();
+        }
+        if let Some(rest) = line.strip_prefix(";; MESSAGE:") {
+            d.message = Some(rest.trim().to_string());
+        }
+        if let Some(rest) = line.strip_prefix(";; WARNING:") {
+            let ws = d.warnings.get_or_insert_with(Vec::new);
+            if rest.trim() != "none" {
+                ws.push(rest.trim().to_string());
+            }
         }
         if let Some(rest) = line.strip_prefix(";; TYPES:") {
             d.types = rest.trim().to_string();
@@ -172,6 +191,18 @@ fn run_with<
                     report.rules.len()
                 );
             }
+            if let Some(want) = &d.warnings {
+                let got = interp.warnings();
+                if want.is_empty() {
+                    assert!(got.is_empty(), "WARNING: none, but got {got:?}");
+                }
+                for w in want {
+                    assert!(
+                        got.iter().any(|g| g.contains(w.as_str())),
+                        "WARNING: {w} not in {got:?}"
+                    );
+                }
+            }
             vec![format!("ok: {} nodes", interp.eg.len())]
         }
         Err(e) => vec![format!("error: {e}")],
@@ -183,7 +214,7 @@ fn check(path: &str) {
     let directives = parse_directives(&src);
     // Every file runs under both atom-scheduling modes as well as under both
     // evaluation strategies. The scheduling flag may not change what a program
-    // computes, only the order in which matches are found (design chapter 20),
+    // computes, only the order in which matches are found (design §8.3),
     // and a whole-program outcome over a hundred and seven files is the
     // broadest statement of that available.
     for runtime in [false, true] {
@@ -212,6 +243,12 @@ fn check(path: &str) {
                 ),
                 other => panic!("{path}: unknown EXPECT directive: {other}"),
             }
+            if let Some(m) = &directives.message {
+                assert!(
+                    output.contains(m.as_str()),
+                    "{at}: expected the message to contain {m:?}, got: {output}"
+                );
+            }
         }
     }
     semi_persistent_egraph::ematch::set_runtime_scheduling(false);
@@ -235,6 +272,145 @@ macro_rules! egg_test {
 }
 
 // ── Arithmetic: checked (default) ──
+egg_test!(collection_rules, "collection_rules.egg");
+egg_test!(collection_rules_absent, "collection_rules_absent.egg");
+egg_test!(collection_reject_scalar, "collection_reject_scalar.egg");
+egg_test!(collection_reject_ac, "collection_reject_ac.egg");
+egg_test!(collection_reject_width, "collection_reject_width.egg");
+egg_test!(seq_reject_nested, "seq_reject_nested.egg");
+egg_test!(seq_reject_two_bare, "seq_reject_two_bare.egg");
+egg_test!(seq_reject_scalar, "seq_reject_scalar.egg");
+egg_test!(seq_reject_global_sort, "seq_reject_global_sort.egg");
+egg_test!(seq_reject_except, "seq_reject_except.egg");
+egg_test!(seq_reject_assoc, "seq_reject_assoc.egg");
+egg_test!(seq_reject_ac, "seq_reject_ac.egg");
+egg_test!(seq_reject_outside_rewrite, "seq_reject_outside_rewrite.egg");
+egg_test!(seq_global_filter, "seq_global_filter.egg");
+egg_test!(seq_global_rhs, "seq_global_rhs.egg");
+egg_test!(seq_each_is_an_operator, "seq_each_is_an_operator.egg");
+egg_test!(seq_assoc_run, "seq_assoc_run.egg");
+// `:comm` patterns match modulo commutativity (`resolve::RAtom::Comm`).
+egg_test!(comm_match_both_orders, "comm_match_both_orders.egg");
+egg_test!(comm_match_global, "comm_match_global.egg");
+egg_test!(comm_match_both_bindings, "comm_match_both_bindings.egg");
+egg_test!(comm_match_nested, "comm_match_nested.egg");
+egg_test!(comm_match_no_false, "comm_match_no_false.egg");
+egg_test!(mult_rhs_max_width, "mult_rhs_max_width.egg");
+egg_test!(mult_rhs_sum_overflow, "mult_rhs_sum_overflow.egg");
+egg_test!(mult_rhs_splice_rest, "mult_rhs_splice_rest.egg");
+egg_test!(mult_rhs_splice_overflow, "mult_rhs_splice_overflow.egg");
+egg_test!(mult_rhs_computed_too_wide, "mult_rhs_computed_too_wide.egg");
+egg_test!(mult_rhs_u64_overflow, "mult_rhs_u64_overflow.egg");
+egg_test!(
+    mult_rhs_underflow_two_vars,
+    "mult_rhs_underflow_two_vars.egg"
+);
+egg_test!(mult_build_flatten_product, "mult_build_flatten_product.egg");
+egg_test!(
+    mult_build_flatten_overflow,
+    "mult_build_flatten_overflow.egg"
+);
+egg_test!(mult_flatten_view_overflow, "mult_flatten_view_overflow.egg");
+egg_test!(mult_ground_past_u64, "mult_ground_past_u64.egg");
+egg_test!(mult_rule_past_u64, "mult_rule_past_u64.egg");
+egg_test!(mult_rhs_zero_empty, "mult_rhs_zero_empty.egg");
+egg_test!(rhs_empty_application, "rhs_empty_application.egg");
+egg_test!(
+    rhs_empty_application_identity,
+    "rhs_empty_application_identity.egg"
+);
+egg_test!(count_zero_written, "count_zero_written.egg");
+egg_test!(count_zero_written_rhs, "count_zero_written_rhs.egg");
+egg_test!(
+    audit_union_coalesce_overflow,
+    "audit_union_coalesce_overflow.egg"
+);
+egg_test!(
+    audit_completion_sum_overflow,
+    "audit_completion_sum_overflow.egg"
+);
+egg_test!(
+    audit_completion_rewrite_batch,
+    "audit_completion_rewrite_batch.egg"
+);
+egg_test!(
+    audit_extract_saturated_cost,
+    "audit_extract_saturated_cost.egg"
+);
+egg_test!(audit_au_large_count, "audit_au_large_count.egg");
+egg_test!(audit_gt_u64_max, "audit_gt_u64_max.egg");
+egg_test!(audit_mset_into_positional, "audit_mset_into_positional.egg");
+egg_test!(audit_seq_count_past_u64, "audit_seq_count_past_u64.egg");
+egg_test!(
+    audit_merge_monomial_overflow,
+    "audit_merge_monomial_overflow.egg"
+);
+egg_test!(bug_set_action_rejected, "bug_set_action_rejected.egg");
+egg_test!(bug_literal_return_sort, "bug_literal_return_sort.egg");
+egg_test!(bug_duplicate_declaration, "bug_duplicate_declaration.egg");
+egg_test!(ground_mult_kinds, "ground_mult_kinds.egg");
+egg_test!(ground_mult_aci_refused, "ground_mult_aci_refused.egg");
+egg_test!(ground_mult_aci_repeats, "ground_mult_aci_repeats.egg");
+egg_test!(rhs_mult_aci_refused, "rhs_mult_aci_refused.egg");
+egg_test!(ground_mult_full_width, "ground_mult_full_width.egg");
+egg_test!(ground_mult_overflow, "ground_mult_overflow.egg");
+egg_test!(ground_mult_too_wide, "ground_mult_too_wide.egg");
+egg_test!(ground_mult_not_variadic, "ground_mult_not_variadic.egg");
+egg_test!(ground_mult_zero, "ground_mult_zero.egg");
+egg_test!(
+    ground_mult_extract_roundtrip,
+    "ground_mult_extract_roundtrip.egg"
+);
+egg_test!(seq_assoc_not_split, "seq_assoc_not_split.egg");
+egg_test!(seq_reject_comm, "seq_reject_comm.egg");
+egg_test!(seq_reject_except_cycle, "seq_reject_except_cycle.egg");
+egg_test!(seq_reject_mult_empty, "seq_reject_mult_empty.egg");
+egg_test!(seq_reject_mult_kind, "seq_reject_mult_kind.egg");
+egg_test!(seq_type_comp_bracket, "seq_type_comp_bracket.egg");
+egg_test!(seq_rhs_too_wide, "seq_rhs_too_wide.egg");
+egg_test!(seq_snapshot, "seq_snapshot.egg");
+egg_test!(
+    seq_snapshot_merged_children,
+    "seq_snapshot_merged_children.egg"
+);
+egg_test!(seq_type_column_source, "seq_type_column_source.egg");
+egg_test!(seq_type_comp_width, "seq_type_comp_width.egg");
+egg_test!(seq_type_reduce_scalar, "seq_type_reduce_scalar.egg");
+egg_test!(seq_type_guard, "seq_type_guard.egg");
+egg_test!(seq_type_term_arg, "seq_type_term_arg.egg");
+egg_test!(seq_splice_aci_into_a, "seq_splice_aci_into_a.egg");
+egg_test!(seq_splice_a_into_aci, "seq_splice_a_into_aci.egg");
+egg_test!(seq_splice_a_into_ac, "seq_splice_a_into_ac.egg");
+egg_test!(seq_splice_aci_into_ac, "seq_splice_aci_into_ac.egg");
+egg_test!(seq_splice_ac_into_aci, "seq_splice_ac_into_aci.egg");
+egg_test!(seq_splice_ac_into_a, "seq_splice_ac_into_a.egg");
+egg_test!(seq_no_value, "seq_no_value.egg");
+egg_test!(seq_zip_truncates, "seq_zip_truncates.egg");
+egg_test!(seq_ac_splice, "seq_ac_splice.egg");
+egg_test!(seq_ac_multiplicity, "seq_ac_multiplicity.egg");
+egg_test!(seq_ac_default_mult, "seq_ac_default_mult.egg");
+egg_test!(flatten_without_nary_warns, "flatten_without_nary_warns.egg");
+egg_test!(
+    flatten_with_nary_no_warning,
+    "flatten_with_nary_no_warning.egg"
+);
+egg_test!(flatten_nested, "flatten_nested.egg");
+egg_test!(flatten_nested_control, "flatten_nested_control.egg");
+egg_test!(flatten_cycle, "flatten_cycle.egg");
+egg_test!(flatten_two_members, "flatten_two_members.egg");
+egg_test!(flatten_assoc, "flatten_assoc.egg");
+egg_test!(flatten_ac_mult, "flatten_ac_mult.egg");
+egg_test!(seq_flatten, "seq_flatten.egg");
+egg_test!(seq_flatten_control, "seq_flatten_control.egg");
+egg_test!(seq_flatten_completion, "seq_flatten_completion.egg");
+egg_test!(flatten_identity, "flatten_identity.egg");
+egg_test!(flatten_identity_control, "flatten_identity_control.egg");
+egg_test!(flatten_nilpotent, "flatten_nilpotent.egg");
+egg_test!(flatten_nilpotent_control, "flatten_nilpotent_control.egg");
+egg_test!(flatten_inverse, "flatten_inverse.egg");
+egg_test!(flatten_inverse_control, "flatten_inverse_control.egg");
+egg_test!(flatten_rest_only, "flatten_rest_only.egg");
+egg_test!(flatten_rest_only_control, "flatten_rest_only_control.egg");
 egg_test!(checked_add_ok, "checked_add_ok.egg");
 // A partial primitive applied outside its domain is a reported program error,
 // not a panic: the engine cannot pick a value, but the caller has to be able to
@@ -342,6 +518,7 @@ egg_test!(deep_constant_fold, "deep_constant_fold.egg");
 
 // ── AC multiplicity semantics ──
 egg_test!(ac_mult_exact, "ac_mult_exact.egg");
+egg_test!(counted_top_level_insert, "counted_top_level_insert.egg");
 egg_test!(
     ac_multiplicity_variant_gap,
     "ac_multiplicity_variant_gap.egg"
@@ -386,7 +563,7 @@ egg_test!(
 egg_test!(seq_flatten_rhs_nesting, "seq_flatten_rhs_nesting.egg");
 // Asserts a *documented incompleteness*, on purpose: plain mode declines the AC flatten
 // consequence in one statement order and derives it in the other, and `--derive-ac-eqs`
-// derives it in both. `ac-congruence-completeness.md` §6c records why every build-time
+// derives it in both. `06-ac-congruence-closure.md` §6c records why every build-time
 // alternative is worse. If the plain-mode fixture starts passing, find out what changed.
 egg_test!(
     ac_flatten_order_dependence,
@@ -416,7 +593,7 @@ egg_test!(set_flatten_build, "set_flatten_build.egg");
 // ── A-only (Seq) build-side normal form ──
 // Associative-but-not-commutative ops flatten to a sequence (order preserved) and
 // collapse a one-element sequence to its element, per
-// `ac-algebraic-properties.md`'s A row and `04-canonization.md`. These two files
+// the A row of design §5.3 and §5.2 (`05-algebraic-operators.md`). These two files
 // pin both behaviors; the AC/ACI counterparts above pin the multiset forms.
 egg_test!(a_flatten_build, "a_flatten_build.egg");
 egg_test!(a_singleton_collapse, "a_singleton_collapse.egg");
@@ -633,6 +810,20 @@ egg_test!(
 egg_test!(
     when_prim_predicate_reject_in_lhs,
     "when_prim_predicate_reject_in_lhs.egg"
+);
+
+// Primitive expressions on a right-hand side, the same composition the guard side has
+// always had. The positive file computes a bound no single flat application can, and the
+// two rejections fix the boundary: a primitive's argument is a value, so a node-building
+// operator cannot feed it, and a nested primitive has to compute the declared sort.
+egg_test!(rhs_prim_nested, "rhs_prim_nested.egg");
+egg_test!(
+    rhs_prim_nested_reject_node_op,
+    "rhs_prim_nested_reject_node_op.egg"
+);
+egg_test!(
+    rhs_prim_nested_reject_sort,
+    "rhs_prim_nested_reject_sort.egg"
 );
 
 egg_test!(eq_global_only_atom, "eq_global_only_atom.egg");

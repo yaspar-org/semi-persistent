@@ -1,0 +1,2 @@
+; cost 100000000012000000007 proved at rung selection (2 solves, 0 cycle exclusions)
+(Plus (V "a"):3000000000 (V "b"))

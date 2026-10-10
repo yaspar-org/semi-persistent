@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: a sequence used as a scalar
+;; TYPES: machine
+;; "§Typing": an element-wise primitive over a sequence is a sequence, which a
+;; guard cannot be: it would hold for some elements and not others.
+(sort E)
+(function a () E)
+(function F (E) E)
+(function G (E) E)
+(function N (i64) E)
+(function And (E) E :assoc-comm-idem)
+(rewrite (And (..gs (N n)) ..rest) (And ..rest) :when ((> n 0)))

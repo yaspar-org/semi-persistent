@@ -1,0 +1,35 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// ANCHOR: cost
+// The window a `Delay` node needs of its operand: its integer payload.
+fn window(n: Node) -> i64 {
+    if n.is("Delay") {
+        match n.int(0) {
+            Some(w) => w,
+            None => 0,
+        }
+    } else {
+        0
+    }
+}
+
+// Each class is buffered once, over the widest window a chosen parent needs of it.
+// A `Hold` keeps its operand without a buffer, at a fixed price of 4.
+fn cost(g: Graph) {
+    for c in g.classes() {
+        let uses = [];
+        for u in c.parents() {
+            let w = window(u.parent());
+            if w > 0 {
+                uses.push(g.constant(w).over().when(u.parent().chosen()));
+            }
+        }
+        g.max_over(uses).charge();
+    }
+    for n in g.nodes() {
+        if n.is("Hold") {
+            n.chosen().charge_if(4);
+        }
+    }
+}
+// ANCHOR_END: cost

@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine
 ;; Regression: a merge produced by a RULE
 ;; recanonizes a parent AC node — (Sub one one) collapses into zero's class, so

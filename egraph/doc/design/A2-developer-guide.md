@@ -8,6 +8,10 @@ operations to the engine. The extension point is the `LitModel` trait,
 which declares concrete value types, their operations, and how
 literal tokens in source code map to typed values.
 
+Widths are a separate extension point. Every id, multiplicity, and store family is a
+parameter of `EGraphConfig`, and a new width is a new configuration, not an engine change:
+see [Chapter 1, "Widths are configuration parameters"](01-node-storage.md#widths-are-configuration-parameters).
+
 ## The `LitModel` Trait
 
 ```rust
@@ -17,7 +21,10 @@ pub trait LitModel: 'static {
     fn ops(&self) -> &[LitOpDesc<Self::Value>];
     fn sort_of(val: &Self::Value) -> &'static str;
     fn is_truthy(val: &Self::Value) -> bool;
-    fn parse_as(&self, sort_name: &str, token: &str) -> Option<Self::Value>;
+    fn parse_as(&self, sort_name: &str, token: &str) -> Option<Self::Value> {..}
+    fn parse_any(&self, token: &str) -> Option<(&'static str, Self::Value)> {..}
+    fn find_op(&self, name: &str) -> Option<&LitOpDesc<Self::Value>> {..}
+    fn is_lit_sort(&self, name: &str) -> bool {..}
 }
 ```
 
@@ -25,7 +32,10 @@ A model declares concrete sorts via `sorts()`, primitive operations
 via `ops()`, a sort classifier via `sort_of()`, a truthiness
 predicate for conditional evaluation, and a `parse_as()` method that
 tries to parse a token as a value of a specific sort (with a default
-implementation that delegates to the sort's parser). The `Value`
+implementation that delegates to the sort's parser). Three further methods have
+default implementations: `parse_any` tries every sort's parser in declaration order,
+`find_op` looks up an operation by name, and `is_lit_sort` tests whether a name is a
+literal sort. The `Value`
 associated type is the runtime representation of all literal values
 (typically an enum).
 
@@ -51,7 +61,9 @@ To add a new sort (say, fixed-point decimals):
 1. Add a variant to your `Value` enum: `Decimal(rust_decimal::Decimal)`.
 2. Add a `LitSortDesc` with name `"Decimal"` and a parser that
    recognizes decimal literals (e.g., `"3.14d"`).
-3. The engine auto-generates `@Decimal` and handles interning.
+3. The engine auto-generates `@Decimal` and handles interning. Interning hashes
+   `LitVal::key()`, not the value itself, so the new variant needs a canonical key in
+   the `Value` type's `LitVal` implementation, where equal keys mean equal values.
 
 ## Defining New Primitive Operations
 
@@ -62,7 +74,7 @@ pub struct LitOpDesc<V> {
     pub name: &'static str,
     pub arg_sorts: &'static [&'static str],
     pub ret_sort: &'static str,
-    pub eval: fn(&[&V]) -> V,
+    pub eval: fn(&[&V]) -> Option<V>,   // None: outside the operation's domain
 }
 ```
 
@@ -75,7 +87,7 @@ LitOpDesc {
     name: "IBig::+",
     arg_sorts: &["IBig", "IBig"],
     ret_sort: "IBig",
-    eval: |args| ibig_add(args[0], args[1]),
+    eval: |args| Some(ibig_add(args[0], args[1])),
 }
 ```
 
@@ -83,9 +95,10 @@ The qualified `Sort::op` naming convention eliminates ambiguity when
 multiple numeric types are in scope.
 
 At model load time, each `LitOpDesc` is registered as a real `OpId`
-in the `OpRegistry`. The first `builtin_count` OpIds correspond to
-model operations, providing a direct bridge from OpId to eval
-function at runtime.
+in the `OpRegistry` (`OpRegistry::register_builtins`). The first `ops().len()` OpIds
+correspond to the model operations in order, providing a direct bridge from OpId to
+eval function at runtime. The `@`-prefixed literal operators follow them, and
+`builtin_count` covers both groups.
 
 ## How Builtins Are Lifted into the E-Graph
 
@@ -116,12 +129,14 @@ pure descriptive step with no side effects on the e-graph.
 | Parse | untouched | untouched |
 | Sortcheck | untouched | untouched |
 | Build ground term | `intern` | `add`, `add_lit` |
-| LHS matching | read-only (`get`, `try_lookup`) | read-only |
+| LHS matching | read-only (`get`) | read-only |
 | RHS application | `intern` | `add`, `add_lit`, `merge` |
 
-`try_lookup` is the read-only probe: if a pattern requires literal
-42 but 42 was never introduced, the probe returns `None` and the
-match fails without polluting the store.
+A pattern that requires literal 42 compiles to a `CheckLit` step, which compares the
+matched literal node's stored value, read through `get`, with 42. If 42 was never
+introduced, no node passes the check and the store stays unchanged.
+`LitValStore::try_lookup` is a read-only probe that returns `None` for a value never
+interned; the matcher does not call it.
 
 ## Primitive-Model Contract
 
@@ -132,7 +147,8 @@ the model inconsistent with the semantics its author intended even though it
 satisfies the Rust type signature.
 
 The provided integer machine operations use checked arithmetic for the
-unqualified names. Overflow and invalid integer division are *partial*: `eval`
+plain operator names (`i64::+`, `u64::-`, and so on), as opposed to the `wrapping_*`
+and `saturating_*` ones. Overflow and invalid integer division are *partial*: `eval`
 returns `None`, which the engine reports as an `EvalError` naming the rule, the
 operation, and the operands, and the program exits nonzero. It stops the run
 rather than panicking, so a caller can tell a bad `.egg` program from a bug in
@@ -177,7 +193,7 @@ enum MyValue {
 }
 
 // In your LitModel implementation:
-fn sorts(&self) -> &[LitSortDesc] {
+fn sorts(&self) -> &[LitSortDesc<MyValue>] {
     &[
         // ... existing sorts ...
         LitSortDesc {
@@ -194,7 +210,7 @@ fn ops(&self) -> &[LitOpDesc<MyValue>] {
             name: "Color::red",
             arg_sorts: &["Color"],
             ret_sort: "IBig",
-            eval: |args| extract_red(args[0]),
+            eval: |args| Some(extract_red(args[0])),
         },
     ]
 }
@@ -205,7 +221,7 @@ Users can then write:
 ```
 (sort Pixel)
 (function Fg (Color) Pixel)
-(let p (Fg #FF0000))
+(let p (Fg "#FF0000"))   ; the quoted literal reaches the parser with its quotes
 ```
 
 The engine handles interning, hash-consing, and pattern matching

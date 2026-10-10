@@ -1,0 +1,7 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+(rewrite (Global (Interval b0 b1) a0) (Global (Interval b0 (i64::+ b1 1)) a0))
+(rewrite (And (Global (Interval b0 b1) a0) (Global (Interval b2 b3) a0) ..rest) (And (Global (Interval b0 (i64::max b1 b3)) a0) ..rest))
+(rewrite (Future (Interval b0 b1) (Future (Interval b2 b3) a0)) (Future (Interval (i64::+ b0 b2) (i64::+ b1 b2)) a0))
+(rewrite (Not (And a0 a1 ..rest)) (And (Not a0) (Not a1) ..rest))
+(rewrite (Until (Interval b0 b1) a0 a1) (Until (Interval b0 b1) a1 a0))

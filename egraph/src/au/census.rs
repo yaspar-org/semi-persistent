@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! The certification budget of an instance: `sum of A(v)` over the reachable
-//! OR states. See `egraph/doc/design/19-anti-unification.md`.
+//! OR states. See `egraph/doc/design/12-anti-unification.md`.
 //!
 //! MCGS realizes one action edge per playout and reports `Completion::Exact`
 //! only after every action of every reachable OR node is realized or proven

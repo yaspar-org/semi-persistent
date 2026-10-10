@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: none
+;; An extracted AC term prints a counted child as `x:k`, and that text reads back as the
+;; same node: here `(Plus (F (a)):3 (b))`, built once by name and once from the printed
+;; spelling.
+(sort E)
+(function a () E) (function b () E)
+(function F (E) E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (F (a)) (F (a)) (F (a)) (b)))
+(extract t)
+(check (= t (Plus (F (a)):3 (b))))

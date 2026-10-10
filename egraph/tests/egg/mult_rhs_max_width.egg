@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: none
+;; A right-hand side builds an AC child at the full multiplicity width: x:4294967295 is
+;; one stored entry, so the rule fires at once. It used to write the child 2^32 - 1
+;; times into the child list and count the copies back.
+(sort E)
+(function a () E) (function b () E) (function W () E) (function Miss () E)
+(function F (E) E) (function Hit (E) E)
+(function Plus (E) E :assoc-comm)
+(let w (W))
+(rewrite (W) (Plus (F (a)):4294967295 (b)))
+(run 1)
+(rewrite (Plus x:4294967295 (b)) (Hit x))
+(rewrite (Plus x:4294967294 (b)) (Miss))
+(run 1)
+(check (= w (Hit (F (a)))))
+(check (!= w (Miss)))

@@ -12,6 +12,13 @@ The workspace requires Rust 1.98.1, pinned in `rust-toolchain.toml`. `rustup`
 selects this compiler when Cargo runs in the checkout. A normal build does not
 require Verus; the proof annotations compile away under `rustc`.
 
+The build also requires a C++ compiler: the extractor's internal SAT solver is
+CaDiCaL, which Cargo compiles from source (crate `cadical-sys`). Xcode's command-line
+tools provide one on macOS (`xcode-select --install`), and `g++` or `clang++` does on
+Linux (Debian and Ubuntu: `apt install build-essential`). The external solvers that
+cost models can use (RoundingSat, clingo, MiniZinc) are optional and found on the
+`PATH` at run time; [Part V](24-extraction-under-cost-models.md) lists them.
+
 Cargo writes the command-line program to `target/release/semi-persistent`. Run
 its help command to confirm the build:
 
@@ -90,6 +97,7 @@ names appear in stack traces. This table maps those names to their source paths.
 | `traversals-compile-tests` | `traversals/compile-tests/` | Downstream compile tests for the generated traversal API. |
 | `semi-persistent-abstract-domains` | `abstract-domains/` | Verus-verified bitvector abstract domains and their executable mirrors. |
 | `semi-persistent-au-verus` | `au-verus/` | Machine-checked lemmas for the positional anti-unification model. |
+| `semi-persistent-satcore` | `satcore/` | Companion SAT/SMT layer that uses the e-graph as its equality theory. |
 
 ## Run the test suite
 
@@ -107,11 +115,12 @@ The interpreter's file-based integration fixtures live under
 `egraph/tests/egg/`. The harness in `egraph/tests/egg_tests.rs` sends each
 registered `.egg` program through the parser, sort checker, and interpreter.
 Unless overridden by a fixture directive, it runs the program with both naive
-and semi-naive evaluation.
+and semi-naive evaluation, each under the static and the runtime atom-scheduling
+modes.
 
-The same harness defines `book_examples`. It scans `doc/book/examples/` for
-every file with the `.egg` extension and sends each one through the same
-checker. Chapters include those files directly, so every book example is a
+The same harness defines `book_examples`. It scans the top level of
+`doc/book/examples/` for every file with the `.egg` extension and sends each one
+through the same checker. Chapters include those files directly, so every book example is a
 test. Adding an example to that directory does not require separate Rust test
 registration.
 

@@ -504,7 +504,7 @@ That attribution is wrong. Splitting the round in process
 build, and 29.6 of the 57.6 in the container writing a span table over a key
 space the data does not fill: `by_child_pos` addresses 801 008 values with
 2 003 967 keys. The index design and fix are documented in
-`egraph/doc/design/20-index-selectivity-and-delta-suffixes.md`; this section
+`egraph/doc/design/08-indexes-and-leapfrog.md` §8.3; this section
 records what the fix did to the numbers this file reports, and section
 12.3 states what section 5 has to retract.
 

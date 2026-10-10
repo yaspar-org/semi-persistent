@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; The filter is annotated `:k` so that it takes the child of multiplicity 2: an
+;; unannotated AC filter takes multiplicity 1 only (decided 2026-09-30).
+;; "§Edge cases 3": an AC sequence spliced under an A operator gives each child
+;; repeated by its multiplicity: (F a) of multiplicity 2 gives two (F a).
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function Cat (E) E :assoc)
+(function And (E) E :assoc-comm-idem)
+(function Plus (E) E :assoc-comm)
+(let e (Plus (F a) (F a) b))
+(rewrite (Plus (..fs:k (F x)) ..rest) (Cat ..fs))
+(run 1)
+(check (= e (Cat (F a) (F a))))

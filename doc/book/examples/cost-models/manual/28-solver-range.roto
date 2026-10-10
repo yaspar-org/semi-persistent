@@ -1,0 +1,8 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// ANCHOR: cost
+// A weight of 3,000,000,000: exact for Semper, past clingo's 32-bit integers.
+fn cost(g: Graph) {
+    g.root().chosen().charge_if(3000000000);
+}
+// ANCHOR_END: cost

@@ -8,8 +8,8 @@
 //! `+(a,b)=c ∧ +(b,d)=e ⊨ +(c,d)=+(a,e)` are otherwise missed. The code-to-paper
 //! correspondence is tested on finite fixtures, but an end-to-end completeness
 //! theorem for this implementation remains open. See
-//! `doc/design/ac-congruence-completeness.md` for the theory and
-//! `doc/design/ac-completion-spec.md` for the engine-level spec.
+//! `doc/design/06-ac-congruence-closure.md` Parts I and II for the theory and
+//! its Part III for the engine-level spec.
 //!
 //! This file contains the representation-agnostic per-round snapshot used by
 //! completion diagnostics and conformance tests. The completion round itself

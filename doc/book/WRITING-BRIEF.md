@@ -52,6 +52,9 @@ authoritative chapter instead of teaching the same mechanism again.
   disagreements. It does not add another domain-rewrite lesson.
 - Chapter 22 owns the two-unit result, readability, domain-specific resolution,
   and the UCT cross-check. It does not reteach clustering.
+- Chapter 24 owns cost models, the ladder of encodings, polarity, the solvers,
+  and certificates. It links to Chapter 8 for additive extraction and to
+  Chapter 5 for collection rules.
 - Chapter 23 intentionally repeats limits, but each is one short paragraph with
   a link to its authoritative chapter.
 
@@ -170,4 +173,4 @@ cross-references name the heading in prose as well as linking the file.
 | semi-naive evaluation | `18` |
 | anti-unification | `19` |
 | index selectivity | `20` |
-| algebraic properties, AC completion, completeness | `ac-algebraic-properties`, `ac-completion-spec`, `ac-congruence-completeness` |
+| algebraic properties, AC completion, completeness | `05-algebraic-operators`, `06-ac-congruence-closure` |

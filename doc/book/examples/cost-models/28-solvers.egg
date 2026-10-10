@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: solvers
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)
+
+(let e (And (Global (Interval 0 9) (Var "a0")) (Future (Interval 2 3) (Var "a1"))
+            (Global (Interval 1 4) (Var "a1")) (Future (Interval 0 7) (Var "a0"))))
+
+(cost-model memory :script "memory.roto")
+(extract e :cost memory :rung splits :solver internal)
+(extract e :cost memory :rung splits :solver dpw)
+(extract e :cost memory :solver greedy)
+;; ANCHOR_END: solvers

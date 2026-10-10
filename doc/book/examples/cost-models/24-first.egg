@@ -1,0 +1,21 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: first
+(sort E)
+(function V (String) E)
+(function F (E) E)
+(function Add (E E) E)
+(function Twice (E) E :cost 3)
+(rewrite (Twice x) (Add x x))
+
+(let e (Twice (F (F (V "a")))))
+(run 1)
+
+; Additive extraction (Chapter 8): a shared child is paid at every use.
+(extract e)
+; The same prices, with every node of the term paid once.
+(cost-model dag :script "24-first.roto")
+(extract e :cost dag)
+; The term additive extraction chooses, scored by the model.
+(extract e :cost dag :solver greedy)
+;; ANCHOR_END: first

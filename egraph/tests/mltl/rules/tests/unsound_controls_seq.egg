@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+; Deliberately wrong sequence rules, for tools/check_rules.py: each must be refuted
+; in the settled sense, so the instantiation of sequence rules can see a settled
+; counterexample when one exists (doc/goals/goal-sequence-patterns.md, step 5).
+
+; Merging that widens every union by one step.
+(rewrite (And (..gs (Global (Interval l u) p)) ..rest)
+         (And ..{ (Global (Interval a (+ b 1)) q) for (q a b) in (union-by p l u) } ..rest)
+  :when ((>= (count gs) 1)))
+
+; Narrowing one step further than the forbidden windows allow.
+(rewrite (And (..ns (Global (Interval a b) (Not q)))
+              (..gs (Global (Interval l u) p) :except ns)
+              (..fs (Future (Interval c d) r)) ..rest)
+         (And ..ns ..gs ..{ (Future (Interval (+ c2 1) d2) r2) for (r2 c2 d2) in (narrow c d r a b q) } ..rest)
+  :when ((> (count (narrowed c d r a b q)) 0)))

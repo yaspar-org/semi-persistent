@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ; Deep linear unary chains: f^64(a) vs f^64(b).
 ; The anti-unifier factors the whole chain through f with a single
 ; Variants leaf: f^64(Variants(a, b)) has size 64 + 2 = 66.

@@ -1,0 +1,9 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// ANCHOR: cost
+// Roto's own `i64` arithmetic would wrap without an error, so the script is refused.
+fn cost(g: Graph) {
+    let k: i64 = 9223372036854775807;
+    g.charge_const(k + 2);
+}
+// ANCHOR_END: cost

@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Ends in an error under --cost-bits 64, so the book test does not run it.
+;; ANCHOR: cost-bits
+(sort E)
+(function V (String) E)
+(let e (V "a"))
+
+(cost-model big :script "28-cost-bits.roto")
+(extract e :cost big)
+;; ANCHOR_END: cost-bits

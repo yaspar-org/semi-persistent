@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; A global on the right-hand side builds its class.
+(sort E)
+(function A () E)
+(function B () E)
+(function Wrap (E) E)
+(function Mark (E) E)
+(function And (E) E :assoc-comm-idem)
+(let a A)
+(let e (And (Wrap A) (Wrap B)))
+(rewrite (And (..gs (Wrap x)) ..rest) (Mark a))
+(run 1)
+(check (= e (Mark A)))

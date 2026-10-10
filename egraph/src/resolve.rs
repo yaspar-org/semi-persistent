@@ -6,8 +6,8 @@
 
 use crate::DenseId;
 use crate::ast::{
-    CmpOp, GlobalVarId, LitValVarId, MsetVarId, MultVarId, RhsLocalMultVarId, RhsLocalVarId,
-    SeqVarId, SetVarId, Span, VarId,
+    CmpOp, GlobalVarId, LitSeqVarId, LitValVarId, MsetVarId, MultVarId, RhsLocalMultVarId,
+    RhsLocalVarId, SeqVarId, SetVarId, Span, VarId,
 };
 use crate::compile::{Atom, FlatMult, FlatQuery};
 use crate::lit_model::LitModel;
@@ -48,13 +48,11 @@ impl<S: Copy, G: Copy> GlobalCtx<S, G> {
     }
 
     pub fn insert(&mut self, name: String, sort: S, eclass: G) -> GlobalVarId {
-        // Checked mint: `GlobalVarId` is a bare u16 with no bound of its own, and
-        // globals accumulate across a session, so the 65537th binding would
-        // otherwise wrap and alias binding 0 — the same narrow-before-check shape
-        // fixed in the container index layer. No Result channel here, so refuse
-        // loudly rather than hand back an aliased id.
-        let raw = u16::try_from(self.sorts.len())
-            .expect("too many global bindings: GlobalVarId is u16, so at most 65536 are supported");
+        // Checked mint: globals accumulate across a session, so the id is a u32 (a
+        // program can bind more than 65,536), minted with a check so a binding past 2^32
+        // cannot wrap and alias binding 0. That many bindings exhaust memory first.
+        let raw = u32::try_from(self.sorts.len())
+            .expect("too many global bindings: GlobalVarId is u32, so at most 2^32 are supported");
         let gid = GlobalVarId::new(raw);
         self.sorts.push(sort);
         self.bindings.push(eclass);
@@ -175,6 +173,16 @@ pub enum RAtom<O, S, L> {
         op: O,
         elems: Vec<(PatVar, RMult)>,
     },
+    /// A `:comm` application, matched modulo commutativity as a two-element multiset:
+    /// the AC matcher's `DecomposeAC` tries every assignment of the two child patterns
+    /// to the stored pair, whatever order the pattern writes them in and whatever is
+    /// bound first. Unlike `ACExact`, never through a `:flatten` view: a commutative
+    /// operator is not associative, so its nested applications must not be spliced.
+    Comm {
+        node: VarId,
+        op: O,
+        elems: Vec<(PatVar, RMult)>,
+    },
     ACSub {
         node: VarId,
         op: O,
@@ -196,6 +204,13 @@ pub enum RAtom<O, S, L> {
         node: VarId,
         op: O,
         val: LitValVarId,
+    },
+    /// The assembly of a sequence pattern's matches at `node`, an `op` node whose
+    /// children are assigned to the rule's items (Semper design §7.6).
+    Collect {
+        node: VarId,
+        op: O,
+        collect: crate::seq_engine::CollectRef<O, S, L>,
     },
     Eq(VarId, VarId),
     EqGlobal(VarId, GlobalVarId),
@@ -312,8 +327,43 @@ pub struct MatchShape {
     pub msets: Vec<String>,
     pub mults: Vec<String>,
     pub lit_vals: Vec<String>,
+    /// Literal-valued sequences: the literal columns of a sequence pattern's filters
+    /// (`doc/sequence-patterns.md`, Typing).
+    pub lit_seqs: Vec<String>,
+    /// The filters of a sequence pattern, with their children and columns. Empty for
+    /// an ordinary rule.
+    pub filters: Vec<FilterShape>,
     /// Tracks which kind each name belongs to, for clash detection.
     kinds: std::collections::HashMap<String, VarKind>,
+}
+
+/// Where a sequence pattern's children live in a match: the pool of the operator's
+/// kind, as for a rest variable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestRef {
+    Seq(SeqVarId),
+    Set(SetVarId),
+    Mset(MsetVarId),
+}
+
+/// One column of a filter: a pattern variable read per element. A class-valued
+/// variable is a sequence in `seq_pool`; a literal-valued one a sequence in
+/// `lit_seq_pool`; an AC filter's multiplicity variable reads the multiplicities
+/// its children carry in `mset_pool`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColRef {
+    Node(SeqVarId),
+    Lit(LitSeqVarId),
+    Mult(MsetVarId),
+}
+
+/// A filter `(..name base)` in a match: its children, and its pattern variables as
+/// columns parallel to them (element `j` of every column belongs to child `j`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FilterShape {
+    pub name: String,
+    pub elems: RestRef,
+    pub cols: Vec<(String, ColRef)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -324,6 +374,7 @@ enum VarKind {
     Mset,
     Mult,
     LitVal,
+    LitSeq,
 }
 
 impl VarKind {
@@ -335,6 +386,7 @@ impl VarKind {
             VarKind::Mset => "multiset rest variable",
             VarKind::Mult => "multiplicity variable",
             VarKind::LitVal => "literal value variable",
+            VarKind::LitSeq => "literal sequence variable",
         }
     }
 }
@@ -357,6 +409,51 @@ impl MatchShape {
     }
     pub fn num_lit_val_vars(&self) -> usize {
         self.lit_vals.len()
+    }
+    pub fn num_lit_seq_vars(&self) -> usize {
+        self.lit_seqs.len()
+    }
+    pub fn lit_seq_name(&self, v: LitSeqVarId) -> &str {
+        &self.lit_seqs[v.idx()]
+    }
+    pub fn find_lit_seq(&self, name: &str) -> Option<LitSeqVarId> {
+        self.lit_seqs
+            .iter()
+            .position(|n| n == name)
+            .and_then(|i| u16::try_from(i).ok())
+            .map(LitSeqVarId::new)
+    }
+    /// The filter a name denotes, if any.
+    pub fn find_filter(&self, name: &str) -> Option<usize> {
+        self.filters.iter().position(|f| f.name == name)
+    }
+    /// The column a name denotes, and its filter, if the name is a filter's pattern
+    /// variable.
+    pub fn find_column(&self, name: &str) -> Option<(usize, ColRef)> {
+        self.filters.iter().enumerate().find_map(|(fi, f)| {
+            f.cols
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, c)| (fi, *c))
+        })
+    }
+    /// Register a literal-valued sequence (a literal column).
+    pub fn intern_lit_seq(&mut self, name: &str) -> Result<LitSeqVarId, String> {
+        self.check_kind(name, VarKind::LitSeq)?;
+        Ok(if let Some(id) = self.find_lit_seq(name) {
+            id
+        } else {
+            let raw = u16::try_from(self.lit_seqs.len()).map_err(|_| {
+                format!(
+                    "too many literal sequence variables in one rule: at most {} distinct names",
+                    u16::MAX as u32 + 1
+                )
+            })?;
+            let id = LitSeqVarId::new(raw);
+            self.lit_seqs.push(name.to_owned());
+            self.kinds.insert(name.to_owned(), VarKind::LitSeq);
+            id
+        })
     }
 
     pub fn var_ids(&self) -> impl Iterator<Item = VarId> {
@@ -618,6 +715,10 @@ pub struct ResolvedQuery<O, S, L> {
     pub set_sorts: Vec<S>,
     pub mset_sorts: Vec<S>,
     pub mult_intervals: Vec<(MultVarId, u64, u64)>,
+    /// `:flatten`: every n-ary atom matches the flattened views of its node
+    /// (`crate::flatten`), not only the stored children. Set by the rule's tag; a
+    /// query resolved here is never flattened until the caller sets it.
+    pub flatten: bool,
 }
 
 struct RestSorts<S> {
@@ -763,6 +864,7 @@ where
         set_sorts: rest_sorts.sets,
         mset_sorts: rest_sorts.msets,
         mult_intervals,
+        flatten: false,
     })
 }
 
@@ -896,7 +998,9 @@ fn check_nodes_bindable<O, S, L>(atoms: &[RAtom<O, S, L>], shape: &MatchShape) -
                     mark(c, &mut bound);
                 }
             }
-            RAtom::ACExact { node, elems, .. } | RAtom::ACSub { node, elems, .. } => {
+            RAtom::ACExact { node, elems, .. }
+            | RAtom::Comm { node, elems, .. }
+            | RAtom::ACSub { node, elems, .. } => {
                 bound[node.idx()] = true;
                 for (ev, _) in elems {
                     mark(ev, &mut bound);
@@ -909,6 +1013,7 @@ fn check_nodes_bindable<O, S, L>(atoms: &[RAtom<O, S, L>], shape: &MatchShape) -
                 }
             }
             RAtom::Lit { node, .. } | RAtom::LitBind { node, .. } => bound[node.idx()] = true,
+            RAtom::Collect { node, .. } => bound[node.idx()] = true,
             // `BindGlobal`: the atom is what gives the variable its value.
             RAtom::EqGlobal(local, _) => bound[local.idx()] = true,
             // Binds nothing on its own; propagated below.
@@ -1214,10 +1319,10 @@ where
                         sorts,
                         &mut extra,
                     )?;
-                    let mut atoms = vec![RAtom::Plain {
+                    let mut atoms = vec![RAtom::Comm {
                         node: nid,
                         op: op_id,
-                        children: vec![c0, c1],
+                        elems: vec![(c0, RMult::Exact(1)), (c1, RMult::Exact(1))],
                     }];
                     atoms.extend(extra);
                     Ok(atoms)
@@ -1235,7 +1340,9 @@ where
                     }])
                 }
                 _ => Err(err(
-                    "operator 'op' is not plain/commutative (internal error: flatten should have classified this)".to_string(),
+                    format!(
+                        "operator '{op}' is not plain/commutative (internal error: flatten should have classified this)"
+                    ),
                     *span,
                 )),
             }
@@ -1718,15 +1825,46 @@ fn variadic_sort<S: DenseId + Copy>(kind: &OpKind<S>, op: &str, span: Span) -> R
     }
 }
 
-fn check_min_children(_op: &str, count: usize, span: Span) -> R<()> {
+fn check_min_children(op: &str, count: usize, span: Span) -> R<()> {
     if count == 0 {
         Err(err(
-            "operator 'op' requires at least 1 child (no identity element support)".to_string(),
+            format!(
+                "a pattern '({op})' with no children never matches: a stored node is never \
+                 empty, since an empty application reduces to the operator's identity"
+            ),
             span,
         ))
     } else {
         Ok(())
     }
+}
+
+/// Whether an application of this kind with no children has a meaning: the declared
+/// identity. A and plain operators have none.
+fn has_identity<S: DenseId>(kind: &OpKind<S>) -> bool {
+    matches!(
+        kind,
+        OpKind::MSet {
+            identity: Some(_),
+            ..
+        } | OpKind::Set {
+            identity: Some(_),
+            ..
+        }
+    )
+}
+
+fn empty_application_message(op: &str) -> String {
+    format!(
+        "operator '{op}' has no :identity, so an application of it with no children is \
+         meaningless; declare an identity or supply at least one child"
+    )
+}
+
+fn zero_count_message() -> String {
+    "a written multiplicity is at least 1: a count of 0 means the element does not occur; \
+     omit it instead"
+        .to_string()
 }
 
 fn check_a_mode<S: DenseId>(kind: &OpKind<S>, op: &str, span: Span) -> R<()> {
@@ -1781,6 +1919,7 @@ fn resolve_ac_elems<S: DenseId + Copy, const TRACK: bool>(
             PatVar::Local(vid)
         };
         let rm = match m {
+            FlatMult::Exact(0) => return Err(err(zero_count_message(), span)),
             FlatMult::Exact(n) => RMult::Exact(*n),
             FlatMult::Var { name, constraint } => RMult::Var {
                 var: shape.intern_mult(name).map_err(|msg| err(msg, span))?,
@@ -1808,7 +1947,9 @@ fn collect_mult_intervals<O, S, V>(
 
     for (atom, src) in atoms.iter().zip(src_atoms.iter()) {
         let elems: &[(PatVar, RMult)] = match atom {
-            RAtom::ACExact { elems, .. } | RAtom::ACSub { elems, .. } => elems.as_slice(),
+            RAtom::ACExact { elems, .. }
+            | RAtom::Comm { elems, .. }
+            | RAtom::ACSub { elems, .. } => elems.as_slice(),
             _ => continue,
         };
         let src_span = match src {
@@ -1823,7 +1964,14 @@ fn collect_mult_intervals<O, S, V>(
                     let (lo, hi) = entry;
                     match op {
                         CmpOp::Ge => *lo = (*lo).max(*val),
-                        CmpOp::Gt => *lo = (*lo).max(*val + 1),
+                        // `k > u64::MAX` has no value: the interval is empty (lo > hi).
+                        CmpOp::Gt => match val.checked_add(1) {
+                            Some(v) => *lo = (*lo).max(v),
+                            None => {
+                                *lo = u64::MAX;
+                                *hi = 0;
+                            }
+                        },
                         CmpOp::Le => *hi = (*hi).min(*val),
                         CmpOp::Lt => *hi = (*hi).min(val.saturating_sub(1)),
                         CmpOp::Eq => {
@@ -1914,7 +2062,7 @@ pub enum RRhsTerm<O, S, L> {
     /// `(+ x y)` where `+` is a `LitOpDesc` prim op.
     PrimApp {
         op: O,
-        args: Vec<RPrimArg>,
+        args: Vec<RPrimArg<O, L>>,
         ret_sort: S,
     },
     /// Reconstruct a `@i64(k)` lit node from a bound AC multiplicity variable.
@@ -1925,12 +2073,28 @@ pub enum RRhsTerm<O, S, L> {
     FetchGlobal(GlobalVarId),
 }
 
-/// A primitive-op argument on a RHS: a bound literal value, or a bound AC
-/// multiplicity variable read as an i64.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RPrimArg {
+/// A primitive-op argument on a RHS: a bound literal value, a bound AC
+/// multiplicity variable read as an i64, a constant written at the argument
+/// position, or a nested primitive application.
+///
+/// The last two mirror [`RPredExpr`], the guard-side expression form: a guard
+/// has always accepted `(i64::<= c (i64::+ b 1))`, and a right-hand side now
+/// accepts the same shape, so an interval computed as `min(a, c)` can be used
+/// where the rule needs it instead of being staged through a helper operator.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RPrimArg<O, L> {
     LitVal(LitValVarId),
     Mult(RhsMultRef),
+    /// A literal written in the argument position, parsed at that position's
+    /// declared sort.
+    Const(L),
+    /// `(i64::+ a (i64::- d c))` — a primitive application feeding another
+    /// primitive's argument. `ret_sort` is checked against the outer
+    /// primitive's declared argument sort during resolution.
+    Nested {
+        op: O,
+        args: Vec<RPrimArg<O, L>>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2281,30 +2445,17 @@ where
             let rt = resolve_rhs(t, None, ops, sorts, model, ctx, globals)?;
             Ok(ResolvedAction::Insert(rt))
         }
-        Action::Set { func, args, value } => {
-            let (op_id, info) = lookup_op(func, ops, Span::Dummy)?;
-            let mut rargs = Vec::with_capacity(args.len());
-            for (i, a) in args.iter().enumerate() {
-                let expected = match &info.kind {
-                    crate::registry::OpKind::Normal { arg_sorts } => arg_sorts.get(i).copied(),
-                    _ => None,
-                };
-                rargs.push(resolve_rhs(a, expected, ops, sorts, model, ctx, globals)?);
-            }
-            let rv = resolve_rhs(
-                value,
-                Some(info.return_sort),
-                ops,
-                sorts,
-                model,
-                ctx,
-                globals,
-            )?;
-            Ok(ResolvedAction::Set {
-                func: op_id,
-                args: rargs,
-                value: rv,
-            })
+        Action::Set { func, .. } => {
+            // Lattice `set` parses but has no semantics yet (`apply.rs` would reach a
+            // `todo!` when the rule fired). Refused here, when the rule is installed, so a
+            // program learns it before any rule runs (bug #4, 2026-10-05).
+            return Err(err(
+                format!(
+                    "the `set` action (on '{func}') is not implemented; write the value as a \
+                     term and use `union` instead"
+                ),
+                Span::Dummy,
+            ));
         }
     };
     debug_assert!(ctx.scopes_are_empty());
@@ -2485,22 +2636,27 @@ pub fn resolve_rhs<
                 }
                 let mut args = Vec::with_capacity(children.len());
                 for (i, c) in children.iter().enumerate() {
-                    let var_name = match c {
-                        crate::ast::RhsChild::Term(crate::ast::RhsTerm::Var(v, _)) => v,
+                    let term = match c {
+                        crate::ast::RhsChild::Term(t) => t,
                         _ => {
                             return Err(err(
-                                format!("prim op '{op}' arg {i} must be a lit-val variable"),
+                                format!(
+                                    "prim op '{op}' arg {i} must be a literal-value variable, \
+                                     a constant, or a nested primitive application"
+                                ),
                                 span,
                             ));
                         }
                     };
-                    args.push(resolve_prim_arg(
-                        var_name,
+                    args.push(resolve_prim_expr(
+                        term,
                         arg_sorts[i],
                         op,
                         i,
                         ctx,
+                        ops,
                         sorts,
+                        model,
                         span,
                     )?);
                 }
@@ -2527,8 +2683,21 @@ pub fn resolve_rhs<
                 info.kind,
                 OpKind::A { .. } | OpKind::MSet { .. } | OpKind::Set { .. }
             );
+            // An application with no children denotes the operator's identity, so it has a
+            // meaning only when the operator declares one. Written without one it names
+            // nothing in the algebra, and it is refused here, as it is in a ground term.
+            // (A right-hand side whose children all drop at run time is refused at run time:
+            // `apply::NO_VALUE`.)
+            if variadic && children.is_empty() && !has_identity(&info.kind) {
+                return Err(err(empty_application_message(op), span));
+            }
             let mut rchildren = Vec::with_capacity(children.len());
             for (i, c) in children.iter().enumerate() {
+                if matches!(info.kind, OpKind::Set { .. })
+                    && matches!(c, crate::ast::RhsChild::TermMult { .. })
+                {
+                    return Err(err(crate::sortcheck::set_count_message(op), span));
+                }
                 if !variadic && matches!(c, crate::ast::RhsChild::TermMult { .. }) {
                     return Err(err(
                         format!(
@@ -2545,6 +2714,7 @@ pub fn resolve_rhs<
                             | crate::ast::RhsChild::SetComp { .. }
                             | crate::ast::RhsChild::MsetComp { .. }
                             | crate::ast::RhsChild::SeqComp { .. }
+                            | crate::ast::RhsChild::RowComp { .. }
                     )
                 {
                     return Err(err(
@@ -2602,7 +2772,109 @@ where
     })
 }
 
-fn resolve_prim_arg<S: DenseId + Copy, const TRACK: bool>(
+/// Resolve one argument of a right-hand-side primitive application.
+///
+/// The argument may be a bound literal-value or multiplicity variable, a
+/// constant, or another primitive application. Only a variable has to be bound
+/// by the query; the other two forms are computed while the right-hand side is
+/// built, exactly as they are in a `:when` guard.
+#[allow(clippy::too_many_arguments)]
+fn resolve_prim_expr<
+    O: DenseId + Hash + Copy,
+    S: DenseId + Copy,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    const TRACK: bool,
+>(
+    term: &crate::ast::RhsTerm,
+    expected_sort: S,
+    outer_op: &str,
+    arg_index: usize,
+    ctx: &RhsResolveCtx<'_, S>,
+    ops: &OpRegistry<O, S, TRACK>,
+    sorts: &SortRegistry<S, TRACK>,
+    model: &M,
+    span: Span,
+) -> R<RPrimArg<O, L>> {
+    use crate::ast::RhsTerm;
+    match term {
+        RhsTerm::Var(name, _) => {
+            resolve_prim_arg(name, expected_sort, outer_op, arg_index, ctx, sorts, span)
+        }
+        RhsTerm::Lit(text, lit_span) => {
+            let val = model
+                .parse_as(sorts.name(expected_sort), text)
+                .ok_or_else(|| {
+                    err(
+                        format!(
+                            "cannot parse '{text}' as '{}' for prim op '{outer_op}' arg {arg_index}",
+                            sorts.name(expected_sort)
+                        ),
+                        *lit_span,
+                    )
+                })?;
+            Ok(RPrimArg::Const(val))
+        }
+        RhsTerm::App {
+            op,
+            children,
+            span: app_span,
+        } => {
+            let (op_id, info) = lookup_op(op, ops, *app_span)?;
+            if !ops.is_prim_op(op_id) {
+                return Err(err(
+                    format!(
+                        "'{op}' is not a primitive operator, so it cannot feed prim op \
+                         '{outer_op}' arg {arg_index}: a primitive computes over literal \
+                         values, not over e-nodes"
+                    ),
+                    *app_span,
+                ));
+            }
+            if info.return_sort != expected_sort {
+                return Err(err(
+                    format!(
+                        "prim op '{op}' computes '{}', but '{outer_op}' arg {arg_index} \
+                         expects '{}'",
+                        sorts.name(info.return_sort),
+                        sorts.name(expected_sort)
+                    ),
+                    *app_span,
+                ));
+            }
+            let OpKind::Normal { arg_sorts } = &info.kind else {
+                unreachable!("a primitive op is always registered as OpKind::Normal")
+            };
+            check_arity(op, arg_sorts.len(), children.len(), *app_span)?;
+            let mut args = Vec::with_capacity(children.len());
+            for (i, c) in children.iter().enumerate() {
+                let crate::ast::RhsChild::Term(inner) = c else {
+                    return Err(err(
+                        format!(
+                            "prim op '{op}' arg {i} must be a literal-value variable, \
+                             a constant, or a nested primitive application"
+                        ),
+                        *app_span,
+                    ));
+                };
+                args.push(resolve_prim_expr(
+                    inner,
+                    arg_sorts[i],
+                    op,
+                    i,
+                    ctx,
+                    ops,
+                    sorts,
+                    model,
+                    *app_span,
+                )?);
+            }
+            Ok(RPrimArg::Nested { op: op_id, args })
+        }
+    }
+}
+
+fn resolve_prim_arg<O, L, S: DenseId + Copy, const TRACK: bool>(
     name: &str,
     expected_sort: S,
     op: &str,
@@ -2610,7 +2882,7 @@ fn resolve_prim_arg<S: DenseId + Copy, const TRACK: bool>(
     ctx: &RhsResolveCtx<'_, S>,
     sorts: &SortRegistry<S, TRACK>,
     span: Span,
-) -> R<RPrimArg> {
+) -> R<RPrimArg<O, L>> {
     let mult_arg = |mult| {
         if sorts.name(expected_sort) != "i64" {
             Err(err(
@@ -2716,6 +2988,12 @@ fn resolve_rhs_child<
             t, sort, ops, sorts, model, ctx, globals,
         )?)),
         RhsChild::TermMult { term, mult, span } => {
+            // A written count of 0 means no occurrence: the element is not there, so the
+            // annotation has no meaning. A computed count of 0 is different: it drops the
+            // child at run time.
+            if matches!(mult, crate::ast::MultExpr::Lit(0)) {
+                return Err(err(zero_count_message(), *span));
+            }
             // Only a variadic op can absorb a repeated child; the App site
             // rejects the annotation under fixed-arity ops before recursing.
             let body = resolve_rhs(term, sort, ops, sorts, model, ctx, globals)?;
@@ -2726,6 +3004,15 @@ fn resolve_rhs_child<
             })
         }
         RhsChild::Splice(name, span) => resolve_splice(name, *span, sort, sorts, ctx),
+        RhsChild::RowComp { span, .. } if ctx.query_shape.filters.is_empty() => Err(err(
+            "a tuple comprehension, or one over an expression, belongs to a sequence rule \
+             (doc/sequence-patterns.md); an ordinary rule iterates a rest variable",
+            *span,
+        )),
+        RhsChild::RowComp { span, .. } => Err(err(
+            "tuple comprehensions are resolved by the sequence-rule resolver",
+            *span,
+        )),
         RhsChild::SetComp {
             body,
             var,
@@ -3290,7 +3577,11 @@ mod tests {
     fn resolve_empty_a_exact() {
         let r = do_resolve("(concat)");
         assert!(r.is_err());
-        assert!(r.unwrap_err().msg.contains("at least 1 child"));
+        assert!(
+            r.unwrap_err()
+                .msg
+                .contains("with no children never matches")
+        );
     }
 
     #[test]

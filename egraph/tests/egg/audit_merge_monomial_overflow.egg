@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: multiplicity overflow:
+;; One rule unions (b) = (c) and t = u in the same round. Merging t's class reads t's
+;; monomial, whose children b:2^32-1 and c:2^32-1 are now one class: their sum, 2^33-2,
+;; is past the 32-bit width. That read panicked in `node_monomial_into` (found 2026-10-06,
+;; missed by the integer audit); it is now recorded and reported as the run's multiplicity
+;; overflow. 64 bits holds the sum (config_matrix.rs).
+(sort E)
+(function b () E) (function c () E) (function s () E) (function K () E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (b):4294967295 (c):4294967295))
+(let u (Plus (s) (b)))
+(rule ((K)) ((union (b) (c)) (union t u)))
+(let k (K))
+(run 1)

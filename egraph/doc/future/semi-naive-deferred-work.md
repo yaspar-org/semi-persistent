@@ -1,6 +1,6 @@
 # Deferred Work — Semi-Naive Evaluation & Index Backend
 
-[Ch 18: Semi-Naive Evaluation](../design/18-semi-naive-evaluation.md) · [Table of Contents](../design/00-table-of-contents.md)
+[§9.2: Semi-Naive Evaluation](../design/09-saturation.md#92-semi-naive-evaluation) · [Table of Contents](../design/00-table-of-contents.md)
 
 Semi-naive evaluation is implemented and shipped (Chapter 18). This
 document tracks the work that was **intentionally deferred**: each item
@@ -129,4 +129,4 @@ variant scheduling and fallback rules can add work on other programs.
   See Chapter 18, "Testing Strategy".
 
 ---
-[Ch 18: Semi-Naive Evaluation](../design/18-semi-naive-evaluation.md) · [Table of Contents](../design/00-table-of-contents.md)
+[§9.2: Semi-Naive Evaluation](../design/09-saturation.md#92-semi-naive-evaluation) · [Table of Contents](../design/00-table-of-contents.md)

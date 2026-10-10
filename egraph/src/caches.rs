@@ -545,6 +545,11 @@ impl<
 
         let gid = node.global_id();
         let mut new_node = FixedArityNode::new(gid, node.op(), node.children);
+        // Carry the control flags over. `new` starts them at 0, so rebuilding the node
+        // here used to clear them: a `(subsume t)` was undone by any later merge that
+        // recanonicalized `t`, and it became matchable again. The flags describe the
+        // node, not its children, so canonization does not affect them.
+        new_node.flags = orig.flags;
         if PROOFS {
             new_node.set_history();
         }
@@ -557,13 +562,30 @@ impl<
         // Collision probe AFTER the write, excluding this node: the old hint
         // stays in its bucket (a restore past this point revalidates it), and
         // a self-hint from earlier content is not a collision.
-        if let Some(existing_gid) =
+        let collided = if let Some(existing_gid) =
             self.probe_hints_fp_mut(new_fp, &node.op(), &node.children, Some(local_id))
         {
             collisions.push((gid, existing_gid));
-        }
+            // The probe validated op and children against arena content, so this node's
+            // canonical form now equals `existing_gid`'s, and the collision merges their
+            // classes. `existing_gid` is unflagged (the hint rule below), so flagging
+            // this one keeps the `FLAG_CONGRUENT_DUP` invariant.
+            let mut dup = self.nodes.get(local_id);
+            dup.flags |= crate::node_types::FLAG_CONGRUENT_DUP;
+            self.nodes.set(local_id, dup);
+            true
+        } else {
+            false
+        };
 
-        self.push_hint(new_fp, local_id);
+        // The rule that maintains the invariant: no hint for a flagged node, so a probe
+        // never returns one and every collision's survivor is unflagged. `collided`
+        // covers the node just flagged; the flag re-check covers a node flagged in an
+        // earlier round whose children have moved again since.
+        if !collided && self.nodes.get(local_id).flags & crate::node_types::FLAG_CONGRUENT_DUP == 0
+        {
+            self.push_hint(new_fp, local_id);
+        }
     }
 
     /// Retrieve the original (pre-recanonize) children for a node by global id.
@@ -895,6 +917,9 @@ impl<
     /// buffer, cleared internally. Pushes collision pair into `collisions`
     /// if the new canonical form matches an existing node.
     /// When `PROOFS=true`, saves the original node+children to history on first recanonize.
+    /// Returns the canonization's result: whether the children form a node or name a
+    /// class (`crate::nary_canon::Normal`), on every path, so the caller records the
+    /// degenerate-arity equality.
     pub fn recanonize_node<V: VarCanon<G, C>>(
         &mut self,
         local_id: L,
@@ -903,12 +928,17 @@ impl<
         collisions: &mut Vec<(G, G)>,
         touched: &mut Vec<G>,
         mode: crate::canon::CanonMode<G>,
-    ) {
+    ) -> crate::nary_canon::Normal<G> {
         let node = self.nodes.get(local_id);
         let (start, end) = node.span();
 
         buf.clear();
-        V::canonize(buf, start, end, |i| self.children.get(i), &find, mode);
+        let normal = V::canonize(buf, start, end, |i| self.children.get(i), &find, mode);
+        // A canonical form past the configured width is not representable: the node keeps
+        // its stored children, and `rebuild` reports the overflow.
+        if normal == crate::nary_canon::Normal::Overflow {
+            return normal;
+        }
 
         let new_len = buf.len();
 
@@ -921,7 +951,7 @@ impl<
                 }
             }
             if same {
-                return;
+                return normal;
             }
         }
 
@@ -955,6 +985,8 @@ impl<
         let new_end = start + new_len;
         let gid = node.global_id();
         let mut updated = VariableArityNode::make(gid, node.op(), start, new_end);
+        // As in the fixed-arity twin: `make` starts the flags at 0, so carry them over.
+        updated.flags = node.flags;
         if PROOFS {
             updated.set_history();
         }
@@ -967,11 +999,28 @@ impl<
         // Collision probe excluding this node (see the fixed-arity twin: a
         // self-hint from earlier content is not a collision), then hint the
         // new content. The old hint stays for restore to revalidate.
-        if let Some(existing_gid) = self.probe_hints(node.op(), &buf[..new_len], Some(local_id)) {
+        let collided = if let Some(existing_gid) =
+            self.probe_hints(node.op(), &buf[..new_len], Some(local_id))
+        {
             collisions.push((gid, existing_gid));
-        }
+            true
+        } else {
+            false
+        };
 
-        self.push_hint(new_fp, local_id);
+        // As in the fixed-arity twin: flag the loser, and never hint a flagged node, which
+        // is what keeps every content group's last member unflagged.
+        let flagged = collided || updated.flags & crate::node_types::FLAG_CONGRUENT_DUP != 0;
+        if collided {
+            updated.flags |= crate::node_types::FLAG_CONGRUENT_DUP;
+            // Written unconditionally now: the arity may be unchanged, in which case the
+            // write above was skipped and the flag would be lost.
+            self.nodes.set(local_id, updated);
+        }
+        if !flagged {
+            self.push_hint(new_fp, local_id);
+        }
+        normal
     }
 
     /// Retrieve the original (pre-recanonize) children for a node by global id.

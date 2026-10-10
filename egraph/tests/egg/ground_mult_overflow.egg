@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: multiplicity overflow:
+;; Two ground entries of one class whose counts sum past the 32-bit width: reported,
+;; not wrapped and not a panic.
+(sort E)
+(function a () E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (a):4294967295 (a)))

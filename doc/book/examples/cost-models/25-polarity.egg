@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; ANCHOR: polarity
+(sort T)
+(function Leaf () T)
+(cost-model broken :script "25-polarity.roto")
+;; ANCHOR_END: polarity

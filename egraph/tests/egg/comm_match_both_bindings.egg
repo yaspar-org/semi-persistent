@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; (Eq x y) against Eq(a, b) has two matches modulo commutativity, {x=a, y=b} and
+;; {x=b, y=a}; a right-hand side that reads one variable sees both. A pair of equal
+;; children is two entries, so (Eq x y) still matches Eq(a, a) with x = y = a.
+;; TYPES: machine
+(sort E)
+(function C () E)
+(function D () E)
+(function F (E) E)
+(function G () E)
+(function H (E) E)
+(function Eq (E E) E :comm)
+(function Plus (E) E :assoc-comm)
+(let gc (C))
+(let e (Eq (C) (D)))
+(let f (Eq (D) (D)))
+(rewrite (Eq x y) (H x))
+(run 1)
+(check (= e (H (C))))
+(check (= e (H (D))))
+(check (= f (H (D))))

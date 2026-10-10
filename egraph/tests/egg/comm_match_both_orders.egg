@@ -1,0 +1,21 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; A :comm pattern matches modulo commutativity: the stored pair is in class-id order,
+;; and the rule names its children in the other order. Before the fix, a :comm atom was
+;; matched positionally and missed this node; it now goes through the AC decomposition
+;; (resolve::RAtom::Comm), which tries every assignment of the two child patterns.
+;; TYPES: machine
+(sort E)
+(function C () E)
+(function D () E)
+(function F (E) E)
+(function G () E)
+(function H (E) E)
+(function Eq (E E) E :comm)
+(function Plus (E) E :assoc-comm)
+(let gc (C))
+(let x (Eq (C) (F (D))))
+(rewrite (Eq (F p) q) (G))
+(run 2)
+(check (= x (G)))

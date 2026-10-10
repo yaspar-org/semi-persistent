@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Sequence rules canonicalize children through the round's snapshot (Semper design
+;; §7.6, "Snapshot"). In round 1 the ordinary rule merges (G b)'s class into
+;; (F a)'s before the sequence rule matches. On the snapshot the two children are
+;; distinct classes and (G b) matches the filter: (N 1). Canonicalized through the
+;; live union-find, both children would read as (F a)'s class, whose snapshot
+;; members have no G: (N 0).
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function G (E) E)
+(function N (i64) E)
+(function And (E) E :assoc-comm-idem)
+(let e (And (F a) (G b)))
+(rewrite (G b) (F (a)))
+(rewrite (And (..gs (G y)) ..rest) (And (N (count gs)) ..rest))
+(run 1)
+(check (= e (And (N 1) (F a))))

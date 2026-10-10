@@ -1,0 +1,33 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Demand-driven `:flatten` (doc/goal-canonical-flatten-views.md, step 3): a class is
+;; opened only when an item takes an element from inside it. `(Add x ..rest)` at
+;; _1 ∋ Add{A, _2} with _2 ∋ Add{_3, _4, Y}, _3 ∋ Add{X, _4}, _4 ∋ Add{Y, Z} has one
+;; match per choice of x and of the classes that choice opens: eight
+;; (`flatten_differential::rest_only_chain_matches` counts them against the reference).
+;; Each placeholder keeps its class from being spliced at build.
+;; flatten_rest_only_control.egg is the same program without the tag.
+(sort E)
+(function A () E) (function X () E) (function Y () E) (function Z () E)
+(function C2 () E) (function C3 () E) (function C4 () E)
+(function Add (E) E :assoc-comm)
+(function Pick (E E) E)
+(let c4 (C4))
+(let c3 (C3))
+(let c2 (C2))
+(union c4 (Add (Y) (Z)))
+(union c3 (Add (X) c4))
+(union c2 (Add c3 c4 (Y)))
+(let c1 (Add (A) c2))
+(rewrite (Add x ..rest) (Pick x (Add ..rest)) :flatten)
+(run 1)
+(check (= c1 (Pick (A) c2)))
+(check (= c1 (Pick c2 (A))))
+(check (= c1 (Pick c3 (Add c4 (Y) (A)))))
+(check (= c1 (Pick c4 (Add c3 (Y) (A)))))
+(check (= c1 (Pick (Y) (Add c4 c3 (A)))))
+(check (= c1 (Pick (X) (Add c4 c4 (Y) (A)))))
+(check (= c1 (Pick (Z) (Add c3 (Y) (Y) (A)))))
+(check (= c1 (Pick (Z) (Add c4 (Y) (Y) (X) (A)))))

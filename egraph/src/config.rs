@@ -33,10 +33,12 @@ pub trait EGraphConfig: 'static {
     /// Recycled key into the packed e-class data store. It has the same
     /// payload width as `G`, because the worst case has one class per node.
     type ClassKey: DenseId<Index = Self::Index> + Send;
-    /// Operator id.
-    type O: DenseId<Index = Self::Index> + Hash + Send;
-    /// Sort id.
-    type S: DenseId<Index = Self::Index> + Send;
+    /// Operator id. Its own word, not `Index`: the operator count is the program's
+    /// declarations, which do not grow with the graph, so every configuration uses the
+    /// 31-bit `OpId` (user's decision, 2026-10-05).
+    type O: DenseId + Hash + Send;
+    /// Sort id, on its own word for the same reason as `O`.
+    type S: DenseId + Send;
     /// Interned literal value id.
     type V: DenseId<Index = Self::Index> + Hash + Send;
     /// Use-list id.
@@ -211,8 +213,8 @@ macro_rules! impl_mset_child_pair {
                 // increment would produce a multiplicity of zero — an entry the canonical
                 // form says cannot exist, which the clamps would then silently delete.
                 existing.b = existing.b.checked_add(Self::M::ONE).expect(
-                    "AC child multiplicity overflowed EGraphConfig::M; \
-                     the configured multiplicity width is too narrow for this e-graph",
+                    "multiplicity overflow: a duplicated AC child past EGraphConfig::M \
+                     (an API contract: the build path coalesces with checked sums)",
                 );
                 true
             } else {

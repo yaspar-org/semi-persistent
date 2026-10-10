@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: depth
+(sort E)
+(function V (String) E)
+(function And (E) E :assoc-comm)
+(let e (And (V "a") (V "b") (V "c") (V "d")))
+
+(cost-model depth :asp "26-depth.lp")
+(extract e :cost depth :rung selection :solver (asp "clingo"))
+(extract e :cost depth :rung levels :solver (asp "clingo"))
+(extract e :cost depth :rung binary :solver (asp "clingo"))
+;; ANCHOR_END: depth

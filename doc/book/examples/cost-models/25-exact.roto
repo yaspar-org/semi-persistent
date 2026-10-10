@@ -1,0 +1,17 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// ANCHOR: cost
+// Each chosen node costs 1 plus 4 per operand copy, computed exactly, and the
+// term carries a fixed charge of 10^20, a constant past `i64`.
+fn cost(g: Graph) {
+    let four = g.ubig(4);
+    for n in g.nodes() {
+        let total = g.ubig(1);
+        for k in n.children() {
+            total = total.plus(k.count().times(four));
+        }
+        n.chosen().charge_if_big(total);
+    }
+    g.charge_const_big(g.ibig_str("100000000000000000000"));
+}
+// ANCHOR_END: cost

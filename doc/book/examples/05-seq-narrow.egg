@@ -1,0 +1,28 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; ANCHOR: seq-narrow
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)
+
+; Narrowing: an eventually F[c,d] r beside always-windows G[a,b] (Not r) cannot
+; be satisfied inside those windows, so its window shrinks past them.
+; `(narrow c d r a b q)` gives one row (r c2 d2) per F; `(narrowed ...)` gives
+; only the rows whose window changed, which guards against a no-op rewrite.
+(rewrite (And (..ns (Global (Interval a b) (Not q)))
+              (..fs (Future (Interval c d) r)) ..rest)
+         (And ..ns ..{ (Future (Interval c2 d2) r2) for (r2 c2 d2) in (narrow c d r a b q) } ..rest)
+  :when ((> (count (narrowed c d r a b q)) 0)))
+
+(let r (Var "r"))
+(let e (And (Global (Interval 0 3) (Not r)) (Future (Interval 2 6) r)))
+(run 1)
+(check (= e (And (Global (Interval 0 3) (Not r)) (Future (Interval 4 6) r))))
+;; ANCHOR_END: seq-narrow

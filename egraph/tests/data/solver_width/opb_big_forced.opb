@@ -1,0 +1,5 @@
+* #variable= 2 #constraint= 2
+* x1 is forced, so the optimum is exactly 2^70 + 1.
+min: +1180591620717411303424 x1 +1 x2 ;
++1 x1 >= 1 ;
++1 x2 >= 1 ;

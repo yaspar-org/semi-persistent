@@ -1,0 +1,10 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; MESSAGE: operator 'a' is already declared
+;; A second declaration of one operator panicked in the registry ("already registered");
+;; found with bug #7 on 2026-10-06. It is a sort error.
+(sort E)
+(function a () E)
+(function a () E)

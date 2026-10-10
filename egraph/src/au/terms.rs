@@ -11,7 +11,6 @@ use crate::config::{AuIds, EGraphConfig};
 use crate::containers::group::Member;
 use crate::containers::{AppendOnlyVec, DenseId, IndexLike, ShrinkPolicy, SpUniqueMap};
 use crate::literal::LitVal;
-use crate::multiplicity::MultiplicityLike;
 
 use super::egraph_api::{AuSnapshot, ClassOf};
 use super::{AuIds31, Span};
@@ -32,6 +31,93 @@ pub enum TermOp<O: DenseId, V: DenseId> {
     Variants,
 }
 
+/// How a term's children are ordered and counted, from its operator's node kind
+/// ([`crate::au::egraph_api::AuSnapshot::child_form`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChildForm {
+    /// Positional children (plain, sequence): kept as given.
+    Ordered,
+    /// Unordered children, each counted once (`:comm` pair, ACI): sorted into the
+    /// canonical structural order.
+    Commutative,
+    /// An AC multiset: sorted, and equal children merged into one entry whose count is
+    /// the sum, so a child of multiplicity k is one entry.
+    Multiset,
+}
+
+/// A term without `Variants` nodes, owned outside its pool: each child with its
+/// multiplicity, an AC child of count k being one entry. What a projection is read out
+/// as, so the pool and the snapshot can be dropped before the term is rebuilt in the
+/// e-graph ([`materialize_owned`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwnedTerm<O, V> {
+    App(O, Vec<(OwnedTerm<O, V>, u64)>),
+    Lit(O, V),
+}
+
+/// Build an owned term in `eg`, children first, with an explicit frame stack: an AC
+/// child of count k is one counted child ([`EGraph::add_with_counts`]). `Err` when a
+/// count does not fit the configuration.
+///
+/// [`EGraph::add_with_counts`]: crate::egraph::EGraph::add_with_counts
+pub fn materialize_owned<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    eg: &mut crate::egraph::EGraph<Cfg, L, T, P>,
+    term: &OwnedTerm<Cfg::O, Cfg::V>,
+) -> Result<Cfg::G, String>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    struct Frame<'t, O, V, G> {
+        op: O,
+        children: &'t [(OwnedTerm<O, V>, u64)],
+        cursor: usize,
+        out: Vec<(G, u64)>,
+    }
+    let mut stack: Vec<Frame<'_, Cfg::O, Cfg::V, Cfg::G>> = Vec::new();
+    let mut pending = term;
+    loop {
+        let mut done = None;
+        match pending {
+            OwnedTerm::Lit(op, value) => done = Some(eg.add_lit(*op, *value)),
+            OwnedTerm::App(op, children) => stack.push(Frame {
+                op: *op,
+                children,
+                cursor: 0,
+                out: Vec::with_capacity(children.len()),
+            }),
+        }
+        loop {
+            if let Some(id) = done.take() {
+                let Some(parent) = stack.last_mut() else {
+                    return Ok(id);
+                };
+                let count = parent.children[parent.cursor].1;
+                parent.out.push((id, count));
+                parent.cursor += 1;
+            }
+            let top = stack.last_mut().expect("materialize stack is non-empty");
+            if top.cursor < top.children.len() {
+                pending = &top.children[top.cursor].0;
+                break;
+            }
+            let frame = stack.pop().expect("materialize stack is non-empty");
+            let counts: Vec<Option<num_bigint::BigUint>> = frame
+                .out
+                .iter()
+                .map(|&(_, k)| (k != 1).then(|| num_bigint::BigUint::from(k)))
+                .collect();
+            let kids: Vec<(Cfg::G, Option<&num_bigint::BigUint>)> = frame
+                .out
+                .iter()
+                .zip(&counts)
+                .map(|(&(g, _), k)| (g, k.as_ref()))
+                .collect();
+            done = Some(eg.add_with_counts(frame.op, &kids)?);
+        }
+    }
+}
+
 /// Hash-consed term pool. Structurally equal terms get the same term id.
 /// All fields are semi-persistent (AppendOnlyVec/SpMap); mark/restore truncates.
 /// The id family `A` defaults to the 31-bit family; a Config64 session
@@ -46,9 +132,12 @@ pub struct TermPool<O: DenseId, V: DenseId, A: AuIds = AuIds31> {
     ops: AppendOnlyVec<TermOp<O, V>, A::Index>,
     child_spans: AppendOnlyVec<Span<A::TermChild>, A::Index>,
     child_pool: AppendOnlyVec<A::Term, A::Index>,
+    /// Each child's multiplicity, parallel to `child_pool`: 1 except under an AC
+    /// operator, whose child of multiplicity k is one entry with count k.
+    child_counts: AppendOnlyVec<u64, A::Index>,
     sizes: AppendOnlyVec<u32, A::Index>,
     vmasses: AppendOnlyVec<u32, A::Index>,
-    by_structure: SpUniqueMap<(TermOp<O, V>, Vec<A::Term>), A::Term, A::Index>,
+    by_structure: SpUniqueMap<(TermOp<O, V>, Vec<(A::Term, u64)>), A::Term, A::Index>,
     /// Memoized [`build_best_term`] result per snapshot class.
     ///
     /// A class's minimal member is fixed by the snapshot, so its extracted term
@@ -73,6 +162,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
             ops: AppendOnlyVec::new(),
             child_spans: AppendOnlyVec::new(),
             child_pool: AppendOnlyVec::new(),
+            child_counts: AppendOnlyVec::new(),
             sizes: AppendOnlyVec::new(),
             vmasses: AppendOnlyVec::new(),
             by_structure: SpUniqueMap::new(),
@@ -92,8 +182,16 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         self.ops.is_empty()
     }
 
-    /// Intern a term. Returns the existing id if structurally equal term exists.
+    /// Intern a term whose children each count once. Returns the existing id if a
+    /// structurally equal term exists.
     pub fn intern(&mut self, op: TermOp<O, V>, children: &[A::Term]) -> A::Term {
+        let counted: Vec<(A::Term, u64)> = children.iter().map(|&c| (c, 1)).collect();
+        self.intern_counted(op, &counted)
+    }
+
+    /// Intern a term from `(child, multiplicity)` entries, as given (no sorting, no
+    /// merging). Returns the existing id if a structurally equal term exists.
+    pub fn intern_counted(&mut self, op: TermOp<O, V>, children: &[(A::Term, u64)]) -> A::Term {
         // One hash of the structural key (an operator plus a child vector, so a
         // heap key) whether the term is new or not: the map decides membership
         // and claims the id in the same probe, and the columns below are only
@@ -109,9 +207,12 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         }
 
         let start = self.child_pool.len().as_usize();
-        for &c in children {
+        for &(c, k) in children {
             self.child_pool
                 .try_push(c)
+                .expect("AU arena sized by its index word");
+            self.child_counts
+                .try_push(k)
                 .expect("AU arena sized by its index word");
         }
 
@@ -136,14 +237,16 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         // `AuSnapshot::best_size` takes the same view from the other side: it
         // reserves `u32::MAX` as an explicit "no finite representative" sentinel and
         // rejects any total that reaches it (`egraph_api.rs`).
-        let child_size_sum = children.iter().fold(0u32, |acc, &c| {
-            acc.saturating_add(*self.sizes.get(c.to_index()))
+        // A child of multiplicity k counts k times: the expanded size of the term.
+        let times = |k: u64, x: u32| x.saturating_mul(u32::try_from(k).unwrap_or(u32::MAX));
+        let child_size_sum = children.iter().fold(0u32, |acc, &(c, k)| {
+            acc.saturating_add(times(k, *self.sizes.get(c.to_index())))
         });
         let (size, vmass) = match &op {
             TermOp::Variants => (child_size_sum, child_size_sum),
             _ => {
-                let vm = children.iter().fold(0u32, |acc, &c| {
-                    acc.saturating_add(*self.vmasses.get(c.to_index()))
+                let vm = children.iter().fold(0u32, |acc, &(c, k)| {
+                    acc.saturating_add(times(k, *self.vmasses.get(c.to_index())))
                 });
                 (child_size_sum.saturating_add(1), vm)
             }
@@ -164,41 +267,49 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         id
     }
 
-    /// Intern the result term of one action.
+    /// Intern the result term of one action from `(child, count)` entries.
     ///
-    /// `commutative` MUST be true exactly for operators whose canonical node kind is
-    /// commutative (SPair, MSet, Set): their children are sorted into canonical
-    /// structural order. For ordered operators (Plain*, Seq) it MUST be false: the
-    /// pair order of the action is positional semantics and is preserved verbatim.
+    /// `form` is the operator's [`ChildForm`]. Ordered children keep the action's
+    /// positional order, which is their meaning. Unordered ones are sorted into the
+    /// canonical structural order, so the same result interns identically whatever the
+    /// construction order. An AC multiset also merges equal children into one entry with
+    /// the summed count: a child of multiplicity k is one entry, never k copies.
     ///
     /// Counts arrive at the *surface* width. Two callers feed this: the structural path,
     /// whose counts are [`EGraphConfig::M`] multiplicities, and the transport path, whose
-    /// counts are flow cells at the solver's own narrower capacity. `u64` is the one width
-    /// that holds both without a fallible conversion — [`MultiplicityLike::to_u64`] is
-    /// total and lossless at every configured width — and the count is consumed here
-    /// rather than stored, so the width costs nothing beyond the call.
+    /// counts are flow cells at the solver's own narrower capacity. A merged sum
+    /// saturates at `u64::MAX`, which no stored multiplicity reaches.
     ///
     /// [`EGraphConfig::M`]: crate::config::EGraphConfig::M
-    /// [`MultiplicityLike::to_u64`]: crate::multiplicity::MultiplicityLike::to_u64
     pub fn intern_action_result(
         &mut self,
         op: TermOp<O, V>,
         children_with_counts: &[(A::Term, u64)],
-        commutative: bool,
+        form: ChildForm,
     ) -> A::Term {
-        // Expand counts into repeated children.
-        let mut expanded: Vec<A::Term> = Vec::new();
-        for &(child, count) in children_with_counts {
-            for _ in 0..count {
-                expanded.push(child);
-            }
+        let mut kids: Vec<(A::Term, u64)> = children_with_counts
+            .iter()
+            .copied()
+            .filter(|&(_, k)| k > 0)
+            .collect();
+        if form != ChildForm::Ordered {
+            kids.sort_by(|&(a, _), &(b, _)| self.structural_cmp(a, b));
         }
-        if commutative {
-            // Canonical structural order: allocation-independent, so the same
-            // semantic result interns identically regardless of construction order.
-            expanded.sort_by(|&a, &b| self.structural_cmp(a, b));
+        if form == ChildForm::Multiset {
+            kids.dedup_by(|later, earlier| {
+                let same = later.0 == earlier.0;
+                if same {
+                    // Bounded by one node's total, which the snapshot gate keeps within
+                    // u64 (`AuError::CountTooWide`).
+                    earlier.1 = earlier
+                        .1
+                        .checked_add(later.1)
+                        .expect("merged counts are bounded by a node's total");
+                }
+                same
+            });
         }
-        self.intern(op, &expanded)
+        self.intern_counted(op, &kids)
     }
 
     /// Total structural order on terms, independent of allocation order:
@@ -240,7 +351,10 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
                 return ord;
             }
             let (ca, cb) = (self.children(a), self.children(b));
-            let ord = ca.len().cmp(&cb.len());
+            let ord = ca
+                .len()
+                .cmp(&cb.len())
+                .then_with(|| self.counts(a).cmp(self.counts(b)));
             if ord != Ordering::Equal {
                 return ord;
             }
@@ -289,7 +403,16 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         self.ops.get(id.to_index())
     }
 
-    /// Get the children of a term.
+    /// The multiplicity of each child of a term, parallel to [`Self::children`].
+    #[inline]
+    pub fn counts(&self, id: A::Term) -> &[u64] {
+        let span = *self.child_spans.get(id.to_index());
+        let (start, len) = (span.start_usize(), span.len_usize());
+        &self.child_counts.as_slice()[start..start + len]
+    }
+
+    /// Get the children of a term: one entry per distinct AC child, whose multiplicity
+    /// is in [`Self::counts`].
     #[inline]
     pub fn children(&self, id: A::Term) -> &[A::Term] {
         let span = *self.child_spans.get(id.to_index());
@@ -329,6 +452,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         Member::push_frame(&mut self.ops, shrink);
         Member::push_frame(&mut self.child_spans, shrink);
         Member::push_frame(&mut self.child_pool, shrink);
+        Member::push_frame(&mut self.child_counts, shrink);
         Member::push_frame(&mut self.sizes, shrink);
         Member::push_frame(&mut self.vmasses, shrink);
         Member::push_frame(&mut self.by_structure, shrink);
@@ -339,6 +463,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         Member::reset_frame(&mut self.ops, depth);
         Member::reset_frame(&mut self.child_spans, depth);
         Member::reset_frame(&mut self.child_pool, depth);
+        Member::reset_frame(&mut self.child_counts, depth);
         Member::reset_frame(&mut self.sizes, depth);
         Member::reset_frame(&mut self.vmasses, depth);
         Member::reset_frame(&mut self.by_structure, depth);
@@ -349,6 +474,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         Member::restore_frame(&mut self.ops, depth);
         Member::restore_frame(&mut self.child_spans, depth);
         Member::restore_frame(&mut self.child_pool, depth);
+        Member::restore_frame(&mut self.child_counts, depth);
         Member::restore_frame(&mut self.sizes, depth);
         Member::restore_frame(&mut self.vmasses, depth);
         Member::restore_frame(&mut self.by_structure, depth);
@@ -359,6 +485,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         Member::pop_frame(&mut self.ops);
         Member::pop_frame(&mut self.child_spans);
         Member::pop_frame(&mut self.child_pool);
+        Member::pop_frame(&mut self.child_counts);
         Member::pop_frame(&mut self.sizes);
         Member::pop_frame(&mut self.vmasses);
         Member::pop_frame(&mut self.by_structure);
@@ -385,6 +512,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
             id: T,
             op: Op,
             children: Vec<T>,
+            counts: Vec<u64>,
             cursor: usize,
             new_children: Vec<T>,
             changed: bool,
@@ -398,11 +526,13 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
                 nid = self.children(nid)[side];
             }
             let children = self.children(nid).to_vec();
+            let counts = self.counts(nid).to_vec();
             let capacity = children.len();
             stack.push(Frame {
                 id: nid,
                 op: self.op(nid).clone(),
                 children,
+                counts,
                 cursor: 0,
                 new_children: Vec::with_capacity(capacity),
                 changed: false,
@@ -416,7 +546,14 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
                 }
                 let frame = stack.pop().expect("project stack cannot be empty");
                 let projected = if frame.changed {
-                    self.intern(frame.op, &frame.new_children)
+                    // Each child keeps its multiplicity through the projection.
+                    let kids: Vec<(A::Term, u64)> = frame
+                        .new_children
+                        .iter()
+                        .copied()
+                        .zip(frame.counts.iter().copied())
+                        .collect();
+                    self.intern_counted(frame.op, &kids)
                 } else {
                     frame.id
                 };
@@ -427,6 +564,58 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
                 parent.changed |= projected != original;
                 parent.new_children.push(projected);
                 parent.cursor += 1;
+            }
+        }
+    }
+
+    /// `id` as an owned tree, each child with its multiplicity, or `None` if it contains
+    /// a `Variants` node. Iterative, with an explicit frame stack.
+    pub fn own(&self, id: A::Term) -> Option<OwnedTerm<O, V>> {
+        struct Frame<O, V, T> {
+            op: O,
+            children: Vec<(T, u64)>,
+            cursor: usize,
+            out: Vec<(OwnedTerm<O, V>, u64)>,
+        }
+        let mut stack: Vec<Frame<O, V, A::Term>> = Vec::new();
+        let mut pending = id;
+        loop {
+            let mut done = None;
+            match self.op(pending) {
+                TermOp::Literal(op, value) => done = Some(OwnedTerm::Lit(*op, *value)),
+                TermOp::EGraph(op) => {
+                    let children: Vec<(A::Term, u64)> = self
+                        .children(pending)
+                        .iter()
+                        .copied()
+                        .zip(self.counts(pending).iter().copied())
+                        .collect();
+                    let n = children.len();
+                    stack.push(Frame {
+                        op: *op,
+                        children,
+                        cursor: 0,
+                        out: Vec::with_capacity(n),
+                    });
+                }
+                TermOp::Variants => return None,
+            }
+            loop {
+                if let Some(t) = done.take() {
+                    let Some(parent) = stack.last_mut() else {
+                        return Some(t);
+                    };
+                    let count = parent.children[parent.cursor].1;
+                    parent.out.push((t, count));
+                    parent.cursor += 1;
+                }
+                let top = stack.last_mut().expect("own stack is non-empty");
+                if top.cursor < top.children.len() {
+                    pending = top.children[top.cursor].0;
+                    break;
+                }
+                let frame = stack.pop().expect("own stack is non-empty");
+                done = Some(OwnedTerm::App(frame.op, frame.out));
             }
         }
     }
@@ -520,7 +709,7 @@ where
         /// Child classes with multiplicities, in `for_each_child` order.
         child_classes: Vec<(C, M)>,
         cursor: usize,
-        children: Vec<Term>,
+        children: Vec<(Term, u64)>,
     }
     let eg = snap.egraph();
     let mut stack: Vec<Frame<Cfg::O, ClassOf<Cfg>, Cfg::M, <Cfg::Au as AuIds>::Term>> = Vec::new();
@@ -558,10 +747,9 @@ where
                 let Some(parent) = stack.last_mut() else {
                     return term;
                 };
+                // The child once, with its multiplicity: never k copies.
                 let (_, mult) = parent.child_classes[parent.cursor];
-                for _ in 0..mult.to_usize() {
-                    parent.children.push(term);
-                }
+                parent.children.push((term, crate::au::au_count(mult)));
                 parent.cursor += 1;
             }
             let top = stack
@@ -572,7 +760,7 @@ where
                 break; // descend into the next child class
             }
             let frame = stack.pop().expect("build_best_term stack cannot be empty");
-            let term = pool.intern(TermOp::EGraph(frame.op), &frame.children);
+            let term = pool.intern_counted(TermOp::EGraph(frame.op), &frame.children);
             pool.cache_best_term(frame.class, term);
             done = Some(term);
         }
@@ -690,13 +878,41 @@ mod tests {
         let v = pool.intern(TermOp::Variants, &[a, c]);
 
         // Ordered: f(Variants(a,c), b) must keep the Variants first.
-        let ordered = pool.intern_action_result(TermOp::EGraph(f), &[(v, 1), (b, 1)], false);
+        let ordered =
+            pool.intern_action_result(TermOp::EGraph(f), &[(v, 1), (b, 1)], ChildForm::Ordered);
         assert_eq!(pool.children(ordered), &[v, b]);
 
         // Commutative: children are sorted structurally (EGraph ops rank before
         // Variants), independent of allocation order.
-        let comm = pool.intern_action_result(TermOp::EGraph(f), &[(v, 1), (b, 1)], true);
+        let comm =
+            pool.intern_action_result(TermOp::EGraph(f), &[(v, 1), (b, 1)], ChildForm::Commutative);
         assert_eq!(pool.children(comm), &[b, v]);
+    }
+
+    /// A multiset result keeps a child of multiplicity k as one entry with count k: equal
+    /// children merge and their counts sum, and the size counts each copy.
+    #[test]
+    fn a_multiset_child_is_one_entry_with_its_count() {
+        let mut pool = TermPool::<OpId, crate::id::ENodeId>::new();
+        let f = OpId::from_usize(0);
+        let a = pool.intern(TermOp::EGraph(OpId::from_usize(1)), &[]);
+        let b = pool.intern(TermOp::EGraph(OpId::from_usize(2)), &[]);
+        let t = pool.intern_action_result(
+            TermOp::EGraph(f),
+            &[(a, 3), (b, 1), (a, 2)],
+            ChildForm::Multiset,
+        );
+        assert_eq!(pool.children(t), &[a, b]);
+        assert_eq!(pool.counts(t), &[5, 1]);
+        assert_eq!(pool.size(t), 1 + 5 + 1);
+        // The same multiset given another way interns to the same term.
+        let u =
+            pool.intern_action_result(TermOp::EGraph(f), &[(b, 1), (a, 5)], ChildForm::Multiset);
+        assert_eq!(t, u);
+        // A `:comm` pair keeps two entries.
+        let p =
+            pool.intern_action_result(TermOp::EGraph(f), &[(a, 1), (a, 1)], ChildForm::Commutative);
+        assert_eq!(pool.children(p), &[a, a]);
     }
 
     /// Variant mass: backbone nodes are excluded; everything under Variants counts.

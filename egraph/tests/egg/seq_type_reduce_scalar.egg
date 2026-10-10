@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: 'y' is not a sequence
+;; TYPES: machine
+;; "§Typing": a reduction consumes a sequence; a simple item's variable is a
+;; scalar.
+(sort E)
+(function a () E)
+(function F (E) E)
+(function G (E) E)
+(function N (i64) E)
+(function And (E) E :assoc-comm-idem)
+(rewrite (And (..gs (F x)) (G y) ..rest) (And (N (count y)) ..rest))

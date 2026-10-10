@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: none
+;; Build-time flattening multiplies counts: the inner sum (a:65535, b) spliced at count
+;; 65537 gives a:4294967295 and b:65537, the largest product a 32-bit multiplicity holds.
+(sort E)
+(function a () E) (function b () E) (function c () E) (function W () E)
+(function Hit (E E) E)
+(function Plus (E) E :assoc-comm)
+(let w (W))
+(rewrite (W) (Plus (Plus (a):65535 (b)):65537 (c)))
+(run 1)
+(rewrite (Plus x:4294967295 y:65537 (c)) (Hit x y))
+(run 1)
+(check (= w (Hit (a) (b))))

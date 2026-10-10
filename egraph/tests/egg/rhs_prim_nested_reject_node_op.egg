@@ -1,0 +1,9 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; A primitive computes over literal values, so a declared operator — which builds an
+;; e-node — cannot feed a primitive's argument. (A user operator cannot return a concrete
+;; literal sort in the first place, so this is the only shape the check can see.)
+(datatype E (Num i64) (Mark E))
+(rewrite (Num a) (Num (i64::+ a (Mark (Num a)))))

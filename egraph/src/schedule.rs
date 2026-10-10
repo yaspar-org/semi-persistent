@@ -38,6 +38,13 @@ pub enum IndexLookup<O, I> {
 // Execution steps
 // ---------------------------------------------------------------------------
 
+/// A flattened-view register of a plan: the slot a [`Step::Flatten`] writes and the
+/// decomposition after it reads. The plan's `k`-th `Flatten` step writes register `k`;
+/// the match pool holds one buffer per register, so nested flattened atoms do not
+/// overwrite each other's view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ViewReg(pub usize);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step<O, I, V> {
     Join {
@@ -83,22 +90,36 @@ pub enum Step<O, I, V> {
         target: VarId,
         other: VarId,
     },
+    /// `view`: read the children from this register, which the preceding
+    /// [`Step::Flatten`] wrote, instead of from the node.
     ExpandA {
         node: VarId,
         children: Vec<PatVar>,
         pre: Option<SeqVarId>,
         suf: Option<SeqVarId>,
+        view: Option<ViewReg>,
     },
     DecomposeAC {
         node: VarId,
         elems: Vec<(PatVar, RMult)>,
         rest: Option<MsetVarId>,
         idempotent: bool,
+        view: Option<ViewReg>,
     },
     DecomposeACI {
         node: VarId,
         elems: Vec<PatVar>,
         rest: Option<SetVarId>,
+        view: Option<ViewReg>,
+    },
+    /// `:flatten`: write each distinct flattened view of the bound `node`, an `op` node
+    /// of `kind`, into register `out` and continue with each (`crate::flatten`). Emitted
+    /// only for a flattened query, directly before the decomposition that reads `out`.
+    Flatten {
+        node: VarId,
+        op: O,
+        kind: crate::flatten::FlatKind,
+        out: ViewReg,
     },
     ExtractLitVal {
         node: VarId,
@@ -115,6 +136,12 @@ pub enum Step<O, I, V> {
     /// values bound so far.
     CheckPred {
         guard: PredGuard<O, V>,
+    },
+    /// Assemble a sequence pattern's matches at the bound `node` and continue with
+    /// each (`crate::seq_engine`).
+    Collect {
+        node: VarId,
+        plan: crate::seq_engine::CollectPlanRef<O, I, V>,
     },
 }
 
@@ -311,7 +338,7 @@ thread_local! {
 /// classes never probes the hub buckets that dominate the mean, and the mean
 /// then over-prices the probe by the hub's size. Sampling reads the joint
 /// distribution directly — draw emitter nodes, extract the keys they expose,
-/// read the buckets those keys actually select. See design chapter 20.
+/// read the buckets those keys actually select. See design §8.3.
 pub fn set_sampled_selectivity(cfg: Option<SamplerConfig>) {
     SAMPLED_SELECTIVITY.with(|c| c.set(cfg));
 }
@@ -568,6 +595,7 @@ fn record_emitters<O, S, V>(
             continue;
         }
         match atom {
+            RAtom::Collect { node, .. } => set(em, (*node).idx(), (ai, KeySite::Node)),
             RAtom::Plain { node, children, .. } => {
                 set(em, (*node).idx(), (ai, KeySite::Node));
                 for (pos, cv) in children.iter().enumerate() {
@@ -588,7 +616,9 @@ fn record_emitters<O, S, V>(
                     set_pv(em, cv, (ai, KeySite::Element));
                 }
             }
-            RAtom::ACExact { node, elems, .. } | RAtom::ACSub { node, elems, .. } => {
+            RAtom::ACExact { node, elems, .. }
+            | RAtom::Comm { node, elems, .. }
+            | RAtom::ACSub { node, elems, .. } => {
                 set(em, (*node).idx(), (ai, KeySite::Node));
                 for (ev, _) in elems {
                     set_pv(em, ev, (ai, KeySite::Element));
@@ -631,6 +661,9 @@ struct Cost<'a, O: Eq + Hash> {
     stats: &'a IndexStats<O>,
     emitters: Emitters,
     sampling: Option<Sampling<'a, O>>,
+    /// The query is flattened: an n-ary atom's join takes no `by_contains` filter
+    /// (see `emit_variadic_join`), so a bound element does not narrow it.
+    flatten: bool,
 }
 
 impl<'a, O: DenseId + Hash + Copy> Cost<'a, O> {
@@ -708,6 +741,7 @@ fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
             node, op, fixed, ..
         } => by_contains_cost(atoms, node, op, atom_id, fixed, bound, ctx),
         RAtom::ACExact { node, op, elems }
+        | RAtom::Comm { node, op, elems }
         | RAtom::ACSub {
             node, op, elems, ..
         } => {
@@ -719,6 +753,15 @@ fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
             node, op, elems, ..
         } => by_contains_cost(atoms, node, op, atom_id, elems, bound, ctx),
         RAtom::Lit { op, .. } | RAtom::LitBind { op, .. } => base_card(op, atom_id, stats) as f64,
+        // Root-driven (step 4 of `doc/goal-sequence-patterns-engine.md`): every node of
+        // the root operator, or one re-join when the node is bound.
+        RAtom::Collect { node, op, .. } => {
+            if bound[(*node).idx()] {
+                by_repr_cost(op, atom_id, stats)
+            } else {
+                base_card(op, atom_id, stats) as f64
+            }
+        }
         RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => 0.0,
     }
 }
@@ -749,6 +792,9 @@ fn by_contains_cost<O: DenseId + Hash + Copy, S, V>(
     }
     let full = ctx.stats.op_card.get(op).copied().unwrap_or(0);
     let mut cost = base_card(op, atom_id, ctx.stats) as f64;
+    if ctx.flatten {
+        return cost;
+    }
     for e in elems {
         if pv_is_bound(e, bound) {
             let f = ctx
@@ -770,7 +816,7 @@ pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone
     rq: &ResolvedQuery<O, S, V>,
     stats: &IndexStats<O>,
 ) -> QueryPlan<O, I, V> {
-    schedule_inner(rq, stats, None)
+    schedule_inner(rq, stats, None, &[])
 }
 
 /// [`schedule_with_stats`] with plan-time access to the round's buckets, so
@@ -790,21 +836,44 @@ pub fn schedule_with_stats_sampled<
     stats: &IndexStats<O>,
     sampler: &dyn CrossSampler<O>,
 ) -> QueryPlan<O, I, V> {
-    schedule_inner(rq, stats, sampled_selectivity().map(|cfg| (sampler, cfg)))
+    schedule_inner(
+        rq,
+        stats,
+        sampled_selectivity().map(|cfg| (sampler, cfg)),
+        &[],
+    )
+}
+
+/// [`schedule_with_stats`] for a query whose variables `pre` are bound before the
+/// first step, by the caller's seed (`ematch::run_query_seeded_into`): the bound-root
+/// plan of a sequence pattern's filter (Semper design §7.6, "Plans"), which
+/// probes one class. An atom over a pre-bound node lowers as it does once a join has
+/// bound it: a re-join over the class's members (`try_eager_lower`).
+pub fn schedule_with_bound<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: IndexLike>(
+    rq: &ResolvedQuery<O, S, V>,
+    stats: &IndexStats<O>,
+    pre: &[VarId],
+) -> QueryPlan<O, I, V> {
+    schedule_inner(rq, stats, None, pre)
 }
 
 fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: IndexLike>(
     rq: &ResolvedQuery<O, S, V>,
     stats: &IndexStats<O>,
     sampling: Option<(&dyn CrossSampler<O>, SamplerConfig)>,
+    pre: &[VarId],
 ) -> QueryPlan<O, I, V> {
     let mut bound = vec![false; rq.shape.num_vars()];
+    for v in pre {
+        bound[v.idx()] = true;
+    }
     let mut steps = Vec::new();
     let mut used = vec![false; rq.atoms.len()];
     let mut ctx = Cost {
         stats,
         emitters: vec![None; rq.shape.num_vars()],
         sampling: sampling.map(|(s, cfg)| Sampling::new(s, cfg)),
+        flatten: rq.flatten,
     };
     let mut before = used.clone();
     loop {
@@ -838,7 +907,31 @@ fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: Inde
         }
 
         let Some((ai, _)) = best else { break };
-        emit_atom(&rq.atoms[ai], ai, &mut bound, &mut steps);
+        if let RAtom::Collect { node, op, collect } = &rq.atoms[ai] {
+            // Lowered here rather than in `emit_atom`: the item plans are priced with
+            // the round's statistics, which only the scheduler holds.
+            let plan = collect.0.plans(stats);
+            // Root-driven: `Join n ← ByOp(root)`, then assemble at each bound `n`.
+            // Filter-driven: no join; the step finds its own nodes from the filters' rows
+            // (candidates, then part 2), which is why it is scheduled with `n` unbound.
+            if !bound[(*node).idx()] && plan.drive == crate::seq_engine::Drive::Root {
+                steps.push(Step::Join {
+                    target: *node,
+                    lookups: vec![IndexLookup::ByOp { op: *op }],
+                    atom_id: ai,
+                });
+            }
+            bound[(*node).idx()] = true;
+            steps.push(Step::Collect {
+                node: *node,
+                plan: crate::seq_engine::CollectPlanRef(std::sync::Arc::new(plan)),
+            });
+            used[ai] = true;
+            record_emitters(&rq.atoms, &before, &used, &mut ctx.emitters);
+            before.copy_from_slice(&used);
+            continue;
+        }
+        emit_atom(&rq.atoms[ai], ai, rq.flatten, &mut bound, &mut steps);
         used[ai] = true;
         record_emitters(&rq.atoms, &before, &used, &mut ctx.emitters);
         before.copy_from_slice(&used);
@@ -860,7 +953,7 @@ fn dump_plan_enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("EGRAPH_DUMP_PLAN").is_some())
 }
 
-/// Print the scheduled plan to stderr, one line per step, in the form chapter 8's
+/// Print the scheduled plan to stderr, one line per step, in the form §7.3's
 /// "Example Plan" section uses. Variables are printed by their resolved index, so a
 /// step's `v3` is variable 3 of the query's `MatchShape`.
 ///
@@ -877,6 +970,12 @@ fn dump_plan<O: std::fmt::Debug, I: std::fmt::Debug, V>(steps: &[Step<O, I, V>],
 
 fn fmt_step<O: std::fmt::Debug, I: std::fmt::Debug, V>(st: &Step<O, I, V>) -> String {
     match st {
+        Step::Collect { node, plan } => format!(
+            "Collect node=v{} filters={} items={}",
+            node.idx(),
+            plan.0.filters.len(),
+            plan.0.ones.len()
+        ),
         Step::BindGlobal { target, global } => {
             format!("BindGlobal target=v{} global={global:?}", target.idx())
         }
@@ -917,8 +1016,9 @@ fn fmt_step<O: std::fmt::Debug, I: std::fmt::Debug, V>(st: &Step<O, I, V>) -> St
             children,
             pre,
             suf,
+            view,
         } => format!(
-            "ExpandA node=v{} children={children:?} pre={pre:?} suf={suf:?}",
+            "ExpandA node=v{} children={children:?} pre={pre:?} suf={suf:?} view={view:?}",
             node.idx()
         ),
         Step::DecomposeAC {
@@ -926,13 +1026,29 @@ fn fmt_step<O: std::fmt::Debug, I: std::fmt::Debug, V>(st: &Step<O, I, V>) -> St
             elems,
             rest,
             idempotent,
+            view,
         } => format!(
-            "DecomposeAC node=v{} elems={elems:?} rest={rest:?} idempotent={idempotent}",
+            "DecomposeAC node=v{} elems={elems:?} rest={rest:?} idempotent={idempotent} view={view:?}",
             node.idx()
         ),
-        Step::DecomposeACI { node, elems, rest } => format!(
-            "DecomposeACI node=v{} elems={elems:?} rest={rest:?}",
+        Step::DecomposeACI {
+            node,
+            elems,
+            rest,
+            view,
+        } => format!(
+            "DecomposeACI node=v{} elems={elems:?} rest={rest:?} view={view:?}",
             node.idx()
+        ),
+        Step::Flatten {
+            node,
+            op,
+            kind,
+            out,
+        } => format!(
+            "Flatten node=v{} op={op:?} kind={kind:?} out={}",
+            node.idx(),
+            out.0
         ),
         Step::ExtractLitVal { node, val } => {
             format!("ExtractLitVal node=v{} val={val:?}", node.idx())
@@ -1014,13 +1130,42 @@ pub(crate) fn lower_eager<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
     }
 }
 
+/// `flatten`: the query is tagged `:flatten`, so an n-ary atom reads its node's
+/// flattened views (`Step::Flatten`) rather than its stored children.
 pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
     atom: &RAtom<O, S, V>,
     atom_id: usize,
+    flatten: bool,
     bound: &mut [bool],
     steps: &mut Vec<Step<O, I, V>>,
 ) {
+    // The register of the `Flatten` step an n-ary atom emits, if the query is flattened.
+    let flat =
+        |node: &VarId, op: O, kind: crate::flatten::FlatKind, steps: &mut Vec<Step<O, I, V>>| {
+            if !flatten {
+                return None;
+            }
+            let out = ViewReg(
+                steps
+                    .iter()
+                    .filter(|s| matches!(s, Step::Flatten { .. }))
+                    .count(),
+            );
+            steps.push(Step::Flatten {
+                node: *node,
+                op,
+                kind,
+                out,
+            });
+            Some(out)
+        };
+    use crate::flatten::FlatKind;
     match atom {
+        // `schedule_inner` lowers `Collect` itself (its item plans need the round's
+        // statistics); the runtime scheduler never sees one (`Adaptive::fits`). Were
+        // one to arrive here, binding its node without assembling would change the
+        // match set, so it binds nothing and the query has no match.
+        RAtom::Collect { .. } => {}
         RAtom::Plain { node, op, children } => {
             let mut lookups = vec![IndexLookup::ByOp { op: *op }];
             for (pos, &cv) in children.iter().enumerate() {
@@ -1092,12 +1237,14 @@ pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
         // eager pass owns them.
         RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => {}
         RAtom::AExact { node, op, children } => {
-            emit_variadic_join(node, *op, atom_id, children, bound, steps);
+            emit_variadic_join(node, *op, atom_id, children, flatten, bound, steps);
+            let view = flat(node, *op, FlatKind::Assoc, steps);
             steps.push(Step::ExpandA {
                 node: *node,
                 children: children.clone(),
                 pre: None,
                 suf: None,
+                view,
             });
             for &cv in children {
                 pv_mark_bound(&cv, bound);
@@ -1109,12 +1256,14 @@ pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
             pre,
             fixed,
         } => {
-            emit_variadic_join(node, *op, atom_id, fixed, bound, steps);
+            emit_variadic_join(node, *op, atom_id, fixed, flatten, bound, steps);
+            let view = flat(node, *op, FlatKind::Assoc, steps);
             steps.push(Step::ExpandA {
                 node: *node,
                 children: fixed.clone(),
                 pre: Some(*pre),
                 suf: None,
+                view,
             });
             for &cv in fixed {
                 pv_mark_bound(&cv, bound);
@@ -1126,12 +1275,14 @@ pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
             fixed,
             suf,
         } => {
-            emit_variadic_join(node, *op, atom_id, fixed, bound, steps);
+            emit_variadic_join(node, *op, atom_id, fixed, flatten, bound, steps);
+            let view = flat(node, *op, FlatKind::Assoc, steps);
             steps.push(Step::ExpandA {
                 node: *node,
                 children: fixed.clone(),
                 pre: None,
                 suf: Some(*suf),
+                view,
             });
             for &cv in fixed {
                 pv_mark_bound(&cv, bound);
@@ -1144,25 +1295,46 @@ pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
             fixed,
             suf,
         } => {
-            emit_variadic_join(node, *op, atom_id, fixed, bound, steps);
+            emit_variadic_join(node, *op, atom_id, fixed, flatten, bound, steps);
+            let view = flat(node, *op, FlatKind::Assoc, steps);
             steps.push(Step::ExpandA {
                 node: *node,
                 children: fixed.clone(),
                 pre: Some(*pre),
                 suf: Some(*suf),
+                view,
             });
             for &cv in fixed {
                 pv_mark_bound(&cv, bound);
             }
         }
-        RAtom::ACExact { node, op, elems } => {
+        RAtom::Comm { node, op, elems } => {
+            // AC's join and decomposition over the stored pair, never a view (the
+            // operator is not associative). `flatten` is passed as false so the join
+            // keeps its `by_contains` filter, which a view would otherwise make unsound.
             let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
-            emit_variadic_join(node, *op, atom_id, &evs, bound, steps);
+            emit_variadic_join(node, *op, atom_id, &evs, false, bound, steps);
             steps.push(Step::DecomposeAC {
                 node: *node,
                 elems: elems.clone(),
                 rest: None,
                 idempotent: false,
+                view: None,
+            });
+            for (ev, _) in elems {
+                pv_mark_bound(ev, bound);
+            }
+        }
+        RAtom::ACExact { node, op, elems } => {
+            let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
+            emit_variadic_join(node, *op, atom_id, &evs, flatten, bound, steps);
+            let view = flat(node, *op, FlatKind::Ac, steps);
+            steps.push(Step::DecomposeAC {
+                node: *node,
+                elems: elems.clone(),
+                rest: None,
+                idempotent: false,
+                view,
             });
             for (ev, _) in elems {
                 pv_mark_bound(ev, bound);
@@ -1175,23 +1347,27 @@ pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
             rest,
         } => {
             let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
-            emit_variadic_join(node, *op, atom_id, &evs, bound, steps);
+            emit_variadic_join(node, *op, atom_id, &evs, flatten, bound, steps);
+            let view = flat(node, *op, FlatKind::Ac, steps);
             steps.push(Step::DecomposeAC {
                 node: *node,
                 elems: elems.clone(),
                 rest: Some(*rest),
                 idempotent: false,
+                view,
             });
             for (ev, _) in elems {
                 pv_mark_bound(ev, bound);
             }
         }
         RAtom::ACIExact { node, op, elems } => {
-            emit_variadic_join(node, *op, atom_id, elems, bound, steps);
+            emit_variadic_join(node, *op, atom_id, elems, flatten, bound, steps);
+            let view = flat(node, *op, FlatKind::Aci, steps);
             steps.push(Step::DecomposeACI {
                 node: *node,
                 elems: elems.clone(),
                 rest: None,
+                view,
             });
             for &ev in elems {
                 pv_mark_bound(&ev, bound);
@@ -1203,11 +1379,13 @@ pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
             elems,
             rest,
         } => {
-            emit_variadic_join(node, *op, atom_id, elems, bound, steps);
+            emit_variadic_join(node, *op, atom_id, elems, flatten, bound, steps);
+            let view = flat(node, *op, FlatKind::Aci, steps);
             steps.push(Step::DecomposeACI {
                 node: *node,
                 elems: elems.clone(),
                 rest: Some(*rest),
+                view,
             });
             for &ev in elems {
                 pv_mark_bound(&ev, bound);
@@ -1310,11 +1488,16 @@ pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLik
     Some(steps)
 }
 
+/// `flatten`: no `by_contains` filter. A flattened node matches through its views, and
+/// a bound element can sit in a view without being a stored child, so the filter
+/// would skip a node whose views are still matchable (the index-filter soundness
+/// requirement, `doc/design/09-saturation.md` §9.2).
 fn emit_variadic_join<O: DenseId + Hash + Copy, I: IndexLike, V>(
     node: &VarId,
     op: O,
     atom_id: usize,
     elems: &[PatVar],
+    flatten: bool,
     bound: &mut [bool],
     steps: &mut Vec<Step<O, I, V>>,
 ) {
@@ -1328,7 +1511,7 @@ fn emit_variadic_join<O: DenseId + Hash + Copy, I: IndexLike, V>(
         // `by_op` bucket — the variadic analogue of `Plain`'s `ByChildPos`.
         let mut lookups = vec![IndexLookup::ByOp { op }];
         for &pv in elems {
-            if pv_is_bound(&pv, bound) {
+            if !flatten && pv_is_bound(&pv, bound) {
                 lookups.push(IndexLookup::ByContains { child: pv });
             }
         }
@@ -1761,6 +1944,7 @@ mod tests {
                 stats: &stats,
                 emitters: vec![None; bound.len()],
                 sampling: None,
+                flatten: false,
             };
             estimate_cost(std::slice::from_ref(&atom), 0, bound, &mut ctx)
         };
@@ -1868,7 +2052,7 @@ mod tests {
         };
         let cfg = SamplerConfig::default();
         let plan: QueryPlan<OpId, u32, NiraLitVal> =
-            schedule_inner(&rq, &stats, Some((&stub, cfg)));
+            schedule_inner(&rq, &stats, Some((&stub, cfg)), &[]);
         assert_eq!(
             join_ops(&plan),
             [f, h, g],

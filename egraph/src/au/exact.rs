@@ -15,7 +15,6 @@ use crate::canon::{MSetCanon, VarCanon};
 use crate::config::{AuIds, EGraphConfig};
 use crate::containers::DenseId;
 use crate::literal::LitVal;
-use crate::multiplicity::MultiplicityLike;
 
 use super::ac_repr;
 use super::actions::{ActionCache, ActionPair, generate_actions};
@@ -437,7 +436,8 @@ where
     }
     for pair in &pairs[next_pair..] {
         bound = bound.saturating_add(
-            u64::from(lb_pair(snap, pair.left, pair.right).0).saturating_mul(pair.count.to_u64()),
+            u64::from(lb_pair(snap, pair.left, pair.right).0)
+                .saturating_mul(crate::au::au_count(pair.count)),
         );
     }
     bound
@@ -736,8 +736,8 @@ where
                         let mut vmass = 0u128;
                         for pair in &action.pairs {
                             let (s, v) = static_generalize_quality(snap, pair.left, pair.right);
-                            size += u128::from(s) * u128::from(pair.count.to_u64());
-                            vmass += u128::from(v) * u128::from(pair.count.to_u64());
+                            size += u128::from(s) * u128::from(crate::au::au_count(pair.count));
+                            vmass += u128::from(v) * u128::from(crate::au::au_count(pair.count));
                         }
                         (size, vmass)
                     });
@@ -795,7 +795,7 @@ where
                                 None => frame.clean = false,
                             }
                         }
-                        child_terms.push((term, pair.count.to_u64()));
+                        child_terms.push((term, crate::au::au_count(pair.count)));
                         *pair_idx += 1;
                     }
                     Stage::Transport { cells, .. } => {
@@ -937,10 +937,10 @@ where
                         // operators and canonical-sorted for commutative ones
                         // (P0 fix: sorting an ordered operator's children
                         // changes its meaning).
-                        let commutative = snap.op_is_commutative(action.op);
+                        let form = snap.child_form(action.op);
                         let op = action.op;
                         let candidate =
-                            pool.intern_action_result(TermOp::EGraph(op), child_terms, commutative);
+                            pool.intern_action_result(TermOp::EGraph(op), child_terms, form);
                         let candidate_quality = pool.quality(candidate);
                         if candidate_quality < frame.best_quality {
                             frame.best = candidate;
@@ -1024,16 +1024,14 @@ where
                             // directly (§3.4.4). Infeasible pairs contribute no
                             // candidate.
                             let mut cell = cells.take().expect("cell state present");
-                            // Monomials carry surface-width multiplicities; the
-                            // solver's supply vectors are narrower. A pair it
-                            // cannot represent contributes no candidate, exactly
-                            // as an infeasible pair does — never a truncated one.
-                            let problem = TransportProblem::narrowed(
+                            // Monomials and the solver both carry u64 counts: every
+                            // pair is a candidate, none is narrowed away.
+                            let problem = TransportProblem::new(
                                 &cell.lm.iter().map(|(_, k)| *k).collect::<Vec<_>>(),
                                 &cell.rm.iter().map(|(_, k)| *k).collect::<Vec<_>>(),
                                 cell.cost,
                             );
-                            if let Some(solution) = problem.as_ref().and_then(solve_transport) {
+                            if let Some(solution) = solve_transport(&problem) {
                                 // Compose the winning matrix into a term. AC/ACI
                                 // kinds are commutative: canonical child order.
                                 let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u64)> =
@@ -1042,10 +1040,7 @@ where
                                 for (i, row) in solution.flow.iter().enumerate() {
                                     for (j, &x) in row.iter().enumerate() {
                                         if x > 0 {
-                                            child_terms.push((
-                                                cell.cell_term[i][j].unwrap(),
-                                                u64::from(x),
-                                            ));
+                                            child_terms.push((cell.cell_term[i][j].unwrap(), x));
                                             if subsumption && frame.clean {
                                                 let (csl, csr) =
                                                     cell.cell_support[i][j].take().expect(
@@ -1064,7 +1059,7 @@ where
                                 let candidate = pool.intern_action_result(
                                     TermOp::EGraph(op),
                                     &child_terms,
-                                    true,
+                                    crate::au::terms::ChildForm::Multiset,
                                 );
                                 let candidate_quality = pool.quality(candidate);
                                 if candidate_quality < frame.best_quality {

@@ -1,0 +1,42 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; ANCHOR: seq-comprehensions
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function G (E) E)
+(function K (E E) E)
+(function Cat (E) E :assoc)
+(function Plus (E) E :assoc-comm)
+(function Pairs () E)
+(function Twice () E)
+(function Both () E)
+
+; `..[ body for binders in source ]` builds an ordered sequence; `zip` pairs
+; positions and stops at the shortest input.
+(let pairs (Pairs))
+(rewrite (Pairs) (Cat (F (a)) (F (b)) (G (b)) (G (a))))
+(run 1)
+(rewrite (Cat (..fs (F x)) (..gs (G y)))
+         (Cat ..[ (K x y) for (x y) in (zip x y) ]))
+
+; An element comprehension `for f:k in fs` reads each child with its
+; multiplicity `k`; the body states the output multiplicity.
+(let twice (Twice))
+(rewrite (Twice) (Plus (F (a)):2 (b)))
+(run 1)
+(rewrite (Plus (..fs:k>=2 (F x)) ..rest) (Plus ..{ (G x):(* k k) for f:k in fs } ..rest))
+
+; `concat` joins sequences of one element type.
+(let both (Both))
+(rewrite (Both) (Cat (F (a)) (G (b))))
+(run 1)
+(rewrite (Cat (..fs (F x)) (..gs (G y))) (Plus ..{ z for z in (concat x y) }))
+(run 1)
+(check (= pairs (Cat (K (a) (b)) (K (b) (a)))))
+(check (= twice (Plus (G (a)) (G (a)) (G (a)) (G (a)) (b))))
+(check (= both (Plus (a) (b))))
+;; ANCHOR_END: seq-comprehensions

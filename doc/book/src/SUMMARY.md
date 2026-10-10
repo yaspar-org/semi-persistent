@@ -37,6 +37,14 @@
 - [General policy conditions](22-policy-conditions.md)
 - [Limits](23-limits.md)
 
+# Part V. Extraction under cost models
+
+- [Extraction under cost models](24-extraction-under-cost-models.md)
+- [Cost functions in Roto](25-cost-functions-in-roto.md)
+- [Criteria in ASP](26-criteria-in-asp.md)
+- [Criteria in MiniZinc](27-criteria-in-minizinc.md)
+- [Solvers, certificates, and export](28-solvers-certificates-and-export.md)
+
 # Annexes
 
 - [A. Complete surface-language grammar](A-full-grammar.md)

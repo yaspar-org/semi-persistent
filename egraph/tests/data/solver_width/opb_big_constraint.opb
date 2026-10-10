@@ -1,0 +1,4 @@
+* #variable= 2 #constraint= 1
+* 2^100 x1 + x2 >= 2^100 forces x1; the optimum is x1 alone, cost 1.
+min: +1 x1 +2 x2 ;
++1267650600228229401496703205376 x1 +1 x2 >= 1267650600228229401496703205376 ;

@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; Control: modulo commutativity is not a weaker pattern. Two F children do not match
+;; a pair with one F child; and a :flatten rule does not splice a nested :comm
+;; application, since a commutative operator is not associative.
+;; TYPES: machine
+(sort E)
+(function C () E)
+(function D () E)
+(function F (E) E)
+(function G () E)
+(function H (E) E)
+(function Eq (E E) E :comm)
+(function Plus (E) E :assoc-comm)
+(let gc (C))
+(let x (Eq (C) (F (D))))
+(let y (Eq (Eq (C) (D)) (F (D))))
+(rewrite (Eq (F p) (F q)) (G))
+(rewrite (Eq (F p) (C)) (H p) :flatten)
+(run 2)
+(check (!= x (G)))
+(check (!= y (H (D))))

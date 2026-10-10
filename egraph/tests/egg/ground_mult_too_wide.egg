@@ -1,0 +1,10 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: does not fit the configured multiplicity width
+;; A written count past the 32-bit width is reported when the term is built.
+(sort E)
+(function a () E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (a):4294967296))

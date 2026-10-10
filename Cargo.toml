@@ -45,3 +45,9 @@ criterion = { version = "0.8", features = ["html_reports"] }
 [profile.release]
 lto = "fat"
 codegen-units = 1
+# An arithmetic overflow the integer audit missed panics here instead of wrapping: a
+# wrapped count or index is a silent wrong result, a panic is a reported one (user,
+# 2026-10-06: "panics are not that bad, silent bugs are worse"). The ltl-eqsat workspace
+# sets the same. A cast (`as`) is not checked by this; the casts were reviewed by hand
+# (`doc/integer-audit.md`).
+overflow-checks = true

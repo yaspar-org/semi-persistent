@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; ANCHOR: seq-assoc-runs
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function H (E) E)
+(function Cat (E) E :assoc)
+
+; Under an associative operator the items cover the children in order:
+; `..pre` and `..suf` are gaps, `(..fs (F x))` is a run of F children.
+(rewrite (Cat ..pre (..fs (F x)) ..suf) (Cat ..pre (H (Cat ..fs)) ..suf)
+  :when ((>= (count fs) 2)))
+
+(let e (Cat a (F a) (F b) b (F a)))
+(run 1)
+; The run is maximal toward its gaps: both F children before `b` are taken.
+; The lone (F a) at the end is a run of length 1, which the guard rejects.
+(check (= e (Cat a (H (Cat (F a) (F b))) b (F a))))
+;; ANCHOR_END: seq-assoc-runs

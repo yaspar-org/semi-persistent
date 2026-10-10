@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: sort-error
 ;; EVAL: both
 ;; A comprehension filter computes a concrete literal. An ordinary application

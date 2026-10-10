@@ -32,20 +32,28 @@ done < <(
         jq -r '.packages[] | [.name, .manifest_path, (.license // "")] | @tsv'
 )
 
-for pattern in '*.rs' '*.py' '*.sh'; do
-    while IFS= read -r source; do
-        header="$(head -n 5 "$source")"
-        if ! grep -Fq \
-            'Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.' \
-            <<<"$header"; then
-            printf 'error: %s is missing the copyright header\n' "$source" >&2
-            failed=1
-        fi
-        if ! grep -Fq 'SPDX-License-Identifier: Apache-2.0' <<<"$header"; then
-            printf 'error: %s is missing the SPDX header\n' "$source" >&2
-            failed=1
-        fi
-    done < <(git ls-files "$pattern")
-done
+# Every source file we own carries the two header lines in its first five. Excluded: the
+# programs generated from egglog's tests (scripts/egglog-compare/programs) and the .egg
+# translations of egglog's tests, which say so in their first six lines; egglog is MIT.
+# --others: a file not yet added is checked too, so the check holds before a commit.
+while IFS= read -r source; do
+    case "$source" in scripts/egglog-compare/programs/*) continue ;; esac
+    if [[ "$source" == *.egg ]] &&
+        head -n 6 "$source" | grep -Eq "egglog (tests/|'s tests)|from egglog"; then
+        continue
+    fi
+    header="$(head -n 5 "$source")"
+    if ! grep -Fq \
+        'Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.' \
+        <<<"$header"; then
+        printf 'error: %s is missing the copyright header\n' "$source" >&2
+        failed=1
+    fi
+    if ! grep -Fq 'SPDX-License-Identifier: Apache-2.0' <<<"$header"; then
+        printf 'error: %s is missing the SPDX header\n' "$source" >&2
+        failed=1
+    fi
+done < <(git ls-files --cached --others --exclude-standard \
+    '*.rs' '*.py' '*.sh' '*.egg' '*.roto' '*.lp' '*.mzn')
 
 exit "$failed"

@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: check-failed
 ;; LAZY_AC_EQS: on
 ;; Book chapter 16: lazy completion does NOT help anti-unification.

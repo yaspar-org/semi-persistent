@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: an AC multiplicity in the right-hand side is undefined on (Plus)
+;; Build-time flattening of the inner sum (a:65536, b) at count 65536 needs a:2^32, past
+;; the 32-bit multiplicity width: the product is checked and the rule reports it.
+(sort E)
+(function a () E) (function b () E) (function c () E) (function W () E)
+(function Plus (E) E :assoc-comm)
+(let w (W))
+(rewrite (W) (Plus (Plus (a):65536 (b)):65536 (c)))
+(run 1)

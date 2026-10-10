@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; ANCHOR: seq-simple-items
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function Not (E) E)
+(function F (E) E)
+(function N (i64) E)
+(function Pick (E E) E)
+(function And (E) E :assoc-comm-idem)
+
+; A simple item `(Not x)` beside a filter takes one child; every choice is a
+; separate match. The filter then takes every remaining F child.
+(rewrite (And (Not x) (..fs (F y)) ..rest) (Pick x (N (count fs))))
+(let e (And (Not (a)) (Not (b)) (F (c))))
+(run 1)
+(check (= e (Pick (a) (N 1))))
+(check (= e (Pick (b) (N 1))))
+;; ANCHOR_END: seq-simple-items

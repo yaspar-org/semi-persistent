@@ -1,0 +1,6 @@
+; cost 5 proved at rung selection (2 solves, 0 cycle exclusions)
+(Pair (Delay 5 (S "x")) (Delay 3 (S "x")))
+; cost 7 proved at rung selection (3 solves, 0 cycle exclusions)
+(Pair (Hold (S "x")) (Delay 3 (S "y")))
+; cost 8 proved at rung selection (2 solves, 0 cycle exclusions)
+(Pair (Delay 5 (S "x")) (Delay 3 (S "y")))

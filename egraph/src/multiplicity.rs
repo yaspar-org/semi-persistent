@@ -32,9 +32,13 @@ use core::hash::Hash;
 
 /// A multiplicity width: a count of occurrences within one AC multiset node.
 ///
-/// Implementors are newtypes over an unsigned primitive. Every supported width
-/// fits in `u64`, so [`Self::to_u64`] is total and lossless; the reverse
-/// direction is fallible.
+/// Implementors are `Copy` newtypes over an unsigned primitive ([`Multiplicity16`],
+/// [`Multiplicity`], [`Multiplicity64`]), and every operation on them is checked: a
+/// result past the width is `None`, which the caller reports as a multiplicity overflow.
+/// An unbounded width was built and then removed (user, 2026-10-06): the stored child sits
+/// in the verified containers, whose elements are `Copy`, and an unbounded count in one
+/// `Copy` word needs a reserved bit or a side table. [`Self::to_u64`] stays fallible, and
+/// [`Self::cmp_u64`] compares with a `u64` without converting.
 pub trait MultiplicityLike:
     Copy + Clone + Eq + Ord + Hash + core::fmt::Debug + core::fmt::Display + Default
 {
@@ -44,40 +48,91 @@ pub trait MultiplicityLike:
     const ZERO: Self;
     /// Multiplicity one: a child occurring exactly once.
     const ONE: Self;
-    /// Largest representable multiplicity in this width.
-    const MAX: Self;
+    /// Largest representable multiplicity in this width, or `None` for an unbounded one.
+    const MAX: Option<Self>;
 
-    /// Widen to the surface width. Total and lossless.
-    fn to_u64(self) -> u64;
+    /// The width in bits, for diagnostics.
+    const BITS: u32;
+
+    /// The count as a `u64`, or `None` when it does not fit.
+    fn to_u64(self) -> Option<u64>;
+
+    /// Compare with a `u64`, total at every width.
+    fn cmp_u64(self, n: u64) -> core::cmp::Ordering;
 
     /// Narrow from the surface width, or `None` if `n` exceeds [`Self::MAX`].
     fn try_from_u64(n: u64) -> Option<Self>;
 
+    /// Narrow from an unbounded count, or `None` if it exceeds [`Self::MAX`].
+    fn try_from_biguint(n: &num_bigint::BigUint) -> Option<Self>;
+
+    /// The count as an unbounded integer.
+    fn to_biguint(self) -> num_bigint::BigUint;
+
     /// Sum, or `None` on overflow of this width.
     fn checked_add(self, other: Self) -> Option<Self>;
+
+    /// Product, or `None` on overflow of this width: splicing a nested AC child of
+    /// multiplicity `k` whose own child has multiplicity `j` gives that child `k · j`.
+    fn checked_mul(self, other: Self) -> Option<Self>;
+
+    /// Difference, or `None` below zero.
+    fn checked_sub(self, other: Self) -> Option<Self>;
+
+    /// Quotient, or `None` for a zero divisor.
+    fn checked_div(self, other: Self) -> Option<Self>;
+
+    /// Remainder, or `None` for a zero divisor.
+    fn checked_rem(self, other: Self) -> Option<Self>;
 
     /// Difference, clamped at [`Self::ZERO`].
     fn saturating_sub(self, other: Self) -> Self;
 
     /// Reduce modulo a small algebraic order: the nilpotent count clamp
     /// (`x∘x∘…∘x = e` after `order` copies) and self-inverse cancellation
-    /// (`order = 2`).
-    ///
-    /// Total at every width: the result is below `order`, hence below 256, which
-    /// even the narrowest supported width represents. Panics on `order == 0`,
-    /// like the `%` it stands for — no algebraic order is zero.
-    fn rem_order(self, order: u8) -> Self {
-        Self::try_from_u64(self.to_u64() % u64::from(order))
-            .expect("a remainder mod a u8 is below 256 and fits every supported width")
-    }
+    /// (`order = 2`). The result is below `order`, hence below 256, which every width
+    /// represents. Panics on `order == 0`, like the `%` it stands for: no algebraic
+    /// order is zero.
+    fn rem_order(self, order: u8) -> Self;
 
     /// Widen to `usize` for cost/size arithmetic. Saturates rather than
-    /// truncating, which matters only for a 64-bit multiplicity on a 32-bit
-    /// target — a configuration this crate does not otherwise support.
+    /// truncating: a count beyond `usize` is beyond any memory a caller could fill.
     fn to_usize(self) -> usize {
-        usize::try_from(self.to_u64()).unwrap_or(usize::MAX)
+        self.to_u64()
+            .and_then(|v| usize::try_from(v).ok())
+            .unwrap_or(usize::MAX)
     }
 }
+
+/// An AC node whose canonical form needs a multiplicity the configured width
+/// ([`crate::config::EGraphConfig::M`]) cannot hold: two counts of one class whose sum
+/// does not fit, or a nested child whose count times its parent's does not. The node
+/// is not representable, so building it fails instead of wrapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MultOverflow;
+
+/// The prefix of every report of a count past the width, so a user can search for one
+/// phrase whichever operation found it.
+pub const OVERFLOW: &str = "multiplicity overflow";
+
+/// `multiplicity overflow: {what} (the N-bit multiplicity width holds at most MAX)`.
+pub fn overflow_message<M: MultiplicityLike>(what: &str) -> String {
+    match M::MAX {
+        Some(max) => format!(
+            "{OVERFLOW}: {what} (the {}-bit multiplicity width holds at most {max})",
+            M::BITS
+        ),
+        None => format!("{OVERFLOW}: {what}"),
+    }
+}
+
+impl core::fmt::Display for MultOverflow {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("multiplicity overflow: an AC multiplicity does not fit the configured multiplicity width")
+    }
+}
+
+impl std::error::Error for MultOverflow {}
 
 macro_rules! define_multiplicity {
     ($name:ident, $w:ty, $bits:literal) => {
@@ -104,23 +159,54 @@ macro_rules! define_multiplicity {
         impl MultiplicityLike for $name {
             const ZERO: Self = Self(0);
             const ONE: Self = Self(1);
-            const MAX: Self = Self(<$w>::MAX);
+            const MAX: Option<Self> = Some(Self(<$w>::MAX));
+            const BITS: u32 = <$w>::BITS;
 
             #[inline]
-            fn to_u64(self) -> u64 {
-                u64::from(self.0)
+            fn to_u64(self) -> Option<u64> {
+                Some(u64::from(self.0))
+            }
+            #[inline]
+            fn cmp_u64(self, n: u64) -> core::cmp::Ordering {
+                u64::from(self.0).cmp(&n)
             }
             #[inline]
             fn try_from_u64(n: u64) -> Option<Self> {
                 <$w>::try_from(n).ok().map(Self)
+            }
+            fn try_from_biguint(n: &num_bigint::BigUint) -> Option<Self> {
+                u64::try_from(n).ok().and_then(Self::try_from_u64)
+            }
+            fn to_biguint(self) -> num_bigint::BigUint {
+                num_bigint::BigUint::from(self.0)
             }
             #[inline]
             fn checked_add(self, other: Self) -> Option<Self> {
                 self.0.checked_add(other.0).map(Self)
             }
             #[inline]
+            fn checked_mul(self, other: Self) -> Option<Self> {
+                self.0.checked_mul(other.0).map(Self)
+            }
+            #[inline]
+            fn checked_sub(self, other: Self) -> Option<Self> {
+                self.0.checked_sub(other.0).map(Self)
+            }
+            #[inline]
+            fn checked_div(self, other: Self) -> Option<Self> {
+                self.0.checked_div(other.0).map(Self)
+            }
+            #[inline]
+            fn checked_rem(self, other: Self) -> Option<Self> {
+                self.0.checked_rem(other.0).map(Self)
+            }
+            #[inline]
             fn saturating_sub(self, other: Self) -> Self {
                 Self(self.0.saturating_sub(other.0))
+            }
+            #[inline]
+            fn rem_order(self, order: u8) -> Self {
+                Self(self.0 % <$w>::from(order))
             }
         }
     };
@@ -161,11 +247,15 @@ mod tests {
     /// stored multiplicity against a surface literal is exact.
     #[test]
     fn to_u64_round_trips() {
-        for m in [Multiplicity::ZERO, Multiplicity::ONE, Multiplicity::MAX] {
-            assert_eq!(Multiplicity::try_from_u64(m.to_u64()), Some(m));
+        for m in [
+            Multiplicity::ZERO,
+            Multiplicity::ONE,
+            Multiplicity::MAX.unwrap(),
+        ] {
+            assert_eq!(Multiplicity::try_from_u64(m.to_u64().unwrap()), Some(m));
         }
-        assert_eq!(Multiplicity16::MAX.to_u64(), 65_535);
-        assert_eq!(Multiplicity64::MAX.to_u64(), u64::MAX);
+        assert_eq!(Multiplicity16::MAX.unwrap().to_u64(), Some(65_535));
+        assert_eq!(Multiplicity64::MAX.unwrap().to_u64(), Some(u64::MAX));
     }
 
     /// Summation reports overflow rather than wrapping to a small (or zero)
@@ -173,12 +263,22 @@ mod tests {
     #[test]
     fn checked_add_detects_overflow_at_each_width() {
         assert_eq!(
-            Multiplicity16::MAX.checked_add(Multiplicity16::ONE),
+            Multiplicity16::MAX
+                .unwrap()
+                .checked_add(Multiplicity16::ONE),
             None,
             "u16 multiplicity must report overflow, not wrap to 0"
         );
-        assert_eq!(Multiplicity::MAX.checked_add(Multiplicity::ONE), None);
-        assert_eq!(Multiplicity64::MAX.checked_add(Multiplicity64::ONE), None);
+        assert_eq!(
+            Multiplicity::MAX.unwrap().checked_add(Multiplicity::ONE),
+            None
+        );
+        assert_eq!(
+            Multiplicity64::MAX
+                .unwrap()
+                .checked_add(Multiplicity64::ONE),
+            None
+        );
         assert_eq!(
             Multiplicity::ONE.checked_add(Multiplicity::ONE),
             Some(Multiplicity(2))

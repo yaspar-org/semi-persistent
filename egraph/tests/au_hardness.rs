@@ -58,7 +58,7 @@ enum Winner {
 struct Cell {
     optimum: u32,
     exact_ms: f64,
-    exact_certified: bool,
+    exact_proven: bool,
     search_ms: Option<f64>,
     hybrid_ms: Option<f64>,
     winner: Winner,
@@ -107,7 +107,7 @@ fn measure(burial_depth: usize, decoys: usize) -> Option<Cell> {
     )
     .unwrap();
     let exact_ms = start.elapsed().as_secs_f64() * 1e3;
-    let exact_certified = exact.completion == Completion::Exact;
+    let exact_proven = exact.completion == Completion::Exact;
 
     // Ladder both search configurations to the first budget that reaches the
     // exact solver's value, and record the wall clock it took to get there.
@@ -155,7 +155,7 @@ fn measure(burial_depth: usize, decoys: usize) -> Option<Cell> {
         (None, Some(b)) => Some(b),
         (None, None) => None,
     };
-    let winner = match (exact_certified, best_search) {
+    let winner = match (exact_proven, best_search) {
         (true, Some(s)) if s < exact_ms => {
             if hybrid_ms.is_some_and(|h| Some(h) == best_search) && search_ms != best_search {
                 Winner::Delegation
@@ -177,7 +177,7 @@ fn measure(burial_depth: usize, decoys: usize) -> Option<Cell> {
     Some(Cell {
         optimum,
         exact_ms,
-        exact_certified,
+        exact_proven,
         search_ms,
         hybrid_ms,
         winner,
@@ -210,7 +210,7 @@ fn hardness_map() {
                 "{burial:>6} {decoys:>7} {:>8} {:>10.1} {:>4} | {:>10} {:>10} | {:>11}",
                 c.optimum,
                 c.exact_ms,
-                if c.exact_certified { "yes" } else { "no" },
+                if c.exact_proven { "yes" } else { "no" },
                 f(c.search_ms),
                 f(c.hybrid_ms),
                 format!("{:?}", c.winner)
@@ -239,7 +239,7 @@ fn dec_never_leaves_the_exact_region() {
     for &(burial, decoys) in &[(2usize, 1usize), (16, 8), (64, 32)] {
         let c = measure(burial, decoys).expect("feasible cell");
         assert!(
-            c.exact_certified,
+            c.exact_proven,
             "burial={burial} decoys={decoys}: the exact solver certifies every cell \
              of this family"
         );
@@ -266,7 +266,7 @@ fn every_method_agrees_on_the_optimum() {
         let Some(c) = measure(burial, decoys) else {
             continue;
         };
-        if !c.exact_certified {
+        if !c.exact_proven {
             continue;
         }
         assert!(

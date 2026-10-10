@@ -161,6 +161,9 @@ Semper validates algebraic attributes when an operator is declared.
 | `:idempotent` and `:cancellative` are exclusive | `:idempotent and :cancellative are mutually exclusive (a cancellative idempotent monoid collapses to the identity)` |
 | `:idempotent` and `:nilpotent` require AC | `:idempotent/:nilpotent require :assoc :comm` |
 | `:cancellative` requires AC | `:cancellative requires :assoc :comm (an AC operator)` |
+| `:identity` and `:inverse` require AC | `:idempotent/:nilpotent/:identity/:inverse require :comm (an AC operator)` on an `:assoc`-only operator, `... require :assoc (an AC operator)` on a `:comm`-only one |
+| the `:nilpotent` order is between 2 and 255 | `:nilpotent order must be 2..=255`, a parse error |
+| the `:inverse` operator is declared earlier and has signature `S -> S` | `:inverse operator 'Neg' is not declared`, or `:inverse operator 'Neg' must be unary over the op's sort (inv : S -> S)` |
 | `:nilpotent` requires an identity | `:nilpotent requires :identity (the emptied monomial must reduce to the unit)` |
 | `:inverse` requires an identity | `:inverse requires :identity` |
 | property attributes require a structural attribute | `algebra tags require :assoc and/or :comm` |
@@ -194,5 +197,5 @@ distinction when adding a domain rewrite changes a reported difference between
 two autoformalizations.
 
 The
-[algebraic-properties design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-algebraic-properties.md)
+[algebraic-properties design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/05-algebraic-operators.md#53-algebraic-properties-of-ac-operators-representation-canonization-and-the-per-op-pool)
 specifies the canonical representations and completion interactions in detail.

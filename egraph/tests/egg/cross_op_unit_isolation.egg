@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: check-failed
 ;; Soundness guard: the identity unit-drop is per-op. Merging a
 ;; class into `add`'s zero must NOT drop it from `mul` monomials — mul(a,b) with b = zero

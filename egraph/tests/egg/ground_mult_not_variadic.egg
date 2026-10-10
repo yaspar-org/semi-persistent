@@ -1,0 +1,10 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; MESSAGE: is not variadic
+;; A fixed-arity operator's child cannot carry a multiplicity.
+(sort E)
+(function a () E) (function b () E)
+(function K (E E) E)
+(let t (K (a):2 (b)))

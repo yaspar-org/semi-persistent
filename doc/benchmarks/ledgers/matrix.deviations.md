@@ -61,7 +61,7 @@ distinct. Both forms build their terms before comparing.
 `(rule ((MMul a b)) …)`.
 Exact, and it keeps those two rules delta-restricted: a rule carrying a constraint
 between two atoms' node variables is matched against the whole graph every round
-(chapter 18), so
+(design §9.2), so
 binding a root nothing reads would have cost the native column six semi-naive iterations,
 measured at 10 against 4.
 

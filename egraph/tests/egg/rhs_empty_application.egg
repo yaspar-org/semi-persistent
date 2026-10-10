@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: has no :identity, so an application of it with no children is meaningless
+;; A written right-hand side `(Add)` of an operator without :identity names nothing in the
+;; algebra, and is refused when the program is checked, as in a ground term.
+(sort E)
+(function w () E) (function G (E) E)
+(function Add (E) E :assoc-comm)
+(let x (w))
+(rewrite (w) (G (Add)))

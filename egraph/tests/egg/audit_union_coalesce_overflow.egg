@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: multiplicity overflow:
+;; A union of two AC children of one stored node makes rebuild coalesce b:2^32-1 and
+;; c:2^32-1 into 2^33-2, past the 32-bit width. The node is left as it was and the run
+;; reports it (it used to panic in canon.rs); 64 bits holds it (config_matrix.rs).
+(sort E)
+(function b () E) (function c () E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (b):4294967295 (c):4294967295))
+(union (b) (c))
+(run 1)
+(check (= t (Plus (b):8589934590)))

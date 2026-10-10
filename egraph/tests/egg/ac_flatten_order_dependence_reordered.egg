@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; TYPES: machine
 ;; The other half of `ac_flatten_order_dependence.egg`: the SAME program with `t0` moved

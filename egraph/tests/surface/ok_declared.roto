@@ -1,0 +1,18 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// Declared integers, free unary operations, and each Bool polarity at its sink.
+fn cost(g: Graph) {
+    let d = g.int([0, 5, 10]);
+    d.at_least(5).require();
+    d.scale(3).clamp(6).charge();
+    let u = g.unary(8);
+    u.plus_const(2).over().charge();
+    let s = g.int_scaled([0, 1, 2], 20);
+    s.at_most(20).charge_if(1);
+    let late = g.attribute_max(g.node_values());
+    for c in g.classes() {
+        late.of(c).at_least(3).charge_if(2);
+        late.of(c).at_most(3).require();
+        late.of(c).at_most(3).not().charge_if(1);
+    }
+}

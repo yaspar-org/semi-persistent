@@ -39,16 +39,20 @@ explains term construction in detail.
 | `(rewrite lhs rhs tags...)` | Match `lhs`, build `rhs`, and merge it with the matched root class. |
 | `(birewrite lhs rhs tags...)` | Install one rewrite in each direction. Both sides use pattern syntax. |
 | `(rule (pattern...) (action...) tags...)` | Run a conjunctive query and execute its actions for every match. |
+| `(rewrite (op ... (..g P) ..rest) rhs tags...)` | A sequence rewrite: filters `(..g P)` and bare sequences `..name` over the children of an `:assoc`, `:assoc-comm`, or `:assoc-comm-idem` root ([Chapter 5](05-rules-and-patterns.md#sequence-patterns)). It accepts `:let`, `:when`, `:flatten`, and `:ruleset`. |
 
 | Modifier | Accepted by | Effect |
 | --- | --- | --- |
 | `:when (pattern...)` | `rewrite`, `birewrite` | Add conjuncts to the query. A primitive predicate here computes over bound literal values. |
-| `:subsume` | `rewrite` | After applying the rewrite, hide the matched e-node from future pattern indexes. |
-| `:ruleset r` | all three forms | Put the installed rule in declared ruleset `r` instead of the default ruleset. |
+| `:when (expr...)` | sequence `rewrite` | Require each right-hand-side expression, computed over the matched sequences, to be `true`. |
+| `:subsume` | ordinary `rewrite` | After applying the rewrite, hide the matched e-node from future pattern indexes and from extraction under a cost model. |
+| `:let ((x e)...)` | sequence `rewrite` | Name values computed from the matched sequences, for the right-hand side and `:when`. |
+| `:flatten` | all four forms | Match every associative, AC, or ACI operator of the pattern on the flattened form of a node, where a child class holding a node of the same operator contributes that node's children. Nothing stored changes. At most once per rule. On a rule without such an operator it has no effect and raises a warning; a `:comm` operator does not count. |
+| `:ruleset r` | all four forms | Put the installed rule in declared ruleset `r` instead of the default ruleset. |
 
-Modifiers may appear in any order. `birewrite` rejects `:subsume`; a general
-`rule` puts guards in its query list and accepts only `:ruleset` as a trailing
-modifier.
+Modifiers may appear in any order. `birewrite` rejects `:subsume`, and so does a
+sequence rewrite. A general `rule` puts guards in its query list and accepts
+only `:flatten` and `:ruleset` as trailing modifiers.
 
 ### General-rule actions
 
@@ -56,7 +60,7 @@ modifier.
 | --- | --- |
 | `(union lhs rhs)` | Build both RHS terms and merge their classes. |
 | `(f rhs...)` | Build and insert an application. RHS splices and comprehensions are accepted in its variadic children. |
-| `(set (f rhs...) value)` | Reserved syntax. It parses, but execution is not implemented. |
+| `(set (f rhs...) value)` | Reserved syntax. It parses, and the sort checker rejects it as not implemented. |
 
 [Chapter 5](05-rules-and-patterns.md) defines pattern matching, multiplicities,
 rest variables, comprehensions, modifiers, and action ordering.
@@ -85,6 +89,13 @@ defines scope lifetime and `:shrink`.
 | `(check (= a b))` | Rebuild and require `a` and `b` to belong to the same e-class. |
 | `(check (!= a b))` | Rebuild and require the terms to belong to different e-classes under the selected completion mode. |
 | `(extract term)` | Rebuild and print a lowest-cost extractable representative. |
+| `(cost-model name :script "file.roto")` | Compile a cost script when the program is checked ([Part V](24-extraction-under-cost-models.md)). |
+| `(cost-model name :rust "id")` | Name a cost registered in Rust ([Part V](24-extraction-under-cost-models.md)). |
+| `(cost-model name :asp "file.lp")` | Name a cost written as answer-set rules over the e-graph's facts, solved by clingo ([Part V](24-extraction-under-cost-models.md)). |
+| `(cost-model name :minizinc "file.mzn")` | Name a cost written in MiniZinc, solved through `minizinc` ([Part V](24-extraction-under-cost-models.md)). |
+| `(extract term :cost name [:rung r] [:solver s] [:budget n] [:file "f"] [:proof "d"])` | Extract under a cost model, print the cost, its status, and the term ([Part V](24-extraction-under-cost-models.md)). `r` is `selection` (the default), `levels`, `splits`, `binary`, or `orders`. `s` is `internal` (the default), `dpw`, `roundingsat`, `greedy`, `(opb "prog" ...)`, `(asp "clingo" ...)`, or `(minizinc "solver" ...)`. `:proof` needs `roundingsat` or an `opb` solver. |
+| `(extract term :cost name :band lo hi [:count n] ...)` | List up to `n` (default 10) terms whose cost lies in `[lo, hi]`, on the internal solver ([Part V](24-extraction-under-cost-models.md)). |
+| `(dump-egraph term :file "f")` | Write the whole e-graph as JSON in egglog's format, `term`'s class as the root. Classes and nodes are named and ordered by content colour, so equal e-graphs write equal bytes ([Part V](24-extraction-under-cost-models.md)). |
 | `(print-size)` | Print nonzero per-operator e-node counts and the total. |
 | `(print-size f)` | Print the e-node count for operator `f`. |
 | `(print-stats)` | Print current graph counts and the most recent run's counters. |

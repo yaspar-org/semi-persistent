@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine
 ;; Translation of the generated AC benchmark (egglog-bridge/examples/make-ac-bench.py
 ;; at N=11, set actions ported to union for the tests dialect). Commutativity and

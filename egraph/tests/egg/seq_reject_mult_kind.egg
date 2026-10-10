@@ -1,0 +1,12 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: 'k' is bound as a multiplicity and as a pattern variable
+;; TYPES: machine
+;; A name bound as a multiplicity and as a literal pattern variable is rejected, as
+;; the ordinary language rejects it: one name, two kinds of binding.
+(sort E)
+(function a () E)
+(function N (i64) E)
+(function Plus (E) E :assoc-comm)
+(rewrite (Plus (..xs a) y:k (N k) ..rest) (Plus ..rest))

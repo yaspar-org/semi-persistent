@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: check-failed
 ;; DERIVE_AC_EQS: off
 ;; Nilpotent soundness: xor(a,a) must NEVER equal a. The old bug routed nilpotent through the Set

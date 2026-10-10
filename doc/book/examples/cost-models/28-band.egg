@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: band
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)
+
+(let e (And (Global (Interval 0 9) (Var "a0")) (Future (Interval 2 3) (Var "a1"))
+            (Global (Interval 1 4) (Var "a1")) (Future (Interval 0 7) (Var "a0"))))
+
+(cost-model memory :script "memory.roto")
+; Every term whose cost lies in [37, 40], at most 4 of them.
+(extract e :cost memory :rung splits :band 37 40 :count 4)
+; A budget of 10 clauses is below the splits encoding: the rung steps down.
+(extract e :cost memory :rung splits :budget 10)
+;; ANCHOR_END: band

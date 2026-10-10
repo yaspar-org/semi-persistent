@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; A difference of two bound multiplicities has no static lower bound, so the interval
+;; check cannot prove it non-negative and rejects the rule at install, before any match
+;; could make it negative (k = 1, j = 2 here).
+(sort E)
+(function a () E) (function b () E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (a) (b) (b)))
+(rewrite (Plus x:k y:j) (Plus x:(u64::- k j) y))
+(run 1)

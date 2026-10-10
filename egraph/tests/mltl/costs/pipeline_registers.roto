@@ -1,0 +1,75 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Pipeline register balancing for arithmetic, as in high-level synthesis.
+//
+// Every operator is one pipeline stage of fixed latency, starting when its last
+// input arrives: its output arrives at latency + max(input arrivals). An input that
+// arrives earlier waits in delay registers, one per cycle, until the latest input.
+// The cost is one unit per operator plus one per delay register.
+//
+// An AC application (Add, Mul) is one stage over all its operands. Rendered as a
+// tree, its internal nodes are partial results with no latency of their own,
+// available when their last member arrives: early operands then combine first and
+// only their partial result waits, which is what regrouping saves.
+//
+// Arrival is subtracted, so it is taken both ways: over-estimated where it is a
+// sibling that sets the wait, under-estimated where it is the input that waits.
+
+fn latency(n: Node) -> u64 {
+    if n.is("Add") || n.is("Neg") {
+        1
+    } else if n.is("Mul") {
+        3
+    } else if n.is("Div") {
+        12
+    } else if n.is("Call1") || n.is("Call2") || n.is("Call3") {
+        20
+    } else {
+        0
+    }
+}
+
+// Whether the class's first candidate is a leaf: a variable or a number.
+fn is_leaf(c: Class) -> bool {
+    match c.nodes().get(0) {
+        Some(n) => n.is("Var") || n.is("Num"),
+        None => false,
+    }
+}
+
+fn cost(g: Graph) {
+    let lat = g.node_values();
+    for n in g.nodes() {
+        lat.set(n, latency(n));
+    }
+    let late = g.attribute_max(lat);
+    let early = g.attribute_max_under(lat);
+    for c in g.classes() {
+        // The latest sibling c waits for, under every parent.
+        let peers = [];
+        for u in c.parents() {
+            for s in u.siblings() {
+                peers.push(late.of(s.class()).when(s.present()));
+            }
+        }
+        g.max_over(peers).minus(early.of(c)).clamp(0).charge();
+        if !is_leaf(c) {
+            c.chosen().charge_if(1);
+        }
+        // A partial result of a rendered flat node waits for its latest sibling.
+        for n in c.nodes() {
+            for t in n.inner_nodes() {
+                let sibs = [];
+                for s in t.siblings() {
+                    sibs.push(late.of(s.class()).when(t.exists().and(s.present())));
+                }
+                let mems = [];
+                for m in t.members() {
+                    mems.push(early.of(m.class()).when(t.exists().and(m.present())));
+                }
+                g.max_over(sibs).minus(g.max_under(mems)).clamp(0).charge();
+            }
+        }
+    }
+}

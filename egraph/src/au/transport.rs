@@ -7,14 +7,13 @@
 //! Find an integral flow meeting every margin that minimizes
 //! `(Σ x_ij·s_ij, Σ x_ij·v_ij)` lexicographically, or report infeasibility.
 //!
-//! The lexicographic objective is scalarized: `cost = s·W + v` with
-//! `W = F·v_max + 1` where `F` is the total transported multiplicity and
-//! `v_max` the maximum cell variant mass. Total variant mass never exceeds
-//! `F·v_max`, so a one-unit size improvement always outweighs any possible
-//! variant-mass difference. All arithmetic is checked `u128`; with `u32`
-//! inputs the worst-case total cost is far below `u128::MAX` for any
-//! realistic multiplicity, and overflow panics with a diagnostic rather
-//! than wrapping.
+//! The lexicographic objective is kept as a pair: a path's cost is `(Σ s, Σ v)`
+//! compared lexicographically, an ordered abelian group, so the shortest-path and
+//! successive-shortest-paths arguments hold unchanged. Margins and flows are u64, the
+//! width anti-unification reads counts at (`au_count`); capacities and flows are `i128`
+//! and path costs pairs of `i128`, none of which a u64 margin or a u32 cell cost can
+//! overflow. (A scalarization `s·W + v` with `W = F·v_max + 1` reached 2^128 at u64
+//! margins, past `i128`.)
 //!
 //! Algorithm: successive shortest augmenting paths (Bellman-Ford/SPFA, which
 //! tolerates the negative residual reverse edges without potentials), with
@@ -38,40 +37,25 @@ pub enum Cell {
     Forbidden,
 }
 
-/// A transportation problem instance.
-///
-/// Supplies and demands are `u32`: this is the solver's own capacity limit, not
-/// the e-graph's multiplicity width. Internally each cell capacity becomes an
-/// `i64` and the objective a `u128`, both of which have headroom above `u32`,
-/// but the flow matrix and the supply vectors do not. Callers holding
-/// surface-width multiplicities must come through [`TransportProblem::narrowed`]
-/// rather than casting.
+/// A transportation problem instance. Supplies and demands are u64, the width the
+/// search reads multiplicities at: every stored count is a margin, none is refused.
 #[derive(Clone, Debug)]
 pub struct TransportProblem {
-    pub row_supply: Vec<u32>,
-    pub col_demand: Vec<u32>,
+    pub row_supply: Vec<u64>,
+    pub col_demand: Vec<u64>,
     /// `cost[i][j]` for row i, column j. Dimensions rows x cols.
     pub cost: Vec<Vec<Cell>>,
 }
 
 impl TransportProblem {
-    /// Build from surface-width (`u64`) supplies and demands, or `None` if any
-    /// exceeds the solver's `u32` capacity.
-    ///
-    /// `None` is the same signal [`solve_transport`] gives for an infeasible
-    /// instance, and every caller already treats that as "this representation
-    /// pair does not yield an action". An unrepresentable supply is genuinely
-    /// unsolvable *by this solver*, so reporting it as infeasible loses only
-    /// candidate generalizations — never soundness. Truncating instead would
-    /// solve a different problem and report its cost as this one's.
-    pub fn narrowed(row_supply: &[u64], col_demand: &[u64], cost: Vec<Vec<Cell>>) -> Option<Self> {
-        let narrow =
-            |v: &[u64]| -> Option<Vec<u32>> { v.iter().map(|&n| u32::try_from(n).ok()).collect() };
-        Some(TransportProblem {
-            row_supply: narrow(row_supply)?,
-            col_demand: narrow(col_demand)?,
+    /// Build from u64 supplies and demands. Nothing is narrowed: a count of any stored
+    /// size is a margin, so no pair loses its transport action to the solver's width.
+    pub fn new(row_supply: &[u64], col_demand: &[u64], cost: Vec<Vec<Cell>>) -> Self {
+        TransportProblem {
+            row_supply: row_supply.to_vec(),
+            col_demand: col_demand.to_vec(),
             cost,
-        })
+        }
     }
 }
 
@@ -79,20 +63,30 @@ impl TransportProblem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransportSolution {
     /// `flow[i][j]` = number of copies pairing row i with column j.
-    pub flow: Vec<Vec<u32>>,
+    pub flow: Vec<Vec<u64>>,
     /// Total (Σ x·s, Σ x·v) as u128 to handle large multiplicities without
     /// overflow. The caller adds the +1 operator cost.
     pub total: (u128, u128),
 }
 
+/// A lexicographic path cost `(Σ size, Σ variant mass)`.
+type Lex = (i128, i128);
+
+fn lex_add(a: Lex, b: Lex) -> Lex {
+    (
+        a.0.checked_add(b.0).expect("transport distance overflow"),
+        a.1.checked_add(b.1).expect("transport distance overflow"),
+    )
+}
+
 struct Edge {
     to: usize,
-    cap: i64,
-    cost: i128,
+    cap: i128,
+    cost: Lex,
     /// Signed net flow: augmenting the forward edge by d does
     /// `flow[e] += d; flow[e^1] -= d`, so a reverse edge with cap 0 gains
     /// residual capacity exactly equal to the cancellable forward flow.
-    flow: i64,
+    flow: i128,
 }
 
 struct Network {
@@ -110,25 +104,25 @@ impl Network {
         }
     }
 
-    fn add_edge(&mut self, from: usize, to: usize, cap: u32, cost: i128) {
+    fn add_edge(&mut self, from: usize, to: usize, cap: u64, cost: Lex) {
         let idx = self.edges.len();
         self.edges.push(Edge {
             to,
-            cap: cap as i64,
+            cap: i128::from(cap),
             cost,
             flow: 0,
         });
         self.edges.push(Edge {
             to: from,
             cap: 0,
-            cost: -cost,
+            cost: (-cost.0, -cost.1),
             flow: 0,
         });
         self.adj[from].push(idx);
         self.adj[to].push(idx + 1);
     }
 
-    fn residual(&self, e: usize) -> i64 {
+    fn residual(&self, e: usize) -> i128 {
         self.edges[e].cap - self.edges[e].flow
     }
 }
@@ -138,10 +132,8 @@ impl Network {
 /// `None` a forbidden one. Returns only the argmin flow matrix; the caller
 /// re-derives its objective from the flow at whatever precision it owns.
 ///
-/// Margins are `u32` for the same reason [`TransportProblem`]'s are: the sole
-/// caller reads them back out of the AND node's stored `transport_rows` /
-/// `transport_cols`, which were moved out of the very [`TransportProblem`]
-/// the feasibility gate ran, so they already passed the one narrowing check.
+/// Margins are u64, as [`TransportProblem`]'s are: the sole caller reads them back out
+/// of the AND node's stored `transport_rows` / `transport_cols`.
 ///
 /// Exact `i128` arithmetic is a termination requirement, not a precision
 /// nicety: with f64 costs, two mathematically-equal path sums can differ by
@@ -151,55 +143,36 @@ impl Network {
 /// augmentation a true shortest path, so the residual graph stays free of
 /// negative cycles and the successive-shortest-paths argument holds.
 pub fn solve_transport_quantized(
-    row_supply: &[u32],
-    col_demand: &[u32],
+    row_supply: &[u64],
+    col_demand: &[u64],
     cost: &[Vec<Option<i128>>],
-) -> Option<Vec<Vec<u32>>> {
-    solve_cells(row_supply, col_demand, cost)
+) -> Option<Vec<Vec<u64>>> {
+    let lex: Vec<Vec<Option<Lex>>> = cost
+        .iter()
+        .map(|r| r.iter().map(|c| c.map(|c| (c, 0))).collect())
+        .collect();
+    solve_cells(row_supply, col_demand, &lex)
 }
 
 /// Solve the transportation problem. Returns `None` if infeasible (the margins
-/// cannot be met using only allowed cells) and panics on arithmetic overflow
-/// (unreachable for realistic u32 inputs).
+/// cannot be met using only allowed cells).
 pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
     let rows = p.row_supply.len();
     let cols = p.col_demand.len();
-
-    // Scalarization constants (checked). `f` uses the row total; on
-    // mismatched margins the core returns None before any cost is read.
-    let f: u128 = p.row_supply.iter().map(|&m| m as u128).sum();
-    let v_max: u128 = p
-        .cost
-        .iter()
-        .flatten()
-        .filter_map(|c| match c {
-            Cell::Cost(_, v) => Some(*v as u128),
-            Cell::Forbidden => None,
+    let cost: Vec<Vec<Option<Lex>>> = (0..rows)
+        .map(|i| {
+            (0..cols)
+                .map(|j| match p.cost[i][j] {
+                    Cell::Cost(s, v) => Some((i128::from(s), i128::from(v))),
+                    Cell::Forbidden => None,
+                })
+                .collect()
         })
-        .max()
-        .unwrap_or(0);
-    let w: u128 = f
-        .checked_mul(v_max)
-        .and_then(|x| x.checked_add(1))
-        .expect("transport scalarization overflow (W)");
-
-    let mut cost: Vec<Vec<Option<i128>>> = vec![vec![None; cols]; rows];
-    for i in 0..rows {
-        for j in 0..cols {
-            if let Cell::Cost(s, v) = p.cost[i][j] {
-                let scalar: u128 = (s as u128)
-                    .checked_mul(w)
-                    .and_then(|x| x.checked_add(v as u128))
-                    .expect("transport scalarization overflow (cell)");
-                cost[i][j] =
-                    Some(i128::try_from(scalar).expect("transport scalar cost exceeds i128"));
-            }
-        }
-    }
-
+        .collect();
     let flow = solve_cells(&p.row_supply, &p.col_demand, &cost)?;
 
-    // Extract the total quality from the flow.
+    // The total quality from the flow: a u64 flow times a u32 cost is below 2^96, and
+    // the cells' flows sum to the total supply, so the sums fit u128.
     let mut total_s: u128 = 0;
     let mut total_v: u128 = 0;
     for i in 0..rows {
@@ -208,8 +181,12 @@ pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
             if x > 0
                 && let Cell::Cost(s, v) = p.cost[i][j]
             {
-                total_s += x as u128 * s as u128;
-                total_v += x as u128 * v as u128;
+                total_s = total_s
+                    .checked_add(u128::from(x) * u128::from(s))
+                    .expect("transport size total fits u128");
+                total_v = total_v
+                    .checked_add(u128::from(x) * u128::from(v))
+                    .expect("transport mass total fits u128");
             }
         }
     }
@@ -226,17 +203,17 @@ pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
 /// be met using only allowed cells. Panics on distance overflow (checked
 /// `i128` adds).
 fn solve_cells(
-    row_supply: &[u32],
-    col_demand: &[u32],
-    cost: &[Vec<Option<i128>>],
-) -> Option<Vec<Vec<u32>>> {
+    row_supply: &[u64],
+    col_demand: &[u64],
+    cost: &[Vec<Option<Lex>>],
+) -> Option<Vec<Vec<u64>>> {
     let rows = row_supply.len();
     let cols = col_demand.len();
     if rows == 0 || cols == 0 {
         return None;
     }
-    let total_supply: u64 = row_supply.iter().map(|&m| m as u64).sum();
-    let total_demand: u64 = col_demand.iter().map(|&n| n as u64).sum();
+    let total_supply: u128 = row_supply.iter().map(|&m| u128::from(m)).sum();
+    let total_demand: u128 = col_demand.iter().map(|&n| u128::from(n)).sum();
     if total_supply != total_demand {
         return None;
     }
@@ -250,10 +227,10 @@ fn solve_cells(
     let mut net = Network::new(rows + cols + 2);
 
     for (i, &m) in row_supply.iter().enumerate() {
-        net.add_edge(source, 1 + i, m, 0);
+        net.add_edge(source, 1 + i, m, (0, 0));
     }
     for (j, &n) in col_demand.iter().enumerate() {
-        net.add_edge(1 + rows + j, sink, n, 0);
+        net.add_edge(1 + rows + j, sink, n, (0, 0));
     }
     // Remember the edge index of each (i,j) cell for flow extraction.
     let mut cell_edge: Vec<Vec<Option<usize>>> = vec![vec![None; cols]; rows];
@@ -276,14 +253,14 @@ fn solve_cells(
     // (n_nodes passes over every edge). A breach means the exact-arithmetic
     // invariant broke and the loop would otherwise spin; fail loudly instead.
     let relaxation_budget = (n_nodes as u64).saturating_mul(net.edges.len() as u64);
-    let mut pushed_total: u64 = 0;
+    let mut pushed_total: u128 = 0;
     loop {
         // SPFA from source: dist, parent edge.
-        let mut dist: Vec<Option<i128>> = vec![None; n_nodes];
+        let mut dist: Vec<Option<Lex>> = vec![None; n_nodes];
         let mut parent_edge: Vec<Option<usize>> = vec![None; n_nodes];
         let mut in_queue = vec![false; n_nodes];
         let mut queue = std::collections::VecDeque::new();
-        dist[source] = Some(0);
+        dist[source] = Some((0, 0));
         queue.push_back(source);
         in_queue[source] = true;
 
@@ -296,9 +273,7 @@ fn solve_cells(
                     continue;
                 }
                 let v = net.edges[e].to;
-                let nd = du
-                    .checked_add(net.edges[e].cost)
-                    .expect("transport distance overflow");
+                let nd = lex_add(du, net.edges[e].cost);
                 // Strict-less relaxation: deterministic first-found ties.
                 if dist[v].is_none() || nd < dist[v].unwrap() {
                     relaxations += 1;
@@ -322,7 +297,7 @@ fn solve_cells(
         }
 
         // Bottleneck along the path.
-        let mut bottleneck = i64::MAX;
+        let mut bottleneck = i128::MAX;
         let mut node = sink;
         while node != source {
             let e = parent_edge[node].unwrap();
@@ -342,7 +317,7 @@ fn solve_cells(
             net.edges[e ^ 1].flow -= bottleneck;
             node = net.edges[e ^ 1].to;
         }
-        pushed_total += bottleneck as u64;
+        pushed_total += u128::try_from(bottleneck).expect("a bottleneck is positive");
         if pushed_total == total_supply {
             break;
         }
@@ -353,14 +328,14 @@ fn solve_cells(
     }
 
     // Extract the flow matrix.
-    let mut flow = vec![vec![0u32; cols]; rows];
+    let mut flow = vec![vec![0u64; cols]; rows];
     for i in 0..rows {
         for j in 0..cols {
             if let Some(e) = cell_edge[i][j] {
                 let x = net.edges[e].flow;
                 debug_assert!(x >= 0, "forward cell edge cannot end with negative flow");
                 if x > 0 {
-                    flow[i][j] = u32::try_from(x).expect("cell flow exceeds u32");
+                    flow[i][j] = u64::try_from(x).expect("a cell's flow is at most its u64 margin");
                 }
             }
         }
@@ -378,13 +353,13 @@ mod tests {
         let rows = p.row_supply.len();
         let cols = p.col_demand.len();
         let mut best: Option<(u128, u128)> = None;
-        let mut matrix = vec![vec![0u32; cols]; rows];
+        let mut matrix = vec![vec![0u64; cols]; rows];
         let mut col_residual = p.col_demand.clone();
 
         fn rec(
             p: &TransportProblem,
-            matrix: &mut Vec<Vec<u32>>,
-            col_residual: &mut Vec<u32>,
+            matrix: &mut Vec<Vec<u64>>,
+            col_residual: &mut Vec<u64>,
             row: usize,
             best: &mut Option<(u128, u128)>,
         ) {
@@ -419,11 +394,11 @@ mod tests {
             // Distribute row `row` across columns.
             fn dist(
                 p: &TransportProblem,
-                matrix: &mut Vec<Vec<u32>>,
-                col_residual: &mut Vec<u32>,
+                matrix: &mut Vec<Vec<u64>>,
+                col_residual: &mut Vec<u64>,
                 row: usize,
                 col: usize,
-                remaining: u32,
+                remaining: u64,
                 best: &mut Option<(u128, u128)>,
             ) {
                 let cols = p.col_demand.len();
@@ -454,11 +429,11 @@ mod tests {
 
     fn check_margins(p: &TransportProblem, sol: &TransportSolution) {
         for (i, &m) in p.row_supply.iter().enumerate() {
-            let row_sum: u32 = sol.flow[i].iter().sum();
+            let row_sum: u64 = sol.flow[i].iter().sum();
             assert_eq!(row_sum, m, "row {i} margin violated");
         }
         for (j, &n) in p.col_demand.iter().enumerate() {
-            let col_sum: u32 = sol.flow.iter().map(|r| r[j]).sum();
+            let col_sum: u64 = sol.flow.iter().map(|r| r[j]).sum();
             assert_eq!(col_sum, n, "col {j} margin violated");
         }
         for (i, row) in sol.flow.iter().enumerate() {
@@ -587,8 +562,8 @@ mod tests {
         // Bottleneck augmentation must handle this without 2M iterations.
         let m = 1_000_000u32;
         let p = TransportProblem {
-            row_supply: vec![m, m],
-            col_demand: vec![m, m],
+            row_supply: vec![u64::from(m), u64::from(m)],
+            col_demand: vec![u64::from(m), u64::from(m)],
             cost: vec![
                 vec![Cell::Cost(1, 0), Cell::Cost(2, 0)],
                 vec![Cell::Cost(2, 0), Cell::Cost(1, 0)],
@@ -599,12 +574,31 @@ mod tests {
         assert_eq!(sol.total.0, 2 * m as u128);
     }
 
+    /// Margins past u32: the solver takes u64 supplies, so a count of 2^40 is a
+    /// transport margin and solves exactly (it used to be refused as infeasible).
+    #[test]
+    fn margins_past_u32_solve_exactly() {
+        let big = 1u64 << 40;
+        let p = TransportProblem {
+            row_supply: vec![big, 1],
+            col_demand: vec![1, big],
+            cost: vec![
+                vec![Cell::Cost(u32::MAX, 1), Cell::Cost(1, 0)],
+                vec![Cell::Cost(0, 0), Cell::Forbidden],
+            ],
+        };
+        let sol = solve_transport(&p).unwrap();
+        check_margins(&p, &sol);
+        assert_eq!(sol.flow, vec![vec![0, big], vec![1, 0]]);
+        assert_eq!(sol.total, (u128::from(big), 0));
+    }
+
     #[test]
     fn u32_max_multiplicities_no_overflow() {
         let m = u32::MAX;
         let p = TransportProblem {
-            row_supply: vec![m, m],
-            col_demand: vec![m, m],
+            row_supply: vec![u64::from(m), u64::from(m)],
+            col_demand: vec![u64::from(m), u64::from(m)],
             cost: vec![
                 vec![Cell::Cost(m, m), Cell::Forbidden],
                 vec![Cell::Forbidden, Cell::Cost(m, m)],
@@ -631,12 +625,12 @@ mod tests {
             let cols = 1 + (next() % 3) as usize;
             // Random margins with equal totals: generate row supplies, then
             // distribute the same total across columns.
-            let row_supply: Vec<u32> = (0..rows).map(|_| 1 + (next() % 3) as u32).collect();
-            let total: u32 = row_supply.iter().sum();
-            let mut col_demand = vec![0u32; cols];
+            let row_supply: Vec<u64> = (0..rows).map(|_| 1 + next() % 3).collect();
+            let total: u64 = row_supply.iter().sum();
+            let mut col_demand = vec![0u64; cols];
             let mut rem = total;
             for j in 0..cols - 1 {
-                let d = next() as u32 % (rem + 1);
+                let d = next() % (rem + 1);
                 col_demand[j] = d;
                 rem -= d;
             }

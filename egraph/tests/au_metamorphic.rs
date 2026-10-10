@@ -433,36 +433,19 @@ fn count_variants(pool: &TermPool<OpId, LitValId>, id: TermId) -> u32 {
         .sum::<u32>()
 }
 
-/// Own a projected result so the snapshot and result borrows can end before
-/// the projection is materialized back into the mutable e-graph.
-#[derive(Clone, Debug)]
-enum OwnedTerm {
-    App(OpId, Vec<OwnedTerm>),
-    Lit(OpId, LitValId),
-}
+/// A projection read out of its pool, each child with its multiplicity
+/// (`semi_persistent_egraph::au::terms::OwnedTerm`).
+type OwnedTerm = semi_persistent_egraph::au::terms::OwnedTerm<OpId, LitValId>;
 
 fn own_projected(pool: &TermPool<OpId, LitValId>, id: TermId) -> OwnedTerm {
-    match pool.op(id) {
-        TermOp::EGraph(op) => OwnedTerm::App(
-            *op,
-            pool.children(id)
-                .iter()
-                .map(|&child| own_projected(pool, child))
-                .collect(),
-        ),
-        TermOp::Literal(op, value) => OwnedTerm::Lit(*op, *value),
-        TermOp::Variants => panic!("projection still contains Variants"),
-    }
+    pool.own(id).expect("projection still contains Variants")
 }
 
+/// Rebuild an owned projection in the e-graph, an AC child of count k as one counted
+/// child.
 fn materialize(eg: &mut Eg, term: &OwnedTerm) -> ENodeId {
-    match term {
-        OwnedTerm::App(op, children) => {
-            let child_ids: Vec<ENodeId> = children.iter().map(|c| materialize(eg, c)).collect();
-            eg.add(*op, &child_ids)
-        }
-        OwnedTerm::Lit(op, value) => eg.add_lit(*op, *value),
-    }
+    semi_persistent_egraph::au::terms::materialize_owned(eg, term)
+        .expect("the projection is buildable")
 }
 
 fn projected_terms(
@@ -667,7 +650,7 @@ fn run_case_guarded(seed: u64, playouts: u64, timeout: Duration) -> PairOutcome 
 struct GapStats {
     cases: usize,
     zero: usize,
-    certified: usize,
+    proven: usize,
     sum: u64,
     max: u32,
     max_seed: u64,
@@ -681,7 +664,7 @@ impl GapStats {
             self.zero += 1;
         }
         if outcome.mcgs_certified {
-            self.certified += 1;
+            self.proven += 1;
         }
         self.sum += u64::from(gap);
         if gap > self.max {
@@ -698,7 +681,7 @@ impl GapStats {
             self.zero,
             self.cases,
             100.0 * self.zero as f64 / self.cases as f64,
-            self.certified,
+            self.proven,
             self.cases,
             self.sum as f64 / self.cases as f64,
             self.max,

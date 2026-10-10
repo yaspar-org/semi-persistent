@@ -37,7 +37,7 @@ complete AC pairings. Multiplicity supplies and demands select how many copies
 of each child pair the composed result contains.
 
 The complete action-generation rules are in
-[`19-anti-unification.md`, section 3.4](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[design chapter 12, section 3.4](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md).
 
 ## The recursion
 
@@ -109,13 +109,17 @@ implemented comparisons use it:
 2. If the bound is greater than the current achieved incumbent, the action
    cannot improve that incumbent.
 
+Both comparisons are opt-in Rust-API settings, off by default. The first is
+`dominance_pruning` in UCT; the second is `exact_pruning` in Exact and
+`live_incumbent_pruning` in UCT. The surface commands run with all three off.
+
 Both comparisons are strict and inspect size only. Equality cannot discard an
 action because an equal-size result may still have smaller variant mass. A
 discarded structural action loses no achieved term and cannot contain the
 lexicographic optimum.
 
 The bound and pruning arguments are in
-[`19-anti-unification.md`, sections 9.1-9.4](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[design chapter 12, sections 9.1-9.4](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md).
 
 ## What `:completion exact` means
 
@@ -129,4 +133,4 @@ Chapter 16 measures the consequences of these qualifiers. The pair-mode
 cycle-erasure and round-bound argument is a prose argument supported by
 regressions and a finite oracle, not a machine-checked theorem for the Rust
 solver. The current proof boundary is stated in
-[`19-anti-unification.md`, section 9.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[design chapter 12, section 9.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md).

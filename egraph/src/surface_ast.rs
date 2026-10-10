@@ -14,6 +14,30 @@ pub enum SurfacePatChild {
     Elem(SurfacePattern),
     /// Element with multiplicity: `x:2`, `x:k`, `x:k>=2`.
     ElemMult(SurfacePattern, MultSpec),
+    /// `..name` between children: a bare sequence of a sequence pattern
+    /// (`doc/sequence-patterns.md`). A `..name` right after the operator or right
+    /// before `)` is the `prefix` or `suffix` rest instead, as before.
+    Seq(String, Span),
+    /// `(..name[:mult] base [:except other])`: a filtered sequence, with an optional
+    /// multiplicity annotation (AC).
+    Filter {
+        name: String,
+        mult: Option<MultSpec>,
+        base: Box<SurfacePattern>,
+        except: Option<(String, Span)>,
+        span: Span,
+    },
+}
+
+impl SurfacePatChild {
+    /// Whether this child is a sequence-pattern construct, which only sequence
+    /// rules accept.
+    pub fn is_sequence(&self) -> bool {
+        matches!(
+            self,
+            SurfacePatChild::Seq(..) | SurfacePatChild::Filter { .. }
+        )
+    }
 }
 
 /// Uniform pattern — `(op children...)` with optional `..rest` and `:mult`.
@@ -51,14 +75,21 @@ pub enum SurfaceCommand {
         rhs: RhsTerm,
         when: Vec<SurfacePattern>,
         subsume: bool,
+        /// `:flatten`: the rule matches its n-ary operators on the flattened form.
+        flatten: bool,
         /// `:ruleset name`, or `None` for the default ruleset.
         ruleset: Option<String>,
     },
     Rule {
         body: Vec<SurfacePattern>,
         head: Vec<Action>,
+        /// `:flatten`, as for `Rewrite`.
+        flatten: bool,
         /// `:ruleset name`, or `None` for the default ruleset.
         ruleset: Option<String>,
     },
+    /// A rewrite whose left-hand side has a collection pattern `(each name pat)`;
+    /// see [`crate::collection`].
+    CollectionRewrite(crate::collection::SurfaceRule),
     Pass(Command),
 }

@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; `zip` stops at the shortest input: two `F` children and one `G` child pair once
+;; (doc/sequence-patterns.md, "Multiplicities and `zip`").
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function F (E) E)
+(function G (E) E)
+(function P (E E) E)
+(function Cat (E) E :assoc)
+(let e (Cat (F a) (F b) (G c)))
+(rewrite (Cat (..fs (F x)) (..gs (G y))) (Cat ..[ (P x y) for (x y) in (zip x y) ]))
+(run 1)
+(check (= e (P a c)))

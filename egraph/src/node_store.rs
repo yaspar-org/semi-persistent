@@ -392,24 +392,34 @@ where
         collisions: &mut Vec<(G, G)>,
         touched: &mut Vec<G>,
         ops: &OpRegistry<O, S, TRACK>,
-    ) where
+    ) -> crate::nary_canon::Normal<G>
+    where
         MSetCanon: VarCanon<G, C>,
     {
         use crate::canon::CanonMode;
+        use crate::nary_canon::Normal;
         match self.routing.get(id) {
-            NodeRef::Plain0(_) => {}
-            NodeRef::Plain1(l) => self
-                .plain1
-                .recanonize_node::<PlainCanon>(l, &find, collisions, touched),
-            NodeRef::Plain2(l) => self
-                .plain2
-                .recanonize_node::<PlainCanon>(l, &find, collisions, touched),
-            NodeRef::Plain3(l) => self
-                .plain3
-                .recanonize_node::<PlainCanon>(l, &find, collisions, touched),
-            NodeRef::SPair(l) => self
-                .spair
-                .recanonize_node::<CCanon>(l, &find, collisions, touched),
+            NodeRef::Plain0(_) => Normal::Node,
+            NodeRef::Plain1(l) => {
+                self.plain1
+                    .recanonize_node::<PlainCanon>(l, &find, collisions, touched);
+                Normal::Node
+            }
+            NodeRef::Plain2(l) => {
+                self.plain2
+                    .recanonize_node::<PlainCanon>(l, &find, collisions, touched);
+                Normal::Node
+            }
+            NodeRef::Plain3(l) => {
+                self.plain3
+                    .recanonize_node::<PlainCanon>(l, &find, collisions, touched);
+                Normal::Node
+            }
+            NodeRef::SPair(l) => {
+                self.spair
+                    .recanonize_node::<CCanon>(l, &find, collisions, touched);
+                Normal::Node
+            }
             NodeRef::PlainN(l) => self.plain_n.recanonize_node::<OrderedCanon>(
                 l,
                 &find,
@@ -448,7 +458,7 @@ where
                 self.set
                     .recanonize_node::<SetCanon>(l, &find, g_buf, collisions, touched, mode)
             }
-            NodeRef::Lit(_) => {}
+            NodeRef::Lit(_) => Normal::Node,
         }
     }
 

@@ -1,0 +1,38 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// Every big variant of a constant-taking call once; the cost is checked in Rust.
+fn cost(g: Graph) {
+    let p65 = g.ibig_str("36893488147419103232");
+    let x = g.int_big([g.ibig(0), p65]);
+    x.at_least_big(g.ibig(1)).require();
+    x.at_most_big(p65).require();
+    let y = x.plus_const_big(g.ibig(1)).scale_big(g.ubig(2)).clamp_big(g.ibig(0));
+    let z = y.over().plus_const_big(g.ibig(0)).scale_big(g.ubig(1)).clamp_big(g.ibig(0));
+    z.at_most_big(g.ibig_str("1000000000000000000000000")).require();
+    z.charge();
+    let u = x.under().plus_const_big(g.ibig(0)).scale_big(g.ubig(1)).clamp_big(g.ibig(0));
+    u.at_least_big(g.ibig(0)).require();
+    for v in x.values_big() {
+        g.charge_const_big(v);
+    }
+    let t = g.root().chosen().times_big(g.ubig_str("36893488147419103232")).plus_const_big(g.ibig(3)).times_big(g.ubig(1));
+    t.at_least_big(g.ibig(3)).require();
+    t.at_most_big(g.ibig_str("1000000000000000000000000")).require();
+    t.charge();
+    let to = g.root().chosen().over().times_big(g.ubig(5)).times_big(g.ubig(1)).plus_const_big(g.ibig(0));
+    to.at_least_big(g.ibig(1)).charge_if_big(g.ubig(17));
+    to.charge();
+    let tu = g.root().chosen().under().times_big(g.ubig(1)).times_big(g.ubig(1)).plus_const_big(g.ibig(0));
+    tu.at_least_big(g.ibig(0)).require();
+    g.pb_const_big(g.ibig(7)).charge();
+    g.constant_big(g.ibig(11)).charge();
+    g.root().chosen().charge_if_big(g.ubig(13));
+    g.at_most_big([g.root().chosen()], g.ubig_str("100000000000000000000"));
+    g.at_least_big([g.root().chosen()], g.ubig(1));
+    let nv = g.node_values();
+    for n in g.nodes() {
+        nv.set_big(n, g.ubig_str("18446744073709551616"));
+        nv.set_big(n, nv.get_big(n).plus(g.ubig(1)));
+    }
+    g.attribute_max(nv).of(g.root()).charge();
+}

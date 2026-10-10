@@ -6,7 +6,8 @@ list grows with distinct decisions rather than with cluster pairs.
 
 ## The expanded model
 
-The fixture retains Chapter 20's deploy and health-check vocabulary. It adds
+The fixture abstracts Chapter 20's deploy and health-check conditions into the
+atoms `methodPost`, `pathDeploy`, and `successfulHealth`. It adds
 `Lte`, `Ite`, `directCopy`, and `multipartCopy` for a shared ground
 conditional. All five samples contain
 `(Ite (Lte 100 100) (directCopy) (multipartCopy))`. It supplies more shared

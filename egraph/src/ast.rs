@@ -36,8 +36,24 @@ typed_var_id! {
     pub struct RhsLocalMultVarId;
     #[doc = "Literal value variable (single LitValId binding from OpKind::Lit nodes)."]
     pub struct LitValVarId;
-    #[doc = "Global variable (let-bound, resolved at match time from global bindings)."]
-    pub struct GlobalVarId;
+    #[doc = "Literal-valued sequence variable: a sequence pattern's literal column, one value per element (`doc/sequence-patterns.md`, Typing)."]
+    pub struct LitSeqVarId;
+    #[doc = "RHS-local literal value introduced by a comprehension over a literal column or a primitive's rows."]
+    pub struct RhsLocalLitVarId;
+}
+
+/// Global variable (let-bound, resolved at match time from global bindings). A u32,
+/// unlike the per-rule variable ids above: globals accumulate over a whole program, and a
+/// benchmark can bind more than 65,536 of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct GlobalVarId(pub u32);
+impl GlobalVarId {
+    pub const fn new(x: u32) -> Self {
+        Self(x)
+    }
+    pub const fn idx(self) -> usize {
+        self.0 as usize
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,14 +284,71 @@ pub enum Term {
         children: Vec<Term>,
         span: Span,
     },
+    /// `term:count` as a child of a variadic application: the child with its
+    /// multiplicity, at least 1, of any size (the configuration narrows it when the term
+    /// is built). An AC operator stores it as one counted child.
+    Counted {
+        term: Box<Term>,
+        count: num_bigint::BigUint,
+        span: Span,
+    },
 }
 
 impl Term {
     pub fn span(&self) -> Span {
         match self {
             Term::Lit(_, s) => *s,
-            Term::App { span, .. } => *span,
+            Term::App { span, .. } | Term::Counted { span, .. } => *span,
         }
+    }
+
+    /// How many entries of the written term are `sub`, compared by text: a child written
+    /// `x:k` is one occurrence. This is the count of e-class references in the term, the
+    /// number of times the class is named. See [`Self::weighted_occurrences`] for the
+    /// count with multiplicities.
+    pub fn occurrences(&self, sub: &Term) -> u64 {
+        let want = sub.to_string();
+        let mut n = 0u64;
+        let mut stack: Vec<&Term> = vec![self];
+        while let Some(t) = stack.pop() {
+            let inner = match t {
+                Term::Counted { term, .. } => term.as_ref(),
+                _ => t,
+            };
+            if inner.to_string() == want {
+                n = n.saturating_add(1);
+            }
+            if let Term::App { children, .. } = inner {
+                stack.extend(children.iter());
+            }
+        }
+        n
+    }
+
+    /// How many copies of `sub` the term denotes, compared by text: each occurrence
+    /// weighted by the product of the multiplicities on its path from the root, so the
+    /// child of `x:k` counts k times. This is the occurrence count of the term with every
+    /// multiset written out, computed without writing it out. Saturates at `u128::MAX`.
+    pub fn weighted_occurrences(&self, sub: &Term) -> u128 {
+        let want = sub.to_string();
+        let mut n = 0u128;
+        let mut stack: Vec<(&Term, u128)> = vec![(self, 1)];
+        while let Some((t, w)) = stack.pop() {
+            let (inner, w) = match t {
+                Term::Counted { term, count, .. } => {
+                    let k = u128::try_from(count).unwrap_or(u128::MAX);
+                    (term.as_ref(), w.saturating_mul(k))
+                }
+                _ => (t, w),
+            };
+            if inner.to_string() == want {
+                n = n.saturating_add(w);
+            }
+            if let Term::App { children, .. } = inner {
+                stack.extend(children.iter().map(|c| (c, w)));
+            }
+        }
+        n
     }
 }
 
@@ -290,6 +363,7 @@ impl std::fmt::Display for Term {
                 }
                 write!(f, ")")
             }
+            Term::Counted { term, count, .. } => write!(f, "{term}:{count}"),
         }
     }
 }
@@ -356,6 +430,27 @@ pub enum RhsChild {
         filter: Option<Box<RhsTerm>>,
         span: Span,
     },
+    /// A comprehension of a sequence rule whose binder is a tuple or whose source is
+    /// an expression: `..{ body[:mult] for (q a b) in (union-by p l u) }`, or
+    /// `..[ … ]` for an ordered result (`doc/sequence-patterns.md`, Typing and
+    /// "Multiplicities and `zip`").
+    RowComp {
+        body: Box<RhsTerm>,
+        mult: Option<MultExpr>,
+        binders: Vec<(String, BinderMult)>,
+        source: Box<RhsTerm>,
+        filter: Option<Box<RhsTerm>>,
+        ordered: bool,
+        span: Span,
+    },
+}
+
+/// A tuple binder's multiplicity: `x` (none), `x:k` (bound), `x:_` (dropped).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BinderMult {
+    None,
+    Var(String),
+    Drop,
 }
 
 /// Multiplicity expression in RHS multiset comprehension.
@@ -380,7 +475,7 @@ pub enum MultExpr {
 
 /// A single composable algebraic-property tag on a function declaration. Tags combine freely
 /// at the surface (`:assoc :comm :idempotent`); the sortcheck resolver maps a tag *set* to a
-/// concrete `OpKind` and validates the combination (see `doc/design/ac-algebraic-properties.md`
+/// concrete `OpKind` and validates the combination (see `doc/design/05-algebraic-operators.md` §5.3
 /// Facet A). The old pre-combined `:assoc-comm` / `:assoc-comm-idem` are accepted as aliases
 /// that the parser expands into these basic tags.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -420,6 +515,43 @@ pub struct Variant {
     /// Always has `is_constructor: true` — a datatype variant is a constructor by
     /// construction — plus whatever `:cost` / `:unextractable` the variant declared.
     pub meta: OpMeta,
+}
+
+/// Where a cost model comes from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CostSource {
+    /// A Roto script, by path.
+    Script(String),
+    /// A cost registered in Rust, by name.
+    Rust(String),
+    /// Criteria in ASP, by path: appended to the ASP dump of the e-graph.
+    Asp(String),
+    /// Criteria in MiniZinc, by path: appended to the MiniZinc dump of the e-graph.
+    MiniZinc(String),
+}
+
+/// Which solver an `(extract … :cost …)` uses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SolverSpec {
+    /// The internal incremental CNF descent.
+    Internal,
+    /// The internal descent with the objective bounded by rustsat's dynamic
+    /// polynomial watchdog instead of the totalizer.
+    Dpw,
+    /// RoundingSat, found as `$ROUNDINGSAT`, `~/.local/bin/roundingsat`, or on the
+    /// `PATH`.
+    RoundingSat,
+    /// No solving: Semper's additive-greedy term, scored by the cost model.
+    Greedy,
+    /// A pseudo-Boolean competition solver: the program and its arguments; the OPB
+    /// file's path is appended.
+    Opb(Vec<String>),
+    /// A MiniZinc solver by name (`cp-sat`, `chuffed`, ...), with further `minizinc`
+    /// arguments.
+    MiniZinc(Vec<String>),
+    /// An answer-set solver with clingo's JSON output: the program and its
+    /// arguments; the program's path is appended.
+    Asp(Vec<String>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -465,6 +597,35 @@ pub enum Command {
     CheckEq(Term, Term),
     CheckNeq(Term, Term),
     Extract(Term),
+    /// `(cost-model NAME :script "file.roto")` or `(cost-model NAME :rust "id")`.
+    CostModel {
+        name: String,
+        source: CostSource,
+        span: Span,
+    },
+    /// `(extract t :cost NAME [:rung R] [:budget CLAUSES] [:solver internal |
+    /// (opb "cmd" "arg"…)] [:file "term.json"])`: extraction under a named cost
+    /// model. A rung whose estimated size exceeds the budget steps down the ladder.
+    ExtractWith {
+        term: Term,
+        cost: String,
+        rung: String,
+        budget: Option<u64>,
+        solver: SolverSpec,
+        file: Option<String>,
+        /// `:proof "dir"`: keep a VeriPB-checkable proof of the final solver call.
+        proof: Option<String>,
+        /// `:band lo hi [:count n]`: up to `n` (default 10) distinct terms whose cost
+        /// lies in `[lo, hi]`, instead of the optimum.
+        band: Option<(u64, u64, u64)>,
+        span: Span,
+    },
+    /// `(dump-egraph t :file "p.json")` — write the whole e-graph, with `t`'s class
+    /// marked as the root, as JSON for an external extractor to read.
+    DumpEGraph {
+        root: Term,
+        file: String,
+    },
     AntiUnify {
         left: Term,
         right: Term,

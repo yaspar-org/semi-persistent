@@ -42,10 +42,10 @@ specific regions, and `s4` names a different second region.
 The four initial extractions print:
 
 ```text
-(And (core) (approvedRegion (destination)))
-(And (core) (approvedRegion (destination)))
-(And (core) (Or (usEast (destination)) (euWest (destination))))
-(And (core) (Or (usEast (destination)) (apSouth (destination))))
+(And (approvedRegion (destination)) (core))
+(And (approvedRegion (destination)) (core))
+(And (Or (euWest (destination)) (usEast (destination))) (core))
+(And (Or (apSouth (destination)) (usEast (destination))) (core))
 ```
 
 The rule states that this deployment's approved regions are `usEast` and
@@ -91,5 +91,5 @@ A rule or union may have asserted more than the domain permits. With
 to its representative, including rewrite identifiers along that path. It can
 identify which merge joined a class, but it does not directly produce a
 named sample-to-sample explanation or enumerate alternative proofs. The
-[proof-logging design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/15-proof-logging.md)
+[proof-logging design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/14-proof-logging.md)
 defines that output and its verification boundary.

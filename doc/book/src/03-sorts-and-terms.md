@@ -47,7 +47,8 @@ decl-kind     = "function" | "constructor"
 variant       = "(" name { name } { decl-option } ")"
 
 term          = literal | name | application
-application   = "(" operator { term } ")"
+application   = "(" operator { term-child } ")"
+term-child    = term [ ":" unsigned-integer ]
 insertion     = "(" name { term } ")"
 
 decl-option   = ":cost" unsigned-integer
@@ -66,7 +67,8 @@ An operator may be an ordinary name or a qualified builtin such as `IBig::+`.
 Whitespace and `;` comments may appear between tokens. A nullary application
 can be written explicitly with parentheses, as in `(x)`. Ground terms contain
 no pattern variables; a bare name must resolve to a literal, a nullary operator,
-or a name introduced by an earlier `let`.
+or a name introduced by an earlier `let`. A `term-child` count follows its term
+with no space before the colon.
 
 Chapter 4 defines the algebraic declaration options listed above.
 [Annex A](A-full-grammar.md) collects the complete surface grammar, including
@@ -154,6 +156,15 @@ The bare `(f (x))` inserts two e-nodes. The `let` reuses both and inserts only
 counts e-nodes, so merging the last two nodes into one e-class does not reduce
 the total.
 
+A child of an AC application may carry a count: `(Add a:3 b)` is
+`(Add a a a b)`, stored as one entry `a:3`, never expanded. A child of an
+associative (`:assoc`) application may carry one too, and it is then repeated
+that many times, since a sequence is positional. The count must be at least 1.
+An ACI operator stores a set, which holds each element once, so a count under it
+is rejected, as it is under any other kind of operator. A count is accepted
+wherever a term is: in a top-level insertion such as `(Add a:3 b)`, and inside
+`let`, `check`, and nested applications.
+
 `named` is an e-class binding, not an alias for the syntax
 `(g (f (x)))`. After the `union`, the same binding denotes the class containing
 both `(g (f (x)))` and `(h (f (x)))`. Later commands may use `named` wherever a
@@ -180,7 +191,7 @@ earlier `let` binding, a literal, or a nullary operator.
 of `f` requires an `N`, not an `E`. The program is rejected before execution:
 
 ```text
-sort error: sort error at 165..172: argument 1 of 'f': expected sort 'N', got 'E'
+sort error at line 12 column 4: argument 1 of 'f': expected sort 'N', got 'E'
 ```
 
 These checks establish that declarations have supported forms and terms are
@@ -214,5 +225,5 @@ have the wrong sort.
 During term construction, Semper interns the concrete value in an internal
 literal node beneath the user-declared constructor. These internal operators
 do not appear in surface syntax. The
-[literal-model design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/13-literal-model.md)
+[literal-model design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/10-literal-model.md)
 specifies their representation and the primitive-operation interface.

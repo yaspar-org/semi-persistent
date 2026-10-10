@@ -52,7 +52,7 @@ the existing `eq` node.
 
 Ground-term insertion and rewrite right-hand-side evaluation use this same
 pipeline. The full procedure is specified in
-[`04-canonization.md`](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/04-canonization.md).
+[design §5.2](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/05-algebraic-operators.md#52-canonization-algorithms).
 
 ## Recanonization during rebuild
 
@@ -61,7 +61,10 @@ children equal. Rebuild revisits affected parents, replaces their direct
 children with current representatives, and reapplies the representation's
 sorting, coalescing, deduplication, unit removal, and multiplicity clamp. A
 hash-cons collision then triggers the generic congruence merge described in
-Chapter 6.
+Chapter 6. Recanonization does not cancel inverse pairs. A separate repair
+round in every rebuild cancels the pairs that later merges form. A coalesced
+multiplicity past the configured width leaves the node unchanged, and the
+command or run reports the overflow as an error.
 
 Multisets retain the original multiplicities until the configured clamp runs.
 Nilpotent operators therefore remain `MSet` nodes even at order two. Sets store
@@ -70,7 +73,9 @@ no explicit counts because every represented count is one.
 Sequence nodes have a narrower rebuild boundary. Rebuild recanonizes the ids
 already present in a sequence span, but it cannot enlarge that span when a
 child class later acquires a same-operator sequence. Chapter 11 describes the
-optional associative inter-reduction work that can add further equalities.
+optional associative inter-reduction work that can add further equalities, and a
+rule tagged `:flatten` matches through such nesting without changing what is
+stored ([Chapter 5](05-rules-and-patterns.md#matching-completeness-over-a-c-ac-and-aci)).
 
 ## The boundary
 

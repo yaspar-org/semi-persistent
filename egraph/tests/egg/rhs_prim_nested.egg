@@ -1,0 +1,25 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; A right-hand-side primitive is an expression, matching the guard side: primitives
+;; compose and a constant is parsed at the argument position's sort. The interval
+;; arithmetic a bounded-temporal-logic rewrite needs is the motivating case — an
+;; interval whose upper bound is `k0 + min(b - a, d - c)` cannot be staged through a
+;; single flat application.
+(datatype Ivl (I i64 i64))
+(datatype E (Win Ivl E) (Var String))
+
+;; Upper bound computed by a three-deep primitive expression; lower bound by a
+;; two-deep one with a constant leaf.
+(rewrite (Win (I a b) (Win (I c d) p))
+         (Win (I (i64::+ a (i64::- c 1))
+                 (i64::+ (i64::min a c) (i64::min (i64::- b a) (i64::- d c))))
+              p))
+
+(let nested (Win (I 4 9) (Win (I 6 8) (Var "p"))))
+(run 1)
+;; lower: 4 + (6 - 1) = 9.  upper: min(4,6) + min(9-4, 8-6) = 4 + 2 = 6.
+(check (= nested (Win (I 9 6) (Var "p"))))
+;; The rewrite computed those two bounds and no others.
+(check (!= nested (Win (I 9 7) (Var "p"))))

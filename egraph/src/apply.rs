@@ -33,7 +33,7 @@ pub enum RhsOp<O, V> {
     /// Evaluate a prim op on bound lit values or multiplicities, intern result.
     PrimApp {
         op: O,
-        args: Vec<crate::resolve::RPrimArg>,
+        args: Vec<crate::resolve::RPrimArg<O, V>>,
     },
     /// Fetch a global e-class id from the runtime global bindings.
     FetchGlobal(GlobalVarId),
@@ -220,6 +220,7 @@ pub fn check_mult_literals<Cfg: crate::config::EGraphConfig, O, S, V>(
     for atom in &rule.query.atoms {
         let elems: &[(crate::resolve::PatVar, crate::resolve::RMult)] = match atom {
             crate::resolve::RAtom::ACExact { elems, .. }
+            | crate::resolve::RAtom::Comm { elems, .. }
             | crate::resolve::RAtom::ACSub { elems, .. } => elems,
             _ => continue,
         };
@@ -461,6 +462,101 @@ use smallvec::SmallVec;
 /// workload and its allocation counters.
 type ChildVec<Cfg> = SmallVec<[<Cfg as EGraphConfig>::G; 16]>;
 
+/// A right-hand-side application's children, in the form its operator stores, chosen
+/// from the operator's kind before any argument is evaluated. A count on a child (`x:k`,
+/// a multiset `..rest`, a multiset comprehension) means something different per form,
+/// so it is applied here and never expanded where it is not a position.
+pub(crate) enum Children<Cfg: EGraphConfig> {
+    /// Fixed-arity, `:comm`, and A operators: ordered ids. A count `k` is `k` positions.
+    Positional(ChildVec<Cfg>),
+    /// ACI operators: ids, one per class. A count of at least one adds the class once.
+    Distinct(ChildVec<Cfg>),
+    /// AC operators: the store's counted child type. A count is one entry.
+    Counted(SmallVec<[<Cfg as EGraphConfig>::C; 16]>),
+}
+
+impl<Cfg: EGraphConfig> Children<Cfg> {
+    pub(crate) fn for_kind<S: DenseId>(kind: &crate::registry::OpKind<S>) -> Self {
+        match kind {
+            crate::registry::OpKind::MSet { .. } => Children::Counted(SmallVec::new()),
+            crate::registry::OpKind::Set { .. } => Children::Distinct(SmallVec::new()),
+            _ => Children::Positional(SmallVec::new()),
+        }
+    }
+
+    pub(crate) fn push(&mut self, g: Cfg::G) {
+        match self {
+            Children::Positional(ids) | Children::Distinct(ids) => ids.push(g),
+            Children::Counted(cs) => cs.push(Cfg::mset_child_single(g)),
+        }
+    }
+
+    /// `g` counted `k` times, `k > 0`. Positions are bounded by
+    /// [`crate::seq_rhs::MAX_WIDTH`], as a sequence rule's are: `k` positions of an A
+    /// operator are real children, so a count past the bound is reported.
+    pub(crate) fn push_count(&mut self, g: Cfg::G, k: Cfg::M) -> Result<(), EvalError> {
+        match self {
+            Children::Positional(ids) => {
+                let n = k
+                    .to_u64()
+                    .and_then(|k| usize::try_from(k).ok())
+                    .filter(|&k| {
+                        ids.len()
+                            .checked_add(k)
+                            .is_some_and(|t| t <= crate::seq_rhs::MAX_WIDTH)
+                    });
+                let Some(n) = n else {
+                    return Err(EvalError {
+                        span: crate::ast::Span::Dummy,
+                        op: "positions",
+                        args: vec![k.to_string()],
+                        site: EvalSite::Rhs,
+                        rule: None,
+                    });
+                };
+                ids.extend(std::iter::repeat_n(g, n));
+            }
+            Children::Distinct(ids) => ids.push(g),
+            Children::Counted(cs) => cs.push(Cfg::mset_child_with_mult(g, k)),
+        }
+        Ok(())
+    }
+
+    pub(crate) fn extend_ids(&mut self, gs: &[Cfg::G]) {
+        match self {
+            Children::Positional(ids) | Children::Distinct(ids) => ids.extend_from_slice(gs),
+            Children::Counted(cs) => cs.extend(gs.iter().map(|&g| Cfg::mset_child_single(g))),
+        }
+    }
+
+    /// A multiset rest: copied as is into an AC application.
+    pub(crate) fn extend_mset(&mut self, ms: &[Cfg::C]) -> Result<(), EvalError> {
+        match self {
+            Children::Counted(cs) => cs.extend_from_slice(ms),
+            Children::Distinct(ids) => ids.extend(ms.iter().map(|c| Cfg::mset_child_id(c))),
+            Children::Positional(_) => {
+                for c in ms {
+                    self.push_count(Cfg::mset_child_id(c), Cfg::mset_child_mult(c))?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The diagnostic for an AC application whose canonical form needs a multiplicity the
+/// configured width cannot hold (a sum of counts of one class, or a nested child's
+/// count times its parent's).
+pub(crate) fn mult_overflow_error(op_name: &str) -> EvalError {
+    EvalError {
+        span: crate::ast::Span::Dummy,
+        op: "an AC multiplicity",
+        args: vec![op_name.to_owned()],
+        site: EvalSite::Rhs,
+        rule: None,
+    }
+}
+
 /// Inline capacity for a primitive application's argument list. Primitives here
 /// are arithmetic and comparison, so two covers all of them.
 const PRIM_ARGS: usize = 2;
@@ -528,19 +624,75 @@ where
 /// A bound AC multiplicity read as an i64 literal value. Resolution only admits
 /// multiplicity variables in i64 positions, so the model must carry an i64
 /// sort; a count above `i64::MAX` cannot arise from a real node's children.
-fn mult_as_lit<L: LitVal, M: crate::lit_model::LitModel<Value = L>>(model: &M, k: u64) -> L {
+fn mult_as_lit<L: LitVal, M: crate::lit_model::LitModel<Value = L>, K: MultiplicityLike>(
+    model: &M,
+    k: K,
+) -> Result<L, EvalError> {
     let desc = model
         .sorts()
         .iter()
         .find(|s| s.name == "i64")
         .expect("multiplicity in RHS: model has no i64 sort");
-    (desc.parse)(&k.to_string()).expect("multiplicity in RHS does not fit i64")
+    // A count is read through its decimal text, so a count above `i64::MAX` (reachable
+    // at 64 bits) is reported, not wrapped or a panic.
+    let text = k.to_string();
+    (desc.parse)(&text).ok_or_else(|| EvalError {
+        span: crate::ast::Span::Dummy,
+        op: "a multiplicity as an i64 literal",
+        args: vec![text],
+        site: EvalSite::Rhs,
+        rule: None,
+    })
+}
+
+/// Evaluate a right-hand-side primitive application to a literal value.
+///
+/// Recursive over [`RPrimArg::Nested`], so `(i64::+ a (i64::- d c))` computes
+/// the inner difference first. Only the outermost application's result becomes
+/// a literal e-node; an intermediate value stays a value, exactly as it does in
+/// a `:when` guard.
+fn eval_prim<Cfg, L, M, Q, const T: bool, const P: bool>(
+    op: Cfg::O,
+    args: &[crate::resolve::RPrimArg<Cfg::O, L>],
+    env: &RhsEnv<'_, Cfg, Q>,
+    eg: &EGraph<Cfg, L, T, P>,
+    model: &M,
+) -> Result<L, EvalError>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    M: crate::lit_model::LitModel<Value = L>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    use crate::resolve::RPrimArg;
+    let mut raw_vals: SmallVec<[L; PRIM_ARGS]> = SmallVec::new();
+    for arg in args {
+        raw_vals.push(match arg {
+            RPrimArg::LitVal(vid) => {
+                let lit_val_id = env.query.get_lit_val(*vid);
+                eg.lits().get(lit_val_id).clone()
+            }
+            RPrimArg::Mult(mid) => mult_as_lit(model, env.mult(*mid))?,
+            RPrimArg::Const(v) => v.clone(),
+            RPrimArg::Nested { op, args } => eval_prim(*op, args, env, eg, model)?,
+        });
+    }
+    let refs: SmallVec<[&L; PRIM_ARGS]> = raw_vals.iter().collect();
+    let prim = &model.ops()[op.to_usize()];
+    (prim.eval)(&refs).ok_or_else(|| EvalError::new(prim.name, &refs, EvalSite::Rhs))
 }
 
 /// Build the term an RHS operator denotes, in `eg`.
 ///
 /// `Err` is a partial primitive applied outside its domain on this match (see
 /// [`EvalError`]). There is no term to return in that case and no defensible
+/// The `EvalError::op` of a right-hand side that has no value: an application of an
+/// operator with no identity whose children all dropped at run time. It is caught in
+/// [`apply_rule_actions`], which skips the action instead of building a meaningless term.
+pub const NO_VALUE: &str = "an application with no children and no identity";
+
 /// substitute, so the error travels out instead of being absorbed.
 fn eval<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
     op: &RhsOp<Cfg::O, L>,
@@ -569,18 +721,19 @@ where
             eg.add_lit(*op, val_id)
         }
         RhsOp::MultVar(op, mid) => {
-            let val = mult_as_lit(model, env.mult(*mid).to_u64());
+            let val = mult_as_lit(model, env.mult(*mid))?;
             let id = eg.lits_mut().intern(val);
             eg.add_lit(*op, id)
         }
         RhsOp::App { op: o, args } => {
-            let mut children = ChildVec::<Cfg>::new();
+            let kind = eg.ops().info(*o).kind.clone();
+            let mut children = Children::<Cfg>::for_kind(&kind);
             // A right-hand side is a syntax tree too, so a rule written
             // `(rewrite ... (F (F x y) z))` carries the same nested same-op application the
             // interpreter's `push_seq_args` flattens for a ground term, and it needs the same
             // treatment for the same reason: `EGraph::add` only ever sees ids and cannot tell
             // a nested application from a class id that happens to be a `Seq` node.
-            match eg.ops().info(*o).kind {
+            match kind {
                 crate::registry::OpKind::A { dir, .. } => {
                     eval_seq_args(args, *o, dir, env, eg, model, globals, &mut children)?
                 }
@@ -590,26 +743,81 @@ where
                     }
                 }
             }
-            eg.add(*o, &children)
+            // Every child dropped (counts computed to 0, empty rests): the application
+            // denotes the operator's identity, so it has a meaning only when one is declared.
+            // Without one the term would be meaningless, and it is not built: the action is
+            // skipped and counted (`NO_VALUE`), as a sequence rule's no-value match is.
+            let empty = match &children {
+                Children::Counted(cs) => cs.is_empty(),
+                Children::Positional(ids) | Children::Distinct(ids) => ids.is_empty(),
+            };
+            let variadic = matches!(
+                kind,
+                crate::registry::OpKind::A { .. }
+                    | crate::registry::OpKind::MSet { .. }
+                    | crate::registry::OpKind::Set { .. }
+            );
+            if empty && variadic && eg.unit_node(*o).is_none() {
+                let name = eg.ops().info(*o).name.clone();
+                return Err(EvalError::new(NO_VALUE, &[&name], EvalSite::Rhs));
+            }
+            let overflow = |eg: &EGraph<Cfg, L, T, P>| mult_overflow_error(&eg.ops().info(*o).name);
+            let id = match &children {
+                Children::Counted(cs) => eg.add_mset(*o, cs).map_err(|_| overflow(eg))?,
+                Children::Positional(ids) | Children::Distinct(ids) => eg.add(*o, ids),
+            };
+            // `--flatten-rhs`: an atomic same-op child is kept nested by `add` (its class
+            // is used elsewhere, and an `:inverse` law may need it whole), so give the
+            // result its flat alternative as a second node. Not for an operator with an
+            // inverse, whose cancellation depends on the nesting, and not under proofs,
+            // where every merge needs a justification.
+            if !P && eg.flatten_rhs && eg.inverse_op(*o).is_none() {
+                match &children {
+                    Children::Counted(cs) => {
+                        let mut flat: SmallVec<[Cfg::C; 16]> = SmallVec::new();
+                        let mut spliced = false;
+                        for c in cs.iter() {
+                            let k = Cfg::mset_child_mult(c);
+                            match eg.same_op_summands(*o, Cfg::mset_child_id(c)) {
+                                Some(parts) => {
+                                    for (p, j) in parts {
+                                        let m = k.checked_mul(j).ok_or_else(|| overflow(eg))?;
+                                        flat.push(Cfg::mset_child_with_mult(p, m));
+                                    }
+                                    spliced = true;
+                                }
+                                None => flat.push(*c),
+                            }
+                        }
+                        if spliced {
+                            let alt = eg.add_mset(*o, &flat).map_err(|_| overflow(eg))?;
+                            eg.merge(alt, id);
+                        }
+                    }
+                    Children::Distinct(ids) => {
+                        let mut flat = ChildVec::<Cfg>::new();
+                        let mut spliced = false;
+                        for &c in ids.iter() {
+                            match eg.same_op_summands(*o, c) {
+                                Some(parts) => {
+                                    flat.extend(parts.into_iter().map(|(p, _)| p));
+                                    spliced = true;
+                                }
+                                None => flat.push(c),
+                            }
+                        }
+                        if spliced {
+                            let alt = eg.add(*o, &flat);
+                            eg.merge(alt, id);
+                        }
+                    }
+                    Children::Positional(_) => {}
+                }
+            }
+            id
         }
         RhsOp::PrimApp { op, args } => {
-            // Gather bound lit values (or multiplicities as i64) from the match
-            let raw_vals: SmallVec<[L; PRIM_ARGS]> = args
-                .iter()
-                .map(|arg| match arg {
-                    crate::resolve::RPrimArg::LitVal(vid) => {
-                        let lit_val_id = env.query.get_lit_val(*vid);
-                        eg.lits().get(lit_val_id).clone()
-                    }
-                    crate::resolve::RPrimArg::Mult(mid) => {
-                        mult_as_lit(model, env.mult(*mid).to_u64())
-                    }
-                })
-                .collect();
-            let refs: SmallVec<[&L; PRIM_ARGS]> = raw_vals.iter().collect();
-            let prim = &model.ops()[op.to_usize()];
-            let result = (prim.eval)(&refs)
-                .ok_or_else(|| EvalError::new(prim.name, &refs, EvalSite::Rhs))?;
+            let result = eval_prim(*op, args, env, eg, model)?;
             let result_id = eg.lits_mut().intern(result);
             // Find the @-prefixed lit op for the return sort
             let lit_op = eg
@@ -646,7 +854,7 @@ fn eval_seq_args<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    out: &mut ChildVec<Cfg>,
+    out: &mut Children<Cfg>,
 ) -> Result<(), EvalError>
 where
     Cfg: EGraphConfig,
@@ -684,7 +892,7 @@ fn eval_arg<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    out: &mut ChildVec<Cfg>,
+    out: &mut Children<Cfg>,
 ) -> Result<(), EvalError>
 where
     Cfg: EGraphConfig,
@@ -709,26 +917,16 @@ where
             // at install by the interval check; the checked ops here are the
             // second line, like the checked literal primitives, and report the
             // same way.
-            let k = eval_mult_expr::<Cfg, Q>(mult, env)?;
-            if k > 0 {
+            let count = eval_mult_expr::<Cfg, Q>(mult, env)?;
+            if count != Cfg::M::ZERO {
                 let id = eval(body, env, eg, model, globals)?;
-                for _ in 0..k {
-                    out.push(id);
-                }
+                out.push_count(id, count)?;
             }
         }
-        RhsArg::SpliceSeq(sid) => out.extend_from_slice(env.query.seq_slice(*sid)),
-        RhsArg::SpliceSet(sid) => out.extend_from_slice(env.query.set_slice(*sid)),
+        RhsArg::SpliceSeq(sid) => out.extend_ids(env.query.seq_slice(*sid)),
+        RhsArg::SpliceSet(sid) => out.extend_ids(env.query.set_slice(*sid)),
         RhsArg::SpliceMset(mid) => {
-            for c in env.query.mset_slice(*mid) {
-                let id = Cfg::mset_child_id(c);
-                let mult = Cfg::mset_child_mult(c);
-                // A repetition count, not a stored multiplicity: widening to
-                // `usize` is lossless for every supported width.
-                for _ in 0..mult.to_usize() {
-                    out.push(id);
-                }
-            }
+            out.extend_mset(env.query.mset_slice(*mid))?;
         }
         RhsArg::SeqComp {
             body,
@@ -786,9 +984,7 @@ where
                 env.restore_local_mult(*mult_var, previous_mult);
                 env.restore_local_node(*var, previous_node);
                 if let Some((result, count)) = outcome? {
-                    for _ in 0..count.to_usize() {
-                        out.push(result);
-                    }
+                    out.push_count(result, count)?;
                 }
             }
         }
@@ -851,22 +1047,12 @@ where
             return Ok(None);
         }
     }
+    // Computed in the configured width (`eval_mult_expr`), so an overflow is reported
+    // there, as a program error like any other partial operation.
     let count = eval_mult_expr::<Cfg, Q>(out_mult, env)?;
-    if count == 0 {
+    if count == Cfg::M::ZERO {
         return Ok(None);
     }
-    // `check_mult_literals` rejects a rule whose *literal* multiplicities
-    // overflow the configured width at install, but a computed one (`k+k`, or a
-    // `k` from a wider surface width) is only known here. It is a program error
-    // like any other partial operation, so it is reported rather than asserted:
-    // narrowing is decided by `try_from_u64`, never by truncation.
-    let count = Cfg::M::try_from_u64(count).ok_or_else(|| EvalError {
-        span: crate::ast::Span::Dummy,
-        op: "multiplicity",
-        args: vec![count.to_string()],
-        site: EvalSite::Multiplicity,
-        rule: None,
-    })?;
     let result = eval(body, env, eg, model, globals)?;
     Ok(Some((result, count)))
 }
@@ -881,18 +1067,32 @@ where
 /// way, for the same reason the literal primitives do: there is no multiplicity
 /// to return, and emitting a different number of copies than the rule asks for
 /// would silently change what the rule means.
+/// A computed multiplicity narrowed to the configured width, or the diagnostic.
+fn narrow_mult<Cfg: EGraphConfig>(count: u64) -> Result<Cfg::M, EvalError> {
+    Cfg::M::try_from_u64(count).ok_or_else(|| EvalError {
+        span: crate::ast::Span::Dummy,
+        op: "multiplicity",
+        args: vec![count.to_string()],
+        site: EvalSite::Multiplicity,
+        rule: None,
+    })
+}
+
+/// A right-hand-side multiplicity expression's value, in the configured width with
+/// checked arithmetic: a literal too wide for it, an overflow, a negative difference, or
+/// a zero divisor is reported.
 fn eval_mult_expr<Cfg, Q>(
     e: &crate::resolve::ResolvedMultExpr,
     env: &RhsEnv<'_, Cfg, Q>,
-) -> Result<u64, EvalError>
+) -> Result<Cfg::M, EvalError>
 where
     Cfg: EGraphConfig,
     Q: crate::ematch::MatchView<Cfg> + ?Sized,
 {
     use crate::resolve::{MultPrimOp as P, ResolvedMultExpr as E};
     Ok(match e {
-        E::Lit(n) => *n,
-        E::Var(v) => env.mult(*v).to_u64(),
+        E::Lit(n) => narrow_mult::<Cfg>(*n)?,
+        E::Var(v) => env.mult(*v),
         E::Prim { op, args } => {
             let a = eval_mult_expr::<Cfg, Q>(&args[0], env)?;
             let b = eval_mult_expr::<Cfg, Q>(&args[1], env)?;
@@ -944,7 +1144,7 @@ fn mult_expr_bounds(
                 P::Sub => {
                     if lo_a < hi_b {
                         return Err(format!(
-                            "u64::- can underflow: the left side is at least {lo_a} but \
+                            "multiplicity underflow: u64::- can underflow: the left side is at least {lo_a} but \
                              the right side can reach {hi_b}; constrain the multiplicity \
                              on the LHS (e.g. `x:k>=2`) so the subtraction cannot go \
                              negative"
@@ -956,7 +1156,7 @@ fn mult_expr_bounds(
                 P::Div | P::Rem => {
                     if lo_b == 0 {
                         return Err(format!(
-                            "{} divisor can be zero; constrain it on the LHS",
+                            "multiplicity division by zero: {} divisor can be zero; constrain it on the LHS",
                             op.name()
                         ));
                     }
@@ -1132,6 +1332,9 @@ where
     for action in &rule.actions {
         match apply_action(action, &mut env, eg, model, globals) {
             Ok(n) => changes += n,
+            // A right-hand side with no value is not built: this action does nothing, the
+            // run continues, and the interpreter warns with the count.
+            Err(e) if e.op == NO_VALUE => eg.count_no_value(),
             Err(e) => {
                 faulted = Some(e);
                 break;
@@ -1201,6 +1404,7 @@ where
     let sampler = crate::index::IndexSampler::new(eg, vindex);
     let plan = crate::schedule::schedule_with_stats_sampled(&rule.query, stats, &sampler);
     run_query_scheduled_into(&rule.query, &plan, eg, &vindex, globals, pool);
+    report_flatten_skips(pool, rule, eg);
     // A guard fault is checked before the actions run. The matcher dropped the
     // assignment it was found on, so applying the surviving matches would be
     // deriving from a query the engine could not fully evaluate.
@@ -1221,6 +1425,147 @@ where
 /// Attribute a fault to the rule that hit it, by the name the rule was
 /// registered under. The evaluators only see the operation, and a `RuleId` alone
 /// tells the reader nothing.
+/// Warn when the query just run skipped flattened nodes over a bound
+/// (`crate::flatten::OVER_BOUND`). The run continues: a skipped node loses its matches
+/// in this round only, and is retried in the next.
+pub(crate) fn report_flatten_skips<Cfg, L, S, O, const T: bool, const P: bool>(
+    pool: &MatchPool<Cfg>,
+    rule: &PreparedRule<O, S, L>,
+    eg: &EGraph<Cfg, L, T, P>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    let (skipped, overflowed) = (pool.flatten_skipped(), pool.flatten_overflowed());
+    if skipped == 0 && overflowed == 0 {
+        // Nothing to report. The rule's name is looked up only here: a caller that compiled
+        // its rule outside the e-graph's registry (the unit tests below) has no entry for it.
+        return;
+    }
+    let name = eg.rules().name(rule.rule_id);
+    let n = skipped;
+    if n > 0 {
+        eprintln!(
+            "warning: {name}: {n} node(s) with {} skipped",
+            crate::flatten::OVER_BOUND
+        );
+    }
+    let n = overflowed;
+    if n > 0 {
+        // The nested form that produced the count, so the reader can see how it arose. If
+        // this is frequent, the flattened counts should move to arbitrary precision.
+        let first = pool
+            .first_flatten_overflow()
+            .map(|o| format!(" The first: {}.", describe_flatten_overflow(eg, o)))
+            .unwrap_or_default();
+        eprintln!(
+            "warning: {name}: {n} flattened view(s) not matched: {} ({}-bit); the nodes' \
+             other views were matched.{first}",
+            crate::flatten::MULT_OVERFLOW,
+            <Cfg::M as crate::multiplicity::MultiplicityLike>::BITS,
+        );
+    }
+}
+
+/// A class as `c<id>`. The warning names classes by id rather than by an extracted term:
+/// it is printed mid-round, where the graph is not rebuilt and extraction would read a
+/// stale table.
+fn class_text<Cfg, L, const T: bool, const P: bool>(eg: &EGraph<Cfg, L, T, P>, c: Cfg::G) -> String
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    format!("c{}", eg.find_const(c).to_usize())
+}
+
+fn count_text<M: crate::multiplicity::MultiplicityLike>(m: M) -> String {
+    m.to_u64()
+        .map_or_else(|| "a count past 2^64".to_string(), |k| k.to_string())
+}
+
+/// An n-ary node as written: its operator and its children, each as its class's cheapest
+/// term with its count.
+fn node_text<Cfg, L, const T: bool, const P: bool>(eg: &EGraph<Cfg, L, T, P>, n: Cfg::G) -> String
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    let op = eg.node_op(n);
+    let info = eg.ops().info(op);
+    let mut parts = vec![info.name.clone()];
+    match info.kind {
+        crate::registry::OpKind::MSet { .. } => {
+            let mut kids = Vec::new();
+            eg.mset_children(n, &mut kids);
+            for (c, k) in kids {
+                let t = class_text(eg, c);
+                parts.push(if k == Cfg::M::ONE {
+                    t
+                } else {
+                    format!("{t}:{}", count_text(k))
+                });
+            }
+        }
+        crate::registry::OpKind::Set { .. } => {
+            let mut kids = Vec::new();
+            eg.set_children(n, &mut kids);
+            parts.extend(kids.into_iter().map(|c| class_text(eg, c)));
+        }
+        _ => {
+            let mut kids = Vec::new();
+            eg.seq_children(n, &mut kids);
+            parts.extend(kids.into_iter().map(|c| class_text(eg, c)));
+        }
+    }
+    format!("({})", parts.join(" "))
+}
+
+fn describe_flatten_overflow<Cfg, L, const T: bool, const P: bool>(
+    eg: &EGraph<Cfg, L, T, P>,
+    o: &crate::flatten::FlattenOverflow<Cfg::G, Cfg::M>,
+) -> String
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    let root = node_text(eg, o.node);
+    match &o.cause {
+        crate::flatten::OverflowCause::Product {
+            class,
+            count,
+            member,
+            child,
+            child_count,
+        } => format!(
+            "in {root}, opening the child {}:{} through its member {} multiplies the count {} \
+             of {} by {}, past the width",
+            class_text(eg, *class),
+            count_text(*count),
+            node_text(eg, *member),
+            count_text(*child_count),
+            class_text(eg, *child),
+            count_text(*count),
+        ),
+        crate::flatten::OverflowCause::Sum { class, counts } => format!(
+            "in a view of {root}, {} occurs with counts {}, whose sum is past the width",
+            class_text(eg, *class),
+            counts
+                .iter()
+                .map(|&k| count_text(k))
+                .collect::<Vec<_>>()
+                .join(" + "),
+        ),
+    }
+}
+
 pub(crate) fn name_fault<Cfg, L, S, O, const T: bool, const P: bool>(
     fault: EvalError,
     rule: &PreparedRule<O, S, L>,

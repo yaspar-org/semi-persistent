@@ -1,0 +1,21 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Sequence rules match on the round's snapshot (Semper design §7.6,
+;; "Snapshot"). In round 1 the ordinary rule merges (G b) with a new (F b) before
+;; the sequence rule matches. On the snapshot, (G b)'s class has no F member, so gs
+;; holds one child and the rule builds (And (N 1) (G b)). A match on the live graph
+;; would see two F children and build (N 2).
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function G (E) E)
+(function N (i64) E)
+(function And (E) E :assoc-comm-idem)
+(let e (And (F a) (G b)))
+(rewrite (G b) (F b))
+(rewrite (And (..gs (F x)) ..rest) (And (N (count gs)) ..rest))
+(run 1)
+(check (= e (And (N 1) (G b))))

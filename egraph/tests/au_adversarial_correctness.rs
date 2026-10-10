@@ -30,39 +30,19 @@ use semi_persistent_egraph::registry::{AssocDir, Clamp, OpKind};
 
 type Eg = EGraph31<NiraLitVal, false, false>;
 
-/// Own a projected result so the snapshot/result borrows can end before we
-/// materialize the projection back into the mutable e-graph.
-#[derive(Clone, Debug)]
-enum OwnedTerm {
-    App(OpId, Vec<OwnedTerm>),
-    Lit(OpId, LitValId),
-}
+/// A projection read out of its pool, each child with its multiplicity
+/// (`semi_persistent_egraph::au::terms::OwnedTerm`).
+type OwnedTerm = semi_persistent_egraph::au::terms::OwnedTerm<OpId, LitValId>;
 
 fn own_projected(pool: &TermPool<OpId, LitValId>, id: TermId) -> OwnedTerm {
-    match pool.op(id) {
-        TermOp::EGraph(op) => OwnedTerm::App(
-            *op,
-            pool.children(id)
-                .iter()
-                .map(|&child| own_projected(pool, child))
-                .collect(),
-        ),
-        TermOp::Literal(op, value) => OwnedTerm::Lit(*op, *value),
-        TermOp::Variants => panic!("projection still contains Variants"),
-    }
+    pool.own(id).expect("projection still contains Variants")
 }
 
+/// Rebuild an owned projection in the e-graph, an AC child of count k as one counted
+/// child.
 fn materialize(eg: &mut Eg, term: &OwnedTerm) -> ENodeId {
-    match term {
-        OwnedTerm::App(op, children) => {
-            let child_ids: Vec<_> = children
-                .iter()
-                .map(|child| materialize(eg, child))
-                .collect();
-            eg.add(*op, &child_ids)
-        }
-        OwnedTerm::Lit(op, value) => eg.add_lit(*op, *value),
-    }
+    semi_persistent_egraph::au::terms::materialize_owned(eg, term)
+        .expect("the projection is buildable")
 }
 
 fn projected_terms(

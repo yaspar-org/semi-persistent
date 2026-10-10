@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: error
 ;; TYPES: bignum
 ;; `UBig::-` is partial for a different reason than division: the operation is

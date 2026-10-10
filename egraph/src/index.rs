@@ -42,7 +42,7 @@ pub use semi_persistent_containers::SortedVecCursor;
 ///
 /// The scheduler charges a join by how many candidate nodes one probe yields.
 /// The three probe kinds can have very different distributions, so each is
-/// measured independently; chapter 20 states the model they feed.
+/// measured independently; §8.3 states the model they feed.
 ///
 /// Each number is the **size-biased** mean bucket size, `sum(b^2) / sum(b)`
 /// over the path's buckets, not the plain mean `sum(b) / count(b)`. A probe key
@@ -254,7 +254,7 @@ pub struct IndexStore<Cfg: EGraphConfig> {
     /// that belongs to some other class, so the answer depends on which access
     /// path the join order happened to use. Keeping the build's mapping makes
     /// every access path agree; see [`round_repr`](Self::round_repr) and
-    /// chapter 09's snapshot contract.
+    /// §7.4's snapshot contract.
     ///
     /// Filled by [`build`](Self::build) only. [`build_delta`](Self::build_delta)
     /// leaves it empty: a delta is built in the same instant as its full index
@@ -328,7 +328,7 @@ fn for_each_occupied<G: DenseId>(m: &DenseSpanMap<G>, mut f: impl FnMut(usize, &
 /// Debug-only check that every bucket is ascending in node id.
 ///
 /// The join relies on it: `SortedVecCursor::seek` is specified against a sorted
-/// slice, and `Difference`'s delta cursor and chapter 20's delta-suffix logic
+/// slice, and `Difference`'s delta cursor and §8.3's delta-suffix logic
 /// both assume a bucket is a monotone run. It holds by construction, because the
 /// build stream is written in ascending node id and `lemma_view_sorted` carries
 /// any ordering of the stream into every per-key slice: the slice *is* the
@@ -504,6 +504,20 @@ where
                 repr_tab.push(repr);
                 op_tab.push(op);
             }
+            // SOUNDNESS REQUIREMENT (doc/design/09-saturation.md §9.2, "A soundness
+            // requirement on every index filter"): this build may skip a node only if its
+            // *content* is unmatchable, never because another node carries the same content.
+            // It serves the delta index as well as the full one, and the two do not hold the
+            // same witnesses.
+            //
+            // `FLAG_SUBSUMED` qualifies: subsumption makes the node's own content
+            // unmatchable. `FLAG_CONGRUENT_DUP` does NOT, and must not be added here. A
+            // congruent duplicate's twin is in `full`, but the touched log receives the node
+            // that recanonicalized onto the twin's content and not the twin, so in `delta`
+            // the flagged copy is the only witness; skipping it makes semi-naive miss matches
+            // naive finds. Pinned by `congruent_dup_is_the_only_delta_representative`,
+            // `congruent_dup_stays_in_the_full_index`, `by_child_pos_after_merge`, and
+            // `saturate::tests::prop::diff_nested_growth_blowup_bounded`.
             if eg.node_flags(gid) & crate::node_types::FLAG_SUBSUMED != 0 {
                 continue;
             }
@@ -544,7 +558,9 @@ where
                     );
                 })
             };
-            // For variadic nodes (arity > 3 from PlainN/A/AC/ACI), also populate by_contains
+            // For variadic nodes (arity > 3 from PlainN/A/AC/ACI), also populate
+            // by_contains; and for a commutative pair, which is matched as a two-element
+            // multiset (`RAtom::Comm`) and so is joined through by_contains as AC is.
             if arity > 3
                 || matches!(
                     eg.node_ref(gid),
@@ -552,6 +568,7 @@ where
                         | crate::typed_routing::NodeRef::MSet(_)
                         | crate::typed_routing::NodeRef::Set(_)
                         | crate::typed_routing::NodeRef::PlainN(_)
+                        | crate::typed_routing::NodeRef::SPair(_)
                 )
             {
                 let seen = &mut scratch.seen;
@@ -1456,6 +1473,107 @@ mod tests {
             idx.nodes_by_child_pos(crate::id::ENodeId::from_usize(eg.node_count()), 0)
                 .is_empty()
         );
+    }
+
+    /// `f(x)` and `f(y)`, with `y`'s class padded so that it survives the merge of `x`
+    /// and `y`: `f(x)`'s stored child then has to move, so `f(x)` is recanonicalized onto
+    /// `f(y)`'s content, the hash-cons collision merges their classes, and `f(x)` is
+    /// flagged `FLAG_CONGRUENT_DUP`. Returns the graph after that rebuild, with the
+    /// touched log holding exactly what the rebuild recanonicalized, and `(fx, fy)`.
+    fn congruent_dup_fixture() -> (
+        EGraph31<NiraLitVal, false, false>,
+        crate::id::ENodeId,
+        crate::id::ENodeId,
+    ) {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let f = eg.register_op1("f", int, int);
+        let x_op = eg.register_op0("x", int);
+        let y_op = eg.register_op0("y", int);
+        let x = eg.add(x_op, &[]);
+        let y = eg.add(y_op, &[]);
+        let fx = eg.add(f, &[x]);
+        let fy = eg.add(f, &[y]);
+        for i in 0..8 {
+            let pad = eg.register_op0(&format!("pad{i}"), int);
+            let p = eg.add(pad, &[]);
+            eg.merge(p, y);
+        }
+        eg.rebuild();
+        eg.clear_touched();
+        eg.merge(x, y);
+        eg.rebuild();
+        (eg, fx, fy)
+    }
+
+    #[test]
+    fn congruent_dup_is_flagged_on_the_recanonicalized_side() {
+        let (eg, fx, fy) = congruent_dup_fixture();
+        assert_eq!(
+            eg.find_const(fx),
+            eg.find_const(fy),
+            "congruence merged the copies"
+        );
+        assert_ne!(
+            eg.node_flags(fx) & crate::node_types::FLAG_CONGRUENT_DUP,
+            0,
+            "the node whose child moved is the one recanonicalized, so it is the loser"
+        );
+        assert_eq!(
+            eg.node_flags(fy) & crate::node_types::FLAG_CONGRUENT_DUP,
+            0,
+            "its twin keeps the content visible"
+        );
+        eg.debug_check_congruent_dup_invariant();
+    }
+
+    /// **Soundness pin: the matcher's index must not skip `FLAG_CONGRUENT_DUP`.**
+    ///
+    /// The delta index is built from the round's touched log. The rebuild that makes
+    /// `f(x)` a copy touches `f(x)`, the node it recanonicalized, and not `f(y)`, whose
+    /// content did not change. So in the delta, the flagged node is the *only*
+    /// representative of `f`-over-that-class. An index build that skipped it would leave
+    /// the content absent from the delta, and every semi-naive variant whose delta atom
+    /// is an `f` atom would miss the matches the merge enabled, while naive, reading the
+    /// full index, finds them through `f(y)`: the two strategies would derive different
+    /// equalities. This was the first placement tried for the flag; the nested-growth
+    /// property in `saturate::tests::prop` caught it end to end.
+    #[test]
+    fn congruent_dup_is_the_only_delta_representative() {
+        let (eg, fx, fy) = congruent_dup_fixture();
+        assert!(
+            eg.touched().contains(&fx),
+            "the recanonicalized copy is touched"
+        );
+        assert!(
+            !eg.touched().contains(&fy),
+            "the twin's content did not change, so it is not touched; if this ever \
+             changes, the pin below stops proving anything and needs a new fixture"
+        );
+        let f = eg.ops().id_by_name("f").unwrap();
+        let delta = IndexStore::build_delta(&eg, eg.touched());
+        assert_eq!(
+            delta.nodes_by_op(f),
+            &[fx],
+            "the delta must hold the flagged copy: it is the only representative of this \
+             content there"
+        );
+        let child = eg.class_repr(eg.child_at(fy, 0));
+        assert!(
+            delta.nodes_by_child_pos(child, 0).contains(&fx),
+            "and must be reachable by its child, which is how a join finds it"
+        );
+    }
+
+    /// The full index keeps the copy too, for the same reason and so that the delta stays
+    /// a subset of it (`build_delta`'s contract: delta ⊆ full per key).
+    #[test]
+    fn congruent_dup_stays_in_the_full_index() {
+        let (eg, fx, fy) = congruent_dup_fixture();
+        let f = eg.ops().id_by_name("f").unwrap();
+        let full = IndexStore::build(&eg);
+        assert!(full.nodes_by_op(f).contains(&fx));
+        assert!(full.nodes_by_op(f).contains(&fy));
     }
 
     #[test]

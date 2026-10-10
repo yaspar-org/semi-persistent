@@ -68,6 +68,9 @@ pub enum CTerm<O, S, L> {
     },
     /// Reference to a let-bound global. Resolved at interpret time.
     Global(String, S),
+    /// A child of a variadic application with its multiplicity, at least 1. Appears
+    /// only in an `App`'s children (`check_term` rejects it anywhere else).
+    Counted(Box<CTerm<O, S, L>>, num_bigint::BigUint),
 }
 
 /// Fully resolved command — ready for interpretation.
@@ -82,6 +85,24 @@ pub enum CCommand<O, S, L> {
     CheckEq(CTerm<O, S, L>, CTerm<O, S, L>),
     CheckNeq(CTerm<O, S, L>, CTerm<O, S, L>),
     Extract(CTerm<O, S, L>),
+    /// `(extract t :cost NAME …)`, with the model compiled at check time.
+    ExtractWith {
+        term: CTerm<O, S, L>,
+        model: crate::cost_models::Handle,
+        rung: String,
+        budget: Option<u64>,
+        solver: crate::ast::SolverSpec,
+        file: Option<String>,
+        proof: Option<String>,
+        band: Option<(u64, u64, u64)>,
+    },
+    /// A collection rule, installed when it executes.
+    CollectionRule(std::sync::Arc<crate::collection::Rule<O, S, L>>),
+    /// `(dump-egraph t :file path)`.
+    DumpEGraph {
+        root: CTerm<O, S, L>,
+        file: String,
+    },
     Rewrite {
         query: ResolvedQuery<O, S, L>,
         rhs_locals: crate::resolve::RhsLocalShape,
@@ -145,6 +166,11 @@ pub struct CGoal<O, S, L> {
 #[derive(Debug, Default)]
 struct RulesetTable {
     names: Vec<String>,
+    /// Cost models by name, compiled when declared. Static like rulesets, and for
+    /// the same reason kept in this table: both are names a later command refers to.
+    cost_models: std::collections::BTreeMap<String, crate::cost_models::Handle>,
+    /// Collection rules checked so far, for their generated names.
+    collection_rules: usize,
 }
 
 impl RulesetTable {
@@ -198,6 +224,10 @@ where
     M: LitModel<Value = L>,
 {
     match term {
+        Term::Counted { span, .. } => Err(serr(
+            "a multiplicity `:k` is written on a child of a variadic application".to_string(),
+            *span,
+        )),
         Term::Lit(tok, span) => {
             // Global name?
             if let Some((_gid, sort, _)) = globals.get(tok.as_str()) {
@@ -306,7 +336,36 @@ where
             let mut checked = Vec::with_capacity(children.len());
             for (i, child) in children.iter().enumerate() {
                 let child_sort = child_sort_hint(&info.kind, i);
-                let ct = check_term(child, child_sort, ops, sorts, model, globals)?;
+                let ct = match child {
+                    Term::Counted { term, count, span } => {
+                        // An ACI operator stores a set, which has no multiplicities: a count
+                        // there would be silently discarded, so it is refused, as it is in a
+                        // pattern.
+                        if matches!(info.kind, OpKind::Set { .. }) {
+                            return Err(serr(set_count_message(op), *span));
+                        }
+                        if !matches!(info.kind, OpKind::A { .. } | OpKind::MSet { .. }) {
+                            return Err(serr(
+                                format!(
+                                    "operator '{op}' is not variadic: a child cannot carry a \
+                                     multiplicity"
+                                ),
+                                *span,
+                            ));
+                        }
+                        if num_traits::Zero::is_zero(count) {
+                            return Err(serr(
+                                "a ground multiplicity is at least 1".to_string(),
+                                *span,
+                            ));
+                        }
+                        CTerm::Counted(
+                            Box::new(check_term(term, child_sort, ops, sorts, model, globals)?),
+                            count.clone(),
+                        )
+                    }
+                    _ => check_term(child, child_sort, ops, sorts, model, globals)?,
+                };
                 // Verify child sort matches expected
                 if let Some(expected_sort) = child_sort {
                     let actual = cterm_sort(&ct);
@@ -350,6 +409,7 @@ fn cterm_sort<O, S: Copy, L>(ct: &CTerm<O, S, L>) -> S {
     match ct {
         CTerm::Lit(_, s) | CTerm::Global(_, s) => *s,
         CTerm::App { sort, .. } => *sort,
+        CTerm::Counted(t, _) => cterm_sort(t),
     }
 }
 
@@ -487,6 +547,9 @@ where
                 SurfacePatChild::ElemMult(..) => {
                     return Err(format!("'{op}' takes no multiplicities"));
                 }
+                SurfacePatChild::Seq(..) | SurfacePatChild::Filter { .. } => {
+                    return Err(format!("'{op}' takes no sequence patterns"));
+                }
             }
         }
         let b = sides.pop().unwrap();
@@ -531,6 +594,11 @@ where
                         SurfacePatChild::ElemMult(..) => {
                             return Err(format!("guard operator '{op}' takes no multiplicities"));
                         }
+                        SurfacePatChild::Seq(..) | SurfacePatChild::Filter { .. } => {
+                            return Err(format!(
+                                "guard operator '{op}' takes no sequence patterns"
+                            ));
+                        }
                     }
                 }
                 Ok(PredExpr::App {
@@ -549,6 +617,9 @@ where
             .map(|c| match c {
                 SurfacePatChild::Elem(p) => self.flatten_child(p),
                 SurfacePatChild::ElemMult(_, _) => unreachable!("mults already rejected"),
+                SurfacePatChild::Seq(..) | SurfacePatChild::Filter { .. } => {
+                    unreachable!("sequence patterns already rejected")
+                }
             })
             .collect()
     }
@@ -564,6 +635,9 @@ where
                 SurfacePatChild::Elem(p) => Ok((self.flatten_child(p)?, FlatMult::Exact(1))),
                 SurfacePatChild::ElemMult(p, m) => {
                     Ok((self.flatten_child(p)?, flatten_mult_spec(m)))
+                }
+                SurfacePatChild::Seq(..) | SurfacePatChild::Filter { .. } => {
+                    unreachable!("sequence patterns already rejected")
                 }
             })
             .collect()
@@ -586,6 +660,12 @@ where
         else {
             unreachable!()
         };
+        if children.iter().any(SurfacePatChild::is_sequence) {
+            return Err(format!(
+                "a sequence pattern under '{op}' (`..name` between children, or `(..name pattern)`) \
+                 is only allowed in the left-hand side of a rewrite"
+            ));
+        }
         let has_mult = Self::has_mult(children);
 
         let op_id = self
@@ -781,6 +861,14 @@ where
     }
 }
 
+/// The refusal of a count under an ACI operator, in a ground term or a right-hand side.
+pub(crate) fn set_count_message(op: &str) -> String {
+    format!(
+        "operator '{op}' is ACI (set); multiplicities not allowed (use AC): a set holds each \
+         element once"
+    )
+}
+
 fn flatten_mult_spec(m: &MultSpec) -> FlatMult {
     match m {
         MultSpec::Exact(n) => FlatMult::Exact(*n),
@@ -847,11 +935,26 @@ where
 {
     match cmd {
         SurfaceCommand::Pass(c) => sortcheck_pass(c, eg, model, globals, rulesets),
+        SurfaceCommand::CollectionRewrite(r) => {
+            let ruleset = rulesets.resolve(&r.ruleset)?;
+            rulesets.collection_rules += 1;
+            let rule = crate::collection::check(
+                &r,
+                ruleset,
+                eg,
+                model,
+                globals,
+                rulesets.collection_rules - 1,
+            )
+            .map_err(|(msg, span)| serr(msg, span))?;
+            Ok(CCommand::CollectionRule(std::sync::Arc::new(rule)))
+        }
         SurfaceCommand::Rewrite {
             lhs,
             rhs,
             when,
             subsume,
+            flatten,
             ruleset,
         } => {
             let ruleset = rulesets.resolve(&ruleset)?;
@@ -860,8 +963,9 @@ where
             pats.extend(when);
             let fq = flatten_surface(&pats, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
             let root_name = fq.root_vars[0].clone();
-            let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
+            let mut rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
+            rq.flatten = flatten;
             let root_vid = rq.shape.find_var(&root_name).ok_or_else(|| {
                 serr(
                     "a rewrite's left-hand side must name an e-class to rewrite; a \
@@ -895,13 +999,15 @@ where
         SurfaceCommand::Rule {
             body,
             head,
+            flatten,
             ruleset,
         } => {
             let ruleset = rulesets.resolve(&ruleset)?;
             let body_span = body.first().map_or(Span::Dummy, |p| p.span());
             let fq = flatten_surface(&body, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
-            let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
+            let mut rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
+            rq.flatten = flatten;
             let mut rhs_ctx = RhsResolveCtx::new(&rq);
             let mut actions = Vec::with_capacity(head.len());
             for a in &head {
@@ -979,6 +1085,84 @@ where
         Command::Extract(t) => {
             let ct = check_term(&t, None, eg.ops(), eg.sorts(), model, globals)?;
             Ok(CCommand::Extract(ct))
+        }
+        Command::CostModel { name, source, span } => {
+            // The script is compiled here, so its type errors, polarity errors
+            // included, stop the program before anything runs.
+            let h = crate::cost_models::compile(&source)
+                .map_err(|e| serr(format!("cost-model {name}: {e}"), span))?;
+            rulesets.cost_models.insert(name.clone(), h);
+            Ok(CCommand::Decl(Command::CostModel { name, source, span }))
+        }
+        Command::ExtractWith {
+            term,
+            cost,
+            rung,
+            budget,
+            solver,
+            file,
+            proof,
+            band,
+            span,
+        } => {
+            let ct = check_term(&term, None, eg.ops(), eg.sorts(), model, globals)?;
+            let h = rulesets
+                .cost_models
+                .get(&cost)
+                .cloned()
+                .ok_or_else(|| serr(format!("no cost model named '{cost}'"), span))?;
+            crate::cost_models::check_rung(&rung).map_err(|e| serr(e, span))?;
+            if band.is_some() && !matches!(solver, crate::ast::SolverSpec::Internal) {
+                return Err(serr(":band runs on the internal solver", span));
+            }
+            let mzn_solver = matches!(solver, crate::ast::SolverSpec::MiniZinc(_));
+            if crate::cost_models::is_minizinc(&h) != mzn_solver {
+                return Err(serr(
+                    if mzn_solver {
+                        format!(
+                            "cost-model {cost} is not written in MiniZinc: a MiniZinc solver takes (cost-model NAME :minizinc \"f.mzn\")"
+                        )
+                    } else {
+                        format!(
+                            "cost-model {cost} is written in MiniZinc: it is solved through minizinc, :solver (minizinc \"cp-sat\")"
+                        )
+                    },
+                    span,
+                ));
+            }
+            if crate::cost_models::is_asp(&h) && !matches!(solver, crate::ast::SolverSpec::Asp(_)) {
+                return Err(serr(
+                    format!(
+                        "cost-model {cost} is written in ASP: it is solved by clingo, :solver (asp \"clingo\")"
+                    ),
+                    span,
+                ));
+            }
+            if proof.is_some()
+                && !matches!(
+                    solver,
+                    crate::ast::SolverSpec::Opb(_) | crate::ast::SolverSpec::RoundingSat
+                )
+            {
+                return Err(serr(
+                    ":proof needs a proof-logging pseudo-Boolean solver, :solver (opb ...)",
+                    span,
+                ));
+            }
+            Ok(CCommand::ExtractWith {
+                term: ct,
+                model: h,
+                rung,
+                budget,
+                solver,
+                file,
+                proof,
+                band,
+            })
+        }
+        Command::DumpEGraph { root, file } => {
+            let ct = check_term(&root, None, eg.ops(), eg.sorts(), model, globals)?;
+            Ok(CCommand::DumpEGraph { root: ct, file })
         }
         Command::Ruleset(name) => {
             rulesets.declare(&name);
@@ -1147,6 +1331,25 @@ where
 {
     use crate::registry::{AssocDir, Clamp, OpKind, UnitRef};
 
+    // The registry asserts these two; a program reaches them, so they are sort errors here
+    // (bug #7, and a second declaration of one name, found with it on 2026-10-06).
+    if eg.ops().id_by_name(name).is_some() {
+        return Err(serr(
+            format!("operator '{name}' is already declared"),
+            Span::Dummy,
+        ));
+    }
+    if eg.sorts().is_concrete(ret) {
+        return Err(serr(
+            format!(
+                "operator '{name}' returns the literal sort '{}': a declared operator returns a \
+                 declared sort; a literal is written directly",
+                eg.sorts().name(ret)
+            ),
+            Span::Dummy,
+        ));
+    }
+
     // No algebra tags → plain op. (`meta` still applies: `:cost` / `:unextractable` /
     // constructor-ness are orthogonal to the algebraic kind.)
     if tags.is_empty() {
@@ -1265,6 +1468,12 @@ where
         None => None,
         Some(Term::Lit(tok, _)) => Some(UnitRef::Lit { token: tok.clone() }),
         Some(term @ Term::App { .. }) => Some(UnitRef::Ctor { term: term.clone() }),
+        Some(Term::Counted { span, .. }) => {
+            return Err(serr(
+                "an :identity is a term, not a child with a multiplicity",
+                *span,
+            ));
+        }
     };
 
     // --- Dispatch on the (assoc, comm) shape ---
@@ -1324,7 +1533,9 @@ where
                             Span::Dummy,
                         )
                     })?;
-                let unit = eg.build_ground_cterm(&ct);
+                let unit = eg
+                    .build_ground_cterm(&ct)
+                    .map_err(|e| serr(format!("operator '{name}': :identity: {e}"), Span::Dummy))?;
                 eg.set_unit_node(op, unit);
             }
             // Resolve `:inverse neg` to a real op id now (it must be declared before this

@@ -1,0 +1,4 @@
+; cost 26 proved at rung selection (2 solves, 0 cycle exclusions)
+(And (Future 0 10 (Var "s")) (Var "p") (Var "q"))
+; cost 17 proved at rung splits (4 solves, 0 cycle exclusions)
+(And (And (Var "p") (Var "q")) (Future 0 10 (Var "s")))

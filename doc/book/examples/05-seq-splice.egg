@@ -1,0 +1,28 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: in class-id order
+;; ANCHOR: seq-splice
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function Cat (E) E :assoc)
+(function And (E) E :assoc-comm-idem)
+(function Plus (E) E :assoc-comm)
+(function Src () E)
+
+; A sequence matched under one operator kind can be spliced under another. An
+; ordered result from an unordered match takes the children in the order the
+; e-graph stores them, which the checker warns about.
+(rewrite (And (..fs (F x)) ..rest) (Cat ..fs))
+; AC to ACI: multiplicities are dropped, as ACI keeps one copy of each child.
+(rewrite (Plus (..fs:k (F x)) ..rest) (And ..fs))
+(let e (And (F (a)) (b)))
+(let p (Src))
+(rewrite (Src) (Plus (F (a)):3 (b)))
+(run 2)
+(check (= e (Cat (F (a)))))
+(check (= p (F (a))))
+;; ANCHOR_END: seq-splice

@@ -7,6 +7,9 @@ target/
 *.aux
 *.log
 *.out
+# Not LaTeX: the expected output of the book's cost-model examples, included by chapter 24
+# and compared by tests/cost_models.rs.
+!doc/book/examples/cost-models/*.out
 *.bbl
 *.blg
 *.fls
@@ -45,3 +48,6 @@ liblib.rlib
 
 # Scratch verification dumps at the repository root: never commit these.
 /*.txt
+
+# Python bytecode
+__pycache__/

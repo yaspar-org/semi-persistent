@@ -1,0 +1,9 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// rejected at line 7
+fn cost(g: Graph) {
+    let late = g.attribute_max(g.node_values());
+    let x = late.of(g.root());
+    let p = [x.when(x.at_least(2))];
+    g.max_over(p).charge();
+}

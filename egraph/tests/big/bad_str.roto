@@ -1,0 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+fn cost(g: Graph) {
+    g.charge_const_big(g.ibig_str("12x"));
+}

@@ -75,7 +75,7 @@ skeleton. `variant_mass` is not printed by the surface command.
 
 The exact definitions and the separate floating-point reward used only for UCT
 selection are in
-[`19-anti-unification.md`, section 2.5](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
+[design chapter 12, section 2.5](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md).
 
 ## What it does not do
 

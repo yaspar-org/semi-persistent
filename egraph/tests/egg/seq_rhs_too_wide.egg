@@ -1,0 +1,24 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; A right-hand side can multiply multiplicities: `(G x):(* k k)` over a child of
+;; multiplicity 2048 would build 2^22 children, over the bound of 2^20 per
+;; application. That match is skipped with a warning, the run continues, and the
+;; match over the child of multiplicity 3 fires.
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function G (E) E)
+(function Plus (E) E :assoc-comm)
+(function Wide () E)
+(function Narrow () E)
+(let wide (Wide))
+(let narrow (Narrow))
+(rewrite (Wide) (Plus (F (a)):2048 (b)))
+(rewrite (Narrow) (Plus (F (b)):3 (a)))
+(run 1)
+(rewrite (Plus (..fs:k>=2 (F x)) ..rest) (Plus ..{ (G x):(* k k) for f:k in fs } ..rest))
+(run 1)
+(check (= narrow (Plus (G b) (G b) (G b) (G b) (G b) (G b) (G b) (G b) (G b) (a))))

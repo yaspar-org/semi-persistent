@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! A workload that separates a mean fan-out from a sampled one (design
-//! chapter 20).
+//! §8.3).
 //!
 //! **The shape.** `(d v) (pr v z) (alt v w)`: a cheap driver `d` over `leaves`
 //! distinct classes, and two candidates for the second join, both keyed on the

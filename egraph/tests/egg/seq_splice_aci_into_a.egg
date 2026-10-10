@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; An ACI sequence spliced under an A operator gives its children in class-id order,
+;; which the checker warns about; with one child the result does not depend on it.
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function Cat (E) E :assoc)
+(function And (E) E :assoc-comm-idem)
+(function Plus (E) E :assoc-comm)
+(let e (And (F a) b))
+(rewrite (And (..fs (F x)) ..rest) (Cat ..fs))
+(run 1)
+(check (= e (Cat (F a))))

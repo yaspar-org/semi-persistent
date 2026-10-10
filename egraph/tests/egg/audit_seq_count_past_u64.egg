@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; A count of 2^64+1 does not build at 32 or 64 bits: a reported multiplicity overflow.
+;; (Under the removed unbounded width it was read as 2^64-1 by a saturating usize, and the
+;; filter k <= 2^64-1 accepted it; the sequence rule now reads counts with `to_u64`.)
+(sort E)
+(function a () E) (function b () E)
+(function F (E) E) (function Z () E)
+(function Plus (E) E :assoc-comm)
+(let e (Plus (F a):18446744073709551617 b))
+(rewrite (Plus (..fs:k<=18446744073709551615 (F x)) ..rest) (Z) :when ((>= (count fs) 1)))
+(run 1)
+(check (= e (Z)))

@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: an AC multiplicity in the right-hand side is undefined on (Plus)
+;; Two counts of one class that sum past the multiplicity width: (a):4294967295 and (a)
+;; make a:2^32, which a 32-bit multiplicity cannot hold. The rule reports it and the run
+;; stops, instead of wrapping to a:0 or panicking.
+(sort E)
+(function a () E) (function W () E)
+(function Plus (E) E :assoc-comm)
+(let w (W))
+(rewrite (W) (Plus (a):4294967295 (a)))
+(run 1)

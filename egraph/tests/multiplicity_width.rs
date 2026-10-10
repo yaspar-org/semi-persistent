@@ -147,10 +147,9 @@ fn engine_runs_end_to_end_on_the_narrow_config() {
     eg.rebuild();
     let term = extract_best(&eg, node).expect("the AC node must extract");
     let s = term.to_string();
-    assert_eq!(
-        s.matches("c0").count(),
-        2,
-        "multiplicity 2 must survive the narrow width and re-expand to two copies: {s}"
+    assert!(
+        s.contains("(c0):2") && s.matches("c0").count() == 1,
+        "multiplicity 2 must survive the narrow width, written once as `(c0):2`: {s}"
     );
     assert_eq!(s.matches("c1").count(), 1, "{s}");
 }
@@ -168,9 +167,9 @@ fn merge_coalesces_multiplicities_on_the_narrow_config() {
     eg.rebuild();
     let term = extract_best(&eg, node).expect("the AC node must extract after the merge");
     let s = term.to_string();
-    let total = s.matches("c0").count() + s.matches("c1").count();
-    assert_eq!(
-        total, 2,
+    let mentions = s.matches("c0").count() + s.matches("c1").count();
+    assert!(
+        mentions == 1 && s.contains("):2"),
         "the two merged summands must coalesce to one summand of multiplicity 2: {s}"
     );
 }
@@ -192,7 +191,7 @@ fn count_just_below_the_ceiling_round_trips() {
         seen = Some(mult);
     });
     assert_eq!(
-        seen.map(|m| m.to_u64()),
+        seen.and_then(|m| m.to_u64()),
         Some(n as u64),
         "a multiplicity one below the width's maximum must be stored exactly"
     );
@@ -207,12 +206,100 @@ fn count_just_below_the_ceiling_round_trips() {
 /// width is the correct outcome: the configuration is too narrow for this e-graph, and
 /// there is no error channel on the build path to report it through.
 #[test]
-#[should_panic(expected = "multiplicity width is too narrow")]
+#[should_panic(expected = "multiplicity overflow")]
 fn count_past_the_ceiling_panics_rather_than_wrapping() {
     let mut eg = EgM16::from_model(&NiraModel);
     let (f, c) = ac_setup(&mut eg, 1);
     let children = vec![c[0]; usize::from(u16::MAX) + 1];
     let _ = eg.add(f, &children);
+}
+
+/// An AC child of ConfigM16, `id:count`.
+fn ch(
+    id: semi_persistent_egraph::ENodeId,
+    count: u16,
+) -> MSetChild<semi_persistent_egraph::ENodeId, Multiplicity16> {
+    MSetChild {
+        a: id,
+        b: Multiplicity16(count),
+    }
+}
+
+/// The stored `(class, count)` children of `node`.
+fn counts(
+    eg: &EgM16,
+    node: semi_persistent_egraph::ENodeId,
+) -> Vec<(semi_persistent_egraph::ENodeId, u64)> {
+    let mut out = Vec::new();
+    eg.for_each_child(node, |g, m| {
+        out.push((eg.find_const(g), m.to_u64().expect("a u16 count fits u64")))
+    });
+    out.sort();
+    out
+}
+
+/// `add_mset` takes the stored child type, so the width's maximum count is one entry,
+/// and it builds the same node as `add` given the children one by one.
+#[test]
+fn add_mset_stores_the_maximum_count_as_one_entry() {
+    let mut eg = EgM16::from_model(&NiraModel);
+    let (f, c) = ac_setup(&mut eg, 2);
+    let node = eg
+        .add_mset(f, &[ch(c[0], u16::MAX), ch(c[1], 1)])
+        .expect("the maximum count fits");
+    assert_eq!(
+        counts(&eg, node),
+        vec![(c[0], u64::from(u16::MAX)), (c[1], 1)]
+    );
+    let by_add = eg.add(f, &[c[0], c[0], c[1]]);
+    let by_mset = eg.add_mset(f, &[ch(c[1], 1), ch(c[0], 2)]).unwrap();
+    assert_eq!(
+        by_add, by_mset,
+        "the entry order and the child list do not matter"
+    );
+}
+
+/// A zero count omits the child, and two entries of one class sum.
+#[test]
+fn add_mset_omits_zero_and_sums_entries_of_one_class() {
+    let mut eg = EgM16::from_model(&NiraModel);
+    let (f, c) = ac_setup(&mut eg, 3);
+    let node = eg
+        .add_mset(f, &[ch(c[0], 0), ch(c[1], 2), ch(c[2], 1), ch(c[1], 3)])
+        .unwrap();
+    assert_eq!(counts(&eg, node), vec![(c[1], 5), (c[2], 1)]);
+}
+
+/// Two entries of one class whose counts sum past the width are `Err`, and nothing is
+/// stored: the node is not representable.
+#[test]
+fn add_mset_sum_past_the_ceiling_is_an_error() {
+    let mut eg = EgM16::from_model(&NiraModel);
+    let (f, c) = ac_setup(&mut eg, 2);
+    let before = eg.len();
+    let r = eg.add_mset(f, &[ch(c[0], u16::MAX), ch(c[1], 1), ch(c[0], 1)]);
+    assert_eq!(r, Err(semi_persistent_egraph::multiplicity::MultOverflow));
+    assert_eq!(eg.len(), before, "a failed build stores no node");
+}
+
+/// Build-time flattening multiplies a nested child's counts by its own: 255 · 257 is
+/// the largest product a u16 holds, and 256 · 256 is past it.
+#[test]
+fn add_mset_flattening_multiplies_counts_with_a_check() {
+    let mut eg = EgM16::from_model(&NiraModel);
+    let (f, c) = ac_setup(&mut eg, 3);
+    let inner = eg.add_mset(f, &[ch(c[0], 255), ch(c[1], 1)]).unwrap();
+    let outer = eg.add_mset(f, &[ch(inner, 257), ch(c[2], 1)]).unwrap();
+    assert_eq!(
+        counts(&eg, outer),
+        vec![(c[0], 65535), (c[1], 257), (c[2], 1)],
+        "the fresh inner sum is spliced, its counts multiplied by 257"
+    );
+    let inner2 = eg.add_mset(f, &[ch(c[0], 256), ch(c[2], 1)]).unwrap();
+    let before = eg.len();
+    let r = eg.add_mset(f, &[ch(inner2, 256), ch(c[1], 1)]);
+    assert_eq!(r, Err(semi_persistent_egraph::multiplicity::MultOverflow));
+    assert_eq!(eg.len(), before, "a failed build stores no node");
 }
 
 /// The surface width is `u64` and narrowing from it is fallible in exactly the places it
@@ -224,19 +311,16 @@ fn surface_narrowing_is_checked_at_every_width() {
     assert_eq!(Multiplicity::try_from_u64((1 << 32) + 1), None);
     assert_eq!(Multiplicity16::try_from_u64(1 << 16), None);
     assert_eq!(Multiplicity16::try_from_u64((1 << 16) + 1), None);
-    // Widening is total, so a stored count always compares exactly against a surface
-    // literal — which is why the match paths never need to narrow at all.
+    // Widening is total at every fixed width, and the match paths compare a stored count
+    // with a surface literal without narrowing at all (`cmp_u64`).
     for m in [
         Multiplicity16::ZERO,
         Multiplicity16::ONE,
-        Multiplicity16::MAX,
+        Multiplicity16::MAX.unwrap(),
     ] {
-        assert_eq!(Multiplicity16::try_from_u64(m.to_u64()), Some(m));
+        assert_eq!(Multiplicity16::try_from_u64(m.to_u64().unwrap()), Some(m));
     }
-    assert_eq!(
-        Multiplicity64::try_from_u64(u64::MAX),
-        Some(Multiplicity64::MAX)
-    );
+    assert_eq!(Multiplicity64::try_from_u64(u64::MAX), Multiplicity64::MAX);
 }
 
 /// The AU search's cached child-pair carries `M`, and doing so is free at every shipped
@@ -324,18 +408,60 @@ fn au_totals_are_not_capped_by_the_narrow_multiplicity_width() {
         matches!(exact.root_op(), TermOp::EGraph(op) if *op == f),
         "the generalization must keep the AC operator, not degrade to a variable"
     );
+    // The root's children are counted: their total is the child count.
+    let total = |pool: &semi_persistent_egraph::au::terms::TermPool<_, _, _>, t| -> u64 {
+        pool.counts(t).iter().sum()
+    };
     assert_eq!(
-        exact.root_children().len(),
-        2 * n,
+        total(&exact.pool, exact.term_id),
+        2 * n as u64,
         "the anti-unifier must have every one of the {} children both inputs have; a total \
          summed at the 16-bit width would wrap to {}",
         2 * n,
         (2 * n) % (usize::from(u16::MAX) + 1)
     );
     assert_eq!(
-        uct.root_children().len(),
-        exact.root_children().len(),
+        total(&uct.pool, uct.term_id),
+        total(&exact.pool, exact.term_id),
         "UCT must reach the same total as the exact oracle"
     );
     assert_eq!(uct.size, exact.size, "UCT must match the exact oracle");
+}
+
+/// An operator with an identity pads an anti-unification action with an identity child
+/// whose count is a node's total, stored at the configured width. A node of such an
+/// operator whose counts total past that width is refused when the snapshot is built
+/// (`AuError::CountTooWide`), not dropped from the action space silently; the same total
+/// under an operator without an identity is admitted (the test above).
+#[test]
+fn an_identity_padded_total_past_the_width_is_refused() {
+    use semi_persistent_egraph::au::AuError;
+    let mut eg = EgM16::from_model(&NiraModel);
+    let s = eg.intern_sort("E");
+    let e_op = eg.register_op0("e", s);
+    let unit = eg.add(e_op, &[]);
+    let f = eg.register_kind(
+        "f",
+        s,
+        OpKind::MSet {
+            arg_sort: s,
+            clamp: Clamp::None,
+            identity: None,
+            cancellative: false,
+        },
+    );
+    eg.set_unit_node(f, unit);
+    let a_op = eg.register_op0("a", s);
+    let b_op = eg.register_op0("b", s);
+    let a = eg.add(a_op, &[]);
+    let b = eg.add(b_op, &[]);
+    let n = 40_000u16;
+    eg.add_mset(f, &[ch(a, n), ch(b, n)])
+        .expect("each count fits u16");
+    eg.rebuild();
+    match AuSnapshot::new(&eg) {
+        Err(AuError::CountTooWide(t)) => assert_eq!(t, "80000"),
+        Err(e) => panic!("expected CountTooWide, got {e}"),
+        Ok(_) => panic!("an identity-padded total past u16 must be refused"),
+    }
 }

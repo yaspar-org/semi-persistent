@@ -1,0 +1,7 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+fn cost(g: Graph) {
+    let k = g.ubig_str("9223372036854775808");
+    g.at_most_big([g.root().chosen()], k);
+    g.root().chosen().charge_if(1);
+}

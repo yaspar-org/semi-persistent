@@ -1,0 +1,44 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// History a past-time temporal monitor keeps, for Dogwood's `when temporal`
+// conditions.
+//
+// `formerly within W phi` needs the timestamps of phi's matches over the last W
+// seconds, and `A since within W B` those of B's. A subformula shared by several
+// temporal operators is buffered once, over the widest window any of them needs:
+// the charge for a class depends on all of its selected parents, not only on its
+// own subterm. `previous within W phi` keeps one value. Every node also costs one
+// unit of evaluation per decision.
+
+// The window over which parent `n` needs the history of the child class `c`.
+// Formerly(W, phi): phi is the only child. Since(W, A, B): B is the second.
+fn window_of(u: Use) -> i64 {
+    let n = u.parent();
+    let w = match n.int(0) {
+        Some(w) => w,
+        None => 0,
+    };
+    if n.is("Formerly") {
+        w
+    } else if n.is("Since") && n.children().len() >= 2 && u.positions().contains(1) {
+        w
+    } else {
+        0
+    }
+}
+
+fn cost(g: Graph) {
+    for c in g.classes() {
+        // The widest window any chosen parent needs of c.
+        let uses = [];
+        for u in c.parents() {
+            let w = window_of(u);
+            if w > 0 {
+                uses.push(g.constant(w).over().when(u.parent().chosen()));
+            }
+        }
+        g.max_over(uses).charge();
+        c.chosen().charge_if(1);
+    }
+}

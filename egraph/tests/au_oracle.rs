@@ -421,7 +421,7 @@ fn pruning_does_not_change_the_optimum() {
 ///
 /// `lb_pair(l, r)` is the precondition of every pruning rule in the solver: an
 /// arm is excluded when its bound exceeds the incumbent, so a bound that ever
-/// exceeds the true optimum would prune the answer. Chapter 19 §9.2 argues it
+/// exceeds the true optimum would prune the answer. Chapter 12 §9.2 argues it
 /// holds. This checks it, for every ordered pair of classes in the fixture and
 /// not only for the roots, against the brute-force optimum of that same pair.
 ///

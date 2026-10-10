@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; A right-hand side with no value does not fire, and the run goes on
+;; (doc/sequence-patterns.md, Edge cases 1): `(Box ..gs)` over an empty `gs`
+;; is an AC application of nothing, and `Box` has no identity.
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function Box (E) E :assoc-comm-idem)
+(function Mark (E) E)
+(let e (Box a b))
+(rewrite (Box (..gs (F x)) ..rest) (Mark (Box ..gs)))
+(run 2)
+(check (!= e (Mark a)))

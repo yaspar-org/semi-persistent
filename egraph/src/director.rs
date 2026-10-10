@@ -801,7 +801,10 @@ impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> DirectorPool<I, TRACK,
 
     /// Read a spilled matrix from the proof pool.
     pub fn read_proof(&self, start: I) -> (u32, std::vec::Vec<PoolDirector>) {
-        let bit_length = self.proof.get(start).bits() as u32;
+        // Checked, as `read` does: a `start` that names a payload word is a caller's
+        // defect, refused rather than truncated.
+        let bit_length = u32::try_from(self.proof.get(start).bits())
+            .expect("read_proof: `start` names a spilled matrix's length word");
         let word_count = ceil_div(bit_length, PoolDirector::USABLE_BITS);
         let mut data = std::vec::Vec::with_capacity(word_count);
         for i in 0..word_count {

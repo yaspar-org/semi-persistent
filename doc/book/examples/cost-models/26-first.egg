@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: first
+(sort E)
+(function V (String) E)
+(function F (E) E)
+(function Add (E E) E)
+(function Twice (E) E)
+(rewrite (Twice x) (Add x x))
+
+(let e (Twice (F (F (V "a")))))
+(run 1)
+
+(cost-model dag :asp "26-first.lp")
+(extract e :cost dag :solver (asp "clingo"))
+;; ANCHOR_END: first

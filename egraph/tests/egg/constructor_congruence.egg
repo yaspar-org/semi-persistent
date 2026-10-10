@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; Tests (constructor …): a constructor is a term former with the same congruence and
 ;; matching behavior as a function. Merging two constructor leaves makes the terms that

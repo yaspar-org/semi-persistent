@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; A `:flatten` view whose count does not fit: opening K ≡ Plus{b:65536, c} inside
+;; Plus{K:65536, a} reads b:2^32. The view is not representable, so the node is skipped,
+;; the run continues, and stderr names the reason ("a flattened multiplicity beyond the
+;; configured width"), which the harness's WARNING directive does not capture.
+(sort E)
+(function a () E) (function b () E) (function c () E) (function Kc () E)
+(function S1 () E) (function S3 () E) (function Hit (E) E)
+(function Plus (E) E :assoc-comm)
+(let k (Kc))
+(let one (S1))
+(let three (S3))
+(rewrite (S1) (Plus k:65536 (a)))
+(rewrite (S3) (Plus (b):65536 (c)))
+(run 1)
+(union k three)
+(rewrite (Plus (b):m ..rest) (Hit (b)) :flatten)
+(run 1)
+(check (= three (Hit (b))))
+(check (!= one (Hit (b))))

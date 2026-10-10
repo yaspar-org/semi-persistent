@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; DERIVE_AC_EQS: on
+;; MESSAGE: multiplicity overflow:
+;; Completion with the ground rule c+d -> b rewrites Plus(b:2^32-1, c, d) to b:2^32, past the
+;; 32-bit width: completion stops (CompletionOutcome::AbortedOverflow) and the run reports
+;; it, where completion's sum used to panic. 64 bits holds it (config_matrix.rs).
+(sort E)
+(function b () E) (function c () E) (function d () E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (b):4294967295 (c) (d)))
+(union (Plus (c) (d)) (b))
+(run 1)

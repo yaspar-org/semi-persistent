@@ -146,19 +146,40 @@ impl EvalError {
         match self.span.render_in(src) {
             Some(at) => match &self.rule {
                 Some(rule) => format!(
-                    "rule '{rule}' at {at}: {} in {} is undefined on ({})",
+                    "rule '{rule}' at {at}: {}{} in {} is undefined on ({})",
+                    self.kind(),
                     self.op,
                     self.site,
                     self.args.join(", ")
                 ),
                 None => format!(
-                    "at {at}: {} in {} is undefined on ({})",
+                    "at {at}: {}{} in {} is undefined on ({})",
+                    self.kind(),
                     self.op,
                     self.site,
                     self.args.join(", ")
                 ),
             },
             None => self.to_string(),
+        }
+    }
+}
+
+impl EvalError {
+    /// `multiplicity overflow: `, `multiplicity underflow: `, or `multiplicity division by
+    /// zero: ` for a fault on a count, so every multiplicity error names its kind first;
+    /// empty for any other fault.
+    fn kind(&self) -> &'static str {
+        let on_count = self.site == EvalSite::Multiplicity || self.op.contains("multiplicity");
+        if !on_count {
+            return "";
+        }
+        if self.op.ends_with('-') {
+            "multiplicity underflow: "
+        } else if self.op.ends_with('/') || self.op.ends_with('%') {
+            "multiplicity division by zero: "
+        } else {
+            "multiplicity overflow: "
         }
     }
 }
@@ -170,7 +191,8 @@ impl fmt::Display for EvalError {
         }
         write!(
             f,
-            "{} in {} is undefined on ({})",
+            "{}{} in {} is undefined on ({})",
+            self.kind(),
             self.op,
             self.site,
             self.args.join(", ")

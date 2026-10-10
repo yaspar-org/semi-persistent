@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: u64::*
+;; A multiplicity expression that overflows u64 itself: k * k * k at k = 2^32 - 1 is about
+;; 2^96. The u64 arithmetic is checked, so the rule reports the operation and its operands.
+(sort E)
+(function a () E) (function b () E) (function W () E)
+(function F (E) E) (function G (E) E)
+(function Plus (E) E :assoc-comm)
+(let w (W))
+(rewrite (W) (Plus (F (a)):4294967295 (b)))
+(rewrite (Plus x:k (b)) (G (Plus x:(u64::* k (u64::* k k)) (b))))
+(run 2)

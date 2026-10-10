@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; EVAL: both
 ;; Sequence patterns match ordered contiguous windows.
@@ -64,6 +66,7 @@
 (check (!= separated_repeat (HasRun)))
 
 ;; Construction flattens nested applications before matching.
+;; ANCHOR: construction-flattens
 (function Flat (E) E :assoc)
 (function Spans (E E) E)
 (rewrite (Flat ..prefix x y ..suffix) (Spans x y))
@@ -72,3 +75,4 @@
 (run 1)
 (check (= flat (Flat a b c d)))
 (check (= flat (Spans b c)))
+;; ANCHOR_END: construction-flattens

@@ -389,3 +389,75 @@ fn when_and_subsume() {
         _ => panic!("expected Rewrite"),
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// :flatten
+// ═══════════════════════════════════════════════════════════════════
+
+/// Whether the (last) command is tagged `:flatten`, for every rule form that takes it.
+fn flatten_of(cmds: &[SurfaceCommand]) -> bool {
+    match &cmds[cmds.len() - 1] {
+        SurfaceCommand::Rewrite { flatten, .. } | SurfaceCommand::Rule { flatten, .. } => *flatten,
+        SurfaceCommand::CollectionRewrite(r) => r.flatten,
+        other => panic!("expected a rule, got {other:?}"),
+    }
+}
+
+#[test]
+fn flatten_in_any_tag_position() {
+    for src in [
+        "(rewrite (f x) x :flatten)",
+        "(rewrite (f x) x :flatten :when ((g x)) :subsume :ruleset r)",
+        "(rewrite (f x) x :when ((g x)) :flatten :subsume :ruleset r)",
+        "(rewrite (f x) x :when ((g x)) :subsume :ruleset r :flatten)",
+        "(rule ((f x)) ((union x x)) :flatten)",
+        "(rule ((f x)) ((union x x)) :ruleset r :flatten)",
+        "(rewrite (And (..gs (G p)) ..rest) (And ..rest) :flatten)",
+        "(rewrite (And (..gs (G p)) ..rest) (And ..rest) :ruleset r :flatten :when ((> 1 0)))",
+    ] {
+        assert!(flatten_of(&parse_ok(src)), "{src}");
+    }
+}
+
+#[test]
+fn no_flatten_tag_means_not_flattened() {
+    for src in [
+        "(rewrite (f x) x :subsume)",
+        "(rule ((f x)) ((union x x)))",
+        "(rewrite (And (..gs (G p)) ..rest) (And ..rest))",
+    ] {
+        assert!(!flatten_of(&parse_ok(src)), "{src}");
+    }
+}
+
+/// Both directions of a `birewrite` carry the tag.
+#[test]
+fn birewrite_flatten_applies_to_both_directions() {
+    let cmds = parse_ok("(birewrite (f x) (g x) :flatten)");
+    assert_eq!(cmds.len(), 2);
+    assert!(flatten_of(&cmds[..1]) && flatten_of(&cmds));
+}
+
+/// The sequence form keeps its route-1 reading when tagged: the tag is skipped there.
+#[test]
+fn flatten_keeps_the_route1_reading() {
+    let cmds = parse_ok("(rewrite (And (..gs (G p)) ..rest) (And ..rest) :flatten)");
+    match &cmds[0] {
+        SurfaceCommand::CollectionRewrite(r) => assert!(r.legacy.is_some()),
+        other => panic!("expected a sequence rewrite, got {other:?}"),
+    }
+}
+
+#[test]
+fn duplicate_flatten_is_rejected() {
+    for src in [
+        "(rewrite (f x) x :flatten :flatten)",
+        "(rewrite (f x) x :flatten :subsume :flatten)",
+        "(rule ((f x)) ((union x x)) :flatten :flatten)",
+        "(birewrite (f x) (g x) :flatten :flatten)",
+        "(rewrite (And (..gs (G p)) ..rest) (And ..rest) :flatten :ruleset r :flatten)",
+    ] {
+        let e = parse_program_v2(src).expect_err(src).to_string();
+        assert!(e.contains("duplicate :flatten"), "{src}: {e}");
+    }
+}

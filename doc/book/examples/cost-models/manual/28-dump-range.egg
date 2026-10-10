@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Ends in an error, so the book test does not run it.
+;; ANCHOR: dump-range
+(sort E)
+(function Num (i64) E)
+(let e (Num 3000000000))
+
+(cost-model size :asp "../26-first.lp")
+(extract e :cost size :solver (asp "clingo"))
+;; ANCHOR_END: dump-range

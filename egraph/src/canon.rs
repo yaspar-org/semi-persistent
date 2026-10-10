@@ -93,6 +93,9 @@ impl<G> CanonMode<G> {
 /// (`dedup`) into its own `canonize`. `mode` is a concrete parameter (not an associated type)
 /// so it adds no `where`-clause bound anywhere; canonizers that do not act on it take it and
 /// ignore it.
+///
+/// The result says whether the canonical children form a node or name a class (the
+/// degenerate arity), so that rebuild records the equality from the canonization itself.
 pub trait VarCanon<G: DenseId, C> {
     fn canonize(
         buf: &mut Vec<C>,
@@ -101,7 +104,7 @@ pub trait VarCanon<G: DenseId, C> {
         get: impl Fn(usize) -> C,
         find: impl Fn(G) -> G,
         mode: CanonMode<G>,
-    );
+    ) -> crate::nary_canon::Normal<G>;
 }
 
 /// Ordered: apply find, preserve order. (PlainN, A). No clamp; `mode` ignored.
@@ -112,9 +115,9 @@ pub trait VarCanon<G: DenseId, C> {
 /// deliberately absent here. Two reasons, and they agree: recanonization writes children back
 /// into the node's existing span, which can shrink but not grow, so a splice could not be
 /// expressed; and the AC counterpart makes the same choice, where §6c of
-/// `ac-congruence-completeness.md` gives a paper argument that recanon-time flattening is
+/// `06-ac-congruence-closure.md` gives a paper argument that recanon-time flattening is
 /// vacuous. See
-/// `doc/design/04-canonization.md`, "A-Only Operators", for what the build-only placement
+/// `doc/design/05-algebraic-operators.md` §5.2, "A-Only Operators", for what the build-only placement
 /// leaves open.
 pub struct OrderedCanon;
 
@@ -127,75 +130,19 @@ impl<G: DenseId> VarCanon<G, G> for OrderedCanon {
         get: impl Fn(usize) -> G,
         find: impl Fn(G) -> G,
         _mode: CanonMode<G>,
-    ) {
+    ) -> crate::nary_canon::Normal<G> {
         for i in start..end {
             buf.push(find(get(i)));
         }
+        crate::nary_canon::Normal::Node
     }
 }
 
-/// AC: apply find to G component, sort by G, merge duplicate G's by summing multiplicities, then
-/// apply the op's count clamp. The two named steps — [`update_multiset`](Self::update_multiset)
-/// (raw representation: find+sort+coalesce, ℕ counts) and [`clamp_multiset`](Self::clamp_multiset)
-/// (the algebraic clamp) — are sequenced by `canonize`, so its output is always the canonical form.
+/// AC: find each child, then the one normalization of an n-ary child list
+/// (`crate::nary_canon::normalize_by`): coalesce by summing multiplicities, drop the
+/// unit's class, and apply the count clamp. Inverse cancellation is the rebuild's repair
+/// pass (`EGraph::inverse_cancel_repair`), which reaches the same function through `add`.
 pub struct MSetCanon;
-
-impl MSetCanon {
-    /// Raw multiset maintenance: find each child, sort by class id, coalesce duplicates by summing
-    /// multiplicities. Produces a sorted, duplicate-free multiset with ℕ counts — the
-    /// representation, before any algebraic clamp.
-    pub fn update_multiset<G: DenseId + Ord, M: crate::multiplicity::MultiplicityLike>(
-        buf: &mut Vec<crate::containers::Pair<G, M>>,
-        start: usize,
-        end: usize,
-        get: impl Fn(usize) -> crate::containers::Pair<G, M>,
-        find: impl Fn(G) -> G,
-    ) {
-        for i in start..end {
-            let crate::containers::Pair { a: g, b: m } = get(i);
-            buf.push(crate::containers::Pair { a: find(g), b: m });
-        }
-        buf.sort_by_key(|a| a.a);
-        // merge adjacent duplicates
-        let mut w = 0;
-        for r in 1..buf.len() {
-            if buf[r].a == buf[w].a {
-                // Coalescing is the one place the representation *grows* a
-                // multiplicity, so it is the one place a configured width can be
-                // exceeded. Detected rather than wrapped: a wrapped sum would
-                // shrink the monomial — to zero at exactly the wrong values —
-                // and `retain`-style clamps would then delete summands, making
-                // the e-graph assert equalities that do not hold.
-                buf[w].b = buf[w].b.checked_add(buf[r].b).expect(
-                    "multiset coalescing overflowed EGraphConfig::M; \
-                     the configured multiplicity width is too narrow for this e-graph",
-                );
-            } else {
-                w += 1;
-                buf[w] = buf[r];
-            }
-        }
-        if !buf.is_empty() {
-            buf.truncate(w + 1);
-        }
-    }
-
-    /// Apply the op's count clamp to an already-`update_multiset`'d buffer, in place. `None` is a
-    /// no-op (plain AC). `Nilpotent { order: n }` reduces each count mod `n` and drops the summands
-    /// that vanish, so `xor(a,a)` (`{a:2}`) becomes `{}`. Preserves sort order (`retain`), so the
-    /// result stays canonical.
-    pub fn clamp_multiset<G: DenseId, M: crate::multiplicity::MultiplicityLike>(
-        buf: &mut Vec<crate::containers::Pair<G, M>>,
-        mode: MSetClamp,
-    ) {
-        if let MSetClamp::Nilpotent { order } = mode {
-            for p in buf.iter_mut() {
-                p.b = p.b.rem_order(order);
-            }
-            buf.retain(|p| p.b != M::ZERO);
-        }
-    }
-}
 
 impl<G: DenseId + Ord, M: crate::multiplicity::MultiplicityLike>
     VarCanon<G, crate::containers::Pair<G, M>> for MSetCanon
@@ -207,21 +154,41 @@ impl<G: DenseId + Ord, M: crate::multiplicity::MultiplicityLike>
         get: impl Fn(usize) -> crate::containers::Pair<G, M>,
         find: impl Fn(G) -> G,
         mode: CanonMode<G>,
-    ) {
-        Self::update_multiset(buf, start, end, get, find);
-        // Identity unit-drop (`f(x,e) = x`) before the count clamp, matching the build
-        // path (`EGraph::add` drops the unit before the nilpotent clamp). `mode.unit` is
-        // the unit's *class* as of this rebuild, resolved by the caller through `find`.
-        if let Some(u) = mode.unit {
-            buf.retain(|p| p.a != u);
+    ) -> crate::nary_canon::Normal<G> {
+        for i in start..end {
+            let crate::containers::Pair { a: g, b: m } = get(i);
+            buf.push(crate::containers::Pair { a: find(g), b: m });
         }
-        Self::clamp_multiset(buf, mode.clamp);
+        let laws = crate::nary_canon::NaryLaws::<G, ()> {
+            kind: crate::nary_canon::NaryKind::Ac {
+                nilpotent: match mode.clamp {
+                    MSetClamp::Nilpotent { order } => Some(order),
+                    MSetClamp::None => None,
+                },
+            },
+            unit: mode.unit,
+            inverse: None,
+        };
+        let normal = crate::nary_canon::normalize_by(
+            &laws,
+            buf,
+            |p| p.a,
+            |p| p.b,
+            |p, m| p.b = m,
+            |_, _| None,
+        );
+        // Coalescing is the one place the representation *grows* a multiplicity, so it
+        // is the one place a configured width can be exceeded. Detected rather than
+        // wrapped: a wrapped sum would shrink the monomial, and the clamps would then
+        // delete summands, making the e-graph assert equalities that do not hold.
+        // `Normal::Overflow` goes back to the cache, which leaves the node as it was, and
+        // to `rebuild`, which records it for the caller to report (`take_width_error`).
+        normal
     }
 }
 
-/// ACI: apply find, sort, dedup. The `dedup` *is* the idempotent clamp, baked into canonize (no
-/// separate mode) — the precedent for keeping a clamp inside canonize rather than after it.
-/// `mode` is ignored (idempotence is structural here, not a count clamp).
+/// ACI: find each child, then the one normalization (`crate::nary_canon::normalize_by`):
+/// dedup, which *is* the idempotent clamp, and the unit's class dropped.
 pub struct SetCanon;
 
 impl<G: DenseId + Ord> VarCanon<G, G> for SetCanon {
@@ -232,16 +199,23 @@ impl<G: DenseId + Ord> VarCanon<G, G> for SetCanon {
         get: impl Fn(usize) -> G,
         find: impl Fn(G) -> G,
         mode: CanonMode<G>,
-    ) {
+    ) -> crate::nary_canon::Normal<G> {
         for i in start..end {
             buf.push(find(get(i)));
         }
-        buf.sort();
-        buf.dedup();
-        // Identity unit-drop, mirroring the build path (`and(a, true) → {a}`).
-        if let Some(u) = mode.unit {
-            buf.retain(|&g| g != u);
-        }
+        let laws = crate::nary_canon::NaryLaws::<G, ()> {
+            kind: crate::nary_canon::NaryKind::Aci,
+            unit: mode.unit,
+            inverse: None,
+        };
+        crate::nary_canon::normalize_by(
+            &laws,
+            buf,
+            |&g| g,
+            |_| <crate::multiplicity::Multiplicity as crate::multiplicity::MultiplicityLike>::ONE,
+            |_, _| {},
+            |_, _| None,
+        )
     }
 }
 

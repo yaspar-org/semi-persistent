@@ -1,0 +1,9 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; MESSAGE: returns the literal sort 'i64'
+;; Bug #7: an operator returning a literal sort panicked in the registry
+;; ("cannot return concrete sort"). It is a sort error.
+(function Mk () i64)
+(let x (Mk))

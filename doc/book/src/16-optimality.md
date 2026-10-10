@@ -8,8 +8,8 @@ qualification can change the returned term.
 
 Chapter 11's containment example asserts
 `add(a,b) = c` and `add(a,b,d) = n`. The AC theory entails
-`add(c,d) = n`, but plain congruence does not derive it. Chapter 16 adds only
-this query to that example:
+`add(c,d) = n`, but plain congruence does not derive it. Chapter 16 wraps
+`n` and `add(c,d)` in a common unary operator `g` and runs this query:
 
 ```lisp
 {{#include ../examples/16-au-plain.egg:ac-completion-query}}
@@ -17,11 +17,11 @@ this query to that example:
 
 The same program is executed in three completion modes:
 
-| mode | result |
-| --- | --- |
-| plain | `:size 5 :cr 0.7500` -- `(g (Variants n (add c d)))` |
-| eager | `:size 2 :cr 0.0000` -- `(g n)` |
-| lazy | `:size 5 :cr 0.7500` -- identical to plain |
+| mode | size and ratio | result |
+| --- | --- | --- |
+| plain | `:size 5 :cr 0.7500` | `(g (Variants n (add c d)))` |
+| eager | `:size 2 :cr 0.0000` | `(g n)` |
+| lazy | `:size 5 :cr 0.7500` | identical to plain |
 
 The size-two `checkau` bound deliberately fails in the plain and lazy fixtures
 and succeeds in the eager fixture.
@@ -82,13 +82,14 @@ the exact certificate does not claim readability.
 
 ## What is argued rather than proved
 
-The `au-verus` crate proves properties of the lexicographic objective and a
-recurrence lower bound. It does not verify the production Rust solver end to
-end. A small exhaustive oracle supplies finite evidence for pair-mode Exact on
+The `au-verus` crate proves objective-order and representation lemmas. It also
+proves a lower bound for any function that satisfies two recurrence
+inequalities. It does not prove that the solver's recurrence value equals the
+optimum, and it does not verify the production Rust solver end to end. A small exhaustive oracle supplies finite evidence for pair-mode Exact on
 enumerable fixtures.
 
 Pair-cycle erasure and global optimality remain prose arguments supported by
 regressions. Hybrid calls have finite differential evidence. Chapters 14 and 15
 state the operational claims, and
-[`19-anti-unification.md`, section 9.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md)
+[design chapter 12, section 9.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md)
 states the current proof boundary.

@@ -1,0 +1,37 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; TYPES: machine
+;; DERIVE_AC_EQS: off
+;; ANCHOR: flatten-control
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+
+(let va (Var "a"))
+(let vb (Var "b"))
+(let vc (Var "c"))
+(let g1 (Global (Interval 1 3) va))
+(let g2 (Global (Interval 2 5) vb))
+(let g3 (Global (Interval 3 6) vc))
+; The node And{g1, cc} is built first. Merging cc with And{g2, g3} afterwards
+; leaves it storing two children, one of them a conjunction.
+(let cc (Var "cc"))
+(let e (And g1 cc))
+(union cc (And g2 g3))
+
+; Factoring: all G of a conjunction share the outer window [K0, K1].
+(rewrite (And (..gs (Global (Interval l u) p)) ..rest)
+         (And (Global (Interval K0 K1)
+                      (And ..{ (if (and (== l K0) (== u K1)) p (Global (Interval (- l K0) (- u K1)) p))
+                               for (l u p) in (zip l u p) }))
+              ..rest)
+  :let ((K0 (min l)) (K1 (+ K0 (min (- u l)))))
+  :when ((>= (count gs) 2) (> K1 0) (== (count (union-by p l u)) (count gs)))
+)
+(run 1)
+(check (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
+;; ANCHOR_END: flatten-control

@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Under AC a filter's children carry their multiplicities, and splicing them back
+;; restores them (doc/sequence-patterns.md, Edge cases 3): `(F a)` twice stays twice.
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function Wrap (E) E)
+(function Plus (E) E :assoc-comm)
+(let e (Plus (F a) (F a) b))
+(rewrite (Plus (..fs (F x)) ..rest) (Wrap (Plus ..fs ..rest)))
+(run 1)
+(check (= e (Wrap (Plus (F a) (F a) b))))

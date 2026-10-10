@@ -82,7 +82,7 @@ The two workarounds it forced, both now removed:
   block 4's check failed. It was not a rule of the source program, and it is no
   longer needed: `add` returns the element's class for a one-element sequence.
 
-Both `:assoc` laws now run at build time (`egraph/doc/design/04-canonization.md`,
+Both `:assoc` laws now run at build time (`egraph/doc/design/05-algebraic-operators.md` §5.2,
 "A-Only Operators"). Fixing them removed one rule from this file, which is why the
 native column's iteration count drops from 2 to 1 in the table below; the node count
 is unchanged, since the flat sequences were what the workaround was writing by hand.

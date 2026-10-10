@@ -1,0 +1,52 @@
+{
+  "nodes": {
+    "c0": {
+      "children": [
+        "c3"
+      ],
+      "ints": [
+        1,
+        4
+      ],
+      "op": "Global",
+      "strings": []
+    },
+    "c1": {
+      "children": [
+        "c4"
+      ],
+      "ints": [
+        0,
+        9
+      ],
+      "op": "Global",
+      "strings": []
+    },
+    "c2": {
+      "children": [
+        "c0",
+        "c1"
+      ],
+      "ints": [],
+      "op": "And",
+      "strings": []
+    },
+    "c3": {
+      "children": [],
+      "ints": [],
+      "op": "Var",
+      "strings": [
+        "a1"
+      ]
+    },
+    "c4": {
+      "children": [],
+      "ints": [],
+      "op": "Var",
+      "strings": [
+        "a0"
+      ]
+    }
+  },
+  "root": "c2"
+}

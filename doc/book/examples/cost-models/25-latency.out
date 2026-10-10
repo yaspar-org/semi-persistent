@@ -1,0 +1,2 @@
+; cost 3 proved at rung selection (2 solves, 0 cycle exclusions)
+(Add (Add (Add (V "a") (V "a")) (Add (V "a") (V "a"))) (V "b"))

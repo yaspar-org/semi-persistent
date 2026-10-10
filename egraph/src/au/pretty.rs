@@ -32,6 +32,7 @@ where
     // open (broken) node whose children still need their own lines.
     struct Frame<T> {
         children: Vec<T>,
+        counts: Vec<u64>,
         cursor: usize,
         indent: usize,
     }
@@ -49,6 +50,7 @@ where
                 buf.push_str(&op_name(pool.op(id)));
                 stack.push(Frame {
                     children: children.to_vec(),
+                    counts: pool.counts(id).to_vec(),
                     cursor: 0,
                     indent: indent + 2,
                 });
@@ -59,12 +61,19 @@ where
         };
         if top.cursor < top.children.len() {
             let child = top.children[top.cursor];
+            let count = top.counts[top.cursor];
             top.cursor += 1;
             buf.push('\n');
             for _ in 0..top.indent {
                 buf.push(' ');
             }
-            pending = Some((child, top.indent));
+            // A child of multiplicity k is written once, `t:k`, on one line.
+            if count == 1 {
+                pending = Some((child, top.indent));
+            } else {
+                buf.push_str(&render_flat(pool, child, op_name));
+                buf.push_str(&format!(":{count}"));
+            }
         } else {
             buf.push(')');
             stack.pop();
@@ -85,6 +94,7 @@ where
         Node(T),
         Space,
         Close,
+        Count(u64),
     }
     let mut out = String::new();
     let mut stack: Vec<Item<A::Term>> = vec![Item::Node(id)];
@@ -99,7 +109,11 @@ where
                     out.push('(');
                     out.push_str(&name);
                     stack.push(Item::Close);
-                    for &c in children.iter().rev() {
+                    // A child of multiplicity k is written once, `t:k`.
+                    for (&c, &k) in children.iter().zip(pool.counts(t)).rev() {
+                        if k != 1 {
+                            stack.push(Item::Count(k));
+                        }
                         stack.push(Item::Node(c));
                         stack.push(Item::Space);
                     }
@@ -107,6 +121,7 @@ where
             }
             Item::Space => out.push(' '),
             Item::Close => out.push(')'),
+            Item::Count(k) => out.push_str(&format!(":{k}")),
         }
     }
     out

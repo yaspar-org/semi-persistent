@@ -1,0 +1,5 @@
+sort error at line 11 column 1: :band runs on the internal solver
+sort error at line 11 column 1: :proof needs a proof-logging pseudo-Boolean solver, :solver (opb ...)
+sort error at line 11 column 1: cost-model dag-asp is written in ASP: it is solved by clingo, :solver (asp "clingo")
+sort error at line 11 column 1: cost-model dag-mzn is written in MiniZinc: it is solved through minizinc, :solver (minizinc "cp-sat")
+sort error at line 11 column 1: cost-model dag is not written in MiniZinc: a MiniZinc solver takes (cost-model NAME :minizinc "f.mzn")

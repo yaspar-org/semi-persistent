@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; With :identity, an application with no children denotes the identity: a right-hand side
+;; `(Add)`, written or left empty by a count computed to 0, builds the unit.
+(sort E)
+(function a () E) (function b () E) (function w () E) (function G (E) E) (function Zero () E)
+(function Add (E) E :assoc-comm :identity (Zero))
+(let x (w))
+(rewrite (w) (G (Add)))
+(let t (G (Add (a):2 (b))))
+(rewrite (G (Add (a):k>=2 (b))) (G (Add (a):(u64::- k 2))))
+(run 2)
+(check (= x (G (Zero))))
+(check (= t (G (Zero))))

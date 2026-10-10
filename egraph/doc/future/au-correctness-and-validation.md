@@ -1,6 +1,6 @@
 # Anti-Unification Correctness and Validation
 
-[Anti-Unification design](../design/19-anti-unification.md) |
+[Anti-Unification design](../design/12-anti-unification.md) |
 [Proof certificates](au-proof-certificates.md)
 
 The production pair-mode root-Exact solver performs bounded relaxation over

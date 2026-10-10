@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: positions in the right-hand side is undefined on (4000000000)
+;; An AC rest spliced into an associative sequence is real positions, bounded by 2^20 as a
+;; sequence rule's are: a count of 4,000,000,000 is reported. It was expanded copy by copy
+;; until the memory guard stopped it.
+(sort E)
+(function Add (E) E :assoc-comm)
+(function L (E) E :assoc)
+(function A () E) (function B () E)
+(let t (Add (A):4000000000 (B)))
+(rewrite (Add ..rest) (L ..rest))
+(run 1)

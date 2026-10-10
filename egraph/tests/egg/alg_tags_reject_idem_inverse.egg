@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: sort-error
 ;; :idempotent and :inverse are mutually exclusive: an idempotent group is trivial, so an
 ;; idempotent op has no group inverse. (Logical `not` is not an `and`-inverse — it cancels to the

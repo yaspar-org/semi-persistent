@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: latency
+(sort E)
+(function V (String) E)
+(function Two () E)
+(function Mul (E E) E)
+(function Add (E E) E)
+(rewrite (Mul x Two) (Add x x))
+
+(let e (Add (Mul (Mul (V "a") Two) Two) (V "b")))
+(run 2)
+
+(cost-model latency :script "25-latency.roto")
+(extract e :cost latency)
+;; ANCHOR_END: latency

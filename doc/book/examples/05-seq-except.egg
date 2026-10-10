@@ -1,0 +1,38 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; ANCHOR: seq-except
+(sort E)
+(function a () E)
+(function b () E)
+(function Not (E) E)
+(function Gl (E) E)
+(function N (i64) E)
+(function Split (E E) E)
+(function Kept (E E) E)
+(function And (E) E :assoc-comm-idem)
+(function Conj (E) E :assoc-comm-idem)
+(function Both () E)
+(function One () E)
+
+; (Gl (Not a)) matches both `(Gl (Not q))` and `(Gl p)`.
+(let both (Both))
+(let one (One))
+(rewrite (Both) (And (Gl (Not (a))) (Gl (b))))
+(rewrite (One) (Conj (Gl (Not (a))) (Gl (b))))
+(run 1)
+
+; Without `:except`, a child that two filters match is given to each in turn,
+; and every assignment is a match.
+(rewrite (And (..ns (Gl (Not q))) (..gs (Gl p)) ..rest)
+         (Split (N (count ns)) (N (count gs))))
+; With `:except ns`, `gs` keeps only what `ns` does not match: one assignment.
+(rewrite (Conj (..ns (Gl (Not q))) (..gs (Gl p) :except ns) ..rest)
+         (Kept (N (count ns)) (N (count gs))))
+(run 1)
+(check (= both (Split (N 1) (N 1))))
+(check (= both (Split (N 0) (N 2))))
+(check (= one (Kept (N 1) (N 1))))
+(check (!= one (Kept (N 0) (N 2))))
+;; ANCHOR_END: seq-except

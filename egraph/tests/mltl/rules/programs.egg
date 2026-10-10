@@ -1,0 +1,27 @@
+; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+; SPDX-License-Identifier: Apache-2.0
+;
+; Field identities over + (Add), * (Mul), unary minus (Neg), and division (Div).
+; Add and Mul are declared AC with their units, so associativity, commutativity,
+; and x + 0 = x, x * 1 = x are canonization, not rules. Every rule is an identity
+; of rational arithmetic where the divisions it touches are defined, which is what
+; `tools/apps/programs.py` checks by exact evaluation.
+
+(rewrite (Neg (Neg a)) a)
+(rewrite (Mul (Neg a) b) (Neg (Mul a b)))
+(rewrite (Neg (Mul a b)) (Mul (Neg a) b))
+; Factoring and its inverse.
+(rewrite (Add (Mul a b) (Mul a c) ..r) (Add (Mul a (Add b c)) ..r))
+(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))
+(rewrite (Add (Neg a) (Neg b) ..r) (Add (Neg (Add a b)) ..r))
+; Division.
+(rewrite (Div (Div a b) c) (Div a (Mul b c)))
+(rewrite (Mul (Div a b) c) (Div (Mul a c) b))
+(rewrite (Add (Div a c) (Div b c) ..r) (Add (Div (Add a b) c) ..r))
+(rewrite (Div (Neg a) b) (Neg (Div a b)))
+; Associativity through a class boundary. A written nested term is flattened
+; when it is admitted, but a node a rewrite builds is built over e-classes: an AC
+; child class may hold several members, and splicing its operands into the parent
+; would choose one. These rules create that flat alternative as a new node.
+(rewrite (Add (Add ..x) ..y) (Add ..x ..y))
+(rewrite (Mul (Mul ..x) ..y) (Mul ..x ..y))

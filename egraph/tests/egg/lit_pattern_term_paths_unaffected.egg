@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; TYPES: machine
 ;; Boundary of the ground-literal defect. `check`, `check-eq`/`check-neq`, `extract`,

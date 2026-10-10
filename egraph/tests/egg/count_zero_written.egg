@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: a written multiplicity is at least 1
+;; A written count of 0 means the element does not occur, so the annotation has no meaning:
+;; refused in a pattern, as in a ground term and on a right-hand side.
+(sort E)
+(function a () E) (function w () E)
+(function Add (E) E :assoc-comm)
+(let t (Add (a) (w)))
+(rewrite (Add x:0 ..r) (w))

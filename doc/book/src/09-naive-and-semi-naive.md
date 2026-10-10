@@ -37,10 +37,12 @@ match belongs to the variant containing its first delta atom, so the variants
 do not duplicate one another.
 
 Equality constraints, primitive predicates, and global comparisons are filters,
-not relation-scanning atoms. Some equality and global-reference shapes can
-become enabled by a merge that no scanning atom represents. Semper evaluates
-those rules against the full index in every iteration rather than applying an
-unsafe delta restriction.
+not relation-scanning atoms. Some rule shapes can become enabled by a merge
+that no scanning atom represents. Semper evaluates those rules against the
+full index in every iteration rather than applying an unsafe delta
+restriction. These shapes are a rule with no scanning atom, a rule tagged
+`:flatten`, an equality constraint on an atom's node variable, and a global
+in a child or element position.
 
 ## Delta boundaries
 
@@ -56,10 +58,30 @@ surviving representative. Recanonicalized parents and absorbed class members
 are therefore recorded in the touched log. Restricting only the operator scan
 would miss or duplicate matches reached through child and containment indexes.
 
+### Sequence rules and `:flatten` rules
+
+A sequence rule ([Chapter 5](05-rules-and-patterns.md#sequence-patterns)) is one
+query over a whole node, so it has no per-atom variants. Under
+`--use-semi-naive` it is evaluated against the round's delta instead. A root
+node's matches can change only if the node is in the delta or one of its child
+classes is affected: the root class of a delta row of one of the rule's item
+patterns, or the class of a node subsumed this round. For each rule and round,
+Semper estimates from index sizes, before doing the work, whether testing that
+condition pays. When it does, the rule assembles only the nodes that pass, either
+filtering naive's candidates or listing the nodes directly when their parents
+are few; otherwise it is matched naively. On the 1,172 MLTL specifications Johannsen and Rozier publish with their FMCAD 2026 paper ([Chapter 24](24-extraction-under-cost-models.md#when-the-cost-depends-on-a-grouping-the-e-graph-does-not-store)) the
+estimate chooses naive in all 11,555 rule rounds, since a test costs more than the
+assembly it can save on graphs that small, and naive and semi-naive saturation
+build identical e-graphs.
+
+An ordinary rule tagged `:flatten` is matched naively in every iteration: a view
+changes when a class below the node gains a member of the same operator, and no
+variant's delta holds the root then.
+
 These rules implement the delta decomposition described in
-[design chapter 18](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/18-semi-naive-evaluation.md).
+[design §9.2](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/09-saturation.md#92-semi-naive-evaluation).
 The index relations are specified in
-[design chapter 6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/06-index.md).
+[design §8.1](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/08-indexes-and-leapfrog.md#81-index-construction).
 
 ## Equivalent outcomes
 
@@ -69,15 +91,16 @@ Semi-naive evaluation emits delta-involving matches and uses full matching for
 the exceptional rule shapes above. The strategies can consequently report
 different emitted matches, node counts, iteration counts, and match-step counts.
 
-The Chapter 9 fixture changes only the harness mode applied to the `dbl`
-program introduced in Chapter 8:
+The Chapter 9 fixture `09-eval-strategies.egg` runs a variant of the `dbl`
+program from Chapter 8, with `z` and `s` declared as constructors and an input
+of three. It selects both strategies with the harness directive:
 
 ```text
 ;; EVAL: both
 ```
 
-The harness executes the multi-round program once with each strategy. Its
-equality and disequality checks must pass in both executions.
+The harness executes the multi-round program under each strategy. Its
+equality and disequality checks must pass in every execution.
 
 The repository also differentially compares the resulting equality partition
 over shared input nodes and exercises fresh nodes, recanonicalization, class

@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; TYPES: machine
 ;; A rule's right-hand side is a syntax tree too, so a nested same-op application written in

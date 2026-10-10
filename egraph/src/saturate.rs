@@ -78,6 +78,9 @@ pub struct SatResult {
     /// implementation-level work proxy is not a semantic match count or a
     /// machine-independent runtime measure.
     pub match_steps: u64,
+    /// What the run's sequence rules did beyond their merges, summed over its rounds:
+    /// the matches not fired and the nodes skipped (`collection::PassReport`).
+    pub sequence: crate::collection::PassReport,
 }
 
 /// Which saturation algorithm to run.
@@ -98,6 +101,30 @@ pub enum SaturationStrategy {
 /// that fired — see [`EvalError`]. It ends the run at the action that faulted:
 /// the effects already applied stay in the e-graph, and the caller is expected
 /// to report and stop rather than keep saturating.
+/// Stop a run whose last `rebuild` met a multiplicity past the configured width
+/// ([`EGraph::take_width_error`]): the node that needed it was left as it was, so the
+/// run cannot continue. Reported as a program error, like a rule's own overflow.
+fn width_check<Cfg, L, const T: bool, const P: bool>(
+    eg: &mut EGraph<Cfg, L, T, P>,
+) -> Result<(), crate::lit_model::EvalError>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    match eg.take_width_error() {
+        None => Ok(()),
+        Some(e) => Err(crate::lit_model::EvalError {
+            span: crate::ast::Span::Dummy,
+            op: "an AC multiplicity",
+            args: vec![e.to_string()],
+            site: crate::lit_model::EvalSite::Rhs,
+            rule: None,
+        }),
+    }
+}
+
 pub fn saturate<Cfg, L, M, S, const T: bool, const P: bool>(
     rules: &[PreparedRule<Cfg::O, S, L>],
     eg: &mut EGraph<Cfg, L, T, P>,
@@ -169,16 +196,202 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
+    saturate_rules_naive(rules, eg, model, spec, globals, scratch).map_err(SatError::into_eval)
+}
+
+/// An entry of the rule list [`saturate_rules_naive`] and [`saturate_rules_semi`] schedule.
+/// Each round applies the ordinary entries of the ruleset in order, then the sequence
+/// entries as one batch on the same snapshot (`crate::seq_engine::apply_rules` matches
+/// every sequence rule before it applies any, so the batch is not split).
+// Unboxed: the list holds tens of rules, and the ordinary rule is read on every round.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug)]
+pub enum Rule<O, S, L> {
+    Ordinary(PreparedRule<O, S, L>),
+    Sequence(std::sync::Arc<crate::collection::Rule<O, S, L>>),
+}
+
+/// What the saturation loops read from a rule-list entry. Implemented by [`Rule`], and by
+/// [`PreparedRule`] for callers whose lists hold ordinary rules only.
+pub trait RuleEntry<Cfg: EGraphConfig, S, L> {
+    /// The entry as an ordinary rule.
+    fn ordinary(&self) -> Option<&PreparedRule<Cfg::O, S, L>>;
+    /// The entry as a sequence rule.
+    fn sequence(&self) -> Option<&crate::collection::Rule<Cfg::O, Cfg::S, L>>;
+    /// The globals as the sequence engine reads them, sorted by the e-graph's own sort
+    /// type: `None` for lists whose sort type differs, which hold no sequence rule.
+    fn sequence_globals(
+        g: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    ) -> Option<&crate::resolve::GlobalCtx<Cfg::S, Cfg::G>>;
+}
+
+impl<Cfg: EGraphConfig, S, L> RuleEntry<Cfg, S, L> for PreparedRule<Cfg::O, S, L> {
+    fn ordinary(&self) -> Option<&PreparedRule<Cfg::O, S, L>> {
+        Some(self)
+    }
+    fn sequence(&self) -> Option<&crate::collection::Rule<Cfg::O, Cfg::S, L>> {
+        None
+    }
+    fn sequence_globals(
+        _: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    ) -> Option<&crate::resolve::GlobalCtx<Cfg::S, Cfg::G>> {
+        None
+    }
+}
+
+impl<Cfg: EGraphConfig, L> RuleEntry<Cfg, Cfg::S, L> for Rule<Cfg::O, Cfg::S, L> {
+    fn ordinary(&self) -> Option<&PreparedRule<Cfg::O, Cfg::S, L>> {
+        match self {
+            Rule::Ordinary(r) => Some(r),
+            Rule::Sequence(_) => None,
+        }
+    }
+    fn sequence(&self) -> Option<&crate::collection::Rule<Cfg::O, Cfg::S, L>> {
+        match self {
+            Rule::Ordinary(_) => None,
+            Rule::Sequence(r) => Some(r),
+        }
+    }
+    fn sequence_globals(
+        g: &crate::resolve::GlobalCtx<Cfg::S, Cfg::G>,
+    ) -> Option<&crate::resolve::GlobalCtx<Cfg::S, Cfg::G>> {
+        Some(g)
+    }
+}
+
+impl<Cfg: EGraphConfig, S, L, R: RuleEntry<Cfg, S, L>> RuleEntry<Cfg, S, L> for &R {
+    fn ordinary(&self) -> Option<&PreparedRule<Cfg::O, S, L>> {
+        (**self).ordinary()
+    }
+    fn sequence(&self) -> Option<&crate::collection::Rule<Cfg::O, Cfg::S, L>> {
+        (**self).sequence()
+    }
+    fn sequence_globals(
+        g: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    ) -> Option<&crate::resolve::GlobalCtx<Cfg::S, Cfg::G>> {
+        R::sequence_globals(g)
+    }
+}
+
+/// A saturation run's fault: a primitive applied outside its domain, or a sequence
+/// rule's right-hand side that could not be built (the rule's name and the reason).
+#[derive(Clone, Debug)]
+pub enum SatError {
+    Eval(EvalError),
+    Sequence(String),
+}
+
+impl From<EvalError> for SatError {
+    fn from(e: EvalError) -> Self {
+        SatError::Eval(e)
+    }
+}
+
+impl SatError {
+    /// The fault as an [`EvalError`], for the entry points whose lists hold ordinary rules
+    /// only. A `Sequence` fault cannot arise there; it is still reported, never dropped.
+    pub fn into_eval(self) -> EvalError {
+        match self {
+            SatError::Eval(e) => e,
+            SatError::Sequence(m) => {
+                EvalError::new("sequence rule", &[&m], crate::lit_model::EvalSite::Rhs)
+            }
+        }
+    }
+}
+
+/// The sequence entries of `rules` in `ruleset`, in list order.
+fn sequence_entries<Cfg: EGraphConfig, S, L, R: RuleEntry<Cfg, S, L>>(
+    rules: &[R],
+    ruleset: Option<crate::apply::RulesetId>,
+) -> Vec<&crate::collection::Rule<Cfg::O, Cfg::S, L>> {
+    rules
+        .iter()
+        .filter_map(|r| r.sequence())
+        .filter(|r| r.ruleset == ruleset)
+        .collect()
+}
+
+/// Apply one round's sequence entries as a batch, after the ordinary rules, on the round's
+/// snapshot; returns the merges that changed the graph and adds the rest to `report`.
+#[allow(clippy::too_many_arguments)]
+fn apply_sequence_batch<Cfg, L, M, const T: bool, const P: bool>(
+    seqs: &[&crate::collection::Rule<Cfg::O, Cfg::S, L>],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    index: &IndexStore<Cfg>,
+    stats: &crate::schedule::IndexStats<Cfg::O>,
+    model: &M,
+    globals: Option<&crate::resolve::GlobalCtx<Cfg::S, Cfg::G>>,
+    pool: &mut MatchPool<Cfg>,
+    delta: Option<&RoundDelta<'_, Cfg>>,
+    report: &mut crate::collection::PassReport,
+) -> Result<usize, SatError>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    if seqs.is_empty() {
+        return Ok(0);
+    }
+    let Some(globals) = globals else {
+        return Err(SatError::Sequence(
+            "sequence rules in a rule list whose sort type is not the e-graph's".to_string(),
+        ));
+    };
+    let r = crate::seq_engine::apply_rules(seqs, eg, index, stats, model, globals, pool, delta)
+        .map_err(SatError::Sequence)?;
+    report.add(&r);
+    Ok(r.changed)
+}
+
+/// A semi-naive round's change since the previous round's snapshot, as the sequence
+/// rules see it (task 6 of `doc/goal-flatten-and-engine-completion.md`).
+pub struct RoundDelta<'a, Cfg: EGraphConfig> {
+    /// The delta index: every node touched since the previous snapshot, as indexed.
+    pub index: &'a IndexStore<Cfg>,
+    /// The touched node ids, sorted and deduplicated, including the ones the index
+    /// skips.
+    pub touched: &'a [Cfg::G],
+    /// The touched nodes now subsumed. The delta index skips them, and a filter row
+    /// on one of them has disappeared.
+    pub subsumed: &'a [Cfg::G],
+}
+
+/// [`saturate_spec_in`] over a rule list that may hold sequence rules ([`Rule`]).
+pub fn saturate_rules_naive<Cfg, L, M, S, R, const T: bool, const P: bool>(
+    rules: &[R],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    scratch: &mut crate::index::IndexScratch<Cfg>,
+) -> Result<SatResult, SatError>
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    R: RuleEntry<Cfg, S, L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
     let steps_base = crate::ematch::match_steps();
+    let seqs = sequence_entries(rules, spec.ruleset);
+    let seq_globals = R::sequence_globals(globals);
+    let mut seq_report = crate::collection::PassReport::default();
     // Outside the round loop: the pool's whole purpose is to survive rounds.
     let mut pool = MatchPool::new();
     for i in 0..spec.limit {
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
             eg.rebuild();
+            width_check(eg)?;
         }
         if goal_met(spec, eg) {
-            return Ok(sat_result(i, false, true, steps_base));
+            return Ok(sat_result_seq(seq_report, i, false, true, steps_base));
         }
         let index = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
@@ -191,13 +404,28 @@ where
                 let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
                 crate::schedule::IndexStats::from_index(&index)
             };
-            for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
+            for rule in rules
+                .iter()
+                .filter_map(|r| r.ordinary())
+                .filter(|r| r.ruleset == spec.ruleset)
+            {
                 // A fault gives up the recycled arenas: `?` skips the
                 // `recycle_into` below. That costs one round's arenas on a path
                 // that ends the program, and keeping them would mean either a
                 // guard object or duplicating the recycle on the error path.
                 changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool)?;
             }
+            changes += apply_sequence_batch(
+                &seqs,
+                eg,
+                &index,
+                &stats,
+                model,
+                seq_globals,
+                &mut pool,
+                None,
+                &mut seq_report,
+            )?;
         }
         // Before any exit from the loop body: the arenas go back so the next
         // round, and the next `(run)`, build into the same span tables.
@@ -205,7 +433,7 @@ where
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
         crate::phase_timing::round_line("naive");
         if changes == 0 {
-            return Ok(sat_result(i + 1, true, false, steps_base));
+            return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
         }
     }
     // The budget is spent, but a goal met by the last iteration's work should still be
@@ -214,9 +442,12 @@ where
     if spec.until.is_some() {
         let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
         eg.rebuild();
+        width_check(eg)?;
     }
     let met = goal_met(spec, eg);
-    Ok(sat_result(spec.limit, false, met, steps_base))
+    Ok(sat_result_seq(
+        seq_report, spec.limit, false, met, steps_base,
+    ))
 }
 
 /// Does the run's `:until` goal hold? Always false when there is no goal.
@@ -238,7 +469,24 @@ fn sat_result(iterations: usize, saturated: bool, goal_met: bool, steps_base: u6
         iterations,
         saturated,
         goal_met,
-        match_steps: crate::ematch::match_steps() - steps_base,
+        // Saturating: a sequence rule may reset the step counter (`reset_match_steps`), and
+        // a count of steps since a reset is then the honest reading, not an underflow.
+        match_steps: crate::ematch::match_steps().saturating_sub(steps_base),
+        sequence: crate::collection::PassReport::default(),
+    }
+}
+
+/// [`sat_result`] with the run's sequence-rule report.
+fn sat_result_seq(
+    sequence: crate::collection::PassReport,
+    iterations: usize,
+    saturated: bool,
+    goal_met: bool,
+    steps_base: u64,
+) -> SatResult {
+    SatResult {
+        sequence,
+        ..sat_result(iterations, saturated, goal_met, steps_base)
     }
 }
 
@@ -267,18 +515,20 @@ pub(crate) fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
         | RAtom::ASuffix { op, .. }
         | RAtom::ABoth { op, .. }
         | RAtom::ACExact { op, .. }
+        | RAtom::Comm { op, .. }
         | RAtom::ACSub { op, .. }
         | RAtom::ACIExact { op, .. }
         | RAtom::ACISub { op, .. }
         | RAtom::Lit { op, .. }
-        | RAtom::LitBind { op, .. } => Some(*op),
+        | RAtom::LitBind { op, .. }
+        | RAtom::Collect { op, .. } => Some(*op),
         RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => None,
     }
 }
 
 /// Indices (stable `atom_id`s) of the join atoms in a rule — the atoms the
 /// semi-naive variant loop ranges over. Excludes `Eq`/`EqGlobal`.
-fn join_atom_indices<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> Vec<usize> {
+pub(crate) fn join_atom_indices<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> Vec<usize> {
     rq.atoms
         .iter()
         .enumerate()
@@ -298,10 +548,12 @@ pub(crate) fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::Va
         | RAtom::ASuffix { node, .. }
         | RAtom::ABoth { node, .. }
         | RAtom::ACExact { node, .. }
+        | RAtom::Comm { node, .. }
         | RAtom::ACSub { node, .. }
         | RAtom::ACIExact { node, .. }
         | RAtom::ACISub { node, .. }
-        | RAtom::LitBind { node, .. } => Some(*node),
+        | RAtom::LitBind { node, .. }
+        | RAtom::Collect { node, .. } => Some(*node),
         RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => None,
     }
 }
@@ -319,7 +571,16 @@ pub(crate) fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::Va
 ///
 /// The root-binding pattern form `(= v pat)` is what produces such constraints; a rule
 /// that does not use it is unaffected, so this costs the existing corpus nothing.
-fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> bool {
+pub(crate) fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> bool {
+    // A flattened atom's views change when a class below its node gains a member of
+    // the node's operator, and that event is a tuple of the nested node's relation,
+    // not of the root's: no variant's delta holds the root. An ordinary `:flatten`
+    // rule therefore matches the whole graph every round. (Sequence rules under
+    // `:flatten` do not reach this: their delta climbs through nesting, design
+    // §7.6.)
+    if rq.flatten {
+        return true;
+    }
     // A global reference in a child or element position is a fixed-class
     // constraint with no scanning atom behind it: the match set grows when the
     // global's class absorbs another class, and if the surviving
@@ -380,12 +641,15 @@ fn pattern_refs_global<O, S, V>(a: &RAtom<O, S, V>) -> bool {
         RAtom::APrefix { fixed, .. }
         | RAtom::ASuffix { fixed, .. }
         | RAtom::ABoth { fixed, .. } => fixed.iter().any(g),
-        RAtom::ACExact { elems, .. } | RAtom::ACSub { elems, .. } => {
+        RAtom::ACExact { elems, .. } | RAtom::Comm { elems, .. } | RAtom::ACSub { elems, .. } => {
             elems.iter().any(|(v, _)| g(v))
         }
         RAtom::ACIExact { elems, .. } | RAtom::ACISub { elems, .. } => elems.iter().any(g),
+        // A sequence pattern's items may name globals, but its query is not run by
+        // the semi-naive variants that consult this (`crate::seq_engine`).
         RAtom::Lit { .. }
         | RAtom::LitBind { .. }
+        | RAtom::Collect { .. }
         | RAtom::Eq(..)
         | RAtom::EqGlobal(..)
         | RAtom::Pred { .. } => false,
@@ -408,7 +672,7 @@ fn pattern_refs_global<O, S, V>(a: &RAtom<O, S, V>) -> bool {
 /// `full∖delta` is exact and O(1) because `delta ⊆ full` per key. The scheduler
 /// then picks most-selective-first from these real per-flavor numbers; the
 /// `VariantIndex` applies the matching modes at execution by `atom_id`.
-fn variant_stats<O, S, V, Cfg>(
+pub(crate) fn variant_stats<O, S, V, Cfg>(
     rq: &ResolvedQuery<O, S, V>,
     delta_atom: usize,
     full: &IndexStore<Cfg>,
@@ -461,7 +725,7 @@ where
     // per-binding atom ordering, and a rule over flat paths keeps the static
     // plan and skips the per-binding overhead. The threshold separates nearly
     // flat paths from distributions dominated by hub buckets. The match set is
-    // the same either way (design chapter 20).
+    // the same either way (design §8.3).
     if crate::ematch::scheduling_mode() == crate::ematch::SchedulingMode::Auto {
         const SKEW_THRESHOLD: f64 = 8.0;
         crate::ematch::set_runtime_scheduling(rule_skew(rule, stats) > SKEW_THRESHOLD);
@@ -469,6 +733,7 @@ where
     let sampler = crate::index::IndexSampler::new(eg, *vindex);
     let plan = crate::schedule::schedule_with_stats_sampled(&rule.query, stats, &sampler);
     crate::ematch::run_query_scheduled_into(&rule.query, &plan, eg, vindex, globals, pool);
+    crate::apply::report_flatten_skips(pool, rule, eg);
     // Checked before the actions, for the same reason as in `apply_rule_pooled`:
     // the matcher dropped the assignment the guard was undefined on, so the
     // surviving matches are the answers to a query the engine could not fully
@@ -563,7 +828,32 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
+    saturate_rules_semi(rules, eg, model, spec, globals, scratch).map_err(SatError::into_eval)
+}
+
+/// [`saturate_semi_spec_in`] over a rule list that may hold sequence rules ([`Rule`]).
+/// The sequence rules run on the round's full index and, from round 1 on, its delta.
+pub fn saturate_rules_semi<Cfg, L, M, S, R, const T: bool, const P: bool>(
+    rules: &[R],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    scratch: &mut crate::index::IndexScratch<Cfg>,
+) -> Result<SatResult, SatError>
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    R: RuleEntry<Cfg, S, L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
     let limit = spec.limit;
+    let seqs = sequence_entries(rules, spec.ruleset);
+    let seq_globals = R::sequence_globals(globals);
+    let mut seq_report = crate::collection::PassReport::default();
     let steps_base = crate::ematch::match_steps();
     // Outside the round loop, and shared by every variant of every rule: a
     // round runs one query per (rule, join atom), all of similar match count.
@@ -572,9 +862,10 @@ where
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
             eg.rebuild();
+            width_check(eg)?;
         }
         if goal_met(spec, eg) {
-            return Ok(sat_result(i, false, true, steps_base));
+            return Ok(sat_result_seq(seq_report, i, false, true, steps_base));
         }
         let full = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
@@ -592,6 +883,21 @@ where
         if std::env::var_os("EGRAPH_TRACE_DELTA").is_some() {
             eprintln!("[semi round {i}] touched={:?}", eg.touched());
         }
+        // The sequence rules' view of the change: the touched ids, and the subsumed ones
+        // the delta index skips. Taken only when a sequence rule will read them.
+        let (touched_ids, subsumed): (Vec<Cfg::G>, Vec<Cfg::G>) = if !seqs.is_empty() && i > 0 {
+            let mut t = eg.touched().to_vec();
+            t.sort_unstable();
+            t.dedup();
+            let s = t
+                .iter()
+                .copied()
+                .filter(|&n| eg.node_flags(n) & crate::node_types::FLAG_SUBSUMED != 0)
+                .collect();
+            (t, s)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         eg.clear_touched();
 
         let match_timer = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
@@ -604,10 +910,25 @@ where
                     IndexStats::from_index(&full)
                 };
                 let vindex = VariantIndex::naive(&full);
-                for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
+                for rule in rules
+                    .iter()
+                    .filter_map(|r| r.ordinary())
+                    .filter(|r| r.ruleset == spec.ruleset)
+                {
                     changes +=
                         run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool)?;
                 }
+                changes += apply_sequence_batch(
+                    &seqs,
+                    eg,
+                    &full,
+                    &stats,
+                    model,
+                    seq_globals,
+                    &mut pool,
+                    None,
+                    &mut seq_report,
+                )?;
             }
             // Rounds ≥ 1: one variant per join atom.
             Some(delta) => {
@@ -615,7 +936,11 @@ where
                     let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
                     IndexStats::from_index(&full)
                 };
-                for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
+                for rule in rules
+                    .iter()
+                    .filter_map(|r| r.ordinary())
+                    .filter(|r| r.ruleset == spec.ruleset)
+                {
                     let jatoms = join_atom_indices(&rule.query);
                     if jatoms.is_empty() || needs_naive_match(&rule.query) {
                         // No scanning atoms (e.g. a bare-literal rule), or a
@@ -645,6 +970,22 @@ where
                             run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool)?;
                     }
                 }
+                let rd = RoundDelta {
+                    index: delta,
+                    touched: &touched_ids,
+                    subsumed: &subsumed,
+                };
+                changes += apply_sequence_batch(
+                    &seqs,
+                    eg,
+                    &full,
+                    &full_stats,
+                    model,
+                    seq_globals,
+                    &mut pool,
+                    Some(&rd),
+                    &mut seq_report,
+                )?;
             }
         }
         match_timer.stop();
@@ -659,15 +1000,16 @@ where
         crate::phase_timing::round_line(if had_delta { "semi" } else { "semi-r0" });
 
         if changes == 0 {
-            return Ok(sat_result(i + 1, true, false, steps_base));
+            return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
         }
     }
     if spec.until.is_some() {
         let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
         eg.rebuild();
+        width_check(eg)?;
     }
     let met = goal_met(spec, eg);
-    Ok(sat_result(limit, false, met, steps_base))
+    Ok(sat_result_seq(seq_report, limit, false, met, steps_base))
 }
 
 /// Like `saturate`, but prints each match and union when `labels` is provided.
@@ -694,6 +1036,7 @@ where
     for i in 0..limit {
         total_iter = i + 1;
         eg.rebuild();
+        width_check(eg)?;
         let index = IndexStore::build(eg);
         let stats = crate::schedule::IndexStats::from_index(&index);
         let vindex = crate::index::VariantIndex::naive(&index);
@@ -702,6 +1045,7 @@ where
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let shape = &plan.shape;
             crate::ematch::run_query_into(&plan, eg, &vindex, globals, &mut pool);
+            crate::apply::report_flatten_skips(&pool, rule, eg);
             if let Some(fault) = pool.guard_fault() {
                 return Err(crate::apply::name_fault(fault.clone(), rule, eg));
             }

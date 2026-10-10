@@ -1,0 +1,1 @@
+error: check failed: extract :cost: the integer of node 0 (Num) 3000000000 is outside clingo's 32-bit integers. Semper checks the numbers it writes for the solver; an overflow inside your ASP or MiniZinc criteria is not checked, and is yours to rule out

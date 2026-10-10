@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; A :comm application inside an AC pattern, written against the stored order.
+;; TYPES: machine
+(sort E)
+(function C () E)
+(function D () E)
+(function F (E) E)
+(function G () E)
+(function H (E) E)
+(function Eq (E E) E :comm)
+(function Plus (E) E :assoc-comm)
+(let gc (C))
+(let x (Plus (Eq (C) (F (D))) (D)))
+(rewrite (Plus (Eq (F p) q) r) (G))
+(run 2)
+(check (= x (G)))

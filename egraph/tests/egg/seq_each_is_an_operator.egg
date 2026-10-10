@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; `each` is no longer a keyword: an operator of that name is usable in rules.
+(sort E)
+(function A () E)
+(function each (E E) E)
+(function Mark (E) E)
+(let e (each A A))
+(rewrite (each x y) (Mark x))
+(run 1)
+(check (= e (Mark A)))

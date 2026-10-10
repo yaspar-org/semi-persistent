@@ -5,7 +5,7 @@
 //! These witness, at runtime, the properties the completion machinery is supposed to
 //! maintain, so a diverging run can be inspected via `printf` to see *which* invariant
 //! breaks. Diagnostic API, not a production hot path: each function rescans all
-//! nodes. See `doc/design/ac-completion-spec.md` §3 (the checkable properties).
+//! nodes. See `doc/design/06-ac-congruence-closure.md` §S3 (the checkable properties).
 //!
 //! The model: every active AC node (not `FLAG_SUBSUMED`, not `FLAG_AC_COLLAPSED`) whose
 //! own monomial `M` is strictly `≫_f`-greater than its class's selected summand candidate

@@ -1,0 +1,21 @@
+{
+ "nodes": {
+  "n0e3163c6ae86c6765650b5b783c0b759-E": {"op": "Plus", "children": ["n0f1448134acd95981b3931e16014521c-E", "nd5ec398aba3e06fa32d7228d5a59cd00-E"], "mults": [2, 1], "eclass": "E-823989c50677dc443bbb3b68e0b57913", "cost": 1, "subsumed": false},
+  "n0f1448134acd95981b3931e16014521c-E": {"op": "F", "children": ["n986a608e2ec286cfc5a691e55b30a36f-E"], "eclass": "E-4d6895f531715b14080654f7417251f5", "cost": 1, "subsumed": false},
+  "n986a608e2ec286cfc5a691e55b30a36f-E": {"op": "a", "children": [], "eclass": "E-4c4de7d182b2ab841f1155f98333ff02", "cost": 1, "subsumed": false},
+  "nd5ec398aba3e06fa32d7228d5a59cd00-E": {"op": "b", "children": [], "eclass": "E-4e661d73fc43b09769cade26489d3916", "cost": 1, "subsumed": false}
+ },
+ "class_data": {
+  "E-4c4de7d182b2ab841f1155f98333ff02": {"type": "E", "colour": "4c4de7d182b2ab841f1155f98333ff02"},
+  "E-4d6895f531715b14080654f7417251f5": {"type": "E", "colour": "4d6895f531715b14080654f7417251f5"},
+  "E-4e661d73fc43b09769cade26489d3916": {"type": "E", "colour": "4e661d73fc43b09769cade26489d3916"},
+  "E-823989c50677dc443bbb3b68e0b57913": {"type": "E", "colour": "823989c50677dc443bbb3b68e0b57913"}
+ },
+ "op_kinds": {
+  "F": "plain",
+  "Plus": "ac",
+  "a": "plain",
+  "b": "plain"
+ },
+ "root_eclasses": ["E-823989c50677dc443bbb3b68e0b57913"]
+}

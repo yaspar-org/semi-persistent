@@ -120,7 +120,7 @@ and never matches the flat node `+{a, b, Const 0}`. Our matcher does not bind a 
 variable to a virtual sub-sum. That would be term-valued classical AC matching against
 the ground subject, outside the shipped maximum-partition relation; general AC
 unification is broader still (see
-`egraph/doc/design/ac-congruence-completeness.md` §5b).
+`egraph/doc/design/06-ac-congruence-closure.md` §5b).
 
 So a literal "delete the A/C rules, keep everything else" native file would be **strictly
 weaker** than the rules encoding: the identity, annihilator, distribution, factoring,

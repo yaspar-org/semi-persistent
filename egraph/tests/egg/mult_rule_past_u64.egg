@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; The header is the default (32-bit) outcome; tests/config_matrix.rs checks both widths.
+;; A rule multiplicity expression computes in the configuration's width: k * k at
+;; k = 2^32 is 2^64, an overflow at 64 bits, and the literal 2^32 does not fit 32 bits.
+(sort E)
+(function a () E) (function b () E) (function W () E)
+(function F (E) E) (function G (E) E)
+(function Plus (E) E :assoc-comm)
+(let w (W))
+(rewrite (W) (Plus (F (a)):4294967296 (b)))
+(rewrite (Plus x:k<=4294967296 (b)) (G (Plus x:(u64::* k k) (b))))
+(run 3)
+(check (= w (Plus (F (a)):4294967296 (b))))
+(check (= w (G (Plus (F (a)):18446744073709551616 (b)))))

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The semi-persistent e-graph: add, merge, find, rebuild, mark, restore.
 
-use crate::canon::{MSetCanon, MSetClamp, VarCanon};
+use crate::canon::{MSetCanon, VarCanon};
 use crate::classes::EClasses;
 use crate::config::EGraphConfig;
 use crate::containers::DenseId;
@@ -10,7 +10,7 @@ use crate::containers::IndexLike;
 use crate::containers::ShrinkPolicy;
 use crate::containers::error::ContainerError;
 use crate::literal::{LitVal, LitValStore};
-use crate::multiplicity::MultiplicityLike;
+use crate::multiplicity::{MultOverflow, MultiplicityLike};
 use crate::node_store::{Added, NodeStore};
 use crate::registry::{AxiomRegistry, OpKind, OpRegistry, RuleRegistry, SortRegistry};
 use crate::typed_routing::NodeRef;
@@ -166,6 +166,9 @@ pub struct EGraph<
     /// Reusable scratch for MSet children, child type `C` = `(G, mult)` (the multiset
     /// representation needs the multiplicity that bare `G` in `g_buf` cannot carry).
     mset_buf: Vec<Cfg::C>,
+    /// `add`'s child list as `(class, multiplicity)` pairs, the form
+    /// `crate::nary_canon::normalize` reads.
+    pair_buf: Vec<(Cfg::G, Cfg::M)>,
     /// Semi-naive touched log: node ids created or recanonicalized since the
     /// last `clear_touched`. Round-local scratch (cleared on `restore`);
     /// drives the per-round delta index. Not part of persistent state.
@@ -176,6 +179,21 @@ pub struct EGraph<
     track_merge_members: bool,
     /// Survivor policy for class merges (see [`UnionBy`]).
     union_by: UnionBy,
+    /// Set by a completion round that met a multiplicity past the configured width;
+    /// `rebuild` then stops completion with [`CompletionOutcome::AbortedOverflow`].
+    cc_overflow: bool,
+    /// A multiplicity past the configured width met during `rebuild` (recanonization or
+    /// completion): the node it belongs to is not representable, so the caller reports
+    /// it ([`take_width_error`](EGraph::take_width_error)) and stops.
+    width_error: Option<MultOverflow>,
+    /// Right-hand-side actions skipped since the last `take_no_value` because their term
+    /// had no value (`apply::NO_VALUE`).
+    no_value: usize,
+    /// Set by [`EGraph::node_monomial_into`], a `&self` read, when coalescing a node's
+    /// children after merges passes the width (two counted children of one node in classes
+    /// a union joined). Folded into `width_error` by the next check: atomic so a shared
+    /// read can record it and the e-graph stays `Sync`.
+    monomial_overflow: std::sync::atomic::AtomicBool,
     /// Goal pair for goal-directed completion (the lazy-check transaction):
     /// the completion loop polls it between passes and inside a round's apply
     /// loops, and stops with [`CompletionOutcome::GoalMet`] as soon as the
@@ -208,6 +226,8 @@ pub struct EGraph<
     /// Reusable scratch for flattening nested same-op AC children (`WF_flat`,
     /// design §6c). Worklist of children still to expand; never grown per add.
     flatten_buf: Vec<Cfg::G>,
+    /// The same worklist for an AC (MSet) operator's counted children.
+    mset_flatten_buf: Vec<Cfg::C>,
     /// Per-op identity (unit) element node, for completion ops declared with `:identity e`
     /// (`x ∘ e = x`; the unit drops from monomials). Resolved to a real node at registration
     /// (sortcheck has the model to parse the term and builds the node), keyed by op id. Stored
@@ -221,6 +241,9 @@ pub struct EGraph<
     /// declared inverse. NOTE: gate-level group support — inverse-PAIR cancellation only,
     /// not Kapur §5.4's full Abelian-group completion (no Gaussian elimination).
     inverse_op: crate::containers::SpUniqueMap<Cfg::O, Cfg::O, <Cfg::O as DenseId>::Index, TRACK>,
+    /// Give a rewrite's AC result a flat alternative for each atomic same-op child
+    /// (`--flatten-rhs`); see [`EGraph::same_op_summands`].
+    pub flatten_rhs: bool,
     /// Outcome of the most recent `rebuild` when `cc` is enabled. Lets callers distinguish
     /// convergence from a growth-budget abort. `None` if completion hasn't run yet.
     completion_outcome: Option<CompletionOutcome>,
@@ -264,6 +287,11 @@ pub enum CompletionOutcome {
     /// Completion aborted because the node-growth budget was exceeded. The e-graph is
     /// sound-but-incomplete: some AC-entailed equalities may be missing.
     AbortedGrowthLimit { added_nodes: usize, limit: usize },
+    /// Completion stopped because a critical pair or a normal form needed a multiplicity
+    /// the configured width cannot hold. The e-graph is a valid plain-congruence-closed
+    /// state and incomplete; the overflow is also recorded for the caller to report
+    /// ([`EGraph::take_width_error`]).
+    AbortedOverflow,
     /// Completion stopped early because the goal pair (`set_cc_goal`) joined.
     /// The e-graph is a valid plain-congruence-closed state; completion is
     /// deliberately unfinished — the caller asked a question and it is
@@ -356,9 +384,14 @@ where
             collisions: Vec::new(),
             g_buf: Vec::new(),
             mset_buf: Vec::new(),
+            pair_buf: Vec::new(),
             touched: Vec::new(),
             track_merge_members: false,
             union_by: UnionBy::Rank,
+            cc_overflow: false,
+            width_error: None,
+            no_value: 0,
+            monomial_overflow: std::sync::atomic::AtomicBool::new(false),
             cc_goal: None,
             cc_start_nodes: 0,
             cc: false,
@@ -366,8 +399,10 @@ where
             cmp_buf_a: Vec::new(),
             cmp_buf_b: Vec::new(),
             flatten_buf: Vec::new(),
+            mset_flatten_buf: Vec::new(),
             unit_node: crate::containers::SpUniqueMap::new(),
             inverse_op: crate::containers::SpUniqueMap::new(),
+            flatten_rhs: false,
             completion_outcome: None,
             completion_node_budget: DEFAULT_COMPLETION_NODE_BUDGET,
             repair_state: None,
@@ -378,6 +413,26 @@ where
     /// rebuild. Callers can use this to distinguish convergence from a growth-budget abort.
     pub fn completion_outcome(&self) -> Option<CompletionOutcome> {
         self.completion_outcome
+    }
+
+    /// A multiplicity past the configured width met by the last `rebuild`, if any,
+    /// cleared by the call. A caller that rebuilds reports it and stops: the node that
+    /// needed it was left as it was, so the graph is no longer fully canonical.
+    pub fn take_width_error(&mut self) -> Option<MultOverflow> {
+        self.has_width_error();
+        self.width_error.take()
+    }
+
+    /// Whether a multiplicity past the width has been met, folding in one recorded by a
+    /// monomial read since the last check.
+    fn has_width_error(&mut self) -> bool {
+        if self
+            .monomial_overflow
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            self.width_error.get_or_insert(MultOverflow);
+        }
+        self.width_error.is_some()
     }
 
     /// Set the node-growth budget for one completion-enabled `rebuild` (default
@@ -598,6 +653,16 @@ where
             Err(_) => panic!("unit/inverse-op map exhausted its index word"),
         }
     }
+    /// Count one right-hand-side action skipped for having no value (`apply::NO_VALUE`).
+    pub(crate) fn count_no_value(&mut self) {
+        self.no_value = self.no_value.saturating_add(1);
+    }
+
+    /// The actions skipped for having no value since the last call, and reset the count.
+    pub fn take_no_value(&mut self) -> usize {
+        std::mem::take(&mut self.no_value)
+    }
+
     /// The identity (unit) element node of `op`, or `None` if `op` has no declared identity.
     pub fn unit_node(&self, op: Cfg::O) -> Option<Cfg::G> {
         self.unit_node.get_by_key(&op).copied()
@@ -609,6 +674,25 @@ where
             Err(_) => panic!("unit/inverse-op map exhausted its index word"),
         }
     }
+    /// The canonical summands for `op` of `class`, when its canonical summand form
+    /// is an `op` node: the children that node would contribute if spliced. `None`
+    /// otherwise. Unlike the splice at build time, this ignores whether the class is
+    /// atomic: it is how a caller builds the flat alternative an atomic child
+    /// forbids splicing in place.
+    pub fn same_op_summands(&self, op: Cfg::O, class: Cfg::G) -> Option<Vec<(Cfg::G, Cfg::M)>> {
+        let col = self.ops.completion_column(op)?;
+        let repr = self.classes.repr_id(self.classes.find_const(class))?;
+        let min_node = self.classes.min_monomial(repr, col)?;
+        if self.node_op(min_node) != op
+            || !matches!(self.node_ref(min_node), NodeRef::MSet(_) | NodeRef::Set(_))
+        {
+            return None;
+        }
+        let mut out = Vec::new();
+        self.for_each_child(min_node, |c, times| out.push((c, times)));
+        Some(out)
+    }
+
     /// The group inverse operator of `op` (`:inverse neg`), or `None` if none declared.
     pub fn inverse_op(&self, op: Cfg::O) -> Option<Cfg::O> {
         self.inverse_op.get_by_key(&op).copied()
@@ -627,42 +711,37 @@ where
     /// multiplicity width. Purely subtractive — `rem_order(2)` and pairwise
     /// cancellation by the smaller of two counts — so no step can overflow.
     pub(crate) fn group_cancel_pairs(&self, inv: Cfg::O, m: &mut Vec<(Cfg::G, Cfg::M)>) -> bool {
-        let zero = Cfg::M::ZERO;
-        let mut changed = false;
-        for i in 0..m.len() {
-            let (x, xc) = (m[i].0, m[i].1);
-            if xc == zero {
-                continue;
-            }
-            let Some(inv_node) = self.nodes.plain1.probe(&inv, &[x]) else {
-                continue;
-            };
-            let y = self.classes.find_const(inv_node);
-            if y == x {
-                // x is its own inverse: copies cancel pairwise (x ∘ x = e here).
-                if xc
-                    >= Cfg::M::ONE
-                        .checked_add(Cfg::M::ONE)
-                        .expect("2 fits every width")
-                {
-                    m[i].1 = xc.rem_order(2);
-                    changed = true;
-                }
-            } else if let Ok(j) = m.binary_search_by(|p| p.0.cmp(&y)) {
-                // The probe is one-directional (inv(y)'s node may not exist), so cancel
-                // eagerly on first sight; the mirrored visit then finds a zeroed side.
-                let k = m[i].1.min(m[j].1);
-                if k > zero {
-                    m[i].1 = m[i].1.saturating_sub(k);
-                    m[j].1 = m[j].1.saturating_sub(k);
-                    changed = true;
-                }
-            }
+        crate::nary_canon::cancel_inverse_pairs(m, |x| self.inverse_class(inv, x))
+    }
+
+    /// The class of the existing node `inv(x)`, if the hash-cons holds one.
+    pub(crate) fn inverse_class(&self, inv: Cfg::O, x: Cfg::G) -> Option<Cfg::G> {
+        self.nodes
+            .plain1
+            .probe(&inv, &[x])
+            .map(|n| self.classes.find_const(n))
+    }
+
+    /// The laws `crate::nary_canon::normalize` applies for `op`, with the unit resolved
+    /// through the live union-find. A non-n-ary operator reads as `:assoc` with no unit,
+    /// which normalizes nothing but the degenerate arity.
+    pub fn nary_laws(&self, op: Cfg::O) -> crate::nary_canon::NaryLaws<Cfg::G, Cfg::O> {
+        use crate::nary_canon::NaryKind;
+        let kind = match self.ops.info(op).kind {
+            OpKind::MSet { clamp, .. } => NaryKind::Ac {
+                nilpotent: match clamp {
+                    crate::registry::Clamp::Nilpotent { order } => Some(order),
+                    _ => None,
+                },
+            },
+            OpKind::Set { .. } => NaryKind::Aci,
+            _ => NaryKind::Assoc,
+        };
+        crate::nary_canon::NaryLaws {
+            kind,
+            unit: self.unit_node(op).map(|u| self.classes.find_const(u)),
+            inverse: self.inverse_op(op),
         }
-        if changed {
-            m.retain(|p| p.1 != zero);
-        }
-        changed
     }
     pub fn register_lit(&mut self, name: &str, ret: Cfg::S) -> Cfg::O {
         self.ops.register_lit(name, ret)
@@ -754,6 +833,38 @@ where
         crate::saturate::saturate_spec_in(rules, self, model, spec, globals, scratch)
     }
 
+    /// Saturate under `strategy` over a rule list that may hold sequence rules
+    /// ([`crate::saturate::Rule`]): each round applies the ordinary rules of the ruleset,
+    /// then its sequence rules as one batch on the same snapshot.
+    pub fn saturate_rules_in<
+        M: crate::lit_model::LitModel<Value = L>,
+        S: crate::DenseId + Copy,
+        R: crate::saturate::RuleEntry<Cfg, S, L>,
+    >(
+        &mut self,
+        strategy: crate::saturate::SaturationStrategy,
+        rules: &[R],
+        model: &M,
+        spec: &crate::saturate::RunSpec<Cfg::G>,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+        scratch: &mut crate::index::IndexScratch<Cfg>,
+    ) -> Result<crate::saturate::SatResult, crate::saturate::SatError> {
+        match strategy {
+            crate::saturate::SaturationStrategy::Naive => {
+                crate::saturate::saturate_rules_naive(rules, self, model, spec, globals, scratch)
+            }
+            crate::saturate::SaturationStrategy::SemiNaive => {
+                // As in `saturate_semi_spec_in`: semi-naive reads the merge-membership delta.
+                self.track_merge_members = true;
+                let r = crate::saturate::saturate_rules_semi(
+                    rules, self, model, spec, globals, scratch,
+                );
+                self.track_merge_members = false;
+                r
+            }
+        }
+    }
+
     /// Semi-naive counterpart of [`saturate_spec_in`](Self::saturate_spec_in).
     pub fn saturate_semi_spec_in<
         M: crate::lit_model::LitModel<Value = L>,
@@ -773,6 +884,14 @@ where
         let r = crate::saturate::saturate_semi_spec_in(rules, self, model, spec, globals, scratch);
         self.track_merge_members = false;
         r
+    }
+
+    /// Test support: record merges' absorbed members in the touched log, as semi-naive
+    /// saturation does while it runs, so that a test can build one round's delta by
+    /// hand (`tests/seq_semi_coverage.rs`).
+    #[doc(hidden)]
+    pub fn set_track_merge_members(&mut self, on: bool) {
+        self.track_merge_members = on;
     }
 
     /// The number of distinct e-classes over the current node set. A scan, not a maintained
@@ -878,20 +997,27 @@ where
                 OpKind::Lit => {}
             }
         }
+        // An AC operator stores counted children; listed children count once each, so
+        // only a list longer than the width's maximum can overflow, which is a caller's
+        // contract here, unlike a rule's computed multiplicity.
+        if matches!(self.ops.info(op).kind, OpKind::MSet { .. }) {
+            self.mset_buf.clear();
+            for &c in children {
+                let g = self.classes.find(c);
+                self.mset_buf.push(Cfg::mset_child_single(g));
+            }
+            return self.add_mset_buffered(op).unwrap_or_else(|e| {
+                panic!("{e}: `add` lists children one by one, so this needs more children than the width counts (an API contract)")
+            });
+        }
         self.g_buf.clear();
         self.g_buf
             .extend(children.iter().map(|&c| self.classes.find(c)));
 
-        // Flatten nested same-op AC children (associativity, `WF_flat`, design §6c): splice
-        // any child whose class is a pure same-op sum, keyed on the class's canonical
-        // summand form (atomic-aware), so `+(+(a,b), c)` becomes `+(a,b,c)`. An atomic child
-        // (e.g. `c` used as `neg`'s child in §5b) is kept as a summand. BOTH completion
-        // representations flatten; otherwise `(Or (Or x y) z)` and `(Or x y z)`
+        // Flatten nested same-op ACI children (associativity, `WF_flat`, design §6c), as
+        // `flatten_mset_children` does for AC: otherwise `(Or (Or x y) z)` and `(Or x y z)`
         // differ for Set (ACI) ops with completion off. See set_flatten_build.egg.
-        if matches!(
-            self.ops.info(op).kind,
-            OpKind::MSet { .. } | OpKind::Set { .. }
-        ) {
+        if matches!(self.ops.info(op).kind, OpKind::Set { .. }) {
             self.flatten_ac_children(op);
         }
 
@@ -902,14 +1028,8 @@ where
             self.flatten_seq_children(op);
         }
 
-        // Canonization must *establish* the op's algebraic normal form at build time (not defer
-        // it to completion): coalesce/dedup, drop the identity's unit class, apply the count clamp
-        // (nilpotent mod-n), and resolve a degenerate arity. Degeneracy is an equality, so the
-        // last step returns an *existing* class id instead of a fresh node:
-        //   - empty multiset  ⇒ the term IS the unit  (`xor(a,a) → {} = e`)
-        //   - single mult-1    ⇒ the term IS that child (`+(a, e) → {a} = a`, `and(a,a) → {a} = a`)
-        // These hold with completion off; completion only adds the cross-rule (superposition)
-        // consequences. `find_unit`/degeneracy read `unit_node`, resolved at registration.
+        // Canonization must *establish* the op's algebraic normal form at build time, not
+        // defer it to completion: the n-ary arms below call `crate::nary_canon::normalize`.
         // The constructor bit is stamped at creation, not written back after:
         // `set_node_flag` would have to resolve the routing table and dispatch
         // on the node kind again, for a node the store has just built.
@@ -919,129 +1039,61 @@ where
             0
         };
         let result = match self.ops.info(op).kind {
-            OpKind::MSet { .. } => {
-                // Only the two completion arms read the identity, and looking it
-                // up is a hash probe of the semi-persistent unit map — a cost the
-                // plain-op path used to pay on every `add`.
-                let unit = self.unit_node(op);
-                self.g_buf.sort_by_key(|id| id.to_usize());
-                self.mset_buf.clear();
-                for &id in &self.g_buf {
-                    if let Some(last) = self.mset_buf.last_mut()
-                        && Cfg::mset_child_merge(last, id)
-                    {
-                        continue;
-                    }
-                    self.mset_buf.push(Cfg::mset_child_single(id));
-                }
-                // Identity: drop the unit's class (`+(a, e) → {a}`).
-                if let Some(u) = unit {
-                    let uc = self.classes.find_const(u);
-                    self.mset_buf.retain(|c| Cfg::mset_child_id(c) != uc);
-                }
-                // Nilpotent clamp: reduce each multiplicity mod n, drop zeros (`xor(a,a) → {}`).
-                // Routed through the SINGLE source of the mod-n law, `MSetCanon::clamp_multiset`
-                // (also used by the recanonize path), so the two paths cannot drift. `Cfg::C` is
-                // concretely `(G, Multiplicity)` but opaque to generic code, so we convert the
-                // buffer through the config accessors around the shared call. Nilpotent-only, so
-                // the conversion never touches the common plain-AC / idempotent build.
-                if let crate::registry::Clamp::Nilpotent { order } = self.op_clamp_kind(op) {
-                    // prod-parity: `clamp_multiset` operates on `Pair<G, Mult>`
-                    // (was `(G, Mult)`; Verus can't impl `Tagged` for a tuple).
-                    // The pair carries `Cfg::M` directly — no narrowing round trip
-                    // through a fixed width, which is what used to truncate here.
-                    let mut tuples: Vec<crate::containers::Pair<Cfg::G, Cfg::M>> = self
-                        .mset_buf
-                        .iter()
-                        .map(|c| crate::containers::Pair {
-                            a: Cfg::mset_child_id(c),
-                            b: Cfg::mset_child_mult(c),
-                        })
-                        .collect();
-                    MSetCanon::clamp_multiset(&mut tuples, MSetClamp::Nilpotent { order });
-                    self.mset_buf.clear();
-                    self.mset_buf
-                        .extend(tuples.iter().map(|p| Cfg::mset_child_with_mult(p.a, p.b)));
-                }
-                // Group inverse-pair cancellation (`x ∘ inv(x) = e`): summand pairs related
-                // by the op's declared `:inverse` cancel at build, like the unit drop. Rare
-                // (inverse ops only), so the tuple conversion is off the common path.
-                if let Some(inv) = self.inverse_op(op) {
-                    let mut tuples: Vec<(Cfg::G, Cfg::M)> = self
-                        .mset_buf
-                        .iter()
-                        .map(|c| (Cfg::mset_child_id(c), Cfg::mset_child_mult(c)))
-                        .collect();
-                    if self.group_cancel_pairs(inv, &mut tuples) {
-                        self.mset_buf.clear();
-                        self.mset_buf.extend(
-                            tuples
-                                .iter()
-                                .map(|(g, m)| Cfg::mset_child_with_mult(*g, *m)),
-                        );
-                    }
-                }
-                // Degenerate arity ⇒ an existing class, not a fresh node. An empty monomial is the
-                // unit; a single mult-1 summand is that summand's class. Empty *without* a declared
-                // unit is an API-contract violation (the surface layer rejects it at sortcheck):
-                // the empty monomial names nothing in a semigroup, so minting a node for it would
-                // put a meaningless term in the graph — panic in ALL builds, like the other
-                // registration invariants.
-                match self.mset_buf.len() {
-                    0 => match unit {
-                        Some(u) => return u,
-                        None => panic!(
-                            "zero-child MSet term without a declared identity — \
-                             the empty monomial has no algebraic meaning for a semigroup op"
-                        ),
-                    },
-                    1 if Cfg::mset_child_mult(&self.mset_buf[0]) == Cfg::M::ONE => {
-                        return self.classes.find(Cfg::mset_child_id(&self.mset_buf[0]));
-                    }
-                    _ => self.nodes.add_mset(op, &self.mset_buf, node_flags),
-                }
-            }
-            OpKind::Set { .. } => {
-                let unit = self.unit_node(op);
-                self.g_buf.sort_by_key(|id| id.to_usize());
-                self.g_buf.dedup();
-                // Identity: drop the unit's class (`and(a, unit) → {a}`).
-                if let Some(u) = unit {
-                    let uc = self.classes.find_const(u);
-                    self.g_buf.retain(|&g| g != uc);
-                }
-                // Degenerate arity ⇒ an existing class (idempotent has no nilpotent clamp, so a
-                // Set monomial only reaches {} via identity-drop, and size-1 via dedup/drop).
-                // Empty without a declared unit is an API-contract violation — panic (see the
-                // MSet counterpart above).
-                match self.g_buf.len() {
-                    0 => match unit {
-                        Some(u) => return u,
-                        None => panic!(
-                            "zero-child Set term without a declared identity — \
-                             the empty monomial has no algebraic meaning for a semigroup op"
-                        ),
-                    },
-                    1 => return self.classes.find(self.g_buf[0]),
-                    _ => self.nodes.add_set(op, &self.g_buf, node_flags),
-                }
-            }
-            OpKind::A { .. } => {
-                // Degenerate arity ⇒ an existing class, the A-only counterpart of the MSet/Set
-                // degeneracy above: a one-element sequence IS its element (`seq(x) = x`),
-                // so return that child's class instead of minting a node for it. There is
-                // no empty case to resolve — an A-only op cannot declare `:identity` (the
-                // property resolver rejects `:identity` without `:comm`, `sortcheck.rs`),
-                // so the empty sequence names nothing in the algebra. Sortcheck already
-                // rejects a zero-argument A application; reaching here is an API-contract
-                // violation, and panics in ALL builds like the MSet/Set counterparts.
-                match self.g_buf.len() {
-                    0 => panic!(
-                        "zero-child A term — an A-only operator has no identity, so the \
-                         empty sequence has no algebraic meaning for a semigroup op"
+            OpKind::Set { .. } | OpKind::A { .. } => {
+                // The one normalization of an n-ary child list (`crate::nary_canon`):
+                // coalesce or dedup, drop the identity's class, clamp, cancel inverse
+                // pairs, and resolve a degenerate arity. Degeneracy is an equality, so it
+                // returns an *existing* class instead of a fresh node:
+                //   - empty multiset  ⇒ the term IS the unit  (`xor(a,a) → {} = e`)
+                //   - single mult-1    ⇒ the term IS that child (`+(a, e) → {a} = a`)
+                // These hold with completion off; completion only adds the cross-rule
+                // (superposition) consequences.
+                let laws = self.nary_laws(op);
+                self.pair_buf.clear();
+                self.pair_buf
+                    .extend(self.g_buf.iter().map(|&g| (g, Cfg::M::ONE)));
+                let normal = {
+                    let (nodes, classes) = (&self.nodes, &self.classes);
+                    crate::nary_canon::normalize(&laws, &mut self.pair_buf, |inv, x| {
+                        nodes
+                            .plain1
+                            .probe(&inv, &[x])
+                            .map(|n| classes.find_const(n))
+                    })
+                };
+                match normal {
+                    crate::nary_canon::Normal::Node => {}
+                    // Empty without a declared unit, or with a zero-child A term, is an
+                    // API-contract violation (the surface layer rejects it at sortcheck):
+                    // the empty monomial names nothing in a semigroup, so minting a node
+                    // for it would put a meaningless term in the graph. Panic in ALL
+                    // builds, like the other registration invariants.
+                    crate::nary_canon::Normal::Empty => panic!(
+                        "zero-child n-ary term without a declared identity — \
+                         the empty monomial has no algebraic meaning for a semigroup op"
                     ),
-                    1 => return self.classes.find(self.g_buf[0]),
-                    _ => self.nodes.add(op, &self.g_buf, &self.ops, node_flags),
+                    crate::nary_canon::Normal::Overflow => panic!(
+                        "multiplicity overflow on a set or associative operator, whose children \
+                         carry no count: an internal invariant"
+                    ),
+                    crate::nary_canon::Normal::Unit => {
+                        return self
+                            .unit_node(op)
+                            .expect("Unit is returned only with a unit");
+                    }
+                    crate::nary_canon::Normal::Single(g) => return self.classes.find(g),
+                }
+                match self.ops.info(op).kind {
+                    OpKind::Set { .. } => {
+                        self.g_buf.clear();
+                        self.g_buf.extend(self.pair_buf.iter().map(|&(g, _)| g));
+                        self.nodes.add_set(op, &self.g_buf, node_flags)
+                    }
+                    _ => {
+                        self.g_buf.clear();
+                        self.g_buf.extend(self.pair_buf.iter().map(|&(g, _)| g));
+                        self.nodes.add(op, &self.g_buf, &self.ops, node_flags)
+                    }
                 }
             }
             _ => self.nodes.add(op, &self.g_buf, &self.ops, node_flags),
@@ -1049,25 +1101,124 @@ where
 
         let id = self.register_if_fresh(result, op);
         if result.is_fresh() {
-            match self.ops.info(op).kind {
-                OpKind::MSet { .. } => {
-                    for c in &self.mset_buf {
-                        let child = Cfg::mset_child_id(c);
-                        if let Some(repr) = self.classes.repr_id(child) {
-                            self.classes.add_use(repr, id);
-                        }
-                    }
-                }
-                _ => {
-                    for &child in &self.g_buf {
-                        if let Some(repr) = self.classes.repr_id(child) {
-                            self.classes.add_use(repr, id);
-                        }
-                    }
+            for &child in &self.g_buf {
+                if let Some(repr) = self.classes.repr_id(child) {
+                    self.classes.add_use(repr, id);
                 }
             }
         }
         id
+    }
+
+    /// Build an AC (MSet) node from its counted children, in the store's own child type,
+    /// so a child of multiplicity `k` is one entry: `(Plus x:4294967295 y)` costs two
+    /// entries, not 2^32. A multiplicity of zero omits the child. Canonicalization is
+    /// [`add`](Self::add)'s: `find` each class, flatten nested same-op children,
+    /// normalize, and resolve a degenerate arity to an existing class.
+    ///
+    /// `Err(MultOverflow)` when the canonical form needs a multiplicity the configured
+    /// width cannot hold: two entries of one class whose counts sum past it, or a nested
+    /// same-op child whose count times its parent's does.
+    pub fn add_mset(&mut self, op: Cfg::O, children: &[Cfg::C]) -> Result<Cfg::G, MultOverflow> {
+        #[cfg(debug_assertions)]
+        {
+            let info = self.ops.info(op);
+            let OpKind::MSet { arg_sort, .. } = &info.kind else {
+                panic!("add_mset: operator '{}' is not AC", info.name);
+            };
+            for c in children {
+                let got = self.node_sort(Cfg::mset_child_id(c));
+                debug_assert_eq!(
+                    got,
+                    *arg_sort,
+                    "operator '{}' expected sort '{}', got '{}'",
+                    info.name,
+                    self.sorts.name(*arg_sort),
+                    self.sorts.name(got)
+                );
+            }
+        }
+        self.mset_buf.clear();
+        for c in children {
+            let k = Cfg::mset_child_mult(c);
+            if k > Cfg::M::ZERO {
+                let g = self.classes.find(Cfg::mset_child_id(c));
+                self.mset_buf.push(Cfg::mset_child_with_mult(g, k));
+            }
+        }
+        self.add_mset_buffered(op)
+    }
+
+    /// The AC build path behind [`add`](Self::add) and [`add_mset`](Self::add_mset),
+    /// over the `find`'d counted children in `mset_buf`.
+    fn add_mset_buffered(&mut self, op: Cfg::O) -> Result<Cfg::G, MultOverflow> {
+        self.flatten_mset_children(op)?;
+        let node_flags = if self.ops.info(op).is_constructor {
+            crate::node_types::FLAG_CONSTRUCTOR
+        } else {
+            0
+        };
+        // The one normalization (`crate::nary_canon`), on the stored child type directly.
+        let laws = self.nary_laws(op);
+        let normal = {
+            let (nodes, classes) = (&self.nodes, &self.classes);
+            crate::nary_canon::normalize_by(
+                &laws,
+                &mut self.mset_buf,
+                |c| Cfg::mset_child_id(c),
+                |c| Cfg::mset_child_mult(c),
+                |c, m| *c = Cfg::mset_child_with_mult(Cfg::mset_child_id(c), m),
+                |inv, x| {
+                    nodes
+                        .plain1
+                        .probe(&inv, &[x])
+                        .map(|n| classes.find_const(n))
+                },
+            )
+        };
+        match normal {
+            crate::nary_canon::Normal::Node => {}
+            // See `add`: an empty AC term without a declared unit is an API-contract
+            // violation the surface layer rejects at sortcheck.
+            crate::nary_canon::Normal::Empty => panic!(
+                "zero-child n-ary term without a declared identity — \
+                 the empty monomial has no algebraic meaning for a semigroup op"
+            ),
+            crate::nary_canon::Normal::Overflow => return Err(MultOverflow),
+            crate::nary_canon::Normal::Unit => {
+                return Ok(self
+                    .unit_node(op)
+                    .expect("Unit is returned only with a unit"));
+            }
+            crate::nary_canon::Normal::Single(g) => return Ok(self.classes.find(g)),
+        }
+        let result = self.nodes.add_mset(op, &self.mset_buf, node_flags);
+        let id = self.register_if_fresh(result, op);
+        if result.is_fresh() {
+            for c in &self.mset_buf {
+                if let Some(repr) = self.classes.repr_id(Cfg::mset_child_id(c)) {
+                    self.classes.add_use(repr, id);
+                }
+            }
+        }
+        Ok(id)
+    }
+
+    /// Build a completion monomial `ms` of `op` (AC or ACI) as a node: counted for AC,
+    /// one entry per class for ACI. `scratch` is reused across calls.
+    fn add_monomial(
+        &mut self,
+        op: Cfg::O,
+        ms: &[(Cfg::G, Cfg::M)],
+        scratch: &mut Vec<Cfg::C>,
+    ) -> Result<Cfg::G, MultOverflow> {
+        if matches!(self.ops.info(op).kind, OpKind::MSet { .. }) {
+            scratch.clear();
+            scratch.extend(ms.iter().map(|&(g, m)| Cfg::mset_child_with_mult(g, m)));
+            return self.add_mset(op, scratch);
+        }
+        let ids: Vec<Cfg::G> = ms.iter().map(|&(g, _)| g).collect();
+        Ok(self.add(op, &ids))
     }
 
     pub fn add_lit(&mut self, op: Cfg::O, lit: Cfg::V) -> Cfg::G {
@@ -1080,28 +1231,95 @@ where
     /// has no access to globals, so a `CTerm::Global` is unreachable here (a unit is always
     /// ground) and panics. Used by the property-tag resolver to materialize an op's `:identity`
     /// unit at registration.
+    ///
+    /// `Err` when a written multiplicity does not fit the configured width
+    /// ([`add_with_counts`](Self::add_with_counts)).
     pub fn build_ground_cterm(
         &mut self,
         ct: &crate::sortcheck::CTerm<Cfg::O, Cfg::S, L>,
-    ) -> Cfg::G {
+    ) -> Result<Cfg::G, String> {
+        use crate::sortcheck::CTerm;
         match ct {
-            crate::sortcheck::CTerm::Lit(val, sort) => {
+            CTerm::Lit(val, sort) => {
                 let lit_op = self
                     .ops
                     .lit_op_for_sort(*sort)
                     .expect("no lit op for identity's sort");
                 let vid = self.lits.intern(val.clone());
-                self.add_lit(lit_op, vid)
+                Ok(self.add_lit(lit_op, vid))
             }
-            crate::sortcheck::CTerm::App { op, children, .. } => {
-                let child_ids: Vec<Cfg::G> = children
-                    .iter()
-                    .map(|c| self.build_ground_cterm(c))
-                    .collect();
-                self.add(*op, &child_ids)
+            CTerm::App { op, children, .. } => {
+                let mut kids = Vec::with_capacity(children.len());
+                for c in children {
+                    kids.push(match c {
+                        CTerm::Counted(t, k) => (self.build_ground_cterm(t)?, Some(k)),
+                        _ => (self.build_ground_cterm(c)?, None),
+                    });
+                }
+                self.add_with_counts(*op, &kids)
             }
-            crate::sortcheck::CTerm::Global(..) => {
+            CTerm::Counted(t, _) => self.build_ground_cterm(t),
+            CTerm::Global(..) => {
                 panic!("identity unit must be a ground term, not a global reference")
+            }
+        }
+    }
+
+    /// Build `op` applied to children with counts, as a ground term writes them
+    /// (`(Plus x:3 y)`, a count of `None` being 1): one counted child under an AC
+    /// operator, the class once under ACI, and `k` positions under any other operator
+    /// (the sort checker admits a count only under a variadic one).
+    ///
+    /// `Err` when a count does not fit the configured multiplicity width, when the AC
+    /// node's canonical form needs one that does not ([`add_mset`](Self::add_mset)), or
+    /// when the positions exceed [`crate::seq_rhs::MAX_WIDTH`].
+    pub fn add_with_counts(
+        &mut self,
+        op: Cfg::O,
+        kids: &[(Cfg::G, Option<&num_bigint::BigUint>)],
+    ) -> Result<Cfg::G, String> {
+        match self.ops.info(op).kind {
+            OpKind::MSet { .. } => {
+                let mut cs = Vec::with_capacity(kids.len());
+                for &(g, k) in kids {
+                    let m = match k {
+                        None => Cfg::M::ONE,
+                        Some(k) => Cfg::M::try_from_biguint(k).ok_or_else(|| {
+                            crate::multiplicity::overflow_message::<Cfg::M>(&format!(
+                                "the ground count {k} does not fit the configured multiplicity width"
+                            ))
+                        })?,
+                    };
+                    cs.push(Cfg::mset_child_with_mult(g, m));
+                }
+                self.add_mset(op, &cs).map_err(|_| {
+                    crate::multiplicity::overflow_message::<Cfg::M>(
+                        "the term's counts, summed or multiplied through nested AC children, do not fit the configured multiplicity width",
+                    )
+                })
+            }
+            OpKind::Set { .. } => {
+                let ids: Vec<Cfg::G> = kids.iter().map(|&(g, _)| g).collect();
+                Ok(self.add(op, &ids))
+            }
+            _ => {
+                let mut ids = Vec::with_capacity(kids.len());
+                for &(g, k) in kids {
+                    let k = match k {
+                        None => Some(1),
+                        Some(k) => usize::try_from(k).ok(),
+                    }
+                    .filter(|&k| {
+                        ids.len()
+                            .checked_add(k)
+                            .is_some_and(|n| n <= crate::seq_rhs::MAX_WIDTH)
+                    });
+                    let Some(k) = k else {
+                        return Err(crate::seq_rhs::TOO_WIDE.to_string());
+                    };
+                    ids.extend(std::iter::repeat_n(g, k));
+                }
+                Ok(self.add(op, &ids))
             }
         }
     }
@@ -1110,74 +1328,57 @@ where
     /// multiset if it is an AC node, else the singleton `{node}` (a non-AC node is a
     /// size-1 monomial, §9b). Children are `find`-canonicalized and coalesced.
     pub(crate) fn node_monomial_into(&self, node: Cfg::G, buf: &mut Vec<(Cfg::G, Cfg::M)>) {
+        use crate::nary_canon::{NaryKind, NaryLaws, Normal, normalize};
         buf.clear();
-        match self.node_ref(node) {
-            NodeRef::MSet(_) => {
-                // Children find-canonicalized, then sorted + coalesced in place in the
-                // destination (same form as MSetCanon), with no intermediate Vec.
-                self.for_each_child(node, |g, mult| {
-                    buf.push((self.classes.find_const(g), mult));
-                });
-                buf.sort_by_key(|p| p.0);
-                let mut w = 0usize;
-                for r in 1..buf.len() {
-                    if buf[r].0 == buf[w].0 {
-                        // Coalescing after find-canonicalization is the one step here
-                        // that grows a multiplicity, so it is the one that can exceed
-                        // the configured width. Detected, not wrapped: a wrapped sum
-                        // would shrink the monomial — to zero at exactly the wrong
-                        // values — and the caller's clamps would then drop the summand,
-                        // making the e-graph assert an equality that does not hold.
-                        buf[w].1 = buf[w].1.checked_add(buf[r].1).expect(
-                            "monomial coalescing overflowed EGraphConfig::M; \
-                             the configured multiplicity width is too narrow for this e-graph",
-                        );
-                    } else {
-                        w += 1;
-                        buf[w] = buf[r];
-                    }
-                }
-                if !buf.is_empty() {
-                    buf.truncate(w + 1);
-                }
-            }
-            NodeRef::Set(_) => {
-                // Set semantics: find-canonicalize, sort, DEDUP — multiplicity stays 1
-                // (two summands whose classes merged count once, the idempotent join).
-                // This is the ACI monomial, same form as SetCanon.
-                self.for_each_child(node, |g, _| {
-                    buf.push((self.classes.find_const(g), Cfg::M::ONE));
-                });
-                buf.sort_by_key(|p| p.0);
-                buf.dedup_by_key(|p| p.0);
-            }
+        let kind = match self.node_ref(node) {
+            NodeRef::MSet(_) => NaryKind::Ac { nilpotent: None },
+            NodeRef::Set(_) => NaryKind::Aci,
             _ => {
                 buf.push((self.classes.find_const(node), Cfg::M::ONE));
+                return;
             }
+        };
+        self.for_each_child(node, |g, mult| {
+            buf.push((self.classes.find_const(g), mult));
+        });
+        // Coalesce (AC) or dedup (ACI) through the one normalization, with no other law:
+        // see below for why the clamp and the unit drop are not reapplied here.
+        let laws: NaryLaws<Cfg::G, Cfg::O> = NaryLaws {
+            kind,
+            unit: None,
+            inverse: None,
+        };
+        if normalize(&laws, buf, |_, _| None) == Normal::Overflow {
+            // Coalescing after find-canonicalization grows a multiplicity, so it can
+            // exceed the configured width: a union in one round can join two counted
+            // children of one node before `rebuild` sees it
+            // (`audit_merge_monomial_overflow.egg`). Detected, not wrapped: a wrapped sum
+            // would shrink the monomial, and the caller's clamps would then drop the
+            // summand, making the e-graph assert an equality that does not hold. The
+            // overflow is recorded and reported as the run's multiplicity overflow; the
+            // monomial read this once is the node's children as stored, find-canonical.
+            self.monomial_overflow
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            buf.clear();
+            self.for_each_child(node, |g, mult| {
+                buf.push((self.classes.find_const(g), mult));
+            });
+            buf.sort_unstable();
         }
         // No clamp / unit-drop here: canonization (`add`, `recanonize_node`) already established
         // the op's algebraic normal form (nilpotent mod-n, identity unit-drop) in the stored node,
         // and `cc_round` only runs after `rebuild_congruence` recanonicalizes every node. So a
         // stored MSet/Set node's children are already the canonical monomial; reading them
         // back is enough. Unit dropping on the recanonize path is enforced by
-        // `CanonMode.unit` plus the became-a-unit sweep in `rebuild_congruence`;
-        // completion does not reapply canonization.
+        // `CanonMode.unit` (through `crate::nary_canon::normalize_by`) plus the
+        // became-a-unit sweep in `rebuild_congruence`; completion does not reapply
+        // canonization.
     }
 
     /// The completion column of `node`'s op (its position in the registry `completion_ops`
     /// array), or `None` if `node`'s op is not a completion (MSet/Set) op.
     fn completion_column(&self, node: Cfg::G) -> Option<usize> {
         self.ops.completion_column(self.node_op(node))
-    }
-
-    /// The op's registry count `Clamp` (`None` / `Idempotent` / `Nilpotent`). The build/canonize
-    /// path reads this directly (the algebraic normal form), where `op_clamp`'s `CompletionClamp`
-    /// projection is completion-shaped. `None` for a non-AC op.
-    fn op_clamp_kind(&self, op: Cfg::O) -> crate::registry::Clamp {
-        match self.ops.info(op).kind {
-            OpKind::MSet { clamp, .. } | OpKind::Set { clamp, .. } => clamp,
-            _ => crate::registry::Clamp::None,
-        }
     }
 
     /// Whether the op is declared cancelative (`:cancellative`, or implied by `:inverse` —
@@ -1542,7 +1743,7 @@ where
             }
             children.clear();
             self.for_each_child(node, |child, mult| {
-                children.push((child, mult.to_u64()));
+                children.push((child, mult));
             });
             write!(out, " children [")?;
             for (i, (child, mult)) in children.iter().enumerate() {
@@ -1801,7 +2002,7 @@ where
     ///
     /// Plain congruence closure always runs. AC/ACI completion is opt-in through
     /// [`set_cc`](Self::set_cc); it is disabled by default. When enabled, two
-    /// closures are interleaved (see `doc/design/ac-congruence-completeness.md`
+    /// closures are interleaved (see `doc/design/06-ac-congruence-closure.md`
     /// section 8, rebuild = Kapur's Algorithm 3):
     /// - `rebuild_congruence`: ordinary worklist-driven
     ///   congruence closure (substitutes equal *atoms* into recanonicalized nodes);
@@ -1823,13 +2024,14 @@ where
             // consequences, it supplies the equalities the canonization laws already
             // *state* but whose stored spelling `add` chose from a non-monotone predicate
             // (see `canon_repair_round`). Its merges feed congruence, so the two run to a
-            // joint fixpoint, bounded by the node-growth budget.
-            // No budget on this loop: the repair is purely subtractive (inverse-pair
-            // cancellation), so each of its merges strictly reduces the class count and the
-            // fixpoint is bounded by the number of classes.
+            // joint fixpoint. The loop has no budget: the repair is purely subtractive
+            // (inverse-pair cancellation), so each of its merges strictly reduces the class
+            // count, and the fixpoint is bounded by the number of classes.
             loop {
                 self.rebuild_congruence();
-                if !self.canon_repair_round() {
+                // A node that could not be recanonicalized stops the rebuild: the caller
+                // reports `take_width_error` and the run ends.
+                if self.has_width_error() || !self.canon_repair_round() {
                     break;
                 }
             }
@@ -1876,6 +2078,10 @@ where
         let mut full = true; // round 0 is full (base case)
         loop {
             self.rebuild_congruence();
+            if self.has_width_error() {
+                self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
+                return;
+            }
             // Goal-directed early stop (the lazy-check transaction): the pair
             // joined, so the question is answered — stop mid-closure. The
             // graph is plain-congruence-closed at this point, a valid state.
@@ -1896,6 +2102,13 @@ where
             let changed =
                 self.cc_round(full, prev_mark, mark) | self.a_round() | self.canon_repair_round();
             prev_mark = mark;
+            if std::mem::take(&mut self.cc_overflow) {
+                // Sound-but-incomplete stop, as for the growth budget, and reported.
+                self.rebuild_congruence();
+                self.width_error.get_or_insert(MultOverflow);
+                self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
+                return;
+            }
             if trace {
                 eprintln!(
                     "[ac-complete] round {round}{}: nodes {before} -> {} (+{}), changed={changed}",
@@ -1942,44 +2155,19 @@ where
         }
     }
 
-    /// If a (just-recanonized) MSet/Set node has a degenerate canonical arity, return the
-    /// equality `(node, target)` it now denotes: an empty monomial equals the op's unit, a
-    /// single mult-1 summand equals that summand's class. Returns `None` for a well-formed
-    /// (≥2, or size-1-with-mult>1) monomial or a non-AC node. This is canonization's
-    /// "AC-of-nothing/one" law read off the stored form; the caller merges the pair. Mirrors
-    /// the build-path (`add`) degeneracy resolution, for nodes that go degenerate via a child
-    /// merge rather than at build.
-    fn degeneracy_merge(&self, node: Cfg::G) -> Option<(Cfg::G, Cfg::G)> {
-        // Peek the node's canonical child span length (no child read, no alloc) and act only on a
-        // degenerate arity — the common ≥2 case returns immediately. Recanonize has already
-        // written the coalesced/clamped children, so the span length *is* the canonical child
-        // count. Only when arity is exactly 1 do we read that one child.
-        match self.node_ref(node) {
-            NodeRef::MSet(l) => {
-                let n = self.nodes.mset.get(l);
-                let (s, e) = n.span();
-                match e - s {
-                    0 => self.unit_node(self.node_op(node)).map(|u| (node, u)),
-                    1 => {
-                        let c = self.nodes.mset.pool_get(s);
-                        // Size-1 collapses to the child only at multiplicity 1 (`{a:2}` is not a
-                        // degenerate `a`; for a nilpotent op it would already have clamped to `{}`).
-                        (Cfg::mset_child_mult(&c) == Cfg::M::ONE)
-                            .then(|| (node, Cfg::mset_child_id(&c)))
-                    }
-                    _ => None,
-                }
-            }
-            NodeRef::Set(l) => {
-                let n = self.nodes.set.get(l);
-                let (s, e) = n.span();
-                match e - s {
-                    0 => self.unit_node(self.node_op(node)).map(|u| (node, u)),
-                    1 => Some((node, self.nodes.set.pool_get(s))),
-                    _ => None,
-                }
-            }
-            _ => None,
+    /// The equality a degenerate canonical form states (`crate::nary_canon::Normal`): a
+    /// single child of multiplicity 1 is that child's class, and an empty list is the
+    /// unit. Read from the canonization's own result, not from the stored span.
+    fn degeneracy_pair(
+        &self,
+        node: Cfg::G,
+        normal: crate::nary_canon::Normal<Cfg::G>,
+    ) -> Option<(Cfg::G, Cfg::G)> {
+        use crate::nary_canon::Normal;
+        match normal {
+            Normal::Single(g) => Some((node, g)),
+            Normal::Unit => self.unit_node(self.node_op(node)).map(|u| (node, u)),
+            Normal::Node | Normal::Empty | Normal::Overflow => None,
         }
     }
 
@@ -2003,7 +2191,7 @@ where
                 .copied()
                 .map(|u| classes.find_const(u))
         };
-        self.nodes.recanonize_node(
+        let normal = self.nodes.recanonize_node(
             parent,
             find,
             unit_of,
@@ -2019,7 +2207,10 @@ where
         // Recanonize (representation) can't express that equality, so record it as a merge
         // here (the congruence layer), alongside the hash-cons collisions. `and(a,b)` after
         // `a=b` becomes `{a}` = `a`; `xor(a,b)` after `a=b` becomes `{}` = the unit.
-        if let Some(pair) = self.degeneracy_merge(parent) {
+        if normal == crate::nary_canon::Normal::Overflow {
+            self.width_error.get_or_insert(MultOverflow);
+        }
+        if let Some(pair) = self.degeneracy_pair(parent, normal) {
             self.collisions.push(pair);
         }
     }
@@ -2044,7 +2235,7 @@ where
                         .copied()
                         .map(|u| classes.find_const(u))
                 };
-                self.nodes.recanonize_node(
+                let normal = self.nodes.recanonize_node(
                     parent,
                     find,
                     unit_of,
@@ -2054,7 +2245,10 @@ where
                     &mut self.touched,
                     &self.ops,
                 );
-                if let Some(pair) = self.degeneracy_merge(parent) {
+                if normal == crate::nary_canon::Normal::Overflow {
+                    self.width_error.get_or_insert(MultOverflow);
+                }
+                if let Some(pair) = self.degeneracy_pair(parent, normal) {
                     self.collisions.push(pair);
                 }
             }
@@ -2332,8 +2526,13 @@ where
     /// congruence, but the summand pair is never cancelled, so `s = 0` is lost.
     ///
     /// Cancellation is purely subtractive, so unlike the two flatten laws it cannot grow a
-    /// node and needs no cap. MSet only, mirroring the build path (`add`'s Set arm does not
-    /// cancel). Free for a graph with no `:inverse` op.
+    /// node and needs no cap. MSet only: the one normalization (`crate::nary_canon`)
+    /// cancels inverse pairs under AC only, and this pass reaches it through
+    /// `group_cancel_pairs` and `add`. Free for a graph with no `:inverse` op.
+    ///
+    /// Recanonization does not cancel inverse pairs: it rewrites a stored node's span in
+    /// place, and a pair the law removes there would change the node's content without
+    /// the `InverseCancel` justification this pass records.
     fn inverse_cancel_repair(&mut self) -> bool {
         // O(1) precheck: the inverse-op map is populated only by `:inverse`
         // declarations, so a program with no group operator pays two loads.
@@ -2361,18 +2560,15 @@ where
                 work.push((op, gid, std::mem::take(&mut m)));
             }
         }
-        let mut buf: Vec<Cfg::G> = Vec::new();
+        let mut scratch: Vec<Cfg::C> = Vec::new();
         let mut changed = false;
         for (op, gid, ms) in work {
-            buf.clear();
-            for (g, mult) in &ms {
-                for _ in 0..mult.to_usize() {
-                    buf.push(*g);
-                }
-            }
-            // `add` resolves the degenerate results itself: a fully cancelled monomial is
-            // the unit (`+(a, neg(a)) → {} = 0`) and a single mult-1 residue is that class.
-            let c = self.add(op, &buf);
+            // `add_mset` resolves the degenerate results itself: a fully cancelled monomial
+            // is the unit (`+(a, neg(a)) → {} = 0`) and a single mult-1 residue is that
+            // class. Cancellation only lowers the counts of a stored node's monomial.
+            let c = self
+                .add_monomial(op, &ms, &mut scratch)
+                .expect("cancellation only lowers the counts of a stored monomial");
             changed |= self.repair_merge(
                 c,
                 gid,
@@ -2423,8 +2619,18 @@ where
     fn cc_round(&mut self, full: bool, delta_lo: usize, delta_hi: usize) -> bool {
         use crate::multiset::{
             NfIndex, NfRuleRef, NfRules, multiset_disjoint, multiset_lcm_into, multiset_subset,
-            multiset_subtract_into, multiset_union, normalize_ms_into, normalize_nilpotent_into,
-            normalize_set_into,
+            multiset_subtract_into, try_multiset_union, try_normalize_ms_into,
+            try_normalize_nilpotent_into, try_normalize_set_into,
+        };
+        // A sum, product, or normal form past the configured width ends the round: the
+        // pair cannot be represented, so completion stops there (`rebuild` reports
+        // `CompletionOutcome::AbortedOverflow` and records the error) instead of panicking.
+        let overflow = std::cell::Cell::new(false);
+        let multiset_union = |a: &[(Cfg::G, Cfg::M)], b: &[(Cfg::G, Cfg::M)]| {
+            try_multiset_union(a, b).unwrap_or_else(|_| {
+                overflow.set(true);
+                Vec::new()
+            })
         };
 
         // Canonical monomial of a completion node as sorted (class-repr, mult): coalesced
@@ -2547,22 +2753,13 @@ where
             .collect();
         let dt_reducible = t_reducible.elapsed();
 
-        // Expand a multiset to a flat child list into a reused scratch; `add` re-sorts and
-        // re-coalesces. The expansion (O(total count), not O(distinct summands)) stays for
-        // now: `add`'s whole canonize pipeline — flatten, unit-drop, clamp, degeneracy —
-        // operates on child lists, and counts are bounded by the lcm of existing monomials.
-        // A pair-based `add` entry could multiply multiplicities through the splice
-        // without materializing repeated children.
-        let mut mat_buf: Vec<Cfg::G> = Vec::new();
+        // Build a normal form as a node, one entry per distinct summand, into a reused
+        // scratch. The combinators that form these monomials (`multiset_union`) already
+        // panic on a sum past the width, so an overflow here is the same condition.
+        let mut mat_buf: Vec<Cfg::C> = Vec::new();
         let materialize =
-            |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::G>| {
-                buf.clear();
-                for (g, mult) in ms {
-                    for _ in 0..mult.to_usize() {
-                        buf.push(*g);
-                    }
-                }
-                eg.add(op, buf)
+            |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::C>| {
+                eg.add_monomial(op, ms, buf).ok()
             };
         let do_merge = |eg: &mut Self, x: Cfg::G, y: Cfg::G, just: Justification<Cfg::G>| -> bool {
             if eg.classes.find_const(x) == eg.classes.find_const(y) {
@@ -2611,10 +2808,11 @@ where
         // normal form back in (Kapur Algo 2 step 2, "normalize Sf"). This subsumes plain
         // inter-reduction (A): a node +{a,b,neg(c)} with rule +{a,b}→{c} reduces to
         // +{c,neg(c)}, which is *materialized* so the ordinary matcher reaches it
-        // (design §5b). `(op, monomial, class, node, is_rule)`: a node that was itself a
-        // rule (its own LHS reducible) is collapsed/subsumed after the merge (design §6b).
+        // (design §5b). `(op, monomial, class, node)`. A node that is itself a rule is
+        // collapsed by the collapse pass, which identifies rules on its own (design §6b);
+        // this list carried an `is_rule` flag no reader used, at O(rules) per node (bug #10).
         let t_gen = std::time::Instant::now();
-        let mut targets: Vec<(Cfg::O, Vec<(Cfg::G, Cfg::M)>, Cfg::G, Cfg::G, bool)> = Vec::new();
+        let mut targets: Vec<(Cfg::O, Vec<(Cfg::G, Cfg::M)>, Cfg::G, Cfg::G)> = Vec::new();
         // AC partition only, same as the rules scan (no full-graph walk, no `is_mset` filter).
         for gid in self.completion_node_ids() {
             if self.node_flags(gid) & inactive != 0 {
@@ -2626,7 +2824,6 @@ where
                 multiset_of(self, gid),
                 self.classes.find_const(gid),
                 gid,
-                rules.iter().any(|r| r.node == gid),
             ));
         }
 
@@ -2668,10 +2865,7 @@ where
                         // the rule itself, joinability of Kapur's (f(M), f(N∪{a})) reduces
                         // to exactly this pair. a ∈ N clamps to N — trivial, skip early.
                         for &(a, _) in &rules[ti].lhs {
-                            let mut r1 = crate::multiset::multiset_union(
-                                &rules[ti].rhs,
-                                &[(a, Cfg::M::ONE)],
-                            );
+                            let mut r1 = multiset_union(&rules[ti].rhs, &[(a, Cfg::M::ONE)]);
                             crate::multiset::clamp_idempotent(&mut r1);
                             if r1 != rules[ti].rhs {
                                 crit.push((op, CpOrigin::AxiomCp, r1, rules[ti].rhs.clone()));
@@ -2693,7 +2887,7 @@ where
                             if k == Cfg::M::ZERO {
                                 continue; // m ≡ 0 (mod n) never stored; defensive
                             }
-                            let mut r1 = crate::multiset::multiset_union(&rules[ti].rhs, &[(a, k)]);
+                            let mut r1 = multiset_union(&rules[ti].rhs, &[(a, k)]);
                             crate::multiset::clamp_nilpotent(&mut r1, order);
                             let r2 = crate::multiset::multiset_subtract(&rules[ti].lhs, &[(a, m)]);
                             crit.push((op, CpOrigin::AxiomCp, r1, r2));
@@ -2803,7 +2997,7 @@ where
         };
         // The op's summand pool, for the per-constant closure (computed only when an
         // empty-side cancelation actually occurs — rare).
-        let summand_pool = |targets: &[(Cfg::O, Vec<(Cfg::G, Cfg::M)>, Cfg::G, Cfg::G, bool)],
+        let summand_pool = |targets: &[(Cfg::O, Vec<(Cfg::G, Cfg::M)>, Cfg::G, Cfg::G)],
                             want: Cfg::O|
          -> Vec<Cfg::G> {
             let mut pool: Vec<Cfg::G> = targets
@@ -2836,7 +3030,7 @@ where
                     crit.push((
                         op,
                         CpOrigin::Cancellative,
-                        crate::multiset::multiset_union(&ne, &one),
+                        multiset_union(&ne, &one),
                         one.to_vec(),
                     ));
                 }
@@ -2879,8 +3073,8 @@ where
                 if !in_delta(rules[ti].node) && !in_delta(rules[pj].node) {
                     continue;
                 }
-                let u1 = crate::multiset::multiset_union(&rules[ti].lhs, &rules[pj].lhs);
-                let u2 = crate::multiset::multiset_union(&rules[ti].rhs, &rules[pj].rhs);
+                let u1 = multiset_union(&rules[ti].lhs, &rules[pj].lhs);
+                let u2 = multiset_union(&rules[ti].rhs, &rules[pj].rhs);
                 if let Some((m, r)) = cancel_close(&u1, &u2) {
                     let needs_pool = (m.is_empty() || r.is_empty()) && !has_unit;
                     let pl = if needs_pool {
@@ -2909,6 +3103,10 @@ where
 
         let dt_gen = t_gen.elapsed();
         let mut changed = false;
+        if overflow.get() {
+            self.cc_overflow = true;
+            return changed;
+        }
         let t_aprime = std::time::Instant::now();
         // (A′) normalize each monomial; materialize+merge its normal form; collapse rules.
         // A node is normalized by all OTHER rules, never by its own node-rule (a rule's
@@ -2922,7 +3120,7 @@ where
         let mut nf_refs: Vec<NfRuleRef<'_, Cfg::G, Cfg::M>> = Vec::with_capacity(rules.len());
         let mut nf_out: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut nf_ping: Vec<(Cfg::G, Cfg::M)> = Vec::new();
-        for (op, mset, class, node, _is_rule) in targets {
+        for (op, mset, class, node) in targets {
             // In-round stop: the goal pair joined, or this round's minting
             // blew the node budget — bail mid-apply instead of burning the
             // rest of the round. `rebuild` reads which outcome occurred.
@@ -2946,16 +3144,20 @@ where
             // index over. Any relative phase cost is workload-dependent and belongs in the
             // Criterion completion benchmark, not in this correctness comment.
             let nf = NfRules::linear(&nf_refs);
-            match self.op_clamp(op) {
+            let normalized = match self.op_clamp(op) {
                 CompletionClamp::Idempotent => {
-                    normalize_set_into(&mut nf_out, &mut nf_ping, &mset, nf)
+                    try_normalize_set_into(&mut nf_out, &mut nf_ping, &mset, nf)
                 }
                 CompletionClamp::Nilpotent { order } => {
-                    normalize_nilpotent_into(&mut nf_out, &mut nf_ping, &mset, nf, order)
+                    try_normalize_nilpotent_into(&mut nf_out, &mut nf_ping, &mset, nf, order)
                 }
                 CompletionClamp::Multiset => {
-                    normalize_ms_into(&mut nf_out, &mut nf_ping, &mset, nf)
+                    try_normalize_ms_into(&mut nf_out, &mut nf_ping, &mset, nf)
                 }
+            };
+            if normalized.is_err() {
+                overflow.set(true);
+                break;
             }
             // Inverse-pair cancellation on the normal form (group ops): normalization can
             // bring x and inv(x) together in one monomial; cancel before comparing. Track
@@ -2975,7 +3177,10 @@ where
             // `mset.len() ≥ 2`, canonization never stores a degenerate node, so any empty/size-1
             // `normal` differs from `mset` and lands here).
             if *normal != mset {
-                let c_prime = materialize(self, op, normal, &mut mat_buf);
+                let Some(c_prime) = materialize(self, op, normal, &mut mat_buf) else {
+                    overflow.set(true);
+                    break;
+                };
                 let just = if inverse_cancelled {
                     Justification::InverseCancel {
                         node_a: c_prime,
@@ -2996,6 +3201,10 @@ where
             }
         }
         let dt_aprime = t_aprime.elapsed();
+        if overflow.get() {
+            self.cc_overflow = true;
+            return changed;
+        }
         let t_bclose = std::time::Instant::now();
         // (B) close each critical pair by merging the normal forms of its two reducts.
         // Normalize BOTH reducts to multisets first; if they coincide the pair is already
@@ -3053,19 +3262,33 @@ where
             };
             // Normalize both reducts in the op's count domain (idempotent → set, nilpotent →
             // mod-n, plain AC → ℕ) before comparing/merging.
-            match self.op_clamp(op) {
+            let normalized = match self.op_clamp(op) {
                 CompletionClamp::Idempotent => {
-                    normalize_set_into(&mut n1_buf, &mut nf_ping, &r1, nf_rules);
-                    normalize_set_into(&mut n2_buf, &mut nf_ping, &r2, nf_rules);
+                    try_normalize_set_into(&mut n1_buf, &mut nf_ping, &r1, nf_rules).and_then(
+                        |()| try_normalize_set_into(&mut n2_buf, &mut nf_ping, &r2, nf_rules),
+                    )
                 }
                 CompletionClamp::Nilpotent { order } => {
-                    normalize_nilpotent_into(&mut n1_buf, &mut nf_ping, &r1, nf_rules, order);
-                    normalize_nilpotent_into(&mut n2_buf, &mut nf_ping, &r2, nf_rules, order);
+                    try_normalize_nilpotent_into(&mut n1_buf, &mut nf_ping, &r1, nf_rules, order)
+                        .and_then(|()| {
+                            try_normalize_nilpotent_into(
+                                &mut n2_buf,
+                                &mut nf_ping,
+                                &r2,
+                                nf_rules,
+                                order,
+                            )
+                        })
                 }
                 CompletionClamp::Multiset => {
-                    normalize_ms_into(&mut n1_buf, &mut nf_ping, &r1, nf_rules);
-                    normalize_ms_into(&mut n2_buf, &mut nf_ping, &r2, nf_rules);
+                    try_normalize_ms_into(&mut n1_buf, &mut nf_ping, &r1, nf_rules).and_then(|()| {
+                        try_normalize_ms_into(&mut n2_buf, &mut nf_ping, &r2, nf_rules)
+                    })
                 }
+            };
+            if normalized.is_err() {
+                overflow.set(true);
+                break;
             }
             if let Some(inv) = self.inverse_op(op) {
                 self.group_cancel_pairs(inv, &mut n1_buf);
@@ -3081,8 +3304,13 @@ where
             // `materialize` calls `add`, which resolves a degenerate reduct itself: an emptied
             // reduct (nilpotent cancellation / identity drop) becomes the unit, a single mult-1
             // summand becomes that class. So no empty/size-1 special-casing is needed here.
-            let c1 = materialize(self, op, n1, &mut mat_buf);
-            let c2 = materialize(self, op, n2, &mut mat_buf);
+            let (Some(c1), Some(c2)) = (
+                materialize(self, op, n1, &mut mat_buf),
+                materialize(self, op, n2, &mut mat_buf),
+            ) else {
+                overflow.set(true);
+                break;
+            };
             // The proof label reflects the pair's ORIGIN: pairwise rule superposition
             // (Kapur Def 3.2), the op's own semantic-axiom CP (§4), or cancelative
             // closure (§5.2/§5.3).
@@ -3122,6 +3350,9 @@ where
                 dt_aprime.as_secs_f64() * 1e3,
                 dt_bclose.as_secs_f64() * 1e3,
             );
+        }
+        if overflow.get() {
+            self.cc_overflow = true;
         }
         changed
     }
@@ -3497,8 +3728,14 @@ where
 
     /// User-level subsumption: exclude `id` from future pattern matching (the matcher's
     /// indices skip `FLAG_SUBSUMED`). Distinct from AC-collapse — see `FLAG_AC_COLLAPSED`.
+    ///
+    /// The node is logged as touched: a subsumption can remove a sequence rule's filter
+    /// row, and semi-naive matching of sequence rules reads the round's subsumed nodes
+    /// from the touched log (Semper design §7.6, "Affected classes", case 2). The
+    /// delta index skips the node, as the full index does.
     pub fn subsume(&mut self, id: Cfg::G) {
         self.set_node_flag(id, crate::node_types::FLAG_SUBSUMED);
+        self.touched.push(id);
     }
 
     /// Whether `id`'s e-class participates in e-matching (the generic e-matching
@@ -3558,6 +3795,34 @@ where
     /// Return sort of a node (from its operator's signature).
     pub fn node_sort(&self, id: Cfg::G) -> Cfg::S {
         self.ops.info(self.node_op(id)).return_sort
+    }
+
+    /// Debug: verify the `FLAG_CONGRUENT_DUP` invariant — every class keeps at least one
+    /// member without the flag.
+    ///
+    /// Its consumers skip flagged members, so a wholly flagged class would present no
+    /// content at all: extraction reports that as infeasible rather than degrading
+    /// (`extract.rs`), and the dump would emit an empty class. The invariant is maintained
+    /// by never hinting a flagged node (`caches.rs`), which keeps every collision's
+    /// survivor unflagged; this is the assertion that the reasoning holds in practice.
+    pub fn debug_check_congruent_dup_invariant(&self) {
+        use std::collections::BTreeMap;
+        let mut total: BTreeMap<Cfg::G, usize> = BTreeMap::new();
+        let mut flagged: BTreeMap<Cfg::G, usize> = BTreeMap::new();
+        for id in self.node_ids() {
+            let repr = self.class_repr(id);
+            *total.entry(repr).or_default() += 1;
+            if self.node_flags(id) & crate::node_types::FLAG_CONGRUENT_DUP != 0 {
+                *flagged.entry(repr).or_default() += 1;
+            }
+        }
+        for (repr, n) in &flagged {
+            assert!(
+                total[repr] > *n,
+                "class {repr:?}: all {n} members carry FLAG_CONGRUENT_DUP, so the class has \
+                 no visible member"
+            );
+        }
     }
 
     /// Debug: verify all nodes in each e-class have the same sort.
@@ -3676,6 +3941,20 @@ where
     }
 
     /// Read AC children as `(id, multiplicity)` pairs into `buf`.
+    /// `id`'s children as the AC matcher reads them: an MSet node's entries, or a
+    /// commutative pair's two children as two entries of multiplicity 1. The pair is
+    /// not coalesced, so `(Eq x y)` still matches `Eq(a, a)` with `x = y = a`, as it
+    /// did before commutative patterns went through `DecomposeAC`; a coalesced `{a:2}`
+    /// would not match two elements of multiplicity 1 under maximum partition.
+    pub fn ac_children(&self, id: Cfg::G, buf: &mut Vec<(Cfg::G, Cfg::M)>) {
+        if matches!(self.node_ref(id), NodeRef::MSet(_)) {
+            self.mset_children(id, buf);
+            return;
+        }
+        buf.clear();
+        self.for_each_child(id, |c, _| buf.push((c, Cfg::M::ONE)));
+    }
+
     pub fn mset_children(&self, id: Cfg::G, buf: &mut Vec<(Cfg::G, Cfg::M)>) {
         buf.clear();
         match self.node_ref(id) {
@@ -3691,7 +3970,64 @@ where
         }
     }
 
-    /// Flatten nested same-op AC children of `op` in `self.g_buf`, to a fixpoint
+    /// Flatten nested same-op AC children of `op` in `self.mset_buf`, to a fixpoint, as
+    /// [`flatten_ac_children`](Self::flatten_ac_children) does for ACI: a non-`atomic`
+    /// child class whose `min_monomial` is an `op` node is replaced by that node's
+    /// children, each with its count times the spliced child's. The product is checked:
+    /// `Err(MultOverflow)` when it does not fit the configured width.
+    fn flatten_mset_children(&mut self, op: Cfg::O) -> Result<(), MultOverflow> {
+        let mut work = std::mem::take(&mut self.mset_flatten_buf);
+        let mut out = std::mem::take(&mut self.mset_buf);
+        work.clear();
+        work.extend(out.iter().rev().copied());
+        out.clear();
+        // The cap of `flatten_ac_children`, for the same reason: it guards a degenerate
+        // cyclic class, measured from the caller's own child count.
+        let cap = work
+            .len()
+            .saturating_add(1)
+            .saturating_add(64usize.saturating_mul(self.node_count()));
+        let op_col = self.ops.completion_column(op);
+        let mut expansions = 0usize;
+        let mut result = Ok(());
+        while let Some(c) = work.pop() {
+            let cls = self.classes.find_const(Cfg::mset_child_id(&c));
+            if let Some(col) = op_col
+                && let Some(repr) = self.classes.repr_id(cls)
+                && !self.classes.atomic(repr)
+                && let Some(min_node) = self.classes.min_monomial(repr, col)
+                && self.node_op(min_node) == op
+                && matches!(self.node_ref(min_node), NodeRef::MSet(_))
+            {
+                assert!(
+                    expansions < cap && out.len() <= cap,
+                    "flatten_mset_children exceeded work cap (degenerate cyclic AC class?)"
+                );
+                expansions += 1;
+                let k = Cfg::mset_child_mult(&c);
+                let mut overflow = false;
+                self.for_each_child(min_node, |cg, j| match k.checked_mul(j) {
+                    Some(m) => work.push(Cfg::mset_child_with_mult(cg, m)),
+                    None => overflow = true,
+                });
+                if overflow {
+                    result = Err(MultOverflow);
+                    break;
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        assert!(
+            out.len() <= cap,
+            "flatten_mset_children exceeded cap (degenerate cyclic AC class?)"
+        );
+        self.mset_buf = out;
+        self.mset_flatten_buf = work;
+        result
+    }
+
+    /// Flatten nested same-op ACI children of `op` in `self.g_buf`, to a fixpoint
     /// (`WF_flat`, design §6c). Each element is examined by its class's *canonical summand
     /// form* (`summand_form`, §9a), NOT by its union-find representative (which depends on
     /// merge order and is therefore non-canonical):
@@ -3777,7 +4113,7 @@ where
     /// **pure `op`-sequence** — i.e. if any member is something other than an `op` `Seq` node.
     ///
     /// This is the A-only counterpart of the AC `summand_form` predicate
-    /// (`ac-congruence-completeness.md` §6c) and it is chosen for the same reason: the answer
+    /// (`06-ac-congruence-closure.md` §6c) and it is chosen for the same reason: the answer
     /// must be a function of the class's *membership*, not of whichever node the union-find
     /// picked as representative (a representative-keyed test flattens or not depending on
     /// merge order, so it is not canonical — §6c's representative trap). Two consequences,
@@ -4247,6 +4583,62 @@ mod tests {
                     "recanonize vs reference: kind={:?} idxs={:?} merge {}->{}", k, idxs, mi, mj
                 );
             }
+
+            /// `add_mset` canonicalizes what it is given and assumes nothing of it: ids
+            /// made stale by a later merge, any entry order, a class in several entries, a
+            /// zero count, the unit as a child, and a nested same-op node (index 5). It must
+            /// land where `add` lands on the same children written out one by one, and,
+            /// without the nested node, where the independent reference does.
+            #[test]
+            fn add_mset_matches_add(
+                k in prop_oneof![
+                    Just(Kind::PlainAc),
+                    Just(Kind::Nilpotent2),
+                    Just(Kind::Nilpotent3),
+                    Just(Kind::IdentityPlus),
+                ],
+                entries in proptest::collection::vec((0usize..6, 0u32..4), 1..7),
+                merge in proptest::option::of((0usize..4, 0usize..4)),
+            ) {
+                use crate::config::EGraphConfig;
+                type C31 = crate::nodes::DefaultConfig;
+                let mut env = make_env();
+                let op = op_of(&env, k);
+                let nested = env.eg.add(op, &[env.atoms[0], env.atoms[1]]);
+                // Merge after building, so the atoms' ids are stale.
+                if let Some((mi, mj)) = merge {
+                    env.eg.merge(env.atoms[mi], env.atoms[mj]);
+                    env.eg.rebuild();
+                }
+                let pick = |i: usize, env: &Env| match i {
+                    0..4 => env.atoms[i],
+                    4 => env.unit,
+                    _ => nested,
+                };
+                let cs: Vec<_> = entries
+                    .iter()
+                    .map(|&(i, m)| {
+                        C31::mset_child_with_mult(pick(i, &env), crate::multiplicity::Multiplicity(m))
+                    })
+                    .collect();
+                let flat: Vec<Cfg31G> = entries
+                    .iter()
+                    .flat_map(|&(i, m)| std::iter::repeat_n(pick(i, &env), m as usize))
+                    .collect();
+                // An empty term needs a unit; plain AC has none.
+                prop_assume!(!flat.is_empty() || !matches!(k, Kind::PlainAc));
+                let by_mset = env.eg.add_mset(op, &cs).expect("small counts fit");
+                let by_add = env.eg.add(op, &flat);
+                prop_assert_eq!(
+                    env.eg.find(by_mset),
+                    env.eg.find(by_add),
+                    "add_mset vs add: kind={:?} entries={:?} merge={:?}", k, entries, merge
+                );
+                if entries.iter().all(|&(i, _)| i != 5) {
+                    let expected = ref_normal(&mut env, k, &flat);
+                    prop_assert_eq!(env.eg.find(by_mset), env.eg.find(expected));
+                }
+            }
         }
     }
 
@@ -4275,7 +4667,7 @@ mod tests {
     // `plus`-monomial across merges, and rolls back with the e-graph token. A leaf constant is
     // NOT a `plus`-monomial (it has no `plus` column); merging it in makes the class `atomic`
     // rather than lowering the `plus` column. See design §9a and the pool design in
-    // `doc/design/ac-algebraic-properties.md`.
+    // `doc/design/05-algebraic-operators.md` §5.3.
     #[test]
     fn min_monomial_tracks_least_and_rolls_back() {
         let (ref mut eg, th) = eg::<true, false>();

@@ -1,0 +1,2 @@
+; cost 9223372036854775808 proved at rung selection (1 solves, 0 cycle exclusions)
+(V "a")

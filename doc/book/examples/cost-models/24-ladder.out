@@ -1,0 +1,12 @@
+; cost 39 proved at rung selection (2 solves, 0 cycle exclusions)
+(And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
+; cost 37 proved at rung levels (4 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 37 proved at rung splits (3 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 40 proved at rung binary (5 solves, 0 cycle exclusions)
+(And (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0"))) (Global 0 9 (Var "a0")))
+; cost 37 proved at rung orders (3 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 39 greedy at rung selection
+(And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))

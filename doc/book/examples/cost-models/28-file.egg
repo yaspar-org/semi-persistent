@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: file
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(let e (And (Global (Interval 0 9) (Var "a0")) (Global (Interval 1 4) (Var "a1"))))
+(cost-model memory :script "memory.roto")
+(extract e :cost memory :file "28-file.json")
+
+(sort E)
+(function V (String) E)
+(function Plus (E) E :assoc-comm)
+(let p (Plus (V "a"):2 (V "b")))
+(cost-model dag :script "24-first.roto")
+(extract p :cost dag :file "28-file-mults.json")
+;; ANCHOR_END: file

@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: sort-error
 ;; The dropped `Eq` need not be the only atom, and the RHS need not mention its variables.
 (sort E)

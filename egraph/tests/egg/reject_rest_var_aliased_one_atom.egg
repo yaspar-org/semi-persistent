@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: sort-error
 ;; `pre` and `suf` of one variadic atom are two writers of the same span, so aliasing them
 ;; is the same defect as sharing a rest between atoms. On (S (a) (b) (c)) the correct

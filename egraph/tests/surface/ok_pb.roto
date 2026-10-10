@@ -1,0 +1,22 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// Pseudo-Boolean terms: built, compared, sorted, and charged at their polarity.
+fn cost(g: Graph) {
+    let late = g.attribute_max(g.node_values());
+    let early = g.attribute_max_under(g.node_values());
+    let x = late.of(g.root());
+    let y = early.of(g.root());
+    let chosen = [];
+    for c in g.classes() {
+        chosen.push(c.chosen());
+    }
+    let n = g.count(chosen);
+    n.plus(g.int([0, 5]).linear()).times(2).charge();
+    n.at_most(5).require();
+    x.linear().minus(y.linear()).plus_const(100).charge();
+    x.linear().at_least(4).charge_if(1);
+    y.linear().at_least(0).require();
+    x.linear().sorted().clamp(1).charge();
+    n.over().plus(x.linear()).sorted().charge();
+    n.neg().plus_const(50).charge();
+}

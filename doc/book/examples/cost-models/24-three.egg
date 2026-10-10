@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: three
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Future (IntervalSort MLTL) MLTL)
+
+;; p ∧ q ∧ r with r = F[0,10] s.
+(let flat (And (Var "p") (Var "q") (Future (Interval 0 10) (Var "s"))))
+
+(cost-model memory :script "memory.roto")
+(extract flat :cost memory :rung selection)
+(extract flat :cost memory :rung splits)
+;; ANCHOR_END: three

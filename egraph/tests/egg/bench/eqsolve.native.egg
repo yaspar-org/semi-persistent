@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine
 ;; EXPECT: check-failed
 ;; BLOCKED: native AC dual postponed; needs --lazy-ac-eqs and a ~600 s budget

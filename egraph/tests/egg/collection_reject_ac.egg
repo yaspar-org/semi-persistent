@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; A collection needs an AC or ACI operator.
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Bool (bool) MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem :identity (Bool true))
+(function Or (MLTL) MLTL :assoc-comm-idem :identity (Bool false))
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)
+(rewrite (Not (..gs (Global (Interval l u) p))) (Bool true))

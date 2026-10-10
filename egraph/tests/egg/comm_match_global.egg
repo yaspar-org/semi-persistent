@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; A :comm pattern with a let-bound class, written in either order, matches.
+;; TYPES: machine
+(sort E)
+(function C () E)
+(function D () E)
+(function F (E) E)
+(function G () E)
+(function H (E) E)
+(function Eq (E E) E :comm)
+(function Plus (E) E :assoc-comm)
+(let gc (C))
+(let x (Eq (C) (F (D))))
+(let y (Eq (D) (F (C))))
+(rewrite (Eq (F p) gc) (G))
+(rewrite (Eq gc (F p)) (H p))
+(run 2)
+(check (= x (G)))
+(check (= x (H (D))))
+(check (!= y (G)))

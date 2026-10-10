@@ -1,0 +1,10 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; MESSAGE: a ground multiplicity is at least 1
+;; A ground term writes every child it has: a count of 0 is rejected.
+(sort E)
+(function a () E) (function b () E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (a):0 (b)))

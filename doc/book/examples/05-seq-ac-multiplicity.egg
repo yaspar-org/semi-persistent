@@ -1,0 +1,35 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; ANCHOR: seq-ac-multiplicity
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function F (E) E)
+(function N (i64) E)
+(function Only (E) E)
+(function All (E) E)
+(function Plus (E) E :assoc-comm)
+(function Src () E)
+
+; `:k>=2` takes the children of multiplicity at least 2 and binds each one's
+; multiplicity in the column `k`; `(sum k)` adds them.
+(rewrite (Plus (..fs:k>=2 (F x)) ..rest) (Plus (N (sum k)) ..rest)
+  :when ((>= (count fs) 1)))
+(let e (Plus (F a) (F a) (F b)))
+(run 1)
+(check (= e (Plus (N 2) (F b))))
+
+; An unannotated filter takes only children of multiplicity 1, as an
+; unannotated AC element does. `:k` with no bound takes any multiplicity.
+(let src (Src))
+(rewrite (Src) (Plus (F (a)):3 (F (b)) (c)))
+(run 1)
+(rewrite (Plus (..fs (F y)) ..rest) (Only (Plus ..fs)))
+(rewrite (Plus (..ks:k (F y)) ..rest) (All (Plus ..ks)))
+(run 1)
+(check (= src (Only (F b))))
+(check (= src (All (Plus (F a) (F a) (F a) (F b)))))
+;; ANCHOR_END: seq-ac-multiplicity

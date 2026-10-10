@@ -1,0 +1,1 @@
+sort error at line 9 column 1: cost-model wrapped: 25-wrap.roto:7:22: `+` is Roto's own arithmetic, which wraps on overflow or aborts on division by zero; cost scripts must compute with the exact methods (`plus`, `minus`, `times`, `div`, `rem`, `neg`) of IBig, UBig, and the encoded integers

@@ -3,7 +3,7 @@
 **Status**: design for future work. Section 1 records implemented behavior, and
 §5 explicitly marks one delivered refinement; the remaining designs are not
 implemented. The implemented anti-unification system is documented in
-[`doc/design/19-anti-unification.md`](../design/19-anti-unification.md); section
+[`doc/design/12-anti-unification.md`](../design/12-anti-unification.md); section
 references of the form §N below point into that chapter.
 
 The main body designs structural factoring for associative (Seq) operators with

@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; A counted child parses in a top-level insertion as it does inside `let` and `check`:
+;; `(Add (A):3 (B))` is the insertion of the AC node {A:3, B:1}.
+
+(sort E)
+(function Add (E) E :assoc-comm)
+(function A () E)
+(function B () E)
+
+(Add (A):3 (B))
+(let t (Add (A):3 (B)))
+(check (= t (Add (A) (A) (A) (B))))
+(check (!= t (Add (A):2 (B))))

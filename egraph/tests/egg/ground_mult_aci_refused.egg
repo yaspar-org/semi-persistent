@@ -1,0 +1,10 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: is ACI (set); multiplicities not allowed
+;; An ACI operator stores a set, which holds each element once: a count there would be
+;; discarded, so it is refused, in a ground term as in a pattern and a right-hand side.
+(sort E)
+(function a () E) (function b () E)
+(function And (E) E :assoc-comm-idem)
+(let t (And (a):5 (b)))

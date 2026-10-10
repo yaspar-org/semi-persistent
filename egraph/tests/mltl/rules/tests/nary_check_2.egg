@@ -1,0 +1,28 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+; MLTL for Semper. Run with --types machine.
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+
+(sort MLTL)
+(function Bool (bool) MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function Implies (MLTL MLTL) MLTL)
+(function Equiv (MLTL MLTL) MLTL)
+; Variadic, unordered, duplicate-free, with a unit. One node represents every
+; reassociation and permutation of the conjunction.
+(function And (MLTL) MLTL :assoc-comm-idem :identity (Bool true))
+(function Or (MLTL) MLTL :assoc-comm-idem :identity (Bool false))
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)
+(function Until (IntervalSort MLTL MLTL) MLTL)
+(function Release (IntervalSort MLTL MLTL) MLTL)
+
+(let a (Var "a")) (let b (Var "b")) (let c (Var "c")) (let x (Var "x"))
+(let f (And (Global (Interval 2 5) a) (Global (Interval 4 9) b) (Global (Interval 3 4) c) x))
+(let m (And (Global (Interval 0 3) a) (Global (Interval 4 6) a) (Global (Interval 10 12) a) x))
+(let n (And (Global (Interval 0 3) (Not a)) (Global (Interval 4 6) (Not a)) (Future (Interval 2 9) a)))
+(let d (Or (Future (Interval 2 5) a) (Future (Interval 4 9) b) x))
+(run 3)
+(check (= m (And (Global (Interval 0 6) a) (Global (Interval 10 12) a) x)))

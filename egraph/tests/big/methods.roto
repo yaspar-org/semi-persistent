@@ -1,0 +1,36 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// Every IBig and UBig method once; the charged constant is checked in Rust.
+fn cost(g: Graph) {
+    let a = g.ibig_str("1180591620717411303424");
+    let b = g.ibig(-3);
+    let c = a.plus(b).times(g.ibig(2)).minus(g.ibig(1)).neg();
+    let d = c.div(g.ibig(7)).rem(g.ibig(1000000007));
+    let e = c.abs().plus(g.ubig_str("5")).minus(g.ubig(2)).times(g.ubig(3)).div(g.ubig(2)).rem(g.ubig_str("100000000000000000000")).max(g.ubig(1)).min(g.ubig_str("99999999999999999999999"));
+    let s = g.ibig(0);
+    if a.gt(b) && b.lt(a) && a.ge(a) && b.le(b) && a.eq(a) {
+        s = s.plus(g.ibig(1));
+    }
+    if e.gt(g.ubig(0)) && g.ubig(0).lt(e) && e.ge(e) && e.le(e) && e.eq(e) {
+        s = s.plus(g.ibig(10));
+    }
+    match a.to_i64() {
+        Some(_) => {
+            s = s.plus(g.ibig(100));
+        }
+        None => {}
+    }
+    match g.ibig(5).to_i64() {
+        Some(v) => {
+            s = s.plus(g.ibig(v));
+        }
+        None => {}
+    }
+    match e.to_u64() {
+        Some(_) => {
+            s = s.plus(g.ibig(1000));
+        }
+        None => {}
+    }
+    g.charge_const_big(d.plus(e.to_ibig()).plus(s).plus(c.max(b)).plus(c.min(b)).plus(b.abs().to_ibig()).plus(a.minus(a).to_ubig().to_ibig()));
+}

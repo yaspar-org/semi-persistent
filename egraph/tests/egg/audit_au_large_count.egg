@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: none
+;; Anti-unification of Plus(a:2^32-1, b) with Plus(a:2^32-2, b:2): a size past u32 saturates
+;; one below the "no finite member" sentinel, so the stored three-word node is a finite
+;; representative. Its size used to drop it and report "no admissible finite member".
+(sort E)
+(function a () E) (function b () E)
+(function Plus (E) E :assoc-comm)
+(let s (Plus (a):4294967295 (b)))
+(let t (Plus (a):4294967294 (b):2))
+(antiunify s t :playouts 50)

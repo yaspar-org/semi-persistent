@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; Semi-persistence of the recanonize unit-drop, inside the marked scope:
 ;; inside the push, the b = zero merge drops b from add(a,b) and s = a holds.

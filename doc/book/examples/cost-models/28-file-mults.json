@@ -1,0 +1,34 @@
+{
+  "nodes": {
+    "c4": {
+      "children": [],
+      "ints": [],
+      "op": "V",
+      "strings": [
+        "b"
+      ]
+    },
+    "c6": {
+      "children": [],
+      "ints": [],
+      "op": "V",
+      "strings": [
+        "a"
+      ]
+    },
+    "c7": {
+      "children": [
+        "c4",
+        "c6"
+      ],
+      "ints": [],
+      "mults": [
+        1,
+        2
+      ],
+      "op": "Plus",
+      "strings": []
+    }
+  },
+  "root": "c7"
+}

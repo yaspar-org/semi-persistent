@@ -71,8 +71,8 @@ building an unrelated term earlier can change how a later term is spelled:
 (check (= t1 t2))
 ```
 
-Both readings are sound — a reordering never makes a *false* equality
-provable, only a true one unprovable — and within a single term the order is
+Both readings are sound. A reordering never makes a *false* equality
+provable, only a true one unprovable. Within a single term the order is
 fixed, so the effect appears only across statements. If a program depends on
 equalities like this one, that is the signal to enable `--derive-ac-eqs` or
 `--lazy-ac-eqs`, which prove it in either order. Operators declared
@@ -82,6 +82,6 @@ the program has built.
 
 Chapter 23 collects the limits and qualifications of these modes. The
 procedures are specified in
-[`ac-completion-spec.md`](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-completion-spec.md),
+[design chapter 6, Part III](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/06-ac-congruence-closure.md#part-iii-min_monomial-a-matcher-invariant-and-implementation-correspondence),
 with the scope of the completeness argument in
-[`ac-congruence-completeness.md`](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-congruence-completeness.md).
+[design chapter 6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/06-ac-congruence-closure.md).

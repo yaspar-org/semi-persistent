@@ -29,6 +29,12 @@ phase-timing = []
 # cursor is a type alias for the bare one, so the wrapped call sites compile to
 # the same code. See `src/leapfrog/seek_stats.rs`.
 seek-stats = []
+# The slow solver comparisons (the ASP and MiniZinc twins, the paper's certification and
+# ASP claims), which need clingo, MiniZinc, RoundingSat, or VeriPB installed and run for
+# minutes. Off by default: `cargo test --features slow-tests`. Not a capability, a test
+# selector, like the two instruments above.
+slow-tests = []
+
 
 [dependencies]
 semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.3.0", features = ["literal-types"] }
@@ -44,6 +50,14 @@ rapidhash.workspace = true
 rayon.workspace = true
 smallvec = "1"
 winnow.workspace = true
+# Extraction under cost models, in the default build (user, 2026-10-06): CaDiCaL for the
+# internal descent, rustsat for the dynamic polynomial watchdog, Roto for cost scripts,
+# serde_json for the solvers' JSON. `cadical-sys` builds CaDiCaL, so a C++ compiler is a
+# build requirement.
+cadical-sys = "0.7.0"
+rustsat = "0.7"
+roto = "0.12"
+serde_json = "1"
 
 [dev-dependencies]
 proptest.workspace = true

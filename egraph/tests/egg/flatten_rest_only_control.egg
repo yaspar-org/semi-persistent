@@ -1,0 +1,28 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; TYPES: machine
+;; The control for flatten_rest_only.egg: without `:flatten` the rule reads the stored
+;; children {A, _2} only, so x is A or _2, and the third check fails.
+(sort E)
+(function A () E) (function X () E) (function Y () E) (function Z () E)
+(function C2 () E) (function C3 () E) (function C4 () E)
+(function Add (E) E :assoc-comm)
+(function Pick (E E) E)
+(let c4 (C4))
+(let c3 (C3))
+(let c2 (C2))
+(union c4 (Add (Y) (Z)))
+(union c3 (Add (X) c4))
+(union c2 (Add c3 c4 (Y)))
+(let c1 (Add (A) c2))
+(rewrite (Add x ..rest) (Pick x (Add ..rest)))
+(run 1)
+(check (= c1 (Pick (A) c2)))
+(check (= c1 (Pick c2 (A))))
+(check (= c1 (Pick c3 (Add c4 (Y) (A)))))
+(check (= c1 (Pick c4 (Add c3 (Y) (A)))))
+(check (= c1 (Pick (Y) (Add c4 c3 (A)))))
+(check (= c1 (Pick (X) (Add c4 c4 (Y) (A)))))
+(check (= c1 (Pick (Z) (Add c3 (Y) (Y) (A)))))
+(check (= c1 (Pick (Z) (Add c4 (Y) (Y) (X) (A)))))

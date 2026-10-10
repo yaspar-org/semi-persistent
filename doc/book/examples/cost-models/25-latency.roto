@@ -1,0 +1,24 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// ANCHOR: cost
+// The latency of the term's critical path: a `Mul` takes 3 cycles, an `Add` 1,
+// and an input none. A node's result is ready its latency after its latest operand.
+fn latency(n: Node) -> u64 {
+    if n.is("Mul") {
+        3
+    } else if n.is("Add") {
+        1
+    } else {
+        0
+    }
+}
+
+fn cost(g: Graph) {
+    let lat = g.node_values();
+    for n in g.nodes() {
+        lat.set(n, latency(n));
+    }
+    let ready = g.attribute_max(lat);
+    ready.of(g.root()).charge();
+}
+// ANCHOR_END: cost

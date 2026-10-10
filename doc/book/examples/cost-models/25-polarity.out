@@ -1,0 +1,8 @@
+sort error at line 7 column 1: cost-model broken: Error: Type error: mismatched types
+   ╭─[ 25-polarity.roto:7:28 ]
+   │
+ 7 │     wpd.of(g.root()).minus(wpd.of(g.root())).charge();
+   │                            ────────┬───────  
+   │                                    ╰───────── expected `Under`, found `Over`
+───╯
+

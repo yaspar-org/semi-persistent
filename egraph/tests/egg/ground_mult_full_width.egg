@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: none
+;; A ground AC child at the full 32-bit width is one stored entry: building and matching
+;; `(Plus (a):4294967295 (b))` takes no memory per copy.
+(sort E)
+(function a () E) (function b () E) (function Hit (E) E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (a):4294967295 (b)))
+(rewrite (Plus x:4294967295 (b)) (Hit x))
+(run 1)
+(check (= t (Hit (a))))

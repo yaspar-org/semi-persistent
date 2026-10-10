@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; TYPES: machine
+;; Without the collection rules the same checks fail: the equalities are theirs.
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Bool (bool) MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem :identity (Bool true))
+(function Or (MLTL) MLTL :assoc-comm-idem :identity (Bool false))
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)
+(let a (Var "a")) (let b (Var "b")) (let c (Var "c")) (let x (Var "x"))
+(let f (And (Global (Interval 2 5) a) (Global (Interval 4 9) b) (Global (Interval 3 4) c) x))
+(run 3)
+(check (= f (And x (Global (Interval 2 3) (And (Global (Interval 0 2) a) (Global (Interval 2 6) b) (Global (Interval 1 1) c))))))

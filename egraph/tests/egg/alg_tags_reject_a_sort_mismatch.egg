@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: sort-error
 ;; Singleton collapse makes every associative operator closed over one sort:
 ;; f : A -> B would assign (f x) sort B while returning x's A-sorted e-class.

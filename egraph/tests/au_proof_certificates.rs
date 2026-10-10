@@ -45,36 +45,19 @@ type Eg<const TRACK: bool, const PROOFS: bool> = EGraph31<NiraLitVal, TRACK, PRO
 // (own_projected / materialize / projected_terms).
 // ---------------------------------------------------------------------------
 
-/// Own a projected result so the snapshot and result borrows can end before
-/// the projection is materialized back into the mutable e-graph.
-#[derive(Clone, Debug)]
-enum OwnedTerm {
-    App(OpId, Vec<OwnedTerm>),
-    Lit(OpId, LitValId),
-}
+/// A projection read out of its pool, each child with its multiplicity
+/// (`semi_persistent_egraph::au::terms::OwnedTerm`).
+type OwnedTerm = semi_persistent_egraph::au::terms::OwnedTerm<OpId, LitValId>;
 
 fn own_projected(pool: &TermPool<OpId, LitValId>, id: TermId) -> OwnedTerm {
-    match pool.op(id) {
-        TermOp::EGraph(op) => OwnedTerm::App(
-            *op,
-            pool.children(id)
-                .iter()
-                .map(|&child| own_projected(pool, child))
-                .collect(),
-        ),
-        TermOp::Literal(op, value) => OwnedTerm::Lit(*op, *value),
-        TermOp::Variants => panic!("projection still contains Variants"),
-    }
+    pool.own(id).expect("projection still contains Variants")
 }
 
+/// Rebuild an owned projection in the e-graph, an AC child of count k as one counted
+/// child.
 fn materialize<const T: bool, const P: bool>(eg: &mut Eg<T, P>, term: &OwnedTerm) -> ENodeId {
-    match term {
-        OwnedTerm::App(op, children) => {
-            let child_ids: Vec<ENodeId> = children.iter().map(|c| materialize(eg, c)).collect();
-            eg.add(*op, &child_ids)
-        }
-        OwnedTerm::Lit(op, value) => eg.add_lit(*op, *value),
-    }
+    semi_persistent_egraph::au::terms::materialize_owned(eg, term)
+        .expect("the projection is buildable")
 }
 
 fn projected_terms(mut result: AuResult<DefaultConfig>) -> (OwnedTerm, OwnedTerm) {
@@ -117,9 +100,12 @@ fn term_depth(pool: &TermPool<OpId, LitValId>, id: TermId) -> u32 {
 fn sexpr<const T: bool, const P: bool>(eg: &Eg<T, P>, id: ENodeId) -> String {
     let mut parts: Vec<String> = Vec::new();
     eg.for_each_child(id, |c, m| {
+        // A child of multiplicity k is written once, `t:k`, as Semper reads it back.
         let rendered = sexpr(eg, c);
-        for _ in 0..m.to_u64() {
-            parts.push(rendered.clone());
+        if m == MultiplicityLike::ONE {
+            parts.push(rendered);
+        } else {
+            parts.push(format!("{rendered}:{m}"));
         }
     });
     let name = eg.node_op_name(id);

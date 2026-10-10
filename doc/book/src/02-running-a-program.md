@@ -12,7 +12,7 @@ We write any options after that path:
 Here is the program used in Chapter 3:
 
 ```lisp
-{{#include ../examples/03-terms.egg}}
+{{#include ../examples/03-terms.egg:3:}}
 ```
 
 Run it from the repository root:
@@ -54,7 +54,8 @@ ok — N nodes
 ```
 
 The example above therefore has no standard output; its only visible line is
-the closing status.
+the closing status. Warnings also go to standard error, one line each, prefixed
+with `warning:`.
 
 Redirecting standard output gives a script only the query results while leaving
 the status visible on the terminal:
@@ -73,14 +74,19 @@ To capture both streams separately:
 ## Exit status
 
 Semper exits with status 0 only after the complete program runs successfully.
-Syntax, sort-checking, and failed-check errors exit with status 1.
+Syntax, sort-checking, failed-check, and other run-time errors exit with status
+1. A command-line error exits with status 2.
 
 | Status | Cause | Standard error |
 | --- | --- | --- |
 | 0 | The program ran and every check passed. | `ok — N nodes` |
 | 1 | A `check` or `checkau` assertion failed. | `error: check failed: ...` |
+| 1 | Another command failed while running, for example a `(pop)` without a `(push)`. | `error: ...` |
 | 1 | The parser rejected the program. | `parse error: ...` |
-| 1 | A declaration or term failed sort-checking. | `sort error: ...` |
+| 1 | A declaration or term failed sort-checking. | `sort error: ...` or `sort error at line L column C: ...` |
+| 1 | The file could not be read. | `error reading 'FILE': ...` |
+| 1 | `--types` named an unknown group. | `unknown type group: ...` |
+| 2 | The command line was malformed or an option value was invalid. | `error: ...` and a usage line |
 
 A failed check stops the program immediately. Its nonzero status lets an
 example file act as a regression test: a script or test runner fails when the
@@ -106,13 +112,14 @@ Run all book examples through their test harness:
 cargo test -p semi-persistent-egraph --test egg_tests book_examples
 ```
 
-The `book_examples` test scans every `.egg` file in the directory. The first six
-lines of a file may contain directives such as `;; EXPECT: ok` or
-`;; DERIVE_AC_EQS: on`. These lines are comments to the engine binary; the test
+The `book_examples` test scans every `.egg` file at the top level of the
+directory. The first eight lines of a file, the two header lines and six more,
+may contain directives such as `;; EXPECT: ok` or `;; DERIVE_AC_EQS: on`.
+These lines are comments to the engine binary; the test
 harness reads them to select settings and the expected outcome.
 
-[Annex C](C-flag-reference.md) lists every directive and its corresponding
-command-line option.
-When running an example manually, pass the matching option for any nondefault
-directive. An `EXPECT` directive can also state that a parse, sort, or check
-failure is the expected test result.
+[Annex C](C-flag-reference.md#test-directives) lists every directive and its
+corresponding command-line option. When running an example manually, pass the
+matching option for any nondefault directive. An `EXPECT` directive can also
+state that a parse, sort, check, or run-time failure is the expected test
+result.

@@ -41,6 +41,12 @@ pub enum InterpError {
     /// cannot pick a value on the program's behalf, so the run stops here and
     /// the driver exits nonzero.
     EvalFailed(crate::lit_model::EvalError),
+    /// A ground term the configuration cannot build: a written multiplicity too wide for
+    /// it, an AC node whose canonical form needs one, or a sequence over the width bound.
+    TermError(String),
+    /// A count past the configured multiplicity width, met while building or rebuilding:
+    /// reported as `multiplicity overflow: …` with the width and its maximum.
+    MultOverflow(String),
 }
 
 impl From<crate::resolve::ResolveError> for InterpError {
@@ -66,6 +72,11 @@ impl std::fmt::Display for InterpError {
             InterpError::ExtractFailed(e) => write!(f, "extract failed: {e}"),
             InterpError::PopWithoutPush => write!(f, "pop without matching push"),
             InterpError::EvalFailed(e) => write!(f, "{e}"),
+            InterpError::TermError(m) if m.starts_with(crate::multiplicity::OVERFLOW) => {
+                write!(f, "{m}")
+            }
+            InterpError::TermError(m) => write!(f, "term: {m}"),
+            InterpError::MultOverflow(m) => write!(f, "{m}"),
         }
     }
 }
@@ -93,7 +104,7 @@ struct Mark<Cfg: EGraphConfig, O> {
 /// - `Off`: canonization and plain congruence only. Checks decide equality of
 ///   materialized canonical forms; AC-entailed equalities through erased
 ///   intermediate sums are not derived (the documented completeness gap,
-///   `ac-congruence-completeness.md` Part I).
+///   `06-ac-congruence-closure.md` Part I).
 /// - `Eager`: every rebuild attempts completion (the `--derive-ac-eqs`
 ///   behavior). `CompletionOutcome::Converged` reports an unchanged full
 ///   implementation round, not a semantic-completeness certificate; the growth
@@ -135,7 +146,9 @@ pub struct Interpreter<
 {
     pub eg: EGraph<Cfg, L, TRACK, PROOFS>,
     pub model: M,
-    rules: Vec<PreparedRule<Cfg::O, Cfg::S, L>>,
+    /// The rule list `(run)` schedules: ordinary rules and sequence rules, in program
+    /// order (`saturate::Rule`).
+    rules: Vec<crate::saturate::Rule<Cfg::O, Cfg::S, L>>,
     globals: crate::resolve::GlobalCtx<Cfg::S, Cfg::G>,
     marks: Vec<Mark<Cfg, Cfg::O>>,
     shrink_policy: ShrinkPolicy,
@@ -144,6 +157,8 @@ pub struct Interpreter<
     /// Alternation budget for a lazy check's second phase (rule rounds
     /// interleaved with completion fixpoints inside the transaction).
     lazy_ac_rounds: usize,
+    /// `--cost-bits`: the width of a cost model's values.
+    cost_bits: crate::cost_models::CostBits,
     /// The shared lazy-check transaction: `Some(mark)` while a run of
     /// consecutive equality checks accumulates completion state. Closed (and
     /// the graph restored) by the first non-check command or program end.
@@ -164,6 +179,8 @@ pub struct Interpreter<
     /// keys its own stream carries, so whatever a previous run left in the
     /// table reads as empty.
     index_scratch: crate::index::IndexScratch<Cfg>,
+    /// Every warning the program raised so far, in order; each is also printed.
+    warnings: Vec<String>,
 }
 
 impl<Cfg: EGraphConfig, L: LitVal, M: LitModel<Value = L>, const TRACK: bool, const PROOFS: bool>
@@ -185,10 +202,12 @@ where
             strategy: crate::saturate::SaturationStrategy::default(),
             ac_mode: AcMode::Off,
             lazy_ac_rounds: 32,
+            cost_bits: Default::default(),
             lazy_txn: None,
             last_sat: None,
             last_run_time: None,
             index_scratch: crate::index::IndexScratch::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -209,10 +228,12 @@ where
             strategy: crate::saturate::SaturationStrategy::default(),
             ac_mode: AcMode::Off,
             lazy_ac_rounds: 32,
+            cost_bits: Default::default(),
             lazy_txn: None,
             last_sat: None,
             last_run_time: None,
             index_scratch: crate::index::IndexScratch::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -224,6 +245,16 @@ where
     /// Select the saturation strategy used by `(run …)`.
     pub fn set_strategy(&mut self, strategy: crate::saturate::SaturationStrategy) {
         self.strategy = strategy;
+    }
+
+    /// The warnings the program has raised so far, in order.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    fn warn(&mut self, w: String) {
+        eprintln!("warning: {w}");
+        self.warnings.push(w);
     }
 
     /// Outcome of the most recent `(run …)` command, or `None` if none has run.
@@ -254,6 +285,11 @@ where
     /// Alternation budget for a lazy check's second phase (default 32 rounds).
     pub fn set_lazy_ac_rounds(&mut self, rounds: usize) {
         self.lazy_ac_rounds = rounds;
+    }
+
+    /// The width of a cost model's values (`--cost-bits`, default `big`, no cap).
+    pub fn set_cost_bits(&mut self, bits: crate::cost_models::CostBits) {
+        self.cost_bits = bits;
     }
 
     /// Select the merge survivor policy (see `EGraph::set_union_by`).
@@ -319,7 +355,16 @@ where
             )
         };
         let mut inconclusive = !equal && aborted(&self.eg);
-        if !equal && !inconclusive && !self.rules.is_empty() {
+        // The ordinary rules only: the completion check never ran the sequence rules.
+        let ordinary: Vec<&PreparedRule<Cfg::O, Cfg::S, L>> = self
+            .rules
+            .iter()
+            .filter_map(|r| match r {
+                crate::saturate::Rule::Ordinary(r) => Some(r),
+                crate::saturate::Rule::Sequence(_) => None,
+            })
+            .collect();
+        if !equal && !inconclusive && !ordinary.is_empty() {
             let spec = crate::saturate::RunSpec {
                 limit: self.lazy_ac_rounds,
                 ruleset: None,
@@ -329,22 +374,18 @@ where
                     equal: true,
                 }),
             };
-            let result = match self.strategy {
-                crate::saturate::SaturationStrategy::Naive => self.eg.saturate_spec_in(
-                    &self.rules,
+            // Ordinary rules only, so the fault is an `EvalError`.
+            let result = self
+                .eg
+                .saturate_rules_in(
+                    self.strategy,
+                    &ordinary,
                     &self.model,
                     &spec,
                     &self.globals,
                     &mut self.index_scratch,
-                ),
-                crate::saturate::SaturationStrategy::SemiNaive => self.eg.saturate_semi_spec_in(
-                    &self.rules,
-                    &self.model,
-                    &spec,
-                    &self.globals,
-                    &mut self.index_scratch,
-                ),
-            };
+                )
+                .map_err(crate::saturate::SatError::into_eval);
             // The completion goal is cleared on the fault path too: it is state
             // on the e-graph, and a caller that reports the error and keeps the
             // interpreter alive must not inherit a goal from a run that ended.
@@ -387,6 +428,11 @@ where
     // ── Checked pipeline ──────────────────────────────────────────────
 
     /// Run a pre-checked program (output of `sortcheck_program`).
+    /// The runtime global bindings (`let` names and their classes).
+    pub fn globals(&self) -> &crate::resolve::GlobalCtx<Cfg::S, Cfg::G> {
+        &self.globals
+    }
+
     pub fn run_checked(&mut self, cmds: &[CCommand<Cfg::O, Cfg::S, L>]) -> Result<(), InterpError> {
         // Each push query already tallies steps in its MatchPool. Arming the
         // thread-local counter folds that tally in once per query; it does not
@@ -409,9 +455,49 @@ where
                 self.lazy_txn_close();
             }
             r?;
+            // A rebuild that met a multiplicity past the configured width (a union that
+            // makes two children of one AC node sum past it, or completion) left that
+            // node as it was: the run reports it and stops.
+            if let Some(e) = self.eg.take_width_error() {
+                self.lazy_txn_close();
+                let _ = e;
+                return Err(InterpError::MultOverflow(
+                    crate::multiplicity::overflow_message::<Cfg::M>(
+                        "a union or completion made two counted children of one AC node sum past the width",
+                    ),
+                ));
+            }
         }
         self.lazy_txn_close();
         Ok(())
+    }
+
+    /// `:flatten` acts on n-ary atoms only, so on a rule with none it has no effect (a
+    /// `:comm` atom, `RAtom::Comm`, is never flattened, so it does not count). The
+    /// rule is still installed: the tag is harmless, and a program that adds an n-ary
+    /// atom later should not have to add it back.
+    fn warn_flatten_without_effect(&mut self, name: &str, rule: &PreparedRule<Cfg::O, Cfg::S, L>) {
+        use crate::resolve::RAtom;
+        let nary = rule.query.atoms.iter().any(|a| {
+            matches!(
+                a,
+                RAtom::AExact { .. }
+                    | RAtom::APrefix { .. }
+                    | RAtom::ASuffix { .. }
+                    | RAtom::ABoth { .. }
+                    | RAtom::ACExact { .. }
+                    | RAtom::ACSub { .. }
+                    | RAtom::ACIExact { .. }
+                    | RAtom::ACISub { .. }
+                    | RAtom::Collect { .. }
+            )
+        });
+        if rule.query.flatten && !nary {
+            self.warn(format!(
+                "{name}: :flatten has no effect: the rule's pattern has no associative, AC, \
+                 or ACI operator"
+            ));
+        }
     }
 
     /// Reject a rule whose multiplicity literals exceed the configured width, before it
@@ -423,9 +509,10 @@ where
     ) -> Result<(), InterpError> {
         crate::apply::check_mult_literals::<Cfg, _, _, _>(rule).map_err(|n| {
             InterpError::DeclError(format!(
-                "rule `{name}`: multiplicity literal {n} exceeds the configured \
+                "rule `{name}`: multiplicity overflow: the literal {n} exceeds the configured \
                  multiplicity width (EGraphConfig::M holds at most {})",
                 <Cfg::M as crate::multiplicity::MultiplicityLike>::MAX
+                    .map_or_else(|| "any count".to_string(), |m| m.to_string())
             ))
         })?;
         crate::apply::check_rhs_mult_exprs(rule)
@@ -438,15 +525,15 @@ where
                 // Already registered into egraph during sortcheck. No-op.
             }
             CCommand::Let(name, ct) => {
-                let (id, sort) = self.build_cterm(ct);
+                let (id, sort) = self.build_cterm(ct)?;
                 self.bind_global(name.clone(), id, sort);
             }
             CCommand::Insert(ct) => {
-                self.build_cterm(ct);
+                self.build_cterm(ct)?;
             }
             CCommand::Union(a, b) => {
-                let (a_id, _) = self.build_cterm(a);
-                let (b_id, _) = self.build_cterm(b);
+                let (a_id, _) = self.build_cterm(a)?;
+                let (b_id, _) = self.build_cterm(b)?;
                 if PROOFS {
                     let axiom_id = self.alloc_axiom_id(a_id, b_id);
                     self.eg
@@ -457,11 +544,11 @@ where
                 self.eg.rebuild();
             }
             CCommand::Check(ct) => {
-                self.build_cterm(ct);
+                self.build_cterm(ct)?;
             }
             CCommand::CheckEq(a, b) => {
-                let (a_id, _) = self.build_cterm(a);
-                let (b_id, _) = self.build_cterm(b);
+                let (a_id, _) = self.build_cterm(a)?;
+                let (b_id, _) = self.build_cterm(b)?;
                 // Install the goal before any rebuild: with the shared
                 // transaction open, the term-build rebuild runs completion,
                 // and the goal keeps it from running past the answer.
@@ -495,8 +582,8 @@ where
                 self.eg.set_cc_goal(None);
             }
             CCommand::CheckNeq(a, b) => {
-                let (a_id, _) = self.build_cterm(a);
-                let (b_id, _) = self.build_cterm(b);
+                let (a_id, _) = self.build_cterm(a)?;
+                let (b_id, _) = self.build_cterm(b)?;
                 if self.ac_mode == AcMode::Lazy {
                     self.eg.set_cc_goal(Some((a_id, b_id)));
                 }
@@ -528,7 +615,7 @@ where
                 }
             }
             CCommand::Extract(ct) => {
-                let (id, _) = self.build_cterm(ct);
+                let (id, _) = self.build_cterm(ct)?;
                 // Extraction must see pending congruence from a preceding
                 // budget-limited run even when `ct` was already materialized.
                 self.eg.rebuild();
@@ -539,6 +626,59 @@ where
                     Ok(t) => println!("{t}"),
                     Err(e) => return Err(InterpError::ExtractFailed(e)),
                 }
+            }
+            CCommand::ExtractWith {
+                term,
+                model,
+                rung,
+                budget,
+                solver,
+                file,
+                proof,
+                band,
+            } => {
+                let (id, _) = self.build_cterm(term)?;
+                self.eg.rebuild();
+                crate::cost_models::run(
+                    &self.eg,
+                    id,
+                    model,
+                    rung,
+                    *budget,
+                    solver,
+                    file.as_deref(),
+                    proof.as_deref(),
+                    *band,
+                    self.cost_bits,
+                )
+                .map_err(|e| InterpError::CheckFailed(format!("extract :cost: {e}")))?;
+            }
+            CCommand::CollectionRule(r) => {
+                // Registered like an ordinary rule, so the unions it makes carry
+                // `Justification::Rewrite` with its id.
+                let mut r = (**r).clone();
+                r.rule_id = Some(self.eg.register_rule(&r.name, "", ""));
+                for w in &r.seq_rhs.warnings {
+                    self.warn(format!("{}: {w}", r.name));
+                }
+                if std::env::var_os("SEMPER_SEQ_PLAN").is_some() {
+                    for line in &r.seq_rhs.plan {
+                        eprintln!("plan: {}: {line}", r.name);
+                    }
+                }
+                self.rules
+                    .push(crate::saturate::Rule::Sequence(std::sync::Arc::new(r)));
+            }
+            CCommand::DumpEGraph { root, file } => {
+                let (id, _) = self.build_cterm(root)?;
+                // The dump has to describe a congruence-closed graph, for the same
+                // reason extraction does: a stale parent key would name a class the
+                // consumer cannot resolve.
+                self.eg.rebuild();
+                let (json, _stats) = self.eg.to_egraph_json(id);
+                std::fs::write(file, json).map_err(|e| {
+                    InterpError::DeclError(format!("dump-egraph :file '{file}': {e}"))
+                })?;
             }
             CCommand::Rewrite {
                 query,
@@ -569,7 +709,8 @@ where
                     span: *span,
                 };
                 Self::check_rule_mults(&name, &rule)?;
-                self.rules.push(rule);
+                self.warn_flatten_without_effect(&name, &rule);
+                self.rules.push(crate::saturate::Rule::Ordinary(rule));
             }
             CCommand::Rule {
                 query,
@@ -593,7 +734,8 @@ where
                     span: *span,
                 };
                 Self::check_rule_mults(&name, &rule)?;
-                self.rules.push(rule);
+                self.warn_flatten_without_effect(&name, &rule);
+                self.rules.push(crate::saturate::Rule::Ordinary(rule));
             }
             CCommand::Run {
                 ruleset,
@@ -608,8 +750,8 @@ where
                     None => None,
                     Some(g) => {
                         let before = self.eg.node_count();
-                        let (l, _) = self.build_cterm(&g.left);
-                        let (r, _) = self.build_cterm(&g.right);
+                        let (l, _) = self.build_cterm(&g.left)?;
+                        let (r, _) = self.build_cterm(&g.right)?;
                         if self.eg.node_count() > before {
                             self.eg.rebuild();
                         }
@@ -620,35 +762,42 @@ where
                         })
                     }
                 };
+                // A limit beyond `usize` cannot be reached: run to saturation.
                 let spec = crate::saturate::RunSpec {
-                    limit: *limit as usize,
+                    limit: usize::try_from(*limit).unwrap_or(usize::MAX),
                     ruleset: *ruleset,
                     until: goal,
                 };
                 let t0 = std::time::Instant::now();
-                let result = match self.strategy {
-                    crate::saturate::SaturationStrategy::Naive => self.eg.saturate_spec_in(
-                        &self.rules,
-                        &self.model,
-                        &spec,
-                        &self.globals,
-                        &mut self.index_scratch,
-                    ),
-                    crate::saturate::SaturationStrategy::SemiNaive => {
-                        self.eg.saturate_semi_spec_in(
-                            &self.rules,
-                            &self.model,
-                            &spec,
-                            &self.globals,
-                            &mut self.index_scratch,
-                        )
-                    }
-                };
+                // Sequence rules are entries of the rule list: each round applies the
+                // ordinary rules, then the sequence rules on the same snapshot (Semper
+                // design §7.6), naive or semi-naive with the ordinary rules.
+                let result = self.eg.saturate_rules_in(
+                    self.strategy,
+                    &self.rules,
+                    &self.model,
+                    &spec,
+                    &self.globals,
+                    &mut self.index_scratch,
+                );
                 // The elapsed time is recorded before the fault is propagated:
                 // the run did take that long, and `(print-stats)` after a caught
                 // error should not read a stale duration from an earlier run.
                 self.last_run_time = Some(t0.elapsed());
-                self.last_sat = Some(result?);
+                let r = result.map_err(|e| match e {
+                    crate::saturate::SatError::Eval(e) => InterpError::EvalFailed(e),
+                    crate::saturate::SatError::Sequence(m) => InterpError::DeclError(m),
+                })?;
+                r.sequence.warn();
+                let skipped = self.eg.take_no_value();
+                if skipped > 0 {
+                    self.warn(format!(
+                        "{skipped} rule action(s) not applied: the right-hand side was an \
+                         application with no children of an operator without :identity, \
+                         which has no meaning"
+                    ));
+                }
+                self.last_sat = Some(r);
             }
             CCommand::PrintSize(op) => {
                 let counts = self.eg.op_node_counts();
@@ -700,8 +849,8 @@ where
                 algorithm,
                 cycle_mode,
             } => {
-                let (l_id, _) = self.build_cterm(left);
-                let (r_id, _) = self.build_cterm(right);
+                let (l_id, _) = self.build_cterm(left)?;
+                let (r_id, _) = self.build_cterm(right)?;
                 self.eg.rebuild();
 
                 let alg = match algorithm.as_str() {
@@ -762,8 +911,8 @@ where
                 algorithm,
                 cycle_mode,
             } => {
-                let (l_id, _) = self.build_cterm(left);
-                let (r_id, _) = self.build_cterm(right);
+                let (l_id, _) = self.build_cterm(left)?;
+                let (r_id, _) = self.build_cterm(right)?;
                 self.eg.rebuild();
 
                 let alg = match algorithm.as_str() {
@@ -826,8 +975,14 @@ where
 
     /// Build a `CTerm` in the e-graph. Apps need no name lookup or sort check;
     /// `CTerm::Global` intentionally retains and looks up its source name.
-    fn build_cterm(&mut self, ct: &CTerm<Cfg::O, Cfg::S, L>) -> (Cfg::G, Cfg::S) {
-        match ct {
+    ///
+    /// `Err` is a ground term the configuration cannot build
+    /// ([`EGraph::add_with_counts`](crate::egraph::EGraph::add_with_counts)).
+    fn build_cterm(
+        &mut self,
+        ct: &CTerm<Cfg::O, Cfg::S, L>,
+    ) -> Result<(Cfg::G, Cfg::S), InterpError> {
+        Ok(match ct {
             CTerm::Lit(val, sort) => {
                 let lit_op = self.eg.ops().lit_op_for_sort(*sort).unwrap();
                 let vid = self.eg.intern_lit(val.clone());
@@ -860,22 +1015,41 @@ where
                     crate::registry::OpKind::A { dir, .. } => Some(dir),
                     _ => None,
                 };
-                let child_ids: Vec<Cfg::G> = match dir {
-                    None => children.iter().map(|c| self.build_cterm(c).0).collect(),
-                    Some(dir) => {
-                        let mut ids = Vec::with_capacity(children.len());
-                        self.push_seq_args(children, *op, dir, &mut ids);
-                        ids
+                // Each child with its count: `x:k` is one counted child of an AC
+                // application, the class once under ACI, and `k` positions otherwise.
+                let mut kids: Vec<(Cfg::G, Option<&num_bigint::BigUint>)> =
+                    Vec::with_capacity(children.len());
+                match dir {
+                    None => {
+                        for c in children {
+                            kids.push(self.build_counted(c)?);
+                        }
                     }
-                };
-                let id = self.eg.add(*op, &child_ids);
+                    Some(dir) => self.push_seq_args(children, *op, dir, &mut kids)?,
+                }
+                let id = self
+                    .eg
+                    .add_with_counts(*op, &kids)
+                    .map_err(InterpError::TermError)?;
                 (id, *sort)
             }
+            CTerm::Counted(t, _) => self.build_cterm(t)?,
             CTerm::Global(name, sort) => {
                 let (_, _, id) = self.globals.get(name).expect("global not found at runtime");
                 (self.eg.find(id), *sort)
             }
-        }
+        })
+    }
+
+    /// A child and its count: `x:k` written, or `None` for 1.
+    fn build_counted<'c>(
+        &mut self,
+        c: &'c CTerm<Cfg::O, Cfg::S, L>,
+    ) -> Result<(Cfg::G, Option<&'c num_bigint::BigUint>), InterpError> {
+        Ok(match c {
+            CTerm::Counted(t, k) => (self.build_cterm(t)?.0, Some(k)),
+            _ => (self.build_cterm(c)?.0, None),
+        })
     }
 
     /// Build the argument list of an A-only application, splicing a nested same-`op`
@@ -883,13 +1057,13 @@ where
     ///
     /// Recursive, so `(F (F (F a b) c) d)` yields `[a, b, c, d)]` in one pass. See the note in
     /// [`build_cterm`](Self::build_cterm) for why this belongs here and not in `EGraph::add`.
-    fn push_seq_args(
+    fn push_seq_args<'c>(
         &mut self,
-        children: &[CTerm<Cfg::O, Cfg::S, L>],
+        children: &'c [CTerm<Cfg::O, Cfg::S, L>],
         op: Cfg::O,
         dir: crate::registry::AssocDir,
-        out: &mut Vec<Cfg::G>,
-    ) {
+        out: &mut Vec<(Cfg::G, Option<&'c num_bigint::BigUint>)>,
+    ) -> Result<(), InterpError> {
         use crate::registry::AssocDir;
         let last = children.len().saturating_sub(1);
         for (i, c) in children.iter().enumerate() {
@@ -905,10 +1079,11 @@ where
                     op: inner_op,
                     children: inner,
                     ..
-                } if on_spine && *inner_op == op => self.push_seq_args(inner, op, dir, out),
-                _ => out.push(self.build_cterm(c).0),
+                } if on_spine && *inner_op == op => self.push_seq_args(inner, op, dir, out)?,
+                _ => out.push(self.build_counted(c)?),
             }
         }
+        Ok(())
     }
 }
 

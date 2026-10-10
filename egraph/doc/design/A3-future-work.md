@@ -6,9 +6,9 @@
 This chapter covers features that are designed but not yet implemented. Full design
 documents are in `doc/future/`. Implemented features are described in the main design
 flow; AC congruence completeness, for example, is its own chapter
-([AC Congruence Completeness](ac-congruence-completeness.md), with the engine-level
-companion [AC Completion spec](ac-completion-spec.md)) and is covered by
-[Ch 14: Soundness and Completeness](14-soundness.md). What remains for AC completion is
+([AC Congruence Completeness](06-ac-congruence-closure.md), with the engine-level
+companion [AC Completion spec](06-ac-congruence-closure.md#part-iii-min_monomial-a-matcher-invariant-and-implementation-correspondence)) and is covered by
+[Ch 13: Soundness and Completeness](13-soundness.md). What remains for AC completion is
 listed below.
 
 ## Maintained specifications
@@ -33,8 +33,8 @@ recanonize, `CanonMode`), idempotent and nilpotent count clamps, the per-rule *a
 critical pairs (Kapur Lemmas 4.1(ii), 4.2(ii)/4.5) that clamping alone cannot derive, the
 empty-monomial RHS for identity classes (Kapur's `f({}) = e`), the `:cancellative` §5
 cancel-closure, and `:inverse` pair-level cancellation (which implies cancelative). See
-`ac-completion-spec.md` §3 (the Kapur-correspondence table) and
-`ac-algebraic-properties.md` (the storage and property-tag design). **Full Abelian-group
+Chapter 6 §S3 (the Kapur-correspondence table) and
+§5.3 (the storage and property-tag design). **Full Abelian-group
 completion (§5.4, Gaussian elimination) is unsupported** (see
 `../future/ac-completion-limitations.md`). Two pieces remain: scoping and verification.
 
@@ -46,9 +46,9 @@ node-growth budget (`set_completion_node_budget`), checked inside the round's
 apply loops and after progress; exceeding it reports
 `CompletionOutcome::AbortedGrowthLimit`, drains plain congruence, and makes no
 completion claim. Equalities already merged retain the transition-level
-soundness argument described in Chapter 14 and focused tests, not an
+soundness argument described in Chapter 13 and focused tests, not an
 end-to-end verified theorem. The lazy mode
-(`--lazy-ac-eqs`, `ac-congruence-completeness.md` §13) covers the on-demand direction:
+(`--lazy-ac-eqs`, Chapter 6 §13) covers the on-demand direction:
 completion runs only inside a failing check, in a mark/complete/restore transaction,
 with goal-directed rule/completion alternation as its second phase. Its recorded
 refinements: share one transaction across consecutive checks, poll the goal
@@ -56,11 +56,11 @@ inside the completion loop, and stop growth inside a round rather than waiting
 for its end. A degree bound on materialized monomials remains the other
 scoping option. These early-stop policies trade completeness for bounded
 execution. Their intended trustworthy polarity is to omit derivations rather
-than admit unjustified ones; proving that polarity for every production
+than admit unjustified ones; proving that polarity for every implemented
 transition remains part of the verification work below.
 
 **Verification.** The concrete obligations are listed in
-[the design doc §12](ac-congruence-completeness.md) and
+[the design doc §12](06-ac-congruence-closure.md) and
 [the limitations specification](../future/ac-completion-limitations.md).
 They include a precise finite-pool semantics, refinement of every Rust
 normalization/materialization/merge step to that semantics, strict descent or
@@ -167,13 +167,26 @@ the final stage. See
 
 ### Cost-Based Extraction via Partial Weighted Max-SAT
 
-The current fixpoint extractor remains the default for additive owned-tree
-cost. Partial weighted Max-SAT or pseudo-Boolean extraction extends the
-objective to edge costs, hard exclusions, lexicographic optimization, and
-shared-DAG cost. It requires an explicit acyclicity encoding, deterministic
-decoding, a solver trait, and independent optimum checks. The complete design
-and acceptance criteria are in
-[the Max-SAT extraction specification](../future/max-sat-extraction.md).
+The fixpoint extractor remains the default for additive owned-tree cost. Extraction
+under a non-additive cost is built (§11.2): `(extract … :cost …)` with the rung
+ladder and the CNF, OPB, ASP, and MiniZinc targets, run inside Semper. The
+specification of the general Max-SAT form is
+[the Max-SAT extraction specification](../future/max-sat-extraction.md). Open work on
+the built path, each with its trigger:
+
+- **Joint-encoding size.** The `splits` rung builds tree variables for every
+  candidate flat node; 4 large-interval instances of the MLTL specifications of [JR26](11-extraction.md#references)
+  (Boeing wheel-brake-system variants) need 28 GB to be proved at it. A smaller encoding
+  of the internal-node charges, or tree variables only for flat nodes that can be
+  selected together, would bring them under the default budget.
+- **RoundingSat aborts on one valid instance** (`std::length_error`; 58 clauses
+  reproduce it in `egraph/tests/roundingsat_length_error.opb`). Report
+  upstream; the internal descent proves the instance.
+- **Closed 2026-10-06: the extraction library was not clippy-clean** (3 findings before
+  2026-10-03). It is now `egraph/src/extraction/`, clean under the crate's clippy run.
+- **Semi-naive for sequence rules pays nothing on the MLTL specifications of [JR26](11-extraction.md#references)** (§7.6);
+  revisit the thresholds `GUARD_SETUP` and `ENUMERATE_DIVISOR` on a workload whose
+  root operators are large and whose deltas are a small share of them.
 
 ### Stratified Negation
 
@@ -202,12 +215,12 @@ for the full design including interaction with e-class merging.
 ## Anti-Unification: remaining work
 
 Anti-unification is implemented and documented in
-[Ch 19: Anti-Unification](19-anti-unification.md). The remaining work
+[Ch 12: Anti-Unification](12-anti-unification.md). The remaining work
 (structural factoring for unequal-length associative (Seq) operators, PUCT and prior
 processors, non-injective ACI matching, golden traces, and JSON export) is
 collected in
 [the associative-operator specification](../future/au-associative-operators.md).
-The target theorem, production refinements, universal bound/transport lemmas,
+The target theorem, refinements to the implementation, universal bound/transport lemmas,
 formalizer validation, and delegation calibration are in
 [AU correctness and validation](../future/au-correctness-and-validation.md);
 independently checkable projection proofs are in

@@ -1,0 +1,36 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; ANCHOR: collection-rules
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)
+
+; Merge: every G in a conjunction over one operand whose windows form a
+; contiguous union becomes one G over that union.
+(rewrite (And (..gs (Global (Interval l u) p)) ..rest)
+         (And ..{ (Global (Interval a b) q) for (q a b) in (union-by p l u) } ..rest)
+  :when ((< (count (union-by p l u)) (count gs))))
+
+; Factor: all G in a conjunction share one outer window.
+(rewrite (And (..gs (Global (Interval l u) p)) ..rest)
+         (And (Global (Interval K0 K1)
+                      (And ..{ (if (and (== l K0) (== u K1)) p (Global (Interval (- l K0) (- u K1)) p))
+                               for (l u p) in (zip l u p) }))
+              ..rest)
+  :let ((K0 (min l)) (K1 (+ K0 (min (- u l)))))
+  :when ((>= (count gs) 2) (> K1 0) (== (count (union-by p l u)) (count gs))))
+
+(let a (Var "a")) (let b (Var "b")) (let x (Var "x"))
+(let m (And (Global (Interval 0 3) a) (Global (Interval 4 6) a) x))
+(let f (And (Global (Interval 2 5) a) (Global (Interval 4 9) b) x))
+(run 2)
+(check (= m (And (Global (Interval 0 6) a) x)))
+(check (= f (And x (Global (Interval 2 5) (And a (Global (Interval 2 4) b))))))
+;; ANCHOR_END: collection-rules

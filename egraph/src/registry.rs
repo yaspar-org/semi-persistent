@@ -25,7 +25,7 @@ pub enum AssocDir {
 /// How an AC op's normal form bounds a summand's count (design "three independent axes").
 /// This is a unified axis carried on both `MSet` and `Set` descriptors,
 /// independent of the storage partition: the partition is derived from the clamp (`Idempotent →
-/// Set`; `None` / `Nilpotent → MSet`). See `doc/design/ac-algebraic-properties.md`.
+/// Set`; `None` / `Nilpotent → MSet`). See `doc/design/05-algebraic-operators.md` §5.3.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Clamp {
     /// No count bound: counts stay in ℕ. Plain AC (`+`, `*`). Stored as `MSet`.
@@ -72,7 +72,7 @@ pub enum UnitRef {
 /// `identity` (unit-drop; applies to either representation), `cancellative` flag, and count
 /// clamp. Resolved unit nodes and inverse operator ids need the configured node/op id types,
 /// which `OpKind<S>` cannot carry, so the e-graph stores them in its semi-persistent
-/// `unit_node` and `inverse_op` maps. See `doc/design/ac-algebraic-properties.md`.
+/// `unit_node` and `inverse_op` maps. See `doc/design/05-algebraic-operators.md` §5.3.
 #[derive(Clone, Debug)]
 pub enum OpKind<S: DenseId> {
     Normal {
@@ -528,7 +528,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
 
     /// Iterator over the ids of all registered AC ops. Used by AC congruence
     /// completion to drive the per-AC-op critical-pair pass (see
-    /// `doc/design/ac-congruence-completeness.md`). Excludes ACI ops.
+    /// `doc/design/06-ac-congruence-closure.md`). Excludes ACI ops.
     pub fn mset_ops(&self) -> impl Iterator<Item = O> + '_ {
         self.ops_of_kind(CompletionKind::MSet)
     }

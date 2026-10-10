@@ -1,0 +1,25 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; `:flatten` on cyclic classes: C ∋ Plus{a, C} and D ∋ And{a, D}. Opening C through its
+;; own member reaches C again, which is then on the path and kept whole, so the views of
+;; Plus{a, C} are {a, C} and {a:2, C}, and the walk terminates. Under ACI both normalize
+;; to {a, D}. Each rule below matches exactly one of those views (the reference in
+;; tests/flatten_differential.rs computes them the same way), over three rounds.
+(sort E)
+(function a () E) (function Cc () E) (function Dc () E)
+(function Plus (E) E :assoc-comm)
+(function And (E) E :assoc-comm-idem)
+(function One (E E) E) (function Two (E E) E) (function Pair (E E) E)
+(let cc (Cc))
+(union cc (Plus (a) cc))
+(let dd (Dc))
+(union dd (And (a) dd))
+(rewrite (Plus x y) (One x y) :flatten)
+(rewrite (Plus x:2 y) (Two x y) :flatten)
+(rewrite (And x y) (Pair x y) :flatten)
+(run 3)
+(check (= cc (One (a) cc)))
+(check (= cc (Two (a) cc)))
+(check (= dd (Pair (a) dd)))

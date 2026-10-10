@@ -1,0 +1,1 @@
+error: check failed: extract :cost: the cost script's build failed: scale: the value 9223372036854775808 is outside the 64-bit cost range (--cost-bits)

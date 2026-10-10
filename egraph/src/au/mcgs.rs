@@ -108,7 +108,6 @@ use crate::config::EGraphConfig;
 use crate::containers::group::Member;
 use crate::containers::{AppendOnlyVec, DenseId, IndexLike, ShrinkPolicy, SpUniqueMap, VecP};
 use crate::literal::LitVal;
-use crate::multiplicity::MultiplicityLike;
 
 use super::AuIds31;
 use super::ac_repr;
@@ -393,8 +392,8 @@ struct AndStatsData<OS, O> {
     child_counts: Vec<u64>,
     child_visits: Vec<u64>,
     round_robin: u64,
-    transport_rows: Vec<u32>,
-    transport_cols: Vec<u32>,
+    transport_rows: Vec<u64>,
+    transport_cols: Vec<u64>,
     transport_cell_map: Vec<Option<usize>>,
 }
 
@@ -422,8 +421,8 @@ struct AndStatsRef<'a, OS, O, CS> {
     child_counts: &'a [u64],
     child_visits: &'a [u64],
     round_robin: u64,
-    transport_rows: &'a [u32],
-    transport_cols: &'a [u32],
+    transport_rows: &'a [u64],
+    transport_cols: &'a [u64],
     transport_cell_map: &'a [Option<CS>],
 }
 
@@ -977,8 +976,8 @@ struct AndStatsArena<A: AuIds, O: DenseId> {
     child_counts: VecP<u64, A::Index>,
     child_visits: VecP<u64, A::Index>,
     round_robin: VecP<u64, A::Index>,
-    transport_rows: AppendOnlyVec<Vec<u32>, A::Index>,
-    transport_cols: AppendOnlyVec<Vec<u32>, A::Index>,
+    transport_rows: AppendOnlyVec<Vec<u64>, A::Index>,
+    transport_cols: AppendOnlyVec<Vec<u64>, A::Index>,
     transport_cell_map: AppendOnlyVec<Vec<Option<A::AndChildStat>>, A::Index>,
     /// Closed bit (`McgsConfig::closed_bit`): every child is closed, so this
     /// action's subgraph is fully resolved.
@@ -1986,8 +1985,8 @@ pub(crate) struct TransportActionDesc<O, C> {
     /// whose multiplicities the solver cannot represent never becomes a
     /// descriptor, so every consumer of these vectors is free of a fallible
     /// conversion and cannot disagree with the gate about what was solved.
-    row_supply: Vec<u32>,
-    col_demand: Vec<u32>,
+    row_supply: Vec<u64>,
+    col_demand: Vec<u64>,
 }
 
 /// Enumerate the feasible transport actions for `(l, r)` at `or_id`. Single
@@ -2022,12 +2021,8 @@ where
             }
             let supply: Vec<u64> = lm.iter().map(|(_, k)| *k).collect();
             let demand: Vec<u64> = rm.iter().map(|(_, k)| *k).collect();
-            // A pair whose multiplicities the solver cannot represent is
-            // reported infeasible, the same signal an unsolvable pair gives: it
-            // consumes no action slot.
-            let Some(problem) = TransportProblem::narrowed(&supply, &demand, cost) else {
-                continue;
-            };
+            // The solver takes u64 margins, so every pair is a candidate.
+            let problem = TransportProblem::new(&supply, &demand, cost);
             if solve_transport(&problem).is_some() {
                 out.push(TransportActionDesc {
                     op,
@@ -2083,7 +2078,8 @@ where
     let mut bound: u64 = 1;
     for pair in &action.pairs {
         bound = bound.saturating_add(
-            u64::from(lb_pair(snap, pair.left, pair.right).0).saturating_mul(pair.count.to_u64()),
+            u64::from(lb_pair(snap, pair.left, pair.right).0)
+                .saturating_mul(crate::au::au_count(pair.count)),
         );
     }
     bound
@@ -2908,9 +2904,10 @@ fn recompute_transport_and_value<A: AuIds, O: DenseId>(
                 if x > 0
                     && let Some(child) = cell_map[flat]
                 {
-                    // Widening a flow cell to the surface width `child_counts` keeps.
-                    state.set_and_child_count(child, u64::from(x));
-                    q += f64::from(x) * state.or_stat(state.and_stats.child_or(child)).value;
+                    state.set_and_child_count(child, x);
+                    // An estimate, not a count: the f64 rounding of a flow past 2^53 is
+                    // the estimate's own precision.
+                    q += x as f64 * state.or_stat(state.and_stats.child_or(child)).value;
                 }
             }
             state.set_and_value(and_idx, q);
@@ -2993,7 +2990,7 @@ fn compose_and_offer<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>
             let x = solution.flow[i][j];
             if x > 0 {
                 if let Some(t) = term {
-                    out.push((*t, u64::from(x)));
+                    out.push((*t, x));
                 } else {
                     return;
                 }
@@ -3014,9 +3011,11 @@ fn compose_and_offer<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>
     };
 
     let op = and.op;
-    let candidate = pool.intern_action_result(TermOp::EGraph(op), &children, and.commutative);
+    // The child form comes from the operator; the stored flag, set from the same
+    // snapshot when the node was made, must agree with it.
+    debug_assert_eq!(and.commutative, snap.op_is_commutative(op));
+    let candidate = pool.intern_action_result(TermOp::EGraph(op), &children, snap.child_form(op));
     let parent_or = state.or_id(and.parent);
-    let _ = snap;
     results.offer(parent_or, candidate, pool.quality(candidate));
 }
 
@@ -3112,7 +3111,7 @@ where
             child_or_stats.push(child_idx);
             // Widening a structural multiplicity to the surface width `child_counts`
             // keeps; see `AndStatsData::child_counts`.
-            child_counts.push(pair.count.to_u64());
+            child_counts.push(crate::au::au_count(pair.count));
         }
         let arity = child_or_stats.len();
         state.push_and_stat(
@@ -3217,7 +3216,7 @@ enum InitialRolloutChoice {
     Structural(usize),
     Transport {
         descriptor: usize,
-        flow: Vec<Vec<u32>>,
+        flow: Vec<Vec<u64>>,
     },
 }
 
@@ -3408,11 +3407,11 @@ where
                         wide_quality(static_generalize_quality(snap, pair.left, pair.right));
                     estimate.0 = estimate
                         .0
-                        .checked_add(child.0 * u128::from(pair.count.to_u64()))
+                        .checked_add(child.0 * u128::from(crate::au::au_count(pair.count)))
                         .expect("structural rollout size estimate overflow");
                     estimate.1 = estimate
                         .1
-                        .checked_add(child.1 * u128::from(pair.count.to_u64()))
+                        .checked_add(child.1 * u128::from(crate::au::au_count(pair.count)))
                         .expect("structural rollout variant estimate overflow");
                 }
                 if estimate < best_estimate {
@@ -3433,7 +3432,7 @@ where
                     }
                 }
                 let Some(solution) = solve_transport(&TransportProblem {
-                    // Narrowed once in the feasibility gate that produced `desc`.
+                    // The margins of the feasibility gate that produced `desc`.
                     row_supply: desc.row_supply.clone(),
                     col_demand: desc.col_demand.clone(),
                     cost,
@@ -3466,7 +3465,7 @@ where
                     let items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u64)> = action
                         .pairs
                         .iter()
-                        .map(|pair| (pair.left, pair.right, pair.count.to_u64()))
+                        .map(|pair| (pair.left, pair.right, crate::au::au_count(pair.count)))
                         .collect();
                     let capacity = items.len();
                     stack.push(Frame {
@@ -3496,7 +3495,7 @@ where
                                 continue;
                             }
                             debug_assert!(desc.legal_cells[i * n_cols + j]);
-                            items.push((*lc, *rc, u64::from(count)));
+                            items.push((*lc, *rc, count));
                         }
                     }
                     stack.push(Frame {
@@ -3552,13 +3551,17 @@ where
                 if frame.child_terms.is_empty() {
                     evaluate_generalize_action(snap, pool, frame.l, frame.r)
                 } else {
-                    pool.intern_action_result(TermOp::EGraph(frame.op), &frame.child_terms, true)
+                    pool.intern_action_result(
+                        TermOp::EGraph(frame.op),
+                        &frame.child_terms,
+                        crate::au::terms::ChildForm::Multiset,
+                    )
                 }
             } else {
                 pool.intern_action_result(
                     TermOp::EGraph(frame.op),
                     &frame.child_terms,
-                    snap.op_is_commutative(frame.op),
+                    snap.child_form(frame.op),
                 )
             });
         }

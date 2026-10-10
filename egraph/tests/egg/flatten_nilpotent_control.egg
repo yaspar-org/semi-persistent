@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; The control for flatten_nilpotent.egg: without `:flatten` the rules read the stored
+;; children {a, K} only. The outcome is the same, which is the point: a view never adds
+;; a match the canonical form forbids.
+(sort E)
+(function e () E)
+(function a () E) (function b () E) (function Kc () E)
+(function xor (E) E :assoc :comm :nilpotent :identity (e))
+(function Two (E) E) (function One (E) E) (function Pair (E E) E)
+(let k (Kc))
+(let top (xor (a) k))
+(union k (xor (a) (b)))
+(rewrite (xor x:2 ..rest) (Two x))
+(rewrite (xor x) (One x))
+(rewrite (xor x y) (Pair x y))
+(run 1)
+(check (= top (Pair (a) k)))
+(check (!= top (Two (a))))
+(check (!= top (One (b))))

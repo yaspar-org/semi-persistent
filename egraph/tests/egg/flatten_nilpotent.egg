@@ -1,0 +1,25 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; `:flatten` with `:nilpotent` (doc/goal-canonical-flatten-views.md, step 1):
+;; Xor{a, K} with K ≡ Xor{a, b}. Opening K gives {a:2, b}, which the clamp reduces to
+;; {b}: a single child, a degenerate view, so it is not matched. The item `x:2` never
+;; binds a, and the one-item pattern never matches the degenerate view. The view
+;; {a, K} still matches the two-item rule. flatten_nilpotent_control.egg is the same
+;; program without the tag.
+(sort E)
+(function e () E)
+(function a () E) (function b () E) (function Kc () E)
+(function xor (E) E :assoc :comm :nilpotent :identity (e))
+(function Two (E) E) (function One (E) E) (function Pair (E E) E)
+(let k (Kc))
+(let top (xor (a) k))
+(union k (xor (a) (b)))
+(rewrite (xor x:2 ..rest) (Two x) :flatten)
+(rewrite (xor x) (One x) :flatten)
+(rewrite (xor x y) (Pair x y) :flatten)
+(run 1)
+(check (= top (Pair (a) k)))
+(check (!= top (Two (a))))
+(check (!= top (One (b))))

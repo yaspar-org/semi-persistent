@@ -105,6 +105,33 @@ where
     /// Build a snapshot from the frozen e-graph. The e-graph must not be mutated
     /// while this snapshot is alive (enforced by the shared reference lifetime).
     pub fn new(eg: &'eg EGraph<Cfg, L, T, P>) -> Result<Self, AuError> {
+        // --- Step 0: the widths the search computes counts in. Every count is read at
+        // u64 (`au_count`) and a node's merged result counts are bounded by its total, so
+        // a node's counts must total within u64. An operator with an identity also pads
+        // with an identity child whose count is a node's total, stored in an action pair
+        // at `Cfg::M`, so for it the total must also fit `Cfg::M`. Refusing here, with a
+        // reported error, is what keeps every sum inside the search from overflowing and
+        // every candidate representable. ---
+        for id in eg.node_ids() {
+            let mut total: Option<u128> = Some(0);
+            let mut in_m = Some(Cfg::M::ZERO);
+            eg.for_each_child(id, |_, m| {
+                total = total.and_then(|t| Some(t + u128::from(m.to_u64()?)));
+                in_m = in_m.and_then(|t| t.checked_add(m));
+            });
+            let pads = eg.unit_node(eg.node_op(id)).is_some();
+            match total {
+                Some(t) if u64::try_from(t).is_ok() && (!pads || in_m.is_some()) => {}
+                Some(t) => return Err(AuError::CountTooWide(t.to_string())),
+                None => {
+                    return Err(AuError::CountTooWide(format!(
+                        "past 2^64 at node {}",
+                        id.to_usize()
+                    )));
+                }
+            }
+        }
+
         // --- Step 1: collect live class representatives ---
         let n = eg.len();
         let mut repr_to_au: hashbrown::HashMap<Cfg::G, ClassOf<Cfg>> =
@@ -289,6 +316,17 @@ where
         self.has_finite_member(class).then_some(class)
     }
 
+    /// How a term of `op` orders and counts its children: an AC operator's are a
+    /// multiset, a `:comm` pair's and an ACI operator's are unordered, the rest ordered.
+    pub fn child_form(&self, op: Cfg::O) -> crate::au::terms::ChildForm {
+        use crate::au::terms::ChildForm;
+        match self.eg.ops().info(op).canon_class() {
+            crate::id::ENodeKind::MSet => ChildForm::Multiset,
+            crate::id::ENodeKind::SPair | crate::id::ENodeKind::Set => ChildForm::Commutative,
+            _ => ChildForm::Ordered,
+        }
+    }
+
     pub fn op_is_commutative(&self, op: Cfg::O) -> bool {
         matches!(
             self.eg.ops().info(op).canon_class(),
@@ -331,9 +369,10 @@ where
                     None => continue,
                 };
 
-                // Widened so the sentinel cannot be reached by arithmetic; an
-                // overflow drops the node from consideration, which costs nothing
-                // real — a term of more than 2^32 - 2 nodes cannot be materialized.
+                // Widened so the sentinel cannot be reached by arithmetic. A size past u32
+                // saturates one below the sentinel (`u32::MAX`, "no finite
+                // representative"): the term exists, its children counted rather than
+                // copied in the pool, and it ranks last, as the pool's sizes do.
                 let mut total: u64 = 1;
                 let mut ok = true;
                 eg.for_each_child(id, |child, mult| {
@@ -347,13 +386,9 @@ where
                             if child_cost == u32::MAX {
                                 ok = false;
                             } else {
-                                match u64::from(child_cost)
-                                    .checked_mul(mult.to_u64())
-                                    .and_then(|c| total.checked_add(c))
-                                {
-                                    Some(t) => total = t,
-                                    None => ok = false,
-                                }
+                                total = u64::from(child_cost)
+                                    .saturating_mul(crate::au::au_count(mult))
+                                    .saturating_add(total);
                             }
                         }
                         None => {
@@ -361,12 +396,14 @@ where
                         }
                     }
                 });
-                // Strictly below the sentinel, so a recorded size always means
-                // "finite representative of exactly this many nodes".
-                if !ok || total >= u64::from(u32::MAX) {
+                if !ok {
                     continue;
                 }
-                let total = total as u32;
+                // Strictly below the sentinel, so a recorded size always means a finite
+                // representative; exact below `u32::MAX - 1`, saturated at it.
+                let total = u32::try_from(total)
+                    .unwrap_or(u32::MAX - 1)
+                    .min(u32::MAX - 1);
 
                 if total < best_size[au_class.to_usize()] {
                     best_size[au_class.to_usize()] = total;

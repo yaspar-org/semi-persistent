@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: none
+;; Two children of cost 2^32-1 at count 2^32-1 sum past usize: the additive cost saturates
+;; one below the "no best" marker, so the term is still extracted. It used to saturate onto
+;; the marker and report no grounded term.
+(sort E)
+(function a () E :cost 4294967295) (function b () E :cost 4294967295)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (a):4294967295 (b):4294967295))
+(extract t)

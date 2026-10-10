@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine
 ;; RHS multiplicity expressions: checked u64 arithmetic over bound
 ;; multiplicities, with multiplicity 0 omitting the element. This lets one

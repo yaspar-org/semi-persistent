@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: none
+;; `x:k` in a ground term: one counted child under AC, and k positions under an
+;; associative sequence. Each spelling is the same node as the one written out. An ACI
+;; operator stores a set, which has no counts (ground_mult_aci_refused.egg).
+(sort E)
+(function a () E) (function b () E)
+(function Plus (E) E :assoc-comm)
+(function Cat (E) E :assoc)
+(check (= (Plus (a):3 (b)) (Plus (a) (a) (a) (b))))
+(check (= (Plus (a):2 (a) (b)) (Plus (a):3 (b))))
+(check (!= (Plus (a):2 (b)) (Plus (a):3 (b))))
+(check (= (Cat (a):3 (b)) (Cat (a) (a) (a) (b))))

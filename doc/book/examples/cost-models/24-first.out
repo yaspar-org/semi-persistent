@@ -1,0 +1,5 @@
+(Twice (F (F (V a))))
+; cost 4 proved at rung selection (2 solves, 0 cycle exclusions)
+(Add (F (F (V "a"))) (F (F (V "a"))))
+; cost 6 greedy at rung selection
+(Twice (F (F (V "a"))))

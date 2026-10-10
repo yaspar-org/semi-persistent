@@ -1,7 +1,6 @@
 # Chapter 3 — Hash-Consing Caches
 
-[← Ch 2: E-Classes and Union-Find](02-classes-and-union-find.md) · [Table of Contents](00-table-of-contents.md) · [Ch 4: Canonization →](04-canonization.md)
-
+[← Ch 2: E-Classes and Union-Find](02-classes-and-union-find.md) · [Table of Contents](00-table-of-contents.md) · [Ch 4: The E-Graph →](04-egraph.md)
 
 ## The Structural Sharing Invariant
 
@@ -14,7 +13,7 @@ e-classes are merged. This is congruence closure.
 The challenge is that "same canonical children" is a moving target.
 When two classes merge, a node's canonical children change, and the
 cache must be updated. This is the re-canonization problem, handled
-by rebuild (Chapter 5). This chapter focuses on the cache structure
+by rebuild (Chapter 4). This chapter focuses on the cache structure
 itself.
 
 ## Cache Partitioning
@@ -34,21 +33,27 @@ their own cache.
 | `FixedArityCache<.., 3>` | `FixedArityNode<G, 3>` | `(op, c₀, c₁, c₂)` |
 | `FixedArityCache<.., 2>` (C) | `FixedArityNode<G, 2>` | `(op, min, max)` |
 | `VariableArityCache` | `VariableArityNode<G>` | `(op, pool[start..end])` |
-| `LitCache` | `LitNode<G, V>` | `(op, lit_val_id)` |
+| `LitCache` | `LitNode<G, V>` | `(op, lit)` |
 
 ## `FixedArityCache`
 
 ```rust
-pub struct FixedArityCache<G, O, L, const K: usize, const TRACK: bool, const PROOFS: bool> {
-    nodes: VecI<FixedArityNode<G, O, K>, L, TRACK>,
-    index: hashbrown::HashMap<StoredKey<L>, (), PassthroughBuildHasher>,
+pub struct FixedArityCache<G, O, L, const K: usize, const TRACK: bool, const PROOFS: bool,
+                           P = HotFirst> {
+    nodes: Vec<FixedArityNode<G, O, K>, L, <P as TaggedFamily<..>>::Store, TRACK>,
+    index: hashbrown::HashMap<FpKey, HintSlot<L>, PassthroughBuildHasher>,
+    spill: Vec<HintBucket<L>>,
+    history: Option<VecI<..>>,     // recanonicalization history, under PROOFS
+    frames: Vec<CacheFrame>,
 }
 ```
 
 The `nodes` vector stores the actual node data, indexed by a typed
-local id `L`. Each index entry stores a 32-bit content fingerprint and
-the local id; a raw-entry probe confirms the operator and full children in
-the node arena before returning its global id. Lookup is expected O(1), subject
+local id `L`. The `index` is a hint index: it maps a 32-bit content fingerprint to
+the local ids that held content with that fingerprint at some point. A `HintSlot` with
+its tag clear holds a single local id; with the tag set it indexes a `spill` bucket
+listing several. A probe confirms the operator and full children of every candidate
+in the node arena before returning its global id. Lookup is expected O(1), subject
 to the hash table's usual assumptions.
 
 ### Passthrough Hasher
@@ -66,7 +71,7 @@ impl Hasher for PassthroughHasher {
 }
 ```
 
-### `probe_or_insert(op, children, global_id) → InsertResult`
+### `probe_or_insert(global_id, op, children) → InsertResult`
 
 1. Receive already canonical children (the `NodeStore` dispatch sorts an
    `SPair`; rebuild invokes the selected canonizer).
@@ -76,80 +81,60 @@ impl Hasher for PassthroughHasher {
 4. Otherwise, allocate node, insert into index, return
    `InsertResult::Inserted { local_id }`.
 
-### `recanonize_node(local_id, find, collisions)`
+### `recanonize_node(local_id, find, collisions, touched)`
 
 During rebuild:
 1. Read current children.
 2. Apply `find()` to each child.
 3. If unchanged → done.
-4. If changed: remove old entry from index, update children in node,
-   compute new content hash, probe index.
-5. If new hash collides with an existing node: congruence. Report
-   `(this_global_id, existing_global_id)` to collision list.
-6. Otherwise, insert new entry into index.
+4. If changed: update children in node, push the node onto `touched`, and
+   compute the new fingerprint. The hint for the old content stays in its bucket.
+5. Probe the hints for the new content, excluding this node. A hit is a congruence:
+   report `(this_global_id, existing_global_id)` to the collision list and flag this
+   node `FLAG_CONGRUENT_DUP`.
+6. If there was no collision and the node does not carry `FLAG_CONGRUENT_DUP`, push a
+   hint for the new content. A flagged node gets no hint, so a probe never returns
+   one and every collision's survivor is unflagged.
 
 ### `reset_frame(depth)` (formerly `restore(token)`)
 
-The `HashMap` index is derived, not semi-persistent, so restoring the
-node arena leaves it stale in two ways: it still holds entries for the
-suffix nodes the restore deletes, and entries for pre-mark nodes that
-were recanonized under the mark point at rewritten keys. `restore`
-repairs it in O(suffix + dirty) expected hash-table operations when that
-work is small, and rebuilds it in O(n) expected hash-table operations
-otherwise. Here `dirty` is the recorded pre-mark recanonization segment,
-not the e-graph's semi-naive touched log.
+The hint index is derived state and takes no part in the semi-persistence protocol:
+a restore does no index work. Rolling the node arena back revalidates the hints for
+the old content and invalidates those for content written under the mark, because a
+probe checks every candidate against the arena. This is what removed the re-key
+repair from the restore path (commit `2e19432`, 2026-09-09). It also keeps a cluster of
+congruent duplicates, many nodes with one content after merges, to one bucket instead
+of a long same-hash probe chain.
 
-Each `push_frame` records a `CacheFrame { saved_len, dirty_start,
-dirty_overflow }`. Since 2026-09-18 the caches carry no tokens: the e-graph's
-single `History` owns them, and a cache sees only the structural protocol —
-`push_frame`, `reset_frame(depth)`, `restore_frame(depth)`, `pop_frame`,
-`frame_depth` — driven through the forwarding view `EGraphMembers`. The frame
-record below is unchanged; what used to arrive in a token now arrives as the
-target depth. `saved_len` splits the arena: ids below it keep
-their entries, ids at or above it are the suffix to delete.
-`dirty_start` cuts a shared `dirty` list into per-frame segments;
-`recanonize_node` appends the local id of every pre-mark node whose
-key it rewrites. Once a frame already holds more than `saved_len /
-REBUILD_RATIO` entries, the next attempted record sets
-`dirty_overflow` instead of appending. Thus the implementation can retain
-up to `floor(saved_len / REBUILD_RATIO) + 1` entries before overflow;
-the ratio test already rejects incremental repair at that point.
-Overflow forces the rebuild path because the dirty segment is then
-incomplete and incremental repair would leave rewritten keys in the index.
+Since 2026-09-18 the caches carry no tokens: the e-graph's single `History` owns them,
+and a cache sees only the structural protocol — `push_frame`, `reset_frame(depth)`,
+`restore_frame(depth)`, `pop_frame`, `frame_depth` — driven through the forwarding view
+`EGraphMembers`. `CacheFrame` is a unit struct, so the frame stack only counts the open
+frames. The group has already validated the token and the members' lockstep before any
+member is touched, and `reset_frame` is called only with a depth below the live one.
 
-`restore` proceeds in this order:
+`reset_frame` resets the node arena and, under `PROOFS`, the history column to the
+frame at `depth`, and truncates `frames` to `depth + 1` under semantics B, since the
+checkpoint's frame stays open; the fused `restore_frame` truncates exactly to `depth`.
+Then `debug_assert!(index_is_complete())` checks that a probe finds the content of every
+live node.
 
-1. The group has already validated the token and the members' lockstep before
-   any member is touched, and `reset_frame` is called only with a depth below the
-   live one. That ordering is what the old per-cache token assertion bought:
-   the deletions in step 3 are not undoable, so nothing may move until the whole
-   move is known to be legal.
-2. Decide the path: incremental iff `dirty_overflow` is unset and
-   `REBUILD_RATIO * (suffix + dirty) <= saved_len`.
-3. Incremental: delete the index entries for the suffix
-   `[saved_len..live_len)` and for the frame's dirty segment, reading
-   keys from the still-live arena; restore the arena; re-insert the
-   dirty nodes under their restored keys.
-   Rebuild: restore the arena, then reconstruct the whole index by
-   scanning the surviving nodes.
-4. Truncate `dirty` to `dirty_start` and `frames` to the target depth — plus one
-   under semantics B, since the checkpoint's frame stays open, and exactly to it
-   for the fused `restore_frame` — then `debug_assert!(index_matches_rebuild())`.
-
-`REBUILD_RATIO` is 4. The source comment records the heuristic model:
-deletion and insertion are treated as roughly comparable and dirty entries
-must be deleted and reinserted. This is a policy threshold, not a benchmarked
-or architecture-independent break-even theorem.
+`REBUILD_RATIO` (4) and `restore_incrementally` remain in `caches.rs` as dead code with
+their test, kept as the policy for a future append-only index; the hint index has no
+rebuild path.
 
 ## `VariableArityCache`
 
 Same structure but children are stored in a shared pool:
 
 ```rust
-pub struct VariableArityCache<G, O, C, L, const TRACK: bool, const PROOFS: bool> {
-    nodes: VecI<VariableArityNode<G, O>, L, TRACK>,
-    children: VecI<C, usize, TRACK>,
-    index: hashbrown::HashMap<StoredKey<L>, (), PassthroughBuildHasher>,
+pub struct VariableArityCache<G, O, C, L, const TRACK: bool, const PROOFS: bool, P = HotFirst> {
+    nodes: Vec<VariableArityNode<G, O>, L, <P as ..>::Store, TRACK>,
+    children: Vec<C, usize, <P as ..>::Store, TRACK>,
+    index: hashbrown::HashMap<FpKey, HintSlot<L>, PassthroughBuildHasher>,
+    spill: Vec<HintBucket<L>>,
+    history_nodes, history_children,   // under PROOFS
+    frames: Vec<CacheFrame>,
 }
 ```
 
@@ -165,32 +150,33 @@ and the span may shrink.
 ## `LitCache`
 
 ```rust
-pub struct LitCache<G, O, V, L, const TRACK: bool> {
-    nodes: VecI<LitNode<G, O, V>, L, TRACK>,
-    index: hashbrown::HashMap<StoredKey<L>, (), PassthroughBuildHasher>,
+pub struct LitCache<G, O, V, L, const TRACK: bool, P = HotFirst> {
+    nodes: Vec<LitNode<G, O, V>, L, <P as ..>::Store, TRACK>,
+    index: hashbrown::HashMap<FpKey, HintSlot<L>, PassthroughBuildHasher>,
+    spill: Vec<HintBucket<L>>,
+    frames: Vec<CacheFrame>,
 }
 ```
 
-Key is `(op, lit_val_id)`. Literal nodes have no e-node children, so
-`recanonize_node` is a no-op. `LitCache` also lacks the `PROOFS`
+Key is `(op, lit)`. Literal nodes have no e-node children, so `LitCache` has no
+`recanonize_node`: `NodeStore::recanonize_node` returns `Normal::Node` for a literal
+node without touching the cache. `LitCache` also lacks the `PROOFS`
 parameter; there is no history bit to manage.
 
 ## Source of Truth vs Derived
 
 The node vectors and children pools are the source of truth: they
-are semi-persistent and rolled back on backtrack. The `HashMap` index
-is derived, repaired in O(suffix + dirty) expected hash-table operations or
-reconstructed in O(n) expected operations from the source of truth after
-backtrack (see `restore` above). This
+are semi-persistent and rolled back on backtrack. The hint index
+is derived: a restore leaves it untouched, and probes validate its entries
+against the restored arena (see `reset_frame` above). This
 separation is deliberate: the index is high-churn (every rebuild
 touches it), and making it semi-persistent would add capture bookkeeping to
-the forward path. The repair-on-backtrack scheme avoids those tracked writes;
-its net performance effect is a benchmark question.
+the forward path.
 
-The same pattern covers the literal store (Chapter 13): its
-value-to-id `HashMap` is derived from a semi-persistent interning log,
-and its restore validates the log token before removing the suffix
-entries from the index, for the same reason as step 1 above.
+The literal store (Chapter 10) does not follow this pattern. It is an
+`SpUniqueMap` (`literal.rs`), whose log of canonical keys and values is the source of
+truth and whose index belongs to the verified map; it takes no token, and its frame
+operations are driven by the `History` like every other member.
 
 ---
-[← Ch 2: E-Classes and Union-Find](02-classes-and-union-find.md) · [Table of Contents](00-table-of-contents.md) · [Ch 4: Canonization →](04-canonization.md)
+[← Ch 2: E-Classes and Union-Find](02-classes-and-union-find.md) · [Table of Contents](00-table-of-contents.md) · [Ch 4: The E-Graph →](04-egraph.md)

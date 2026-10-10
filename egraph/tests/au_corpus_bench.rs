@@ -2004,8 +2004,8 @@ fn blind_interval_certification() {
 
         // The certified size, so the table cannot report a speedup that came
         // from certifying something worse.
-        let mut certified_size: Option<u32> = None;
-        let mut first_cert = |intervals: bool| -> Option<u64> {
+        let mut proven_size: Option<u32> = None;
+        let mut first_proof = |intervals: bool| -> Option<u64> {
             let mut p = 1u64;
             while p <= 8192 {
                 let r = anti_unify(
@@ -2023,8 +2023,8 @@ fn blind_interval_certification() {
                 )
                 .unwrap();
                 if r.completion == Completion::Exact {
-                    match certified_size {
-                        None => certified_size = Some(r.size),
+                    match proven_size {
+                        None => proven_size = Some(r.size),
                         Some(prev) => assert_eq!(
                             prev, r.size,
                             "d{depth}m{matched}: the two configurations certified different \
@@ -2038,8 +2038,8 @@ fn blind_interval_certification() {
             }
             None
         };
-        let s1 = first_cert(false);
-        let s6 = first_cert(true);
+        let s1 = first_proof(false);
+        let s6 = first_proof(true);
         let sp = match (s1, s6) {
             (Some(a), Some(b)) if b > 0 => format!("{:.2}x", a as f64 / b as f64),
             _ => "n/a".to_owned(),

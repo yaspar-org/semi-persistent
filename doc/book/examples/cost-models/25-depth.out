@@ -1,0 +1,6 @@
+; cost 1 proved at rung selection (2 solves, 0 cycle exclusions)
+(And (V "a") (V "b") (V "c") (V "d"))
+; cost 1 proved at rung levels (2 solves, 0 cycle exclusions)
+(And (V "a") (V "b") (V "c") (V "d"))
+; cost 2 proved at rung binary (3 solves, 0 cycle exclusions)
+(And (And (V "a") (V "b")) (And (V "c") (V "d")))

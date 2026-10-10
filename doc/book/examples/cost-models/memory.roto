@@ -1,0 +1,73 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// R2U2's minimum monitor memory, as a cost script (`semi_persistent_egraph::extraction::script`).
+//
+// Per class: the queue an early producer needs while its latest sibling
+// finishes, max(max sibling wpd - own bpd, 0) + 1, and the same for every
+// internal node of a rendered flat node, plus the specification wrapper's
+// queue. A Boolean constant occupies none. The same cost as
+// mltl-cost/src/lib.rs::mltl_memory, which is what the tests compare.
+
+// The interval bound `j` (0 lower, 1 upper) of a bounded temporal operator.
+fn bound(n: Node, j: u64) -> u64 {
+    if (n.is("Global") || n.is("Future") || n.is("Until") || n.is("Release")) && n.ints().len() >= 2 {
+        match n.nat(j) {
+            Some(v) => v,
+            None => 0,
+        }
+    } else {
+        0
+    }
+}
+
+// Whether the class's first candidate is the operator `op`.
+fn first_is(c: Class, op: String) -> bool {
+    match c.nodes().get(0) {
+        Some(n) => n.is(op),
+        None => false,
+    }
+}
+
+// ANCHOR: cost
+fn cost(g: Graph) {
+    let ub = g.node_values();
+    let lb = g.node_values();
+    for n in g.nodes() {
+        ub.set(n, bound(n, 1));
+        lb.set(n, bound(n, 0));
+    }
+    let wpd = g.attribute_max(ub);
+    let bpd = g.attribute_min(lb);
+    g.charge_const(1);
+    for c in g.classes() {
+        // Every sibling c may wait for, under every parent, where it is one.
+        let peers = [];
+        for u in c.parents() {
+            for s in u.siblings() {
+                peers.push(wpd.of(s.class()).when(s.present()));
+            }
+        }
+        let queue = g.max_over(peers).minus(bpd.of(c)).clamp(0);
+        if !first_is(c, "Bool") {
+            c.chosen().charge_if(1);
+            queue.charge();
+        }
+        // The same for every internal node a rendering of a flat node may contain.
+        for n in c.nodes() {
+            for t in n.inner_nodes() {
+                let sibs = [];
+                for s in t.siblings() {
+                    sibs.push(wpd.of(s.class()).when(t.exists().and(s.present())));
+                }
+                let mems = [];
+                for m in t.members() {
+                    mems.push(bpd.of(m.class()).when(t.exists().and(m.present())));
+                }
+                t.exists().charge_if(1);
+                g.max_over(sibs).minus(g.min_under(mems)).clamp(0).charge();
+            }
+        }
+    }
+}
+// ANCHOR_END: cost

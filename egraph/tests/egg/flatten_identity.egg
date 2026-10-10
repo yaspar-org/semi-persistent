@@ -1,0 +1,27 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; `:flatten` with `:identity` (doc/goal-canonical-flatten-views.md, step 1): a view is
+;; canonized by the one normalization, which drops the unit's class. And{p, K} with
+;; K ≡ And{q, r} and K ≡ And{q2, s}, where s is merged with the unit `Tru` after
+;; construction. The tagged rule pairs elements of every view: q with r only through
+;; the view that opens K, and never the unit. (A two-item pattern: rebuild leaves the
+;; degenerate node And{K} in K's class, which a one-item pattern would match untagged.)
+;; flatten_identity_control.egg is the same program without the tag.
+(sort E)
+(function Tru () E)
+(function p () E) (function q () E) (function q2 () E) (function r () E)
+(function Kc () E) (function Sc () E)
+(function And (E) E :assoc-comm-idem :identity (Tru))
+(function Pair (E E) E)
+(let k (Kc))
+(let s (Sc))
+(let top (And (p) k))
+(union k (And (q) (r)))
+(union k (And (q2) s))
+(union s (Tru))
+(rewrite (And x y ..rest) (Pair x y) :flatten)
+(run 1)
+(check (= top (Pair (q) (r))))
+(check (!= top (Pair (Tru) (p))))

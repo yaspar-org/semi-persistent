@@ -381,14 +381,18 @@ fn build_meta(seed: u64) -> (Eg, ENodeId, ENodeId) {
 /// Matches the tree-expansion semantics of `TermPool::size`, which counts a
 /// hash-consed child once per occurrence.
 fn backbone_count(pool: &TermPool<OpId, LitValId>, root: TermId) -> u64 {
+    // Each entry carries how many times it occurs: a child of multiplicity k counts k
+    // times, as it does in `size`.
     let mut count: u64 = 0;
-    let mut stack: Vec<TermId> = vec![root];
-    while let Some(t) = stack.pop() {
+    let mut stack: Vec<(TermId, u64)> = vec![(root, 1)];
+    while let Some((t, times)) = stack.pop() {
         if matches!(pool.op(t), TermOp::Variants) {
             continue;
         }
-        count += 1;
-        stack.extend_from_slice(pool.children(t));
+        count += times;
+        for (&c, &k) in pool.children(t).iter().zip(pool.counts(t)) {
+            stack.push((c, times * k));
+        }
     }
     count
 }

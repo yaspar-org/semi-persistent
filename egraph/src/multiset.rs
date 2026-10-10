@@ -3,8 +3,8 @@
 //! Multiset algebra over canonical AC child slices.
 //!
 //! These are the search-and-arithmetic primitives for AC congruence completion
-//! (superposition / inter-reduction). See `doc/design/ac-completion-spec.md`
-//! and `doc/design/ac-congruence-completeness.md` §6–§7.
+//! (superposition / inter-reduction). See `doc/design/06-ac-congruence-closure.md`
+//! §6–§7 and Part III.
 //!
 //! All functions operate on the *canonical* AC child form produced by
 //! [`crate::canon::MSetCanon`]: a slice `&[(G, M)]` that is
@@ -26,14 +26,14 @@
 //! take a max, min, or clamped difference and so cannot overflow. That one, and
 //! the cross-class sum in [`multiset_size`], are checked.
 
-use crate::multiplicity::MultiplicityLike;
+use crate::multiplicity::{MultOverflow, MultiplicityLike};
 
 /// Raised where a multiset operation would exceed the caller's multiplicity
 /// width. The positivity invariant above makes wrapping actively dangerous: a sum
 /// that wraps to zero produces an entry the canonical form says cannot exist, and
 /// the `retain`-based clamps would then silently delete the summand — turning an
 /// overflow into a wrong equality rather than a failure.
-const SUM_OVERFLOW: &str = "AC multiset multiplicity overflowed its configured width";
+const SUM_OVERFLOW: &str = "multiplicity overflow: an AC multiset sum past its configured width";
 
 /// An AC child: a class id paired with its multiplicity in the multiset.
 type Pair<G, M> = (G, M);
@@ -139,13 +139,23 @@ pub fn multiset_subtract<G: Copy + Ord, M: MultiplicityLike>(
     out
 }
 
-/// Multiset union (sum) `a ⊎ b` into `out` (cleared first): multiplicities of shared
-/// classes add. `out` must not alias `a` or `b`.
+/// [`try_multiset_union_into`] for a caller whose counts cannot overflow; panics if they do.
 pub fn multiset_union_into<G: Copy + Ord, M: MultiplicityLike>(
     out: &mut Vec<Pair<G, M>>,
     a: &[Pair<G, M>],
     b: &[Pair<G, M>],
 ) {
+    try_multiset_union_into(out, a, b).expect(SUM_OVERFLOW);
+}
+
+/// Multiset union (sum) `a ⊎ b` into `out` (cleared first): multiplicities of shared
+/// classes add. `out` must not alias `a` or `b`. `Err` when a sum does not fit the
+/// configured width; `out` is then partial and must not be used.
+pub fn try_multiset_union_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> Result<(), MultOverflow> {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
     out.clear();
@@ -161,7 +171,7 @@ pub fn multiset_union_into<G: Copy + Ord, M: MultiplicityLike>(
                 j += 1;
             }
             std::cmp::Ordering::Equal => {
-                out.push((a[i].0, a[i].1.checked_add(b[j].1).expect(SUM_OVERFLOW)));
+                out.push((a[i].0, a[i].1.checked_add(b[j].1).ok_or(MultOverflow)?));
                 i += 1;
                 j += 1;
             }
@@ -169,6 +179,7 @@ pub fn multiset_union_into<G: Copy + Ord, M: MultiplicityLike>(
     }
     out.extend_from_slice(&a[i..]);
     out.extend_from_slice(&b[j..]);
+    Ok(())
 }
 
 /// Allocating wrapper over [`multiset_union_into`].
@@ -176,9 +187,17 @@ pub fn multiset_union<G: Copy + Ord, M: MultiplicityLike>(
     a: &[Pair<G, M>],
     b: &[Pair<G, M>],
 ) -> Vec<Pair<G, M>> {
+    try_multiset_union(a, b).expect(SUM_OVERFLOW)
+}
+
+/// Allocating wrapper over [`try_multiset_union_into`].
+pub fn try_multiset_union<G: Copy + Ord, M: MultiplicityLike>(
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> Result<Vec<Pair<G, M>>, MultOverflow> {
     let mut out = Vec::with_capacity(a.len() + b.len());
-    multiset_union_into(&mut out, a, b);
-    out
+    try_multiset_union_into(&mut out, a, b)?;
+    Ok(out)
 }
 
 /// Multiset lcm (least common multiple) `(a ⊎ b) − (a ∩ b)` into `out` (cleared first):
@@ -259,11 +278,20 @@ pub fn multiset_intersect<G: Copy + Ord, M: MultiplicityLike>(
     out
 }
 
-/// Total size of a monomial: the sum of its multiplicities.
-pub fn multiset_size<G: Copy, M: MultiplicityLike>(m: &[Pair<G, M>]) -> u64 {
-    m.iter()
-        .try_fold(0u64, |acc, (_, mult)| acc.checked_add(mult.to_u64()))
-        .expect(SUM_OVERFLOW)
+/// Total size of a monomial: the sum of its multiplicities. A sum of u64 counts over
+/// fewer than 2^64 entries fits u128; past that the sum is exact in `BigUint`.
+pub fn multiset_size<G: Copy, M: MultiplicityLike>(m: &[Pair<G, M>]) -> num_bigint::BigUint {
+    match small_size(m) {
+        Some(total) => num_bigint::BigUint::from(total),
+        None => m.iter().map(|(_, mult)| mult.to_biguint()).sum(),
+    }
+}
+
+/// [`multiset_size`] in u128, when every count fits u64.
+fn small_size<G: Copy, M: MultiplicityLike>(m: &[Pair<G, M>]) -> Option<u128> {
+    m.iter().try_fold(0u128, |acc, (_, mult)| {
+        Some(acc + u128::from(mult.to_u64()?))
+    })
 }
 
 /// Degree-lexicographic order on monomials — a *total admissible* monomial order
@@ -289,9 +317,11 @@ pub fn monomial_cmp<G: Copy + Ord, M: MultiplicityLike>(
     a: &[Pair<G, M>],
     b: &[Pair<G, M>],
 ) -> std::cmp::Ordering {
-    multiset_size(a)
-        .cmp(&multiset_size(b))
-        .then_with(|| a.iter().rev().cmp(b.iter().rev()))
+    match (small_size(a), small_size(b)) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        _ => multiset_size(a).cmp(&multiset_size(b)),
+    }
+    .then_with(|| a.iter().rev().cmp(b.iter().rev()))
 }
 
 /// A ground AC rewrite rule `+lhs → +rhs`, both monomials, oriented `lhs ≫ rhs` by
@@ -567,7 +597,18 @@ pub fn normalize_ms_into<G: Copy + Ord, M: MultiplicityLike>(
     ms: &[Pair<G, M>],
     rules: NfRules<'_, '_, G, M>,
 ) {
-    normalize_ms_into_with_limit(out, scratch, ms, rules, GUARD_MAX_REWRITES);
+    normalize_ms_into_with_limit(out, scratch, ms, rules, GUARD_MAX_REWRITES).expect(SUM_OVERFLOW);
+}
+
+/// [`normalize_ms_into`], `Err` when a rewrite needs a multiplicity the configured
+/// width cannot hold (`out` is then partial and must not be used).
+pub fn try_normalize_ms_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    scratch: &mut Vec<Pair<G, M>>,
+    ms: &[Pair<G, M>],
+    rules: NfRules<'_, '_, G, M>,
+) -> Result<(), MultOverflow> {
+    normalize_ms_into_with_limit(out, scratch, ms, rules, GUARD_MAX_REWRITES)
 }
 
 fn normalize_ms_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
@@ -576,7 +617,7 @@ fn normalize_ms_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
     ms: &[Pair<G, M>],
     rules: NfRules<'_, '_, G, M>,
     max_rewrites: usize,
-) {
+) -> Result<(), MultOverflow> {
     out.clear();
     out.extend_from_slice(ms);
     let mut cands = CandVec::new();
@@ -588,9 +629,25 @@ fn normalize_ms_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
         );
         #[cfg(debug_assertions)]
         let before = out.clone();
-        // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
-        multiset_subtract_into(scratch, out, rule.lhs);
-        multiset_union_into(out, scratch, rule.rhs);
+        // Apply the rule as many times as `out` contains its left side, at once: q copies
+        // of `lhs` come out and q of `rhs` go in. Each single step only adds `rhs`, so the
+        // rule still applies at every intermediate step, and the batch is exactly q single
+        // rewrites. The guard counts batches: a child of multiplicity k is one batch, not k
+        // rewrites (a count of 2,000,000 used to exhaust the 1,000,000-rewrite guard).
+        let q = times_contained(out, rule.lhs);
+        if q == M::ONE {
+            // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
+            multiset_subtract_into(scratch, out, rule.lhs);
+            try_multiset_union_into(out, scratch, rule.rhs)?;
+        } else {
+            let scaled = |m: &[Pair<G, M>]| -> Result<Vec<Pair<G, M>>, MultOverflow> {
+                m.iter()
+                    .map(|&(g, k)| Ok((g, k.checked_mul(q).ok_or(MultOverflow)?)))
+                    .collect()
+            };
+            multiset_subtract_into(scratch, out, &scaled(rule.lhs)?);
+            try_multiset_union_into(out, scratch, &scaled(rule.rhs)?)?;
+        }
         #[cfg(debug_assertions)]
         debug_assert!(
             monomial_cmp(out, &before) == std::cmp::Ordering::Less,
@@ -598,6 +655,25 @@ fn normalize_ms_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
         );
         rewrites += 1;
     }
+    Ok(())
+}
+
+/// How many times `host` contains `part`: the least `host[g] / part[g]` over `part`'s
+/// classes, at least 1 for a part the caller found contained. Both are canonical.
+fn times_contained<G: Copy + Ord, M: MultiplicityLike>(
+    host: &[Pair<G, M>],
+    part: &[Pair<G, M>],
+) -> M {
+    let mut q: Option<M> = None;
+    for &(g, k) in part {
+        let have = host
+            .binary_search_by(|p| p.0.cmp(&g))
+            .map(|i| host[i].1)
+            .unwrap_or(M::ZERO);
+        let t = have.checked_div(k).unwrap_or(M::ZERO);
+        q = Some(q.map_or(t, |q| q.min(t)));
+    }
+    q.filter(|&q| q != M::ZERO).unwrap_or(M::ONE)
 }
 
 /// Allocating wrapper over [`normalize_ms_into`].
@@ -635,7 +711,17 @@ pub fn normalize_set_into<G: Copy + Ord, M: MultiplicityLike>(
     ms: &[Pair<G, M>],
     rules: NfRules<'_, '_, G, M>,
 ) {
-    normalize_set_into_with_limit(out, scratch, ms, rules, GUARD_MAX_REWRITES);
+    normalize_set_into_with_limit(out, scratch, ms, rules, GUARD_MAX_REWRITES).expect(SUM_OVERFLOW);
+}
+
+/// [`normalize_set_into`], `Err` on a multiplicity past the configured width.
+pub fn try_normalize_set_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    scratch: &mut Vec<Pair<G, M>>,
+    ms: &[Pair<G, M>],
+    rules: NfRules<'_, '_, G, M>,
+) -> Result<(), MultOverflow> {
+    normalize_set_into_with_limit(out, scratch, ms, rules, GUARD_MAX_REWRITES)
 }
 
 fn normalize_set_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
@@ -644,7 +730,7 @@ fn normalize_set_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
     ms: &[Pair<G, M>],
     rules: NfRules<'_, '_, G, M>,
     max_rewrites: usize,
-) {
+) -> Result<(), MultOverflow> {
     out.clear();
     out.extend_from_slice(ms);
     clamp_idempotent(out);
@@ -659,7 +745,7 @@ fn normalize_set_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
         let before = out.clone();
         // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
         multiset_subtract_into(scratch, out, rule.lhs);
-        multiset_union_into(out, scratch, rule.rhs);
+        try_multiset_union_into(out, scratch, rule.rhs)?;
         clamp_idempotent(out);
         // Strictness survives the clamp: the multiset step is strict (admissible
         // order + lhs ≫ rhs) and the clamp only lowers counts (can(t) ≼ t).
@@ -670,6 +756,7 @@ fn normalize_set_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
         );
         rewrites += 1;
     }
+    Ok(())
 }
 
 /// Allocating wrapper over [`normalize_set_into`].
@@ -712,7 +799,19 @@ pub fn normalize_nilpotent_into<G: Copy + Ord, M: MultiplicityLike>(
     rules: NfRules<'_, '_, G, M>,
     order: u8,
 ) {
-    normalize_nilpotent_into_with_limit(out, scratch, ms, rules, order, GUARD_MAX_REWRITES);
+    normalize_nilpotent_into_with_limit(out, scratch, ms, rules, order, GUARD_MAX_REWRITES)
+        .expect(SUM_OVERFLOW);
+}
+
+/// [`normalize_nilpotent_into`], `Err` on a multiplicity past the configured width.
+pub fn try_normalize_nilpotent_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    scratch: &mut Vec<Pair<G, M>>,
+    ms: &[Pair<G, M>],
+    rules: NfRules<'_, '_, G, M>,
+    order: u8,
+) -> Result<(), MultOverflow> {
+    normalize_nilpotent_into_with_limit(out, scratch, ms, rules, order, GUARD_MAX_REWRITES)
 }
 
 fn normalize_nilpotent_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
@@ -722,7 +821,7 @@ fn normalize_nilpotent_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
     rules: NfRules<'_, '_, G, M>,
     order: u8,
     max_rewrites: usize,
-) {
+) -> Result<(), MultOverflow> {
     out.clear();
     out.extend_from_slice(ms);
     clamp_nilpotent(out, order);
@@ -737,7 +836,7 @@ fn normalize_nilpotent_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
         let before = out.clone();
         // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
         multiset_subtract_into(scratch, out, rule.lhs);
-        multiset_union_into(out, scratch, rule.rhs);
+        try_multiset_union_into(out, scratch, rule.rhs)?;
         clamp_nilpotent(out, order);
         // Strictness survives the clamp: the multiset step is strict (admissible
         // order + lhs ≫ rhs) and the mod-n clamp only lowers counts (can(t) ≼ t).
@@ -748,6 +847,7 @@ fn normalize_nilpotent_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
         );
         rewrites += 1;
     }
+    Ok(())
 }
 
 /// Allocating wrapper over [`normalize_nilpotent_into`].
@@ -968,21 +1068,29 @@ mod tests {
         expected = "normalize_ms_into exceeded its rewrite guard before reaching a normal form"
     )]
     fn rewrite_guard_never_returns_a_partial_normal_form() {
-        let rules = [NfRule {
-            lhs: ms(&[(1, 1)]),
-            rhs: Vec::new(),
-        }];
+        // Two rules, each applied once: a rule applies all its copies in one batch, so a
+        // repeated class alone (`{1:2}`) would reach its normal form in one rewrite.
+        let rules = [
+            NfRule {
+                lhs: ms(&[(1, 1)]),
+                rhs: Vec::new(),
+            },
+            NfRule {
+                lhs: ms(&[(2, 1)]),
+                rhs: Vec::new(),
+            },
+        ];
         let refs: Vec<NfRuleRef<'_, ENodeId, Multiplicity>> =
             rules.iter().map(NfRuleRef::from).collect();
         let mut out = Vec::new();
         let mut scratch = Vec::new();
 
-        // One rewrite leaves one copy of class 1, so a budget of one is
+        // One rewrite removes one of the two classes, so a budget of one is
         // deliberately exhausted before the input reaches its empty normal form.
-        normalize_ms_into_with_limit(
+        let _ = normalize_ms_into_with_limit(
             &mut out,
             &mut scratch,
-            &ms(&[(1, 2)]),
+            &ms(&[(1, 1), (2, 1)]),
             NfRules::linear(&refs),
             1,
         );

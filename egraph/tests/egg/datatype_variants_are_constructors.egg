@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; Datatype variants are constructors automatically: they take the same :cost and
 ;; :unextractable tags as a (constructor …) declaration, and their nodes carry

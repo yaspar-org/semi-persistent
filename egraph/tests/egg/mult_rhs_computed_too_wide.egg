@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: u64::+ in a multiplicity expression is undefined on (2147483648, 2147483648)
+;; A computed multiplicity past the configured 32-bit width: k + k at k = 2^31 is 2^32.
+;; The expression computes in the configuration's width with checked arithmetic, so the
+;; sum is reported, never truncated (64 bits and big hold it: tests/config_matrix.rs).
+(sort E)
+(function a () E) (function b () E) (function W () E)
+(function F (E) E) (function G (E) E)
+(function Plus (E) E :assoc-comm)
+(let w (W))
+(rewrite (W) (Plus (F (a)):2147483648 (b)))
+(rewrite (Plus x:k (b)) (G (Plus x:(u64::+ k k) (b))))
+(run 2)

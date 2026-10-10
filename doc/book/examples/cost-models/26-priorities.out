@@ -1,0 +1,3 @@
+; cost 4 proved at rung selection (0 solves, 0 cycle exclusions)
+; solver objective [4, 0] (most important first)
+(Twice (F (F (V "a"))))

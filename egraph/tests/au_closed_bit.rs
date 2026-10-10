@@ -212,7 +212,7 @@ fn closed_bit_never_costs_quality() {
     }
 
     let mut improved = 0usize;
-    let mut certified_earlier = 0usize;
+    let mut proven_earlier = 0usize;
     let mut checked = 0usize;
     for (id, inst) in &instances {
         let (exact_size, exact_vmass) = exact(inst);
@@ -246,7 +246,7 @@ fn closed_bit_never_costs_quality() {
                 improved += 1;
             }
             if on.certified && !off.certified {
-                certified_earlier += 1;
+                proven_earlier += 1;
             }
             assert!(
                 !off.certified || on.certified,
@@ -257,7 +257,7 @@ fn closed_bit_never_costs_quality() {
     }
     println!(
         "closed_bit_never_costs_quality: {checked} (instance, budget) pairs, {improved} \
-         strictly better, {certified_earlier} certified earlier"
+         strictly better, {proven_earlier} certified earlier"
     );
 }
 

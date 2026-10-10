@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: an `:except` cycle (a -> b -> a)
+;; TYPES: machine
+;; ANCHOR: seq-illegal-except-cycle
+(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Bool (bool) MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem :identity (Bool true))
+(function Cat (MLTL) MLTL :assoc)
+(function Bag (MLTL) MLTL :assoc-comm)
+(function Pair (MLTL MLTL) MLTL :comm)
+(function Global (IntervalSort MLTL) MLTL)
+(rewrite (And (..a (Global (Interval l u) p) :except b) (..b (Global (Interval m v) q) :except a) ..rest) (And ..a ..b ..rest))
+;; ANCHOR_END: seq-illegal-except-cycle

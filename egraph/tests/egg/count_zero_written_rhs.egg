@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: a written multiplicity is at least 1
+;; A written count of 0 on a right-hand side element is refused; a computed one drops the
+;; child (mult_rhs_zero_empty.egg).
+(sort E)
+(function a () E) (function b () E) (function w () E) (function G (E) E)
+(function Add (E) E :assoc-comm)
+(let x (w))
+(rewrite (w) (G (Add (a):0 (b))))

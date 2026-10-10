@@ -1,0 +1,10 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: is ACI (set); multiplicities not allowed
+;; A count on a right-hand-side child of an ACI operator is refused: a set has none.
+(sort E)
+(function a () E) (function b () E) (function w () E)
+(function And (E) E :assoc-comm-idem)
+(let x (w))
+(rewrite (w) (And (a):2 (b)))

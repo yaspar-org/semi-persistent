@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: none
+;; A matched AC `..rest` is copied into the right-hand side with its counts: rebuilding a
+;; node whose rest holds F(a):4294967295 costs one entry for it, not 2^32 - 1.
+(sort E)
+(function a () E) (function b () E) (function c () E) (function W () E)
+(function F (E) E) (function G (E) E) (function Hit (E) E)
+(function Plus (E) E :assoc-comm)
+(let w (W))
+(rewrite (W) (Plus (F (a)):4294967295 (b)))
+(run 1)
+(rewrite (Plus (b) ..rest) (G (Plus (c) ..rest)))
+(run 1)
+(rewrite (G (Plus x:4294967295 (c))) (Hit x))
+(run 1)
+(check (= w (Hit (F (a)))))

@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; `:flatten` with `:inverse` (doc/goal-canonical-flatten-views.md, step 1):
+;; Add{a, K} with K ≡ Add{neg a, b, c}. Opening K gives {a, neg a, b, c}, in which the
+;; inverse pair cancels: the view is {b, c}, and the two-item rule matches it.
+;; flatten_inverse_control.egg is the same program without the tag.
+(sort E)
+(function zero () E)
+(function a () E) (function b () E) (function c () E) (function Kc () E)
+(function neg (E) E)
+(function add (E) E :assoc :comm :identity (zero) :inverse neg)
+(function Pair (E E) E)
+(let k (Kc))
+(let top (add (a) k))
+(union k (add (neg (a)) (b) (c)))
+(rewrite (add x y) (Pair x y) :flatten)
+(run 1)
+(check (= top (Pair (b) (c))))

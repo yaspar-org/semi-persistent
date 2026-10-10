@@ -80,7 +80,7 @@ completion pass. Measured, all three completion modes on this program:
 - **lazy** (`--lazy-ac-eqs`): **all ten checks pass in one 484 s run**,
   ending at the restored 69-node graph. The lazy transaction is shared
   across consecutive checks and every completion pass is goal-directed
-  (`ac-congruence-completeness.md` section 13).
+  (`06-ac-congruence-closure.md` section 13).
 
 484 s against the rules encoding's 118-128 ms is a validation result, not a
 competitive configuration, so the native encoding appears in no campaign

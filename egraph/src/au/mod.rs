@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Anti-unification over the frozen e-graph.
 //!
-//! Implements `doc/design/19-anti-unification.md`: cycle-policy-parameterized
+//! Implements `doc/design/12-anti-unification.md`: cycle-policy-parameterized
 //! Exact and Monte-Carlo graph search, plus contextual Exact delegation.
 //! Pair-mode root Exact uses bounded relaxation over the finite ordered-pair
 //! graph; side-mode Exact and every MCGS mode use contextual graphs. A
@@ -204,16 +204,17 @@ pub enum AuError {
     /// class index, carried as `u64` for DIAGNOSTIC DISPLAY ONLY: it is not a
     /// typed id and must never flow back into AU indexing operations.
     NoFiniteRepresentative(u64),
-    // There is deliberately no `MultiplicityOverflow` variant. Snapshot construction
-    // used to narrow every multiplicity to a hardcoded `u32` and fail here; nothing
-    // narrows now. Multiplicities are read at [`EGraphConfig::M`] and widened losslessly
-    // to `u64` where the AU search needs a common width, so the read cannot overflow.
-    // What *can* still exceed a width is a *sum* of multiplicities, and that is not an
-    // error: [`actions::generate_actions`] answers a summation overflow by enumerating no
-    // actions from the offending member, which costs search completeness rather than
-    // soundness and so has no business aborting the caller's snapshot.
-    //
-    // [`EGraphConfig::M`]: crate::config::EGraphConfig::M
+    /// An AC node whose counts total past u64, the width the search reads and merges
+    /// counts at ([`au_count`]), or, for an operator with an identity, past the
+    /// configured width, at which an identity-padded action pair stores the total.
+    /// Reported when the snapshot is built, so no sum inside the search can overflow and
+    /// no candidate is lost to one. The payload describes the total.
+    ///
+    /// A *sum* of multiplicities that exceeds a width is not an error:
+    /// [`actions::generate_actions`] answers a summation overflow by enumerating no
+    /// actions from the offending member, which costs search completeness rather than
+    /// soundness and so has no business aborting the caller's snapshot.
+    CountTooWide(String),
     /// A session method received a config whose cycle mode differs from the
     /// mode the session's search space was created with. The space's cycle
     /// contexts are derived under one mode; mixing modes would silently
@@ -227,6 +228,10 @@ impl core::fmt::Display for AuError {
             AuError::NoFiniteRepresentative(c) => {
                 write!(f, "class auc{c} has no admissible finite member")
             }
+            AuError::CountTooWide(k) => write!(
+                f,
+                "multiplicity overflow: an AC node's counts total {k}, past the width anti-unification computes in"
+            ),
             AuError::CycleModeMismatch => write!(
                 f,
                 "config cycle mode differs from the session's search-space mode"
@@ -247,4 +252,12 @@ impl<V, F: FnOnce() -> V> crate::containers::Produce<V> for Lazy<F> {
     fn produce(self) -> V {
         (self.0)()
     }
+}
+
+/// A multiplicity at the u64 width the search computes in. Total inside the search:
+/// [`AuSnapshot::new`](egraph_api::AuSnapshot::new) refuses a graph holding a wider
+/// count ([`AuError::CountTooWide`]), so the conversion here cannot fail.
+pub(crate) fn au_count<M: crate::multiplicity::MultiplicityLike>(m: M) -> u64 {
+    m.to_u64()
+        .expect("AuSnapshot::new admits only counts that fit u64")
 }

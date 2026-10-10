@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: a comprehension binding 2 names needs a source of that width
+;; TYPES: machine
+;; A comprehension binds one name per column of its source: `(zip gs)` has one.
+(sort E)
+(function a () E)
+(function F (E) E)
+(function G (E) E)
+(function N (i64) E)
+(function And (E) E :assoc-comm-idem)
+(rewrite (And (..gs (F x)) ..rest) (And ..{ (G e) for (e d) in (zip gs) } ..rest))

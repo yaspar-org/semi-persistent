@@ -4,7 +4,7 @@
 //! relative to the AC theory (design ch. 19 §2.8). This file pins the consequence under
 //! all three AC congruence modes.
 //!
-//! The fixture is the containment gap of `ac-congruence-completeness.md` §4a, wrapped in
+//! The fixture is the containment gap of `06-ac-congruence-closure.md` §4a, wrapped in
 //! one common unary operator so the anti-unifier has a backbone and the only candidate
 //! disagreement is the AC-equal pair:
 //!

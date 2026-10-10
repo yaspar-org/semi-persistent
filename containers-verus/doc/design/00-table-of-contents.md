@@ -91,8 +91,9 @@ listing's order.
     obligation it rests on. Verified; the engine does not enable it.
 17. **[The Three-Tier Frame Grid](17-three-tier-frame-grid.md)**: the geometric
     proof model for non-monotone saved lengths, Trail duplicate columns, Hot
-    unique captures, Cold runs, cross-tier replay, and the inductive lemmas
-    suggested by horizontal, vertical, and representation changes.
+    unique captures, Cold runs, cross-tier replay, the inductive lemmas
+    suggested by horizontal, vertical, and representation changes, and
+    rollover: when a mark, a tier limit, or an explicit pass converts a frame.
 18. **[Store Policy for the Composite Containers](18-store-policy.md)**: the
     policy type parameter every composite takes, the two column families it is
     consulted through, `HotFirst` (the default) versus `TrailFirst`, and the

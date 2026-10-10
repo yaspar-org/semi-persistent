@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; DERIVE_AC_EQS: on
 ;; TYPES: machine
 ;; The A-only erased-reference gap (design doc section 13 companion): merging

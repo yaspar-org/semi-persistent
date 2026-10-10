@@ -16,7 +16,7 @@
 //! ordinary term node. Removing the path is therefore strictly smaller. With
 //! `N` reachable pair states, the argument gives a depth-`N` bound, which the
 //! loop asserts. This argument has finite regression coverage but is not yet a
-//! machine-checked theorem; see design chapter 19, section 9.6.
+//! machine-checked theorem; see design chapter 12, section 9.6.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -29,7 +29,7 @@ use super::ac_repr;
 use super::actions::{ActionCache, generate_actions};
 use super::egraph_api::{AuSnapshot, ClassOf};
 use super::estimates::lb_pair;
-use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
+use super::terms::{ChildForm, TermOp, TermPool, build_best_term, evaluate_generalize_action};
 use super::transport::{Cell, TransportProblem, TransportSolution, solve_transport};
 
 type Quality = (u32, u32);
@@ -41,8 +41,8 @@ struct StructuralAction<O> {
 
 struct TransportAction<O> {
     op: O,
-    row_supply: Vec<u32>,
-    col_demand: Vec<u32>,
+    row_supply: Vec<u64>,
+    col_demand: Vec<u64>,
     cells: Vec<Vec<usize>>,
 }
 
@@ -103,11 +103,9 @@ fn expired(deadline: Option<Instant>) -> bool {
     deadline.is_some_and(|limit| Instant::now() >= limit)
 }
 
-fn narrow_counts<C>(monomial: &[(C, u64)]) -> Option<Vec<u32>> {
-    monomial
-        .iter()
-        .map(|(_, count)| u32::try_from(*count).ok())
-        .collect()
+/// A monomial's counts, the transport margins (u64, as the solver takes them).
+fn counts<C>(monomial: &[(C, u64)]) -> Vec<u64> {
+    monomial.iter().map(|(_, count)| *count).collect()
 }
 
 fn build_graph<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
@@ -149,7 +147,7 @@ where
                 .map(|pair| {
                     (
                         graph.intern(pair.left, pair.right),
-                        crate::multiplicity::MultiplicityLike::to_u64(pair.count),
+                        crate::au::au_count(pair.count),
                     )
                 })
                 .collect();
@@ -162,12 +160,8 @@ where
         let mut transport = Vec::new();
         for op in ac_repr::common_ac_ops(snap, left, right) {
             for (left_mono, right_mono, _) in ac_repr::representation_pairs(snap, left, right, op) {
-                let Some(row_supply) = narrow_counts(&left_mono) else {
-                    continue;
-                };
-                let Some(col_demand) = narrow_counts(&right_mono) else {
-                    continue;
-                };
+                let row_supply = counts(&left_mono);
+                let col_demand = counts(&right_mono);
                 let cells = left_mono
                     .iter()
                     .map(|(left_child, _)| {
@@ -303,7 +297,7 @@ where
     pool.intern_action_result(
         TermOp::EGraph(action.op),
         &children,
-        snap.op_is_commutative(action.op),
+        snap.child_form(action.op),
     )
 }
 
@@ -317,11 +311,11 @@ fn transport_term<Cfg: EGraphConfig>(
     for (row, flow_row) in solution.flow.iter().enumerate() {
         for (col, &count) in flow_row.iter().enumerate() {
             if count > 0 {
-                children.push((terms[action.cells[row][col]], u64::from(count)));
+                children.push((terms[action.cells[row][col]], count));
             }
         }
     }
-    pool.intern_action_result(TermOp::EGraph(action.op), &children, true)
+    pool.intern_action_result(TermOp::EGraph(action.op), &children, ChildForm::Multiset)
 }
 
 #[allow(clippy::too_many_arguments)]

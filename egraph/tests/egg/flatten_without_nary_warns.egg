@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: rewrite_0: :flatten has no effect
+;; WARNING: rule_1: :flatten has no effect
+;; `:flatten` acts on associative, AC, and ACI operators only. A rule that uses none is
+;; accepted with a warning that the tag has no effect, and matches as without the tag.
+(sort E)
+(function a () E)
+(function F (E) E)
+(function G (E) E)
+(function H (E) E)
+(let t (F (a)))
+(rewrite (F x) (G x) :flatten)
+(rule ((F x)) ((union (F x) (H x))) :flatten)
+(run 2)
+(check (= t (G (a))))
+(check (= t (H (a))))

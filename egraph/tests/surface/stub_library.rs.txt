@@ -1,0 +1,132 @@
+//! Surface spike: stub types for the typed cost algebra. Checks only that scripts
+//! type-check (or are rejected) as the design says.
+use roto::{library, List, Runtime, Val};
+
+macro_rules! stub { ($($t:ident),*) => { $( #[derive(Clone, PartialEq)] pub struct $t; )* } }
+stub!(G, Cl, Nd, Bl, BlO, BlU, IE, IO, IU, PE, PO, PU, Part);
+
+fn lib() -> roto::Library {
+    library! {
+        #[clone] type Graph = Val<G>;
+        #[clone] type Class = Val<Cl>;
+        #[clone] type Node = Val<Nd>;
+        #[clone] type Bool = Val<Bl>;
+        #[clone] type BoolOver = Val<BlO>;
+        #[clone] type BoolUnder = Val<BlU>;
+        #[clone] type Int = Val<IE>;
+        #[clone] type IntOver = Val<IO>;
+        #[clone] type IntUnder = Val<IU>;
+        #[clone] type Pb = Val<PE>;
+        #[clone] type PbOver = Val<PO>;
+        #[clone] type PbUnder = Val<PU>;
+        #[clone] type Part = Val<Part>;
+
+        impl Val<G> {
+            fn classes(g: Val<G>) -> List<Val<Cl>> { let _ = g; List::from(vec![Val(Cl)]) }
+            fn int(g: Val<G>, bps: List<i64>) -> Val<IE> { let _ = (g, bps); Val(IE) }
+            fn unary(g: Val<G>, n: u64) -> Val<IE> { let _ = (g, n); Val(IE) }
+            fn constant(g: Val<G>, v: i64) -> Val<IE> { let _ = (g, v); Val(IE) }
+            fn count(g: Val<G>, bs: List<Val<Bl>>) -> Val<PE> { let _ = (g, bs); Val(PE) }
+            fn max(g: Val<G>, ps: List<Val<Part>>) -> Val<IO> { let _ = (g, ps); Val(IO) }
+            fn max_exact(g: Val<G>, ps: List<Val<Part>>) -> Val<IE> { let _ = (g, ps); Val(IE) }
+            fn attribute_max(g: Val<G>) -> Val<IO> { let _ = g; Val(IO) }
+            fn attribute_max_under(g: Val<G>) -> Val<IU> { let _ = g; Val(IU) }
+        }
+        impl Val<Cl> {
+            fn chosen(c: Val<Cl>) -> Val<Bl> { let _ = c; Val(Bl) }
+        }
+        // Bool: exact. Gates, requirement, charge.
+        impl Val<Bl> {
+            fn and(a: Val<Bl>, b: Val<Bl>) -> Val<Bl> { let _ = (a, b); Val(Bl) }
+            fn not(a: Val<Bl>) -> Val<Bl> { let _ = a; Val(Bl) }
+            fn over(a: Val<Bl>) -> Val<BlO> { let _ = a; Val(BlO) }
+            fn under(a: Val<Bl>) -> Val<BlU> { let _ = a; Val(BlU) }
+            fn require(a: Val<Bl>) { let _ = a; }
+            fn charge_if(a: Val<Bl>, w: u64) { let _ = (a, w); }
+            fn times(a: Val<Bl>, k: i64) -> Val<PE> { let _ = (a, k); Val(PE) }
+        }
+        // BoolOver: may be spuriously true. Charge only; `not` gives an Under.
+        impl Val<BlO> {
+            fn and(a: Val<BlO>, b: Val<BlO>) -> Val<BlO> { let _ = (a, b); Val(BlO) }
+            fn not(a: Val<BlO>) -> Val<BlU> { let _ = a; Val(BlU) }
+            fn charge_if(a: Val<BlO>, w: u64) { let _ = (a, w); }
+        }
+        // BoolUnder: may be spuriously false. Require only.
+        impl Val<BlU> {
+            fn and(a: Val<BlU>, b: Val<BlU>) -> Val<BlU> { let _ = (a, b); Val(BlU) }
+            fn not(a: Val<BlU>) -> Val<BlO> { let _ = a; Val(BlO) }
+            fn require(a: Val<BlU>) { let _ = a; }
+        }
+        impl Val<IE> {
+            fn over(x: Val<IE>) -> Val<IO> { let _ = x; Val(IO) }
+            fn under(x: Val<IE>) -> Val<IU> { let _ = x; Val(IU) }
+            fn plus(x: Val<IE>, y: Val<IE>) -> Val<IE> { let _ = (x, y); Val(IE) }
+            fn minus(x: Val<IE>, y: Val<IE>) -> Val<IE> { let _ = (x, y); Val(IE) }
+            fn neg(x: Val<IE>) -> Val<IE> { let _ = x; Val(IE) }
+            fn scale(x: Val<IE>, c: u64) -> Val<IE> { let _ = (x, c); Val(IE) }
+            fn clamp(x: Val<IE>, lo: i64) -> Val<IE> { let _ = (x, lo); Val(IE) }
+            fn at_least(x: Val<IE>, v: i64) -> Val<Bl> { let _ = (x, v); Val(Bl) }
+            fn at_most(x: Val<IE>, v: i64) -> Val<Bl> { let _ = (x, v); Val(Bl) }
+            fn when(x: Val<IE>, b: Val<Bl>) -> Val<Part> { let _ = (x, b); Val(Part) }
+            fn linear(x: Val<IE>) -> Val<PE> { let _ = x; Val(PE) }
+            fn charge(x: Val<IE>) { let _ = x; }
+        }
+        impl Val<IO> {
+            fn plus(x: Val<IO>, y: Val<IO>) -> Val<IO> { let _ = (x, y); Val(IO) }
+            fn minus(x: Val<IO>, y: Val<IU>) -> Val<IO> { let _ = (x, y); Val(IO) }
+            fn neg(x: Val<IO>) -> Val<IU> { let _ = x; Val(IU) }
+            fn scale(x: Val<IO>, c: u64) -> Val<IO> { let _ = (x, c); Val(IO) }
+            fn clamp(x: Val<IO>, lo: i64) -> Val<IO> { let _ = (x, lo); Val(IO) }
+            fn at_least(x: Val<IO>, v: i64) -> Val<BlO> { let _ = (x, v); Val(BlO) }
+            fn at_most(x: Val<IO>, v: i64) -> Val<BlU> { let _ = (x, v); Val(BlU) }
+            fn when(x: Val<IO>, b: Val<Bl>) -> Val<Part> { let _ = (x, b); Val(Part) }
+            fn linear(x: Val<IO>) -> Val<PO> { let _ = x; Val(PO) }
+            fn charge(x: Val<IO>) { let _ = x; }
+        }
+        impl Val<IU> {
+            fn plus(x: Val<IU>, y: Val<IU>) -> Val<IU> { let _ = (x, y); Val(IU) }
+            fn minus(x: Val<IU>, y: Val<IO>) -> Val<IU> { let _ = (x, y); Val(IU) }
+            fn neg(x: Val<IU>) -> Val<IO> { let _ = x; Val(IO) }
+            fn at_least(x: Val<IU>, v: i64) -> Val<BlU> { let _ = (x, v); Val(BlU) }
+            fn at_most(x: Val<IU>, v: i64) -> Val<BlO> { let _ = (x, v); Val(BlO) }
+            fn linear(x: Val<IU>) -> Val<PU> { let _ = x; Val(PU) }
+        }
+        impl Val<PE> {
+            fn plus(x: Val<PE>, y: Val<PE>) -> Val<PE> { let _ = (x, y); Val(PE) }
+            fn minus(x: Val<PE>, y: Val<PE>) -> Val<PE> { let _ = (x, y); Val(PE) }
+            fn over(x: Val<PE>) -> Val<PO> { let _ = x; Val(PO) }
+            fn sorted(x: Val<PE>) -> Val<IE> { let _ = x; Val(IE) }
+            fn charge(x: Val<PE>) { let _ = x; }
+        }
+        impl Val<PO> {
+            fn plus(x: Val<PO>, y: Val<PO>) -> Val<PO> { let _ = (x, y); Val(PO) }
+            fn minus(x: Val<PO>, y: Val<PU>) -> Val<PO> { let _ = (x, y); Val(PO) }
+            fn sorted(x: Val<PO>) -> Val<IO> { let _ = x; Val(IO) }
+            fn charge(x: Val<PO>) { let _ = x; }
+        }
+        impl Val<PU> {
+            fn plus(x: Val<PU>, y: Val<PU>) -> Val<PU> { let _ = (x, y); Val(PU) }
+            fn minus(x: Val<PU>, y: Val<PO>) -> Val<PU> { let _ = (x, y); Val(PU) }
+            fn sorted(x: Val<PU>) -> Val<IU> { let _ = x; Val(IU) }
+        }
+    }
+}
+
+fn main() {
+    let rt = Runtime::from_lib(lib()).unwrap();
+    for path in std::env::args().skip(1) {
+        let r: Result<(), String> = match rt.compile(&path) {
+            Ok(mut c) => c.get_function::<fn(Val<G>)>("cost").map(|_| ()).map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        match r {
+            Ok(_) => println!("{path}: compiled"),
+            Err(e) => {
+                let msg = e.to_string();
+                let line = msg.lines().find(|l| l.contains("expected") || l.contains("no method") || l.contains("not found")).unwrap_or("").trim().to_string();
+                let at = msg.lines().find(|l| l.contains(".roto:")).unwrap_or("").trim().to_string();
+                println!("{path}: rejected {at} {line}");
+            }
+        }
+    }
+}

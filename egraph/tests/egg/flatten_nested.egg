@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; `:flatten` (doc/goal-flatten-and-engine-completion.md, task 3): the pairwise rule
+;; fires on And{Not p, K} where K gains the conjunction And{Not q, r} after the root
+;; was built, so the two negations sit at two levels. flatten_nested_control.egg is the
+;; same program without the tag.
+(sort E)
+(function a () E) (function b () E) (function c () E) (function p () E) (function q () E)
+(function r () E) (function s () E) (function t () E) (function Kc () E) (function Cc () E)
+(function Not (E) E)
+(function Or (E) E :assoc-comm-idem)
+(function And (E) E :assoc-comm-idem)
+(let k (Kc))
+(let top (And (Not (p)) k))
+(union k (And (Not (q)) (r)))
+(rewrite (And (Not a0) (Not a1) ..rest) (And (Not (Or a0 a1)) ..rest) :flatten)
+(run 1)
+(check (= top (And (Not (Or (p) (q))) (r))))

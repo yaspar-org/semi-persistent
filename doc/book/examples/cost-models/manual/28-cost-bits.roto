@@ -1,0 +1,8 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// ANCHOR: cost
+// 2^62 doubled is 2^63, one past the largest signed 64-bit integer.
+fn cost(g: Graph) {
+    g.constant(4611686018427387904).scale(2).charge();
+}
+// ANCHOR_END: cost

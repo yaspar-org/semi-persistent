@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; A nested primitive's return sort has to be the outer argument's declared sort. `i64::<`
+;; computes a bool, so it cannot feed `i64::+`.
+(datatype E (Num i64))
+(rewrite (Num a) (Num (i64::+ a (i64::< a a))))

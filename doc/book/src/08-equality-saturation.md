@@ -10,9 +10,11 @@ Before a run with an `:until` goal starts, Semper builds the two ground goal
 terms. Each iteration then performs these operations in order:
 
 1. Rebuild the e-graph, then test the goal against the current union-find.
+   A multiplicity past the configured width stops the run with an error here.
 2. Build an immutable full index and its scheduling statistics.
-3. Process the selected rules in declaration order. For each rule, schedule and
-   collect its matches against the index, then apply its actions.
+3. Process the selected ordinary rules in declaration order. For each rule,
+   schedule and collect its matches against the index, then apply its actions.
+   The selected sequence rules then run as one batch on the same index.
 4. Recycle the index and test whether the action counter is zero.
 
 The index represents the graph immediately after step 1. Nodes and canonical
@@ -30,7 +32,7 @@ The final run requests ten iterations but reaches its operational fixpoint after
 three.
 
 The complete rule-application procedure is specified in
-[design chapter 12](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-rule-application.md).
+[design §7.7](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/07-rules-and-pattern-matching.md#77-rule-application-and-rhs-evaluation).
 
 ## Saturation
 
@@ -102,6 +104,15 @@ The class in this example contains `(expensive)`, `(hidden)`, and
 `(wrap (unit))`. Extraction prints `(wrap (unit))`: its cost is 2,
 `(expensive)` costs 5, and `(hidden)` is not a candidate.
 
+Among nodes of equal cost, extraction takes the one whose term is lowest, and
+then the one whose content colour (a hash of its structure, the name
+`dump-egraph` gives it, [Chapter 24](24-extraction-under-cost-models.md)) is
+smallest. The choice therefore depends only on the e-graph's contents, not on
+the order nodes were created in: two runs that build the same e-graph extract the
+same term. Height comes before colour because, with operators of cost 0, a class
+can reach itself at equal cost, and a choice by colour alone could pick the cycle.
+An AC, ACI, or commutative node's operands print sorted by their text.
+
 A cycle is not itself an error when its class also has an extractable grounded
 member. Extraction fails when no candidate has a fully extractable child set.
 It reports a more specific error when every node in the requested class is
@@ -109,10 +120,13 @@ marked `:unextractable`.
 
 {{#include ../examples/08-extraction-failure.egg:extraction-failure}}
 
+A cost that is not additive, or that depends on how an AC operator's operands are
+grouped, is a cost model: [Chapter 24](24-extraction-under-cost-models.md).
+
 Extraction chooses one representative of one e-class. Anti-unification compares
 two e-classes and is introduced in Part III. The extraction algorithm and its
 failure cases are specified in
-[design chapter 16](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/16-extraction.md).
+[design §11.1](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/11-extraction.md#111-term-extraction).
 
 ## Statistics
 
@@ -134,4 +148,4 @@ saturation true. The goal-directed run then reports 30 nodes, 10 classes,
 Wall time depends on the machine and run.
 
 The interpreter's command behavior and statistics fields are specified in
-[design chapter 17](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/17-interpreter.md).
+[design §9.1](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/09-saturation.md#91-interpreter-and-saturation-loop).

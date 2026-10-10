@@ -8,7 +8,7 @@ Optimality is deliberately separate. A projection certificate proves that the
 reported term generalizes both inputs. It does not turn contextual closure into
 a global proof or verify pair-mode root Exact's pair-relaxation optimum. The
 two optimality scopes and their current theorem boundary are documented in
-[`../design/19-anti-unification.md`](../design/19-anti-unification.md#96-target-optimum-theorem-and-current-proof-boundary).
+[`../design/12-anti-unification.md`](../design/12-anti-unification.md#96-target-optimum-theorem-and-current-proof-boundary).
 
 ## 1. Certificate statement
 

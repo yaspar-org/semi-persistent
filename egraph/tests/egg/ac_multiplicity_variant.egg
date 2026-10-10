@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine
 ;; The multiplicity variant closes the partition-semantics gap pinned by
 ;; ac_multiplicity_variant_gap.egg: an element consumes its child's whole

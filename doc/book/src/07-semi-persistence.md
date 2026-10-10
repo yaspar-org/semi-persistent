@@ -6,9 +6,10 @@ speculative use.
 
 ## Opening and discarding a scope
 
-`(push)` records the current logical state. `(pop)` restores the most recent
-recorded state, discarding insertions, unions, and rule effects performed
-inside the scope.
+`(push)` rebuilds the e-graph and records the resulting logical state.
+`(pop)` restores the most recent recorded state and closes its scope in one
+step, discarding insertions, unions, and rule effects performed inside the
+scope.
 
 ```lisp
 {{#include ../examples/07-push-pop.egg:push-pop}}
@@ -50,16 +51,21 @@ capture a slot's previous value the first time that slot changes in a scope.
 Restore replays those sparse differences and restores the saved lengths.
 
 Hash-consing tables and other derived indexes are not themselves the logical
-state. On restore, a node cache removes or repairs entries affected by the
-discarded suffix and by recanonized nodes. The literal interning table is a
-verified semi-persistent map that unwinds the discarded suffix of its index,
-and rebuilds the index instead when that is cheaper. Saturation's matching
-indexes have round-local lifetimes and are built again when needed.
+state. Each node cache keeps a hint index from content fingerprints to node
+ids, and a restore does no work on it. A lookup compares every hint against
+the restored node arena, so hints for discarded content are skipped. The
+literal interning table is a verified semi-persistent map that unwinds the
+discarded suffix of its index, and rebuilds the index instead when that is
+cheaper. Saturation's matching indexes have round-local lifetimes and are
+built again when needed.
 
-Push therefore records coordinated container tokens rather than cloning all
-nodes and classes. Its exact work includes frame and capture bookkeeping, and
-pop work depends on changes made since the mark, discarded suffixes, and cache
-repair. The project name refers to this semi-persistent representation.
+Push therefore records one stamp in a single history rather than cloning all
+nodes and classes. The history drives nine synchronized members, which carry
+no tokens of their own. Push marks the members sequentially. A pop runs the
+seven large members in parallel once the graph holds at least 2^14 live nodes.
+Push work includes the rebuild and frame bookkeeping. Pop work depends on the
+changes made since the mark and on the discarded suffixes. The project name
+refers to this semi-persistent representation.
 
 The command-line mode is `--push-pop diff`, and it is the default.
 
@@ -70,11 +76,13 @@ restores the logical lengths. Reusing that capacity avoids reallocating when
 the next branch grows to a similar size. `print-size` reports logical e-nodes,
 so it cannot show retained capacity.
 
-`(push :shrink)` conditionally reclaims excess container capacity before
-recording the mark. The current interpreter requests shrinking when capacity
-is more than four times logical length plus a small headroom. Shrinking can
-move live storage and add work to `push`; `pop` does not perform another
-shrink. The option does not promise that every allocation is returned.
+`(push :shrink)` conditionally reclaims excess container capacity at the
+mark. The current interpreter passes a factor of 4 and a headroom of 2. A
+container shrinks when its capacity exceeds four times its logical length. The
+append-only arenas add the headroom to that threshold, and some stores ignore
+the request. Shrinking can move live storage and add work to `push`; `pop`
+does not perform another shrink. The option does not promise that every
+allocation is returned.
 
 ```lisp
 {{#include ../examples/07-push-pop.egg:push-shrink}}
@@ -122,8 +130,8 @@ formalization, inspect the equalities it implies, and pop before trying the
 next candidate. Chapter 19 applies this sequence to alternative explanations
 of differences between autoformalization clusters.
 
-The exact restore order and cache repair are specified in the design chapters
+The exact restore order and the cache protocol are specified in the design chapters
 for the
-[e-graph](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/05-egraph.md)
+[e-graph](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/04-egraph.md)
 and
-[interpreter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/17-interpreter.md).
+[interpreter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/09-saturation.md#91-interpreter-and-saturation-loop).

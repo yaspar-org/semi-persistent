@@ -1,0 +1,12 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; A sort error, so the book test does not run it.
+;; ANCHOR: check
+(sort E)
+(function V (String) E)
+(let e (V "a"))
+(cost-model dag :script "../24-first.roto")
+(cost-model dag-asp :asp "../26-first.lp")
+(cost-model dag-mzn :minizinc "../27-first.mzn")
+(extract e :cost dag :band 0 10 :solver dpw)
+;; ANCHOR_END: check

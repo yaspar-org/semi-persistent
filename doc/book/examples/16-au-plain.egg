@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: check-failed
 ;; Book chapter 16: anti-unification is complete relative to the E-GRAPH, not
 ;; relative to the AC theory.

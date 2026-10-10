@@ -150,11 +150,11 @@ where
             }
         }
     }
-    let problem = TransportProblem::narrowed(
+    let problem = TransportProblem::new(
         &lm.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
         &rm.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
         cost,
-    )?;
+    );
     let solution = solve_transport(&problem)?;
     Some(solution.total.0.saturating_add(1))
 }

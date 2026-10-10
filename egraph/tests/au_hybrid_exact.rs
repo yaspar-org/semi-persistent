@@ -268,7 +268,7 @@ fn hybrid_never_costs_quality() {
 
     let mut checked = 0usize;
     let mut improved = 0usize;
-    let mut certified_earlier = 0usize;
+    let mut proven_earlier = 0usize;
     for (id, inst) in &instances {
         let (exact_size, exact_vmass) = exact(inst);
         let off = Flags {
@@ -324,14 +324,14 @@ fn hybrid_never_costs_quality() {
                     improved += 1;
                 }
                 if on.certified && !base.certified {
-                    certified_earlier += 1;
+                    proven_earlier += 1;
                 }
             }
         }
     }
     println!(
         "hybrid_never_costs_quality: {checked} (instance, budget, flags) triples, {improved} \
-         strictly better, {certified_earlier} certified earlier"
+         strictly better, {proven_earlier} certified earlier"
     );
 }
 

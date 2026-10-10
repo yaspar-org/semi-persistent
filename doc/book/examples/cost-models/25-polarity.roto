@@ -1,0 +1,9 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// ANCHOR: cost
+// Subtracts an over-estimate: the delay of a sibling taken as the wait's base.
+fn cost(g: Graph) {
+    let wpd = g.attribute_max(g.node_values());
+    wpd.of(g.root()).minus(wpd.of(g.root())).charge();
+}
+// ANCHOR_END: cost

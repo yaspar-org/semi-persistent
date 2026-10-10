@@ -369,3 +369,117 @@ The formal proof should factor this into four named lemmas:
 No proof may apply the Hot/Cold bound directly to an undeduplicated Trail frame.
 That distinction is also the geometric basis of the adaptive ratios `W/U` and
 `U/R`.
+
+## 9. Rollover: when a frame changes representation
+
+Sections 4 to 8 say what the three representations of a frame are and why they
+restore the same snapshot. This section says when a frame moves from one to the
+next. The code is `src/tier_policy.rs` and the rollover functions of `src/vec.rs`.
+
+### Ingress and closed frames
+
+The writable frame, the newest one, is the ingress frame. Its representation is
+fixed by the store. A store that appends every write (`TrailStore`) has Trail
+ingress; a store that dedupes on first capture (`InlineStore`, whose
+`unique_capture` is true) has Hot ingress, so its frames never pass through
+Trail. The ingress frame is never converted: every limit below applies to closed
+frames only, and a limit of zero still leaves the ingress frame alone.
+
+### What a mark does
+
+A mark seals the ingress frame, opens a new one, and then applies a
+`RolloverPolicy`:
+
+| Policy | Effect |
+| --- | --- |
+| `Defer` | converts nothing; the mark is one header push |
+| `ApplyConfigured` (default) | applies the vector's configured limits, below |
+| `ForceClosed { trail_to_hot, hot_to_cold }` | converts every closed frame on the chosen edges |
+
+When both edges run, Trail to Hot runs before Hot to Cold, so a frame can cascade
+from Trail to Cold in one mark.
+
+### Configured limits
+
+A vector carries a `TierPolicy`: one `TierLimit` for closed Trail frames, one for
+closed Hot frames, and a `ReclaimPolicy` for Cold pools.
+
+| Limit | Frames converted |
+| --- | --- |
+| `Unbounded` | none, automatically |
+| `Frames(n)` | all but the newest `n` closed frames |
+| `Entries(n)` | all but the newest closed suffix whose entries fit `n` |
+| `Bytes(n)` | all but the newest closed suffix whose entries times the entry size fit `n` |
+| `Adaptive` | on Trail: closed frames from the oldest, each while its writes are at least twice its unique slots, stopping at the first that is not; on Hot: none automatically |
+
+A bounded limit keeps the newest closed suffix and converts the older prefix, so
+recently closed frames stay in the cheaper-to-restore representation. Trail to
+Hot is `dedupe_first` (§8): a hash set over the frame's writes, linear in them.
+Hot to Cold sorts the unique frame in place and forms runs (§4), so it costs a
+sort of the frame's unique entries.
+
+The constructors choose a policy from the store. A Hot-ingress store gets
+`trail: Frames(0), hot: Unbounded`, which is `TierPolicy::fully_buffered_unique()`
+(the default): closed frames stay Hot until something compresses them. A
+Trail-ingress store gets `trail: Unbounded, hot: Unbounded`, which converts
+nothing by limit. Four named profiles exist:
+
+| Profile | Trail | Hot | Use |
+| --- | --- | --- | --- |
+| `smt()` | `Unbounded` | `Unbounded` | frequent backtracking: append-only formation, no conversion |
+| `adaptive()` | `Adaptive` | `Unbounded` | duplicate-heavy frames dedupe; unique frames wait for explicit compression |
+| `restore_optimized()` | `Frames(0)` | `Frames(0)` | every closed frame goes to Cold |
+| `fully_buffered_unique()` | `Frames(0)` | `Unbounded` | the default for Hot ingress |
+
+`set_tier_policy` replaces a vector's policy for future marks (`apply_tier_policy`
+enforces it at once), and `tier_stats` reports the frames and entries in each
+tier.
+
+### The legacy batch cadence
+
+Before the tier limits existed, a vector converted history in batches. That
+cadence survives as `hot_buffer`, and the constructor sets it to eight frames
+for every store except a Hot-ingress store with no compression mode. When it is
+set, it takes precedence over the limits: once more than eight frames have
+closed, every closed ingress frame migrates (Trail to Hot, then Hot to Cold).
+`TrailStore`, and so the e-graph's `TrailFirst` policy, therefore rolls its
+closed frames over in batches of eight by default. A vector built with an
+explicit `TierPolicy`, or given one by `set_tier_policy`, has no batch cadence:
+the limits alone decide.
+
+### Explicit passes
+
+A caller can also convert history directly:
+
+- `flush_trail` dedupes every closed Trail frame;
+- `compress_hot` run-compresses every closed Hot frame;
+- `apply_tier_policy` enforces both configured limits now;
+- `apply_adaptive(AdaptiveInput)` runs one deterministic budgeted pass and
+  returns an `AdaptiveReport`.
+
+The adaptive pass takes a byte budget for closed history
+(`max_closed_history_bytes`) and two exact ratios. It does nothing when the
+closed history already fits the budget. Otherwise it dedupes closed Trail frames
+from the oldest, while the budget is exceeded and each frame's writes per unique
+slot meet `min_writes_per_unique`. It then recomputes the occupancy and moves
+closed Hot frames to Cold from the oldest, while the budget is still exceeded,
+each frame's unique entries per run meet `min_uniques_per_run`, and its Cold form
+is no larger than its Hot form. The first frame that does not qualify stops its
+stage. The budget counts logical occupancy only (closed headers and payloads
+times their element size), not capacity, allocator state, or time. The ratios
+compare by cross multiplication, so the decision does not depend on floating
+point. Capacity is reclaimed once, after both stages, so a cascade does not
+shrink a pool and then regrow it. `try_push_frame_adaptive` is a deferred mark
+followed by one such pass.
+
+### Why the e-graph's two policies differ
+
+The e-graph chooses its stores through `EGraphConfig::Policy` (chapter 18).
+Equality saturation writes the same slots many times between marks, so
+`HotFirst`'s deduplicating ingress pays: one saved word per touched slot per
+frame, at the cost of a lookup per write. SMT search marks and backtracks often
+with few writes per frame, so `TrailFirst`'s append-only ingress pays: no lookup
+per write, and duplicates are kept until rollover dedupes them. Restoring a frame
+replays its Trail entries in reverse or applies its Hot or Cold entries once
+(§5); a deduplicated frame restores in time proportional to its unique slots, a
+Trail frame in time proportional to its writes.

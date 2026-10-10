@@ -1,0 +1,19 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// ANCHOR: cost
+// The depth of the deepest operand of any chosen node, an operand directly under
+// its node at depth 1. Where the rung does not decide a node's tree, `depth()` is
+// `None` and the operand is at depth 1.
+fn cost(g: Graph) {
+    let depths = [];
+    for n in g.nodes() {
+        for k in n.children() {
+            match k.depth() {
+                Some(d) => depths.push(d.over().when(n.chosen())),
+                None => depths.push(g.constant(1).over().when(n.chosen())),
+            }
+        }
+    }
+    g.max_over(depths).charge();
+}
+// ANCHOR_END: cost

@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; WARNING: none
+;; A `:flatten` rule whose pattern has an ACI, AC, or associative atom, or a sequence
+;; pattern (whose root is n-ary by construction), raises no warning.
+(sort E)
+(function a () E)
+(function b () E)
+(function N (E) E)
+(function And (E) E :assoc-comm-idem)
+(function Plus (E) E :assoc-comm)
+(function Seq (E) E :assoc)
+(rewrite (And x y) (N x) :flatten)
+(rewrite (Plus x ..r) (N x) :flatten)
+(rewrite (Seq x y) (N x) :flatten)
+(rule ((Seq x ..r)) ((union (Seq x ..r) (N x))) :flatten)
+(rewrite (And (..gs (N p)) ..rest) (And ..rest) :flatten)
+(let t (And (a) (b)))
+(run 1)
+(check (= t (N (a))))

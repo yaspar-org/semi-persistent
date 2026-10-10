@@ -57,103 +57,19 @@ type Eg = EGraph31<NiraLitVal, false, false>;
 
 // ─── Projection helpers (pattern from au_adversarial_correctness.rs) ───
 
-#[derive(Clone, Debug)]
-enum OwnedTerm {
-    App(OpId, Vec<OwnedTerm>),
-    Lit(OpId, LitValId),
-}
+/// A projection read out of its pool, each child with its multiplicity
+/// (`semi_persistent_egraph::au::terms::OwnedTerm`).
+type OwnedTerm = semi_persistent_egraph::au::terms::OwnedTerm<OpId, LitValId>;
 
-/// Rebuild an owned tree from a projected (Variants-free) pool term.
-/// Iterative post-order fold with an explicit frame stack: children are built
-/// left to right, so deep terms need heap, not call-stack frames.
 fn own_projected(pool: &TermPool<OpId, LitValId>, id: TermId) -> OwnedTerm {
-    struct Frame {
-        op: OpId,
-        children: Vec<TermId>,
-        cursor: usize,
-        out: Vec<OwnedTerm>,
-    }
-    let mut stack: Vec<Frame> = Vec::new();
-    let mut pending = id;
-    loop {
-        // Enter: literals complete immediately; apps get a frame.
-        let mut done: Option<OwnedTerm> = None;
-        match pool.op(pending) {
-            TermOp::EGraph(op) => {
-                let children = pool.children(pending).to_vec();
-                let capacity = children.len();
-                stack.push(Frame {
-                    op: *op,
-                    children,
-                    cursor: 0,
-                    out: Vec::with_capacity(capacity),
-                });
-            }
-            TermOp::Literal(op, value) => done = Some(OwnedTerm::Lit(*op, *value)),
-            TermOp::Variants => panic!("projection still contains Variants"),
-        }
-        // Advance: deliver completed subterms upward, descend or compose.
-        loop {
-            if let Some(term) = done.take() {
-                let Some(parent) = stack.last_mut() else {
-                    return term;
-                };
-                parent.out.push(term);
-                parent.cursor += 1;
-            }
-            let top = stack.last_mut().expect("own_projected stack is non-empty");
-            if top.cursor < top.children.len() {
-                pending = top.children[top.cursor];
-                break;
-            }
-            let frame = stack.pop().expect("own_projected stack is non-empty");
-            done = Some(OwnedTerm::App(frame.op, frame.out));
-        }
-    }
+    pool.own(id).expect("projection still contains Variants")
 }
 
-/// Re-add an owned tree into the e-graph, returning the root node id.
-/// Iterative post-order fold with an explicit frame stack: `eg.add` calls
-/// happen children-first, left to right, exactly like the recursive fold.
+/// Rebuild an owned projection in the e-graph, an AC child of count k as one counted
+/// child.
 fn materialize(eg: &mut Eg, term: &OwnedTerm) -> ENodeId {
-    struct Frame<'t> {
-        op: OpId,
-        children: &'t [OwnedTerm],
-        cursor: usize,
-        out: Vec<ENodeId>,
-    }
-    let mut stack: Vec<Frame<'_>> = Vec::new();
-    let mut pending = term;
-    loop {
-        let mut done: Option<ENodeId> = None;
-        match pending {
-            OwnedTerm::App(op, children) => {
-                stack.push(Frame {
-                    op: *op,
-                    children,
-                    cursor: 0,
-                    out: Vec::with_capacity(children.len()),
-                });
-            }
-            OwnedTerm::Lit(op, value) => done = Some(eg.add_lit(*op, *value)),
-        }
-        loop {
-            if let Some(node) = done.take() {
-                let Some(parent) = stack.last_mut() else {
-                    return node;
-                };
-                parent.out.push(node);
-                parent.cursor += 1;
-            }
-            let top = stack.last_mut().expect("materialize stack is non-empty");
-            if top.cursor < top.children.len() {
-                pending = &top.children[top.cursor];
-                break;
-            }
-            let frame = stack.pop().expect("materialize stack is non-empty");
-            done = Some(eg.add(frame.op, &frame.out));
-        }
-    }
+    semi_persistent_egraph::au::terms::materialize_owned(eg, term)
+        .expect("the projection is buildable")
 }
 
 fn projected_terms(

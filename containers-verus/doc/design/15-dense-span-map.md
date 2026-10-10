@@ -28,7 +28,7 @@ population and prefix-sums the counts into offsets, pass 2 walks the stream agai
 and writes each value at its key's running cursor.
 
 It replaces the e-graph's per-round index families
-(`egraph/doc/design/06-index.md`, `20-index-selectivity-and-delta-suffixes.md`
+(`egraph/doc/design/08-indexes-and-leapfrog.md` §8.1 and §8.3
 sections R2/R3), which are rebuilt from scratch each round. A rebuilt-per-round
 structure has no state to roll back to, so `mark`/`restore` would add a frame
 stack, a fork history, and a capture protocol that no caller ever exercises. The

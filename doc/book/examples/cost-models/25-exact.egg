@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: exact
+(sort E)
+(function V (String) E)
+(function Plus (E) E :assoc-comm)
+(let e (Plus (V "a"):3000000000 (V "b")))
+
+(cost-model exact :script "25-exact.roto")
+(extract e :cost exact)
+;; ANCHOR_END: exact

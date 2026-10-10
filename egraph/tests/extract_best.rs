@@ -138,16 +138,64 @@ fn multiset_multiplicity_is_reproduced_exactly() {
     let ia = eg.add(a, &[]);
     let ib = eg.add(b, &[]);
     // `add` is a multiset op, so this is the one path where `for_each_child`
-    // reports a multiplicity above 1. `reconstruct` emits `mult` copies of the
-    // child term, and the count is the thing that can silently go wrong: an
+    // reports a multiplicity above 1. `reconstruct` writes the child once with its
+    // count, `(a):3`, and the count is the thing that can silently go wrong: an
     // off-by-one there changes the extracted term without failing any other test.
     let s = eg.add(add, &[ia, ia, ia, ib]);
     eg.rebuild();
 
     let t = extract_best(&eg, s).expect("grounded");
     let printed = t.to_string();
-    assert_eq!(printed.matches("(a)").count(), 3, "in {printed}");
-    assert_eq!(printed.matches("(b)").count(), 1, "in {printed}");
+    let leaf = |op: &str| semi_persistent_egraph::ast::Term::App {
+        op: op.to_string(),
+        children: vec![],
+        span: semi_persistent_egraph::ast::Span::Dummy,
+    };
+    // Two notions, both checked: the class of `a` is named once (an occurrence), and
+    // it stands for three copies (its weighted occurrences).
+    assert_eq!(t.occurrences(&leaf("a")), 1, "named once: {printed}");
+    assert_eq!(
+        t.weighted_occurrences(&leaf("a")),
+        3,
+        "three copies: {printed}"
+    );
+    assert_eq!(t.occurrences(&leaf("b")), 1, "{printed}");
+    assert_eq!(t.weighted_occurrences(&leaf("b")), 1, "{printed}");
+    assert!(printed.contains("(a):3"), "with its count: {printed}");
+    assert!(
+        !printed.contains("(b):"),
+        "a count of 1 is not written: {printed}"
+    );
+}
+
+/// The two counts under nesting: in `(add (f (a):2):3 (a))` the class of `a` is named
+/// twice and stands for 2·3 + 1 = 7 copies.
+#[test]
+fn occurrences_and_weighted_occurrences_differ_under_nesting() {
+    use semi_persistent_egraph::ast::{Span, Term};
+    let leaf = || Term::App {
+        op: "a".into(),
+        children: vec![],
+        span: Span::Dummy,
+    };
+    let counted = |t: Term, k: u32| Term::Counted {
+        term: Box::new(t),
+        count: k.into(),
+        span: Span::Dummy,
+    };
+    let inner = Term::App {
+        op: "f".into(),
+        children: vec![counted(leaf(), 2)],
+        span: Span::Dummy,
+    };
+    let t = Term::App {
+        op: "add".into(),
+        children: vec![counted(inner, 3), leaf()],
+        span: Span::Dummy,
+    };
+    assert_eq!(t.to_string(), "(add (f (a):2):3 (a))");
+    assert_eq!(t.occurrences(&leaf()), 2);
+    assert_eq!(t.weighted_occurrences(&leaf()), 7);
 }
 
 // ── Per-op cost and extractability (`:cost`, `:unextractable`) ──────────────
@@ -299,7 +347,7 @@ fn subsumed_node_is_still_extractable() {
     // Documents current behavior, which `:unextractable` deliberately does not change:
     // `(subsume …)` hides a node from *matching* only, and the extractor still selects it.
     // This is why `:unextractable` cannot be faked with subsumption, and why extraction had
-    // to grow its own filter. See doc/design/16-extraction.md.
+    // to grow its own filter. See doc/design/11-extraction.md §11.1.
     let mut eg = eg();
     let e = eg.intern_sort("E");
     eg.register_op1("g", e, e);

@@ -40,6 +40,9 @@ Chapter 5's scalar variables bind complete stored children and their
 multiplicities. They do not range over implicit sub-sums or split one stored
 multiplicity among several scalar variables. The implemented relation is a
 specialization of classical AC matching, not a complete implementation of it.
+[Chapter 5](05-rules-and-patterns.md#matching-completeness-over-a-c-ac-and-aci)
+lists what matching does and does not reach over A, C, AC, and ACI nodes,
+including `:flatten` views and the subsets a sequence filter gives up.
 
 ## AU optimality has three qualifications
 
@@ -51,7 +54,8 @@ Changing any of those three inputs can change the result.
 ## The production solver is not machine-verified
 
 The `au-verus` crate proves objective and recurrence lemmas, not end-to-end
-refinement of the Rust solver. Pair-cycle erasure, AC and ACI transport, and
+refinement of the Rust solver. Its lemmas do not prove that the recurrence
+value equals the optimum. Pair-cycle erasure, AC and ACI transport, and
 global optimality retain prose arguments plus finite oracle and regression
 evidence. Chapter 16 and the
 [AU correctness plan](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/future/au-correctness-and-validation.md)
@@ -84,6 +88,15 @@ Chapter 18 uses `n(n - 1) / 2` equality checks because Semper has no
 clustering command. That grid is practical for the three-to-five-sample
 workflow in this book. Larger collections require host code to group e-class
 identifiers.
+
+## A solver's arithmetic is its own
+
+Semper checks every number it hands a solver against that solver's range, but ASP and
+MiniZinc criteria compute inside the solver, and clasp, clingo, Chuffed, and COIN-BC
+were measured giving wrong optima, with no error, on values past their ranges. A cost
+function that overflows the solver's number representation is the author's
+responsibility; [Number ranges](24-extraction-under-cost-models.md#number-ranges) lists
+each solver's range and the solvers to use for large costs.
 
 ## The application evidence is limited
 

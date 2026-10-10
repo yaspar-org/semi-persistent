@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; ANCHOR: wrap
+(sort E)
+(function V (String) E)
+(let e (V "a"))
+
+(cost-model wrapped :script "25-wrap.roto")
+(extract e :cost wrapped)
+;; ANCHOR_END: wrap

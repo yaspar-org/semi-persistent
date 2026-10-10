@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: dump-egraph
+(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function Plus (E) E :assoc-comm)
+(let p (Plus (F a) (F a) b))
+(dump-egraph p :file "28-dump-egraph.json")
+;; ANCHOR_END: dump-egraph

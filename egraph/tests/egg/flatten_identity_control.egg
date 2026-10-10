@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; TYPES: machine
+;; The control for flatten_identity.egg: without `:flatten` the rule reads the stored
+;; children {p, K}, so it never pairs q with r at the root, and the first check fails.
+(sort E)
+(function Tru () E)
+(function p () E) (function q () E) (function q2 () E) (function r () E)
+(function Kc () E) (function Sc () E)
+(function And (E) E :assoc-comm-idem :identity (Tru))
+(function Pair (E E) E)
+(let k (Kc))
+(let s (Sc))
+(let top (And (p) k))
+(union k (And (q) (r)))
+(union k (And (q2) s))
+(union s (Tru))
+(rewrite (And x y ..rest) (Pair x y))
+(run 1)
+(check (= top (Pair (q) (r))))
+(check (!= top (Pair (Tru) (p))))

@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; ANCHOR: window
+(sort E)
+(function S (String) E)
+(function Delay (i64 E) E)
+(function Hold (E) E)
+(function Pair (E E) E)
+
+; `x` delayed by 5 has two forms; in `shared`, a sibling already buffers `x` for 3.
+(union (Delay 5 (S "x")) (Hold (S "x")))
+(let shared (Pair (Delay 5 (S "x")) (Delay 3 (S "x"))))
+(let alone (Pair (Delay 5 (S "x")) (Delay 3 (S "y"))))
+
+(cost-model buffers :script "25-window.roto")
+(extract shared :cost buffers)
+(extract alone :cost buffers)
+(cost-model no-hold :script "25-no-hold.roto")
+(extract alone :cost no-hold)
+;; ANCHOR_END: window
