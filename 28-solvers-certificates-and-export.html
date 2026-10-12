@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
+            window.path_to_searchindex_js = "searchindex-16c64170.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -462,18 +462,19 @@ steps down:</p>
 ; A budget of 10 clauses is below the splits encoding: the rung steps down.
 (extract e :cost memory :rung splits :budget 10)</p>
 <pre><code class="language-text">; 4 terms with cost in [37, 40] at rung splits
+; cost 37 in band at rung splits
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
 ; cost 39 in band at rung splits
 (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
 ; cost 40 in band at rung splits
-(And (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Global 0 9 (Var "a0")))
-; cost 40 in band at rung splits
 (And (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0"))) (Global 0 9 (Var "a0")))
-; cost 37 in band at rung splits
-(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 40 in band at rung splits
+(And (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Global 0 9 (Var "a0")))
 ; cost 39 proved at rung selection (2 solves, 0 cycle exclusions)
 (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
 </code></pre>
-<p>The terms come in the order found, each with its cost. Standard error carries
+<p>The terms come by increasing cost, then by their text, each with its cost; the
+order the solver finds them in depends on its version and platform. Standard error carries
 <code>warning: rung splits estimated above the budget; extracting at selection</code>. With
 the optimum proved, a band gives equivalent terms at a known gap above it:
 benchmarks with known answers, variants for differential testing, and pairs of

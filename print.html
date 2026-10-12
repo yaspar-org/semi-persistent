@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
+            window.path_to_searchindex_js = "searchindex-16c64170.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -4532,7 +4532,7 @@ the slow one outside, which no price on the flat node can say. With the cost scr
 (extract flat :cost memory :rung splits)</p>
 <pre><code class="language-text">; cost 26 proved at rung selection (2 solves, 0 cycle exclusions)
 (And (Future 0 10 (Var "s")) (Var "p") (Var "q"))
-; cost 17 proved at rung splits (4 solves, 0 cycle exclusions)
+; cost 17 proved at rung splits (3 solves, 0 cycle exclusions)
 (And (And (Var "p") (Var "q")) (Future 0 10 (Var "s")))
 </code></pre>
 <h2 id="how-the-grouping-becomes-part-of-the-choice"><a class="header" href="#how-the-grouping-becomes-part-of-the-choice">How the grouping becomes part of the choice</a></h2>
@@ -4584,7 +4584,7 @@ fn cost(g: Graph) {
 <span class="boring">}</span></code></pre>
 <p>Run from <code>doc/book/examples/cost-models/</code>, the program prints:</p>
 <pre><code class="language-text">(Twice (F (F (V a))))
-; cost 4 proved at rung selection (2 solves, 0 cycle exclusions)
+; cost 4 proved at rung selection (3 solves, 0 cycle exclusions)
 (Add (F (F (V "a"))) (F (F (V "a"))))
 ; cost 6 greedy at rung selection
 (Twice (F (F (V "a"))))
@@ -4788,11 +4788,11 @@ rung; only <code>:rung</code> changes. The monitor memory of the introduction, a
 (extract e :cost memory :solver greedy)</p>
 <pre><code class="language-text">; cost 39 proved at rung selection (2 solves, 0 cycle exclusions)
 (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
-; cost 37 proved at rung levels (4 solves, 0 cycle exclusions)
+; cost 37 proved at rung levels (3 solves, 0 cycle exclusions)
 (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
 ; cost 37 proved at rung splits (3 solves, 0 cycle exclusions)
 (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
-; cost 40 proved at rung binary (5 solves, 0 cycle exclusions)
+; cost 40 proved at rung binary (4 solves, 0 cycle exclusions)
 (And (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0"))) (Global 0 9 (Var "a0")))
 ; cost 37 proved at rung orders (3 solves, 0 cycle exclusions)
 (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
@@ -4951,9 +4951,9 @@ objective.</p>
 (extract alone :cost buffers)
 (cost-model no-hold :script “25-no-hold.roto”)
 (extract alone :cost no-hold)</p>
-<pre><code class="language-text">; cost 5 proved at rung selection (2 solves, 0 cycle exclusions)
+<pre><code class="language-text">; cost 5 proved at rung selection (3 solves, 0 cycle exclusions)
 (Pair (Delay 5 (S "x")) (Delay 3 (S "x")))
-; cost 7 proved at rung selection (3 solves, 0 cycle exclusions)
+; cost 7 proved at rung selection (2 solves, 0 cycle exclusions)
 (Pair (Hold (S "x")) (Delay 3 (S "y")))
 ; cost 8 proved at rung selection (2 solves, 0 cycle exclusions)
 (Pair (Delay 5 (S "x")) (Delay 3 (S "y")))
@@ -5040,7 +5040,7 @@ the root’s. The rewrite turns each doubling into an addition:</p>
 (run 2)</p>
 <p>(cost-model latency :script “25-latency.roto”)
 (extract e :cost latency)</p>
-<pre><code class="language-text">; cost 3 proved at rung selection (2 solves, 0 cycle exclusions)
+<pre><code class="language-text">; cost 3 proved at rung selection (4 solves, 0 cycle exclusions)
 (Add (Add (Add (V "a") (V "a")) (Add (V "a") (V "a"))) (V "b"))
 </code></pre>
 <p>The written term takes 3 + 3 + 1 = 7 cycles; the extracted one takes 3, one per
@@ -5205,7 +5205,7 @@ fn cost(g: Graph) {
 ; cost 1 proved at rung levels (2 solves, 0 cycle exclusions)
 (And (V "a") (V "b") (V "c") (V "d"))
 ; cost 2 proved at rung binary (3 solves, 0 cycle exclusions)
-(And (And (V "a") (V "b")) (And (V "c") (V "d")))
+(And (And (V "a") (V "d")) (And (V "b") (V "c")))
 </code></pre>
 <p>At <code>selection</code> and <code>levels</code> the flat node keeps every operand at depth 1: a chain
 of blocks only deepens some of them. <code>binary</code> requires two operands per group, and
@@ -6297,18 +6297,19 @@ steps down:</p>
 ; A budget of 10 clauses is below the splits encoding: the rung steps down.
 (extract e :cost memory :rung splits :budget 10)</p>
 <pre><code class="language-text">; 4 terms with cost in [37, 40] at rung splits
+; cost 37 in band at rung splits
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
 ; cost 39 in band at rung splits
 (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
 ; cost 40 in band at rung splits
-(And (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Global 0 9 (Var "a0")))
-; cost 40 in band at rung splits
 (And (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0"))) (Global 0 9 (Var "a0")))
-; cost 37 in band at rung splits
-(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 40 in band at rung splits
+(And (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Global 0 9 (Var "a0")))
 ; cost 39 proved at rung selection (2 solves, 0 cycle exclusions)
 (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
 </code></pre>
-<p>The terms come in the order found, each with its cost. Standard error carries
+<p>The terms come by increasing cost, then by their text, each with its cost; the
+order the solver finds them in depends on its version and platform. Standard error carries
 <code>warning: rung splits estimated above the budget; extracting at selection</code>. With
 the optimum proved, a band gives equivalent terms at a known gap above it:
 benchmarks with known answers, variants for differential testing, and pairs of

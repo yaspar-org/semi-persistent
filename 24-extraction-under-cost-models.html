@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
+            window.path_to_searchindex_js = "searchindex-16c64170.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -281,7 +281,7 @@ the slow one outside, which no price on the flat node can say. With the cost scr
 (extract flat :cost memory :rung splits)</p>
 <pre><code class="language-text">; cost 26 proved at rung selection (2 solves, 0 cycle exclusions)
 (And (Future 0 10 (Var "s")) (Var "p") (Var "q"))
-; cost 17 proved at rung splits (4 solves, 0 cycle exclusions)
+; cost 17 proved at rung splits (3 solves, 0 cycle exclusions)
 (And (And (Var "p") (Var "q")) (Future 0 10 (Var "s")))
 </code></pre>
 <h2 id="how-the-grouping-becomes-part-of-the-choice"><a class="header" href="#how-the-grouping-becomes-part-of-the-choice">How the grouping becomes part of the choice</a></h2>
@@ -333,7 +333,7 @@ fn cost(g: Graph) {
 <span class="boring">}</span></code></pre>
 <p>Run from <code>doc/book/examples/cost-models/</code>, the program prints:</p>
 <pre><code class="language-text">(Twice (F (F (V a))))
-; cost 4 proved at rung selection (2 solves, 0 cycle exclusions)
+; cost 4 proved at rung selection (3 solves, 0 cycle exclusions)
 (Add (F (F (V "a"))) (F (F (V "a"))))
 ; cost 6 greedy at rung selection
 (Twice (F (F (V "a"))))
@@ -537,11 +537,11 @@ rung; only <code>:rung</code> changes. The monitor memory of the introduction, a
 (extract e :cost memory :solver greedy)</p>
 <pre><code class="language-text">; cost 39 proved at rung selection (2 solves, 0 cycle exclusions)
 (And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
-; cost 37 proved at rung levels (4 solves, 0 cycle exclusions)
+; cost 37 proved at rung levels (3 solves, 0 cycle exclusions)
 (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
 ; cost 37 proved at rung splits (3 solves, 0 cycle exclusions)
 (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
-; cost 40 proved at rung binary (5 solves, 0 cycle exclusions)
+; cost 40 proved at rung binary (4 solves, 0 cycle exclusions)
 (And (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0"))) (Global 0 9 (Var "a0")))
 ; cost 37 proved at rung orders (3 solves, 0 cycle exclusions)
 (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
