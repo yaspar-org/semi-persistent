@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,8 +188,8 @@ qualification can change the returned term.</p>
 <h2 id="optimal-over-the-e-graph-not-over-the-theory"><a class="header" href="#optimal-over-the-e-graph-not-over-the-theory">Optimal over the e-graph, not over the theory</a></h2>
 <p>Chapter 11’s containment example asserts
 <code>add(a,b) = c</code> and <code>add(a,b,d) = n</code>. The AC theory entails
-<code>add(c,d) = n</code>, but plain congruence does not derive it. Chapter 16 adds only
-this query to that example:</p>
+<code>add(c,d) = n</code>, but plain congruence does not derive it. Chapter 16 wraps
+<code>n</code> and <code>add(c,d)</code> in a common unary operator <code>g</code> and runs this query:</p>
 <pre><code class="language-lisp">(antiunify l r :algorithm exact)
 (checkau l r :max_size 2 :algorithm exact)
 </code></pre>
@@ -197,12 +197,12 @@ this query to that example:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>mode</th><th>result</th></tr>
+<tr><th>mode</th><th>size and ratio</th><th>result</th></tr>
 </thead>
 <tbody>
-<tr><td>plain</td><td><code>:size 5 :cr 0.7500</code> – <code>(g (Variants n (add c d)))</code></td></tr>
-<tr><td>eager</td><td><code>:size 2 :cr 0.0000</code> – <code>(g n)</code></td></tr>
-<tr><td>lazy</td><td><code>:size 5 :cr 0.7500</code> – identical to plain</td></tr>
+<tr><td>plain</td><td><code>:size 5 :cr 0.7500</code></td><td><code>(g (Variants n (add c d)))</code></td></tr>
+<tr><td>eager</td><td><code>:size 2 :cr 0.0000</code></td><td><code>(g n)</code></td></tr>
+<tr><td>lazy</td><td><code>:size 5 :cr 0.7500</code></td><td>identical to plain</td></tr>
 </tbody>
 </table>
 </div>
@@ -261,14 +261,15 @@ result preserves the labels <code>Approved</code> and <code>Rejected</code>. App
 prefer those labels need a different output objective or a presentation layer;
 the exact certificate does not claim readability.</p>
 <h2 id="what-is-argued-rather-than-proved"><a class="header" href="#what-is-argued-rather-than-proved">What is argued rather than proved</a></h2>
-<p>The <code>au-verus</code> crate proves properties of the lexicographic objective and a
-recurrence lower bound. It does not verify the production Rust solver end to
-end. A small exhaustive oracle supplies finite evidence for pair-mode Exact on
+<p>The <code>au-verus</code> crate proves objective-order and representation lemmas. It also
+proves a lower bound for any function that satisfies two recurrence
+inequalities. It does not prove that the solver’s recurrence value equals the
+optimum, and it does not verify the production Rust solver end to end. A small exhaustive oracle supplies finite evidence for pair-mode Exact on
 enumerable fixtures.</p>
 <p>Pair-cycle erasure and global optimality remain prose arguments supported by
 regressions. Hybrid calls have finite differential evidence. Chapters 14 and 15
 state the operational claims, and
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md"><code>19-anti-unification.md</code>, section 9.6</a>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md">design chapter 12, section 9.6</a>
 states the current proof boundary.</p>
 
                     </main>

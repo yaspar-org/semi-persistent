@@ -1,0 +1,524 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Criteria in MiniZinc - The Semper Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Using anti-unification to diagnose formalization problems">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/semper-blue-a28f71f5.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-d6b8dbf7.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Semper Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/yaspar-org/semi-persistent" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/yaspar-org/semi-persistent/edit/main/doc/book/src/27-criteria-in-minizinc.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="criteria-in-minizinc"><a class="header" href="#criteria-in-minizinc">Criteria in MiniZinc</a></h1>
+<p>A <code>:minizinc</code> cost model is a MiniZinc file: a criterion over arrays and variables
+that describe the e-graph. This chapter shows how to write one, lists every name
+Semper defines, and compares the solvers. Every example runs from
+<code>doc/book/examples/cost-models/</code> and needs <code>minizinc</code> on the <code>PATH</code>.</p>
+<h2 id="how-semper-runs-a-criterion"><a class="header" href="#how-semper-runs-a-criterion">How Semper runs a criterion</a></h2>
+<p><code>(extract t :cost m :solver (minizinc "cp-sat"))</code> runs four steps:</p>
+<ol>
+<li>Semper numbers the classes reachable from <code>t</code> <code>1..C</code> and their candidates
+<code>1..N</code>. It writes the e-graph as data, and the chosen rung as variables and
+constraints whose solutions are the candidate terms.</li>
+<li>It appends the criterion file and runs MiniZinc with the named solver.
+Integers stay integer variables: nothing is order-encoded before the solver
+sees them.</li>
+<li>It decodes the last solution into a term.</li>
+<li>It solves a second time with that term fixed, and reports the objective on it
+(<a href="24-extraction-under-cost-models.html#the-reported-cost">The reported cost</a>).</li>
+</ol>
+<p>Every auxiliary variable is determined by the term, so each term is one solution.
+The model itself excludes cyclic terms through <code>rank</code>, so the first line of the
+output reports 0 solves and 0 cycle exclusions. A MiniZinc model runs only with a
+<code>(minizinc ...)</code> solver, and a <code>(minizinc ...)</code> solver only with a MiniZinc model;
+any other pairing is a sort error.</p>
+<h2 id="a-first-criterion"><a class="header" href="#a-first-criterion">A first criterion</a></h2>
+<p>The criterion of the first example of <a href="24-extraction-under-cost-models.html#a-first-extraction-under-a-cost-model">Chapter 24</a>,
+in MiniZinc:</p>
+<pre><code class="language-text">% Every picked node is paid once: `Twice` 3, every other operator 1.
+array[1..N] of int: price = [if op[n] = "Twice" then 3 else 1 endif | n in 1..N];
+var int: cost = sum(n in 1..N)(price[n] * bool2int(pick[n]));
+solve minimize cost;
+</code></pre>
+<p><code>op[n]</code> is node <code>n</code>’s operator, a string, and <code>pick[n]</code> is the variable that is
+true when the term takes node <code>n</code> for its class. The file declares its own names,
+here <code>price</code> and <code>cost</code>, and ends with one <code>solve minimize</code> item.</p>
+<p>(sort E)
+(function V (String) E)
+(function F (E) E)
+(function Add (E E) E)
+(function Twice (E) E)
+(rewrite (Twice x) (Add x x))</p>
+<p>(let e (Twice (F (F (V “a”)))))
+(run 1)</p>
+<p>(cost-model dag :minizinc “27-first.mzn”)
+(extract e :cost dag :solver (minizinc “cp-sat”))</p>
+<pre><code class="language-text">; cost 4 proved at rung selection (0 solves, 0 cycle exclusions)
+; solver lower bound 4
+(Add (F (F (V "a"))) (F (F (V "a"))))
+</code></pre>
+<p>The cost is 4, as in Roto and in ASP. The second line is the solver’s lower bound
+on the objective. On a run stopped by a time limit, the bound tells how far the
+reported term can be from the optimum.</p>
+<h2 id="the-data-semper-writes"><a class="header" href="#the-data-semper-writes">The data Semper writes</a></h2>
+<p>For the program above, at the selection rung, Semper writes this data before its
+variables, its constraints, and the criterion:</p>
+<pre><code class="language-text">% The e-graph.
+int: C = 4;
+int: N = 5;
+int: B = 0;
+int: MAXK = 2;
+int: MAXL = 1;
+int: MAXJ = 1;
+int: ROOT = 4;
+int: PLAIN = 0; int: COMM = 1; int: SEQ = 2; int: SEQ_LEFT = 3; int: SEQ_RIGHT = 4; int: MSET = 5; int: SET = 6;
+array[1..C] of int: class_id = [0, 1, 2, 3];
+array[1..N] of int: node_id = [3, 0, 4, 1, 2];
+array[1..N] of 1..C: cls = [1, 2, 3, 4, 4];
+array[1..N] of string: op = ["V", "F", "F", "Add", "Twice"];
+array[1..N] of int: kind = [0, 0, 0, 0, 0];
+array[1..N] of set of 1..C: kids = [{}, {1}, {2}, {3}, {3}];
+array[1..N] of int: nkid = [0, 1, 1, 2, 1];
+array[1..N, 1..MAXK] of 0..C: kid = [| 0, 0 | 1, 0 | 2, 0 | 3, 3 | 3, 0 |];
+array[1..N, 1..MAXK] of int: kmult = [| 0, 0 | 1, 0 | 1, 0 | 1, 1 | 1, 0 |];
+function int: mult(int: n, int: k) = sum(i in 1..nkid[n])(if kid[n, i] = k then kmult[n, i] else 0 endif);
+array[1..N] of int: nint = [0, 0, 0, 0, 0];
+array[1..N, 1..MAXJ] of int: ints = [| 0 | 0 | 0 | 0 | 0 |];
+array[1..C] of 1..N: first = [1, 2, 3, 4];
+array[1..N] of int: nleaf = [0, 1, 1, 1, 1];
+array[1..N, 1..MAXL] of 0..C: leaf = [| 0 | 1 | 2 | 3 | 3 |];
+% 0 no tree, 1 chains, 2 trees, 3 binary trees, 4 ordered trees, 5 a fold.
+array[1..N] of int: family = [0, 0, 0, 0, 0];
+array[1..B] of 1..N: bnode = [];
+array[1..B] of bool: interval = [];
+array[1..B] of int: blo = [];
+array[1..B] of int: bhi = [];
+</code></pre>
+<p>Node 4, <code>Add</code>, has two children, both class 3: <code>kid</code> and <code>kmult</code> list both
+positions, and <code>kids</code> holds the class once. The names, with <code>n</code> a node, <code>c</code> a
+class, and <code>b</code> a block:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>name</th><th>meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>C</code>, <code>N</code></td><td>the numbers of classes and candidates</td></tr>
+<tr><td><code>class_id[c]</code>, <code>node_id[n]</code></td><td>the e-graph’s numbers, as in the ASP facts</td></tr>
+<tr><td><code>ROOT</code></td><td>the root class</td></tr>
+<tr><td><code>cls[n]</code>, <code>op[n]</code></td><td>node <code>n</code>’s class and operator (a string)</td></tr>
+<tr><td><code>kind[n]</code></td><td><code>PLAIN</code>, <code>COMM</code>, <code>SEQ</code>, <code>SEQ_LEFT</code>, <code>SEQ_RIGHT</code>, <code>MSET</code>, or <code>SET</code>, integer constants</td></tr>
+<tr><td><code>kids[n]</code></td><td>the set of <code>n</code>’s distinct operand classes</td></tr>
+<tr><td><code>nkid[n]</code>, <code>kid[n, i]</code></td><td>the number of children, and child <code>i</code>, in order, 0-padded; a multiset or set node’s children are its distinct operands</td></tr>
+<tr><td><code>kmult[n, i]</code></td><td>child <code>i</code>’s multiplicity: its stored count under an AC operator, 1 otherwise</td></tr>
+<tr><td><code>mult(n, k)</code></td><td>a function: the multiplicity of class <code>k</code> among <code>n</code>’s children, summed over its positions</td></tr>
+<tr><td><code>nint[n]</code>, <code>ints[n, j]</code></td><td>the integer payload, from <code>j</code> = 1</td></tr>
+<tr><td><code>first[c]</code></td><td>class <code>c</code>’s first candidate</td></tr>
+<tr><td><code>nleaf[n]</code>, <code>leaf[n, p]</code></td><td>the leaves of <code>n</code>’s tree: the positions of a sequence or fold, the distinct operands of any other node</td></tr>
+<tr><td><code>MAXK</code>, <code>MAXL</code>, <code>MAXJ</code></td><td>the widths of <code>kid</code>, <code>leaf</code>, and <code>ints</code></td></tr>
+<tr><td><code>family[n]</code></td><td><code>n</code>’s trees: 0 none, 1 chains, 2 trees, 3 binary trees, 4 ordered trees, 5 a fold</td></tr>
+<tr><td><code>B</code>, <code>bnode[b]</code></td><td>the number of possible blocks, and block <code>b</code>’s node</td></tr>
+<tr><td><code>interval[b]</code>, <code>blo[b]</code>, <code>bhi[b]</code></td><td>the block is the interval <code>blo..bhi</code> of a sequence or fold, or else an AC block of least leaf <code>blo</code> and size <code>bhi</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The payload is integers only: unlike the ASP facts’ <code>str</code>, no string payload is
+written.</p>
+<h2 id="the-variables"><a class="header" href="#the-variables">The variables</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>name</th><th>meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>used[c]</code>, <code>pick[n]</code></td><td>the class is in the term; the node is its class’s choice</td></tr>
+<tr><td><code>rank[c]</code></td><td>the term’s height at <code>c</code>, 0 when unused: the chosen term is acyclic</td></tr>
+<tr><td><code>inner[b]</code></td><td>block <code>b</code> exists</td></tr>
+<tr><td><code>bmem[b, p]</code></td><td>leaf <code>p</code> lies under block <code>b</code></td></tr>
+<tr><td><code>parent_leaf[n, p]</code>, <code>parent_blk[b]</code></td><td>the innermost block around a leaf or a block, 0 for the root</td></tr>
+<tr><td><code>depth[n, p]</code></td><td>leaf <code>p</code>’s depth, 1 directly under the root</td></tr>
+<tr><td><code>pos_leaf[n, p]</code>, <code>pos_blk[b]</code></td><td>at <code>orders</code>, a child’s position in its block, from 0 (AC only)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Blocks exist only for a bracketed node with 3 to 16 leaves (8 at <code>orders</code> for an
+AC node) at a tree rung, and for a fold at every rung. <code>depth[n, p]</code> is defined
+for every node <code>n</code> and every <code>p</code> in <code>1..MAXL</code>; it is 1 for every leaf of a node
+with no blocks.</p>
+<h2 id="names-a-criterion-must-not-redefine"><a class="header" href="#names-a-criterion-must-not-redefine">Names a criterion must not redefine</a></h2>
+<p>The dump also defines the function <code>children</code> and the predicates <code>meet</code> and
+<code>within</code>. A criterion must not redefine them, nor declare any name of the two
+tables above; MiniZinc then stops with an error, such as an ambiguous call for a
+second <code>meet</code>. A parameter-only
+predicate that an <code>int</code> function uses is declared with <code>test</code>, not <code>predicate</code>, as
+<code>bounded</code> is in <a href="#a-larger-criterion">A larger criterion</a>.</p>
+<h2 id="trees"><a class="header" href="#trees">Trees</a></h2>
+<p>The depth cost of <a href="25-cost-functions-in-roto.html#bracketed-nodes">Chapter 25</a> in
+MiniZinc:</p>
+<pre><code class="language-text">% The depth of the deepest leaf of any picked node, a leaf directly under its node
+% at depth 1.
+var 0..MAXL: deepest;
+constraint forall(n in 1..N, p in 1..nleaf[n])(pick[n] -&gt; deepest &gt;= depth[n, p]);
+solve minimize deepest;
+</code></pre>
+<p>(sort E)
+(function V (String) E)
+(function And (E) E :assoc-comm)
+(let e (And (V “a”) (V “b”) (V “c”) (V “d”)))</p>
+<p>(cost-model depth :minizinc “27-depth.mzn”)
+(extract e :cost depth :rung selection :solver (minizinc “cp-sat”))
+(extract e :cost depth :rung levels :solver (minizinc “cp-sat”))
+(extract e :cost depth :rung binary :solver (minizinc “cp-sat”))</p>
+<pre><code class="language-text">; cost 1 proved at rung selection (0 solves, 0 cycle exclusions)
+; solver lower bound 1
+(And (V "a") (V "b") (V "c") (V "d"))
+; cost 1 proved at rung levels (0 solves, 0 cycle exclusions)
+; solver lower bound 1
+(And (V "a") (V "b") (V "c") (V "d"))
+; cost 2 proved at rung binary (0 solves, 0 cycle exclusions)
+; solver lower bound 2
+(And (And (V "a") (V "c")) (And (V "b") (V "d")))
+</code></pre>
+<p>The costs are 1, 1, and 2, as in Roto and in ASP. At <code>binary</code> the term differs:
+CP-SAT returns <code>(And (And a c) (And b d))</code>, where the internal solver and clingo
+return <code>(And (And a b) (And c d))</code>. Both cost 2. Among terms of equal cost, each
+solver returns the one it finds, and the reported cost is the same.</p>
+<h2 id="a-larger-criterion"><a class="header" href="#a-larger-criterion">A larger criterion</a></h2>
+<p>The MLTL monitor memory in MiniZinc:</p>
+<pre><code class="language-text">test bounded(int: n) = (op[n] = "Global" \/ op[n] = "Future" \/ op[n] = "Until" \/ op[n] = "Release") /\ nint[n] &gt;= 2;
+function int: lb(int: n) = if bounded(n) then max(ints[n, 1], 0) else 0 endif;
+function int: ub(int: n) = if bounded(n) then max(ints[n, 2], 0) else 0 endif;
+int: TOP = sum(n in 1..N)(ub(n) + lb(n));
+
+% Worst- and best-case propagation delays over the chosen term.
+array[1..C] of var 0..TOP: wpd;
+array[1..C] of var 0..TOP: bpd;
+constraint forall(n in 1..N)(pick[n] -&gt; wpd[cls[n]] = ub(n) + max([0] ++ [wpd[k] | k in kids[n]]));
+constraint forall(n in 1..N)(pick[n] -&gt; bpd[cls[n]] = lb(n) + if card(kids[n]) = 0 then 0 else min([bpd[k] | k in kids[n]]) endif);
+
+predicate counted(int: c) = used[c] /\ op[first[c]] != "Bool";
+predicate sibling(int: n, int: p, int: q) =
+    parent_leaf[n, p] = 0 \/ exists(b in 1..B where bnode[b] = n)(parent_leaf[n, p] = b /\ bmem[b, q]);
+
+array[1..C] of var 0..TOP: queue;
+constraint forall(n in 1..N, p, q in 1..nleaf[n] where p != q)(
+    (pick[n] /\ sibling(n, p, q) /\ op[first[leaf[n, p]]] != "Bool") -&gt; queue[leaf[n, p]] &gt;= wpd[leaf[n, q]] - bpd[leaf[n, p]]);
+
+% An internal node's queue: its latest outside sibling less its earliest member.
+array[1..B] of var 0..TOP: own;
+constraint forall(b in 1..B)(own[b] = min([TOP] ++ [if bmem[b, p] then bpd[leaf[bnode[b], p]] else TOP endif | p in 1..nleaf[bnode[b]]]));
+array[1..B] of var 0..TOP: iqueue;
+constraint forall(b in 1..B, q in 1..nleaf[bnode[b]])(
+    (inner[b] /\ not bmem[b, q] /\ (parent_blk[b] = 0 \/ exists(b2 in 1..B where bnode[b2] = bnode[b])(parent_blk[b] = b2 /\ bmem[b2, q])))
+    -&gt; iqueue[b] &gt;= wpd[leaf[bnode[b], q]] - own[b]);
+
+var int: cost = 1 + sum(c in 1..C)(bool2int(counted(c))) + sum(c in 1..C)(queue[c])
+    + sum(b in 1..B)(bool2int(inner[b])) + sum(b in 1..B)(iqueue[b]);
+solve minimize cost;
+</code></pre>
+<p>Each attribute is an array of variables with an explicit domain, <code>0..TOP</code>, where
+<code>TOP</code> bounds every delay of an acyclic term. A constraint under <code>pick[n] -&gt; ...</code>
+defines a node’s value only where the term takes it.</p>
+<p>(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)</p>
+<p>(let e (And (Global (Interval 0 9) (Var “a0”)) (Future (Interval 2 3) (Var “a1”))
+(Global (Interval 1 4) (Var “a1”)) (Future (Interval 0 7) (Var “a0”))))</p>
+<p>(cost-model memory :minizinc “memory.mzn”)
+(extract e :cost memory :rung selection :solver (minizinc “cp-sat”))
+(extract e :cost memory :rung splits :solver (minizinc “cp-sat”))</p>
+<pre><code class="language-text">; cost 39 proved at rung selection (0 solves, 0 cycle exclusions)
+; solver lower bound 39
+(And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
+; cost 37 proved at rung splits (0 solves, 0 cycle exclusions)
+; solver lower bound 37
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+</code></pre>
+<h2 id="choosing-a-solver"><a class="header" href="#choosing-a-solver">Choosing a solver</a></h2>
+<p><code>(minizinc "SOLVER" "ARG" ...)</code> runs
+<code>minizinc --solver SOLVER ARG ... --output-mode json --output-objective -s -i FILE</code>.
+<code>SOLVER</code> is any name <code>minizinc --solvers</code> lists, such as <code>cp-sat</code>, <code>chuffed</code>,
+<code>gecode</code>, <code>highs</code>, or <code>coin-bc</code>. Semper sets no time limit; pass MiniZinc’s own,
+in milliseconds, as an argument:</p>
+<p>(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)</p>
+<p>(let e (And (Global (Interval 0 9) (Var “a0”)) (Future (Interval 2 3) (Var “a1”))
+(Global (Interval 1 4) (Var “a1”)) (Future (Interval 0 7) (Var “a0”))))</p>
+<p>(cost-model memory :minizinc “memory.mzn”)
+(extract e :cost memory :rung splits :solver (minizinc “chuffed”))
+(extract e :cost memory :rung splits :solver (minizinc “gecode”))
+(extract e :cost memory :rung splits :solver (minizinc “highs”))
+(extract e :cost memory :rung splits :solver (minizinc “coin-bc”))
+; A time limit in milliseconds, passed to minizinc after the solver’s name.
+(extract e :cost memory :rung splits :solver (minizinc “cp-sat” “–time-limit” “60000”))</p>
+<pre><code class="language-text">; cost 37 proved at rung splits (0 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 37 proved at rung splits (0 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 37 proved at rung splits (0 solves, 0 cycle exclusions)
+; solver lower bound 37
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 37 proved at rung splits (0 solves, 0 cycle exclusions)
+; solver lower bound 37
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 37 proved at rung splits (0 solves, 0 cycle exclusions)
+; solver lower bound 37
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+</code></pre>
+<p>Every solver proves 37 at <code>splits</code>. HiGHS, COIN-BC, and CP-SAT report a lower
+bound; Chuffed and Gecode do not, and print no bound line. When a solve stops
+before it proves its optimum, the status is <code>bounded</code>, and the bound, when
+printed, limits the distance to the optimum.</p>
+<p>Each solver reads integers in its own range, and Semper checks the integers it
+writes, the payload and the multiplicities, against the range of the named
+solver: 32 bits for Chuffed and Gecode, exact to 2^53 for the MIP solvers, 64 bits
+for CP-SAT and any other. The values the criterion computes are the solver’s
+arithmetic, which Semper does not check. <strong>If you write cost functions that can
+overflow the solver’s internal number representation, you are on your own.</strong>
+CP-SAT, whose 64-bit range the MiniZinc compiler also checks, is the recommended
+solver for criteria whose values can grow
+(<a href="28-solvers-certificates-and-export.html#number-ranges">Number ranges</a>).</p>
+<p><code>EXTRACT_API_KEEP_MZN=dir</code> keeps every model MiniZinc is given in <code>dir</code>, as
+<code>call000.mzn</code>, <code>call001.mzn</code>, and so on: two per extraction. The directory must
+exist. <code>egraph/tests/mltl/costs/</code> holds the three MLTL costs in MiniZinc. The
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/src/extraction/mzn.rs">mzn.rs source</a>
+holds the constraints Semper writes.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="26-criteria-in-asp.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="28-solvers-certificates-and-export.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="26-criteria-in-asp.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="28-solvers-certificates-and-export.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

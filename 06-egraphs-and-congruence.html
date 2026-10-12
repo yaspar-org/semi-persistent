@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -234,7 +234,8 @@ the affected parent keys.</p>
 <h2 id="union-find"><a class="header" href="#union-find">Union-find</a></h2>
 <p>Semper maintains e-class membership with union-find. Every e-node has a class
 identifier. <code>find</code> follows parent links to the class’s canonical
-representative, and path compression shortens later lookups. A <code>union</code> between
+representative. In the same pass it applies path halving: each visited node is
+pointed at its grandparent, which shortens later lookups. A <code>union</code> between
 two representatives makes one the survivor and the other a child of it.</p>
 <p>The survivor is an implementation choice, not a preferred term. A merge does
 not rewrite or delete either side, and choosing a different survivor does not
@@ -242,7 +243,7 @@ change the asserted equality. The <code>--union-by</code> flag changes the survi
 heuristic and can change operational work and printed representatives, but it
 does not change which input equality was asserted. <a href="C-flag-reference.html">Annex C</a>
 lists the available policies.</p>
-<p>Path compression and union updates are included in push and pop restoration.
+<p>Path-halving writes and union updates are both undone by a pop.
 Chapter 7 describes that semi-persistent storage.</p>
 <h2 id="congruence"><a class="header" href="#congruence">Congruence</a></h2>
 <p>Congruence adds the rule that applications of the same operator to equal
@@ -281,7 +282,9 @@ contain the absorbed representative in their stored keys. Rebuild restores a
 congruence-closed state. It visits parents from the absorbed class’s use-list,
 replaces child identifiers with current representatives, canonizes the
 children, and probes the hash-consing cache again. A collision schedules
-another class merge, so the process continues until no pending merges remain.</p>
+another class merge, so the process continues until no pending merges remain.
+Rebuild then runs a repair round that cancels inverse pairs formed by later
+merges, and it alternates the two passes until neither changes the graph.</p>
 <p>The <code>union</code> and equality-check commands rebuild before returning their result.
 Saturation also rebuilds before constructing each round’s matching indexes.
 Rules therefore match against a congruence-closed graph rather than an
@@ -289,7 +292,7 @@ intermediate state with stale parent keys. <code>print-size</code> itself only r
 node arenas; it does not trigger rebuild.</p>
 <p>Chapter 10 describes the operator-specific canonization performed during term
 construction and parent recanonization. The
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/05-egraph.md">e-graph design chapter</a>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/04-egraph.md">e-graph design chapter</a>
 specifies the rebuild worklist and use-list algorithm.</p>
 <h2 id="what-an-equality-check-asks"><a class="header" href="#what-an-equality-check-asks">What an equality check asks</a></h2>
 <p><code>(check (= t1 t2))</code> builds both ground terms, rebuilds the e-graph, and asks

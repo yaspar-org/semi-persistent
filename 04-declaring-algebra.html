@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -355,6 +355,9 @@ directly. Semper enforces this invariant. For example,</p>
 <tr><td><code>:idempotent</code> and <code>:cancellative</code> are exclusive</td><td><code>:idempotent and :cancellative are mutually exclusive (a cancellative idempotent monoid collapses to the identity)</code></td></tr>
 <tr><td><code>:idempotent</code> and <code>:nilpotent</code> require AC</td><td><code>:idempotent/:nilpotent require :assoc :comm</code></td></tr>
 <tr><td><code>:cancellative</code> requires AC</td><td><code>:cancellative requires :assoc :comm (an AC operator)</code></td></tr>
+<tr><td><code>:identity</code> and <code>:inverse</code> require AC</td><td><code>:idempotent/:nilpotent/:identity/:inverse require :comm (an AC operator)</code> on an <code>:assoc</code>-only operator, <code>... require :assoc (an AC operator)</code> on a <code>:comm</code>-only one</td></tr>
+<tr><td>the <code>:nilpotent</code> order is between 2 and 255</td><td><code>:nilpotent order must be 2..=255</code>, a parse error</td></tr>
+<tr><td>the <code>:inverse</code> operator is declared earlier and has signature <code>S -&gt; S</code></td><td><code>:inverse operator 'Neg' is not declared</code>, or <code>:inverse operator 'Neg' must be unary over the op's sort (inv : S -&gt; S)</code></td></tr>
 <tr><td><code>:nilpotent</code> requires an identity</td><td><code>:nilpotent requires :identity (the emptied monomial must reduce to the unit)</code></td></tr>
 <tr><td><code>:inverse</code> requires an identity</td><td><code>:inverse requires :identity</code></td></tr>
 <tr><td>property attributes require a structural attribute</td><td><code>algebra tags require :assoc and/or :comm</code></td></tr>
@@ -384,7 +387,7 @@ which additional domain equalities saturation can derive. Part IV uses this
 distinction when adding a domain rewrite changes a reported difference between
 two autoformalizations.</p>
 <p>The
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-algebraic-properties.md">algebraic-properties design chapter</a>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/05-algebraic-operators.md#53-algebraic-properties-of-ac-operators-representation-canonization-and-the-per-op-pool">algebraic-properties design chapter</a>
 specifies the canonical representations and completion interactions in detail.</p>
 
                     </main>

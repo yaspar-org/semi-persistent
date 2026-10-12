@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,7 +198,7 @@ whole family of AC-equivalent terms without enumerating its members.</p>
 <p>The engine also answers more than equality questions. An anti-unification query
 returns a term that preserves shared structure and marks the remaining
 disagreements with <code>Variants</code> nodes.</p>
-<h2 id="the-four-parts"><a class="header" href="#the-four-parts">The four parts</a></h2>
+<h2 id="the-five-parts"><a class="header" href="#the-five-parts">The five parts</a></h2>
 <p>In Part I, we build the binary, write and run a program, declare operators with
 algebraic properties, and write rules over ordinary, sequence, multiset, and
 set operators.</p>
@@ -210,18 +210,27 @@ search, and their hybrid work, and what an optimal result is optimal over.</p>
 <p>In Part IV, we apply the engine to autoformalization. We sample a formalizer
 several times, cluster the samples by equality saturation, and anti-unify across
 clusters to explain the remaining differences.</p>
+<p>In Part V, we extract terms under cost models: costs written as scripts, in
+Rust, as answer-set programs, or in MiniZinc, solved by an internal or an
+external solver. <a href="24-extraction-under-cost-models.html">Chapter 24</a> opens the
+part.</p>
 <h2 id="what-you-need-to-know-already"><a class="header" href="#what-you-need-to-know-already">What you need to know already</a></h2>
 <p>We assume that you are familiar with first-order terms and rewrite rules. We do
 not assume any experience with Semper or with e-graphs, equality saturation, AC
 canonization, or anti-unification; we introduce each of them from scratch.</p>
 <h2 id="the-examples"><a class="header" href="#the-examples">The examples</a></h2>
 <p>Every program shown in this book lives in <code>doc/book/examples/</code> and is included
-in its chapter directly from that file. The test suite executes every <code>.egg</code>
-file in the directory.</p>
-<p>Each example ends with <code>check</code> or <code>checkau</code> assertions that state the behavior
-the chapter relies on. A change in engine behavior therefore fails a test
-instead of silently invalidating the book. Every number, size, ratio, and error
-message quoted in the book was captured by running the corresponding file.</p>
+in its chapter directly from that file. The <code>book_examples</code> test executes every
+<code>.egg</code> file at the top level of that directory. The <code>book_cost_model_examples</code>
+test runs the Part V programs in <code>examples/cost-models/</code> and compares each
+output with its <code>.out</code> file. It skips a program whose external solver is not
+installed.</p>
+<p>Each example states the behavior the chapter relies on, either with <code>check</code> or
+<code>checkau</code> assertions or, for a program the book shows being rejected, with an
+<code>EXPECT</code> directive naming the failure. A change in engine behavior therefore
+fails a test instead of silently invalidating the book. Every number, size,
+ratio, and error message quoted in the book was captured by running the
+corresponding file.</p>
 <h2 id="what-this-book-is-not"><a class="header" href="#what-this-book-is-not">What this book is not</a></h2>
 <p>This book is not the design documentation. It states what a user needs to run
 and understand the engine. The

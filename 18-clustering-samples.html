@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -279,10 +279,10 @@ six pairwise checks record it directly. Before the rewrite, the checks assert</p
 declaration for <code>And</code> absorbs both. <code>s3</code> expands <code>approvedRegion</code> into two
 specific regions, and <code>s4</code> names a different second region.</p>
 <p>The four initial extractions print:</p>
-<pre><code class="language-text">(And (core) (approvedRegion (destination)))
-(And (core) (approvedRegion (destination)))
-(And (core) (Or (usEast (destination)) (euWest (destination))))
-(And (core) (Or (usEast (destination)) (apSouth (destination))))
+<pre><code class="language-text">(And (approvedRegion (destination)) (core))
+(And (approvedRegion (destination)) (core))
+(And (Or (euWest (destination)) (usEast (destination))) (core))
+(And (Or (apSouth (destination)) (usEast (destination))) (core))
 </code></pre>
 <p>The rule states that this deployment’s approved regions are <code>usEast</code> and
 <code>euWest</code>. After three rounds, the partition is</p>
@@ -322,7 +322,7 @@ AC structure, Chapter 11 explains when <code>--derive-ac-eqs</code> is required.
 to its representative, including rewrite identifiers along that path. It can
 identify which merge joined a class, but it does not directly produce a
 named sample-to-sample explanation or enumerate alternative proofs. The
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/15-proof-logging.md">proof-logging design chapter</a>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/14-proof-logging.md">proof-logging design chapter</a>
 defines that output and its verification boundary.</p>
 
                     </main>

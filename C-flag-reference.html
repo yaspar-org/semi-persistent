@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -193,16 +193,17 @@
 <tr><th>Flag</th><th>Values</th><th>Default</th><th>Effect</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--id-bits</code></td><td><code>31</code>, <code>63</code></td><td><code>31</code></td><td>Select 31-bit or 63-bit e-class identifiers.</td></tr>
-<tr><td><code>--push-pop</code></td><td><code>diff</code>, <code>clone</code></td><td><code>diff</code></td><td>Select scope storage. <code>diff</code> uses semi-persistent logs; <code>clone</code> is accepted as a value but currently exits with “not yet implemented.”</td></tr>
-<tr><td><code>--types</code></td><td><code>machine</code>, <code>bignum</code></td><td><code>bignum</code></td><td>Select comma-separated literal groups. <code>machine,bignum</code> enables both groups.</td></tr>
+<tr><td><code>--bits</code></td><td><code>32</code>, <code>64</code></td><td><code>32</code></td><td>Width preset, by storage word: 31-bit ids with 32-bit multiplicities, or 63-bit ids with 64-bit multiplicities. Operator and sort ids are 31-bit in both. Every operation on a count is checked: a count past the width is reported as <code>multiplicity overflow: …</code> with the width and its maximum. <code>--id-bits</code> is an alias, and either spelling accepts <code>31</code> for <code>32</code> and <code>63</code> for <code>64</code>.</td></tr>
+<tr><td><code>--cost-bits</code></td><td><code>32</code>, <code>64</code>, <code>big</code></td><td><code>big</code></td><td>An optional signed cap on a cost model’s values and on the cost <code>(extract … :cost m)</code> reports; <code>big</code> sets none. Arithmetic is exact either way, and a value outside the cap is a reported error naming the operation. Each solver’s own range is checked separately, before it runs (<a href="24-extraction-under-cost-models.html">Part V</a>).</td></tr>
+<tr><td><code>--push-pop</code></td><td><code>diff</code></td><td><code>diff</code></td><td>Select scope storage. <code>diff</code> uses semi-persistent logs. <code>clone</code> is a reserved value: the argument parser rejects it, since no deep-copy backend exists, and the program exits with status 2.</td></tr>
+<tr><td><code>--types</code></td><td><code>machine</code>, <code>bignum</code></td><td><code>bignum</code></td><td>Select comma-separated literal groups. <code>machine,bignum</code> enables both groups. An unknown group exits with status 1.</td></tr>
 <tr><td><code>--proofs</code></td><td>flag</td><td>off</td><td>Record merge justifications for proof extraction.</td></tr>
-<tr><td><code>--dump-proofs FILE</code></td><td>path</td><td>none</td><td>Write one proof-path record per e-node after execution. Requires <code>--proofs</code>.</td></tr>
+<tr><td><code>--dump-proofs FILE</code></td><td>path</td><td>none</td><td>Write one proof-path record per e-node after execution, and report the record count on standard error. Requires <code>--proofs</code>.</td></tr>
 </tbody>
 </table>
 </div>
 <p>The machine group provides <code>i64</code>, <code>u64</code>, <code>f64</code>, <code>usize</code>, <code>String</code>, and <code>bool</code>;
-the bignum group provides <code>IBig</code>, <code>UBig</code>, <code>RBig</code>, <code>String</code>, and <code>bool</code>.</p>
+the bignum group provides <code>IBig</code>, <code>UBig</code>, <code>RBig</code>, and <code>bool</code>.</p>
 <h2 id="saturation-and-completion"><a class="header" href="#saturation-and-completion">Saturation and completion</a></h2>
 <div class="table-wrapper">
 <table>
@@ -211,11 +212,12 @@ the bignum group provides <code>IBig</code>, <code>UBig</code>, <code>RBig</code
 </thead>
 <tbody>
 <tr><td><code>--use-naive</code></td><td>selected</td><td>Explicitly select full re-matching each round. Conflicts with <code>--use-semi-naive</code>.</td></tr>
-<tr><td><code>--use-semi-naive</code></td><td>off</td><td>Select delta-driven saturation.</td></tr>
+<tr><td><code>--use-semi-naive</code></td><td>off</td><td>Select delta-driven saturation. Conflicts with <code>--use-naive</code>.</td></tr>
 <tr><td><code>--derive-ac-eqs</code></td><td>off</td><td>Run eager AC completion during rebuild. Conflicts with <code>--lazy-ac-eqs</code>.</td></tr>
-<tr><td><code>--lazy-ac-eqs</code></td><td>off</td><td>Run goal-directed AC completion for equality and disequality checks.</td></tr>
+<tr><td><code>--lazy-ac-eqs</code></td><td>off</td><td>Run goal-directed AC completion for equality and disequality checks. Conflicts with <code>--derive-ac-eqs</code>.</td></tr>
 <tr><td><code>--check-ac-basis</code></td><td>off</td><td>Print expensive reduced-basis invariant checks during eager completion. It has no effect without <code>--derive-ac-eqs</code>.</td></tr>
-<tr><td><code>--count-match-steps</code></td><td>off</td><td>Count and report matching work.</td></tr>
+<tr><td><code>--count-match-steps</code></td><td>off</td><td>Count matching work and report <code>match steps: N</code> on standard error after the closing status.</td></tr>
+<tr><td><code>--flatten-rhs</code></td><td>off</td><td>Give an AC node a rewrite builds a flat alternative for each same-operator child kept nested because its class is used elsewhere; not for operators with <code>:inverse</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -230,15 +232,17 @@ modes.</p>
 </thead>
 <tbody>
 <tr><td><code>--runtime-scheduling</code></td><td>flag</td><td>off</td><td>Choose atom order per binding from live bucket lengths. Conflicts with <code>--auto-scheduling</code>.</td></tr>
-<tr><td><code>--auto-scheduling</code></td><td>flag</td><td>off</td><td>Select static or per-binding atom ordering for each rule and round.</td></tr>
+<tr><td><code>--auto-scheduling</code></td><td>flag</td><td>off</td><td>Select static or per-binding atom ordering for each rule and round. Conflicts with <code>--runtime-scheduling</code>.</td></tr>
 <tr><td><code>--sampled-selectivity</code></td><td>flag</td><td>off</td><td>Estimate bound-key fan-out by sampling the emitter relation.</td></tr>
 <tr><td><code>--sampler-k</code></td><td>nonnegative integer</td><td><code>32</code></td><td>Set emitter nodes drawn per sampled estimate. Relevant with <code>--sampled-selectivity</code>.</td></tr>
-<tr><td><code>--sampler-bootstrap</code></td><td>nonnegative integer</td><td><code>0</code></td><td>Set bootstrap resamples per estimate; zero disables the guard.</td></tr>
-<tr><td><code>--sampler-cv</code></td><td>floating-point number</td><td><code>1.0</code></td><td>Reject a bootstrapped estimate when its coefficient of variation exceeds this threshold.</td></tr>
-<tr><td><code>--union-by</code></td><td><code>rank</code>, <code>size</code>, <code>uses</code>, <code>sum</code></td><td><code>rank</code></td><td>Choose the surviving representative by union-find rank, class size, use-list length, or size plus uses.</td></tr>
+<tr><td><code>--sampler-bootstrap</code></td><td>nonnegative integer</td><td><code>0</code></td><td>Set bootstrap resamples per estimate; zero disables the guard. Relevant with <code>--sampled-selectivity</code>.</td></tr>
+<tr><td><code>--sampler-cv</code></td><td>floating-point number</td><td><code>1.0</code></td><td>Reject a bootstrapped estimate when its coefficient of variation exceeds this threshold. Relevant with a nonzero <code>--sampler-bootstrap</code>.</td></tr>
 </tbody>
 </table>
 </div>
+<p>The parser does not enforce the three “relevant with” conditions: the value is
+accepted and has no effect.
+| <code>--union-by</code> | <code>rank</code>, <code>size</code>, <code>uses</code>, <code>sum</code> | <code>rank</code> | Choose the surviving representative by union-find rank, class size, use-list length, or size plus uses. |</p>
 <p>These policies change operational work and representative choice, not the
 equalities asserted by the input program.</p>
 <h2 id="help"><a class="header" href="#help">Help</a></h2>
@@ -252,6 +256,31 @@ equalities asserted by the input program.</p>
 </tbody>
 </table>
 </div>
+<p>An unknown flag or an invalid value exits with status 2 and a usage line.</p>
+<h2 id="test-directives"><a class="header" href="#test-directives">Test directives</a></h2>
+<p>The test harness in <code>egraph/tests/egg_tests.rs</code> reads directives from the first
+eight lines of a program. Each directive mirrors a flag; pass the flag when
+running the file by hand.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Directive</th><th>Values</th><th>Default</th><th>Flag</th></tr>
+</thead>
+<tbody>
+<tr><td><code>;; EXPECT:</code></td><td><code>ok</code>, <code>check-failed</code>, <code>parse-error</code>, <code>sort-error</code>, <code>error</code></td><td><code>ok</code></td><td>none; the expected outcome</td></tr>
+<tr><td><code>;; MESSAGE:</code></td><td>text</td><td>none</td><td>none; the outcome’s message must contain the text</td></tr>
+<tr><td><code>;; WARNING:</code></td><td>text, or <code>none</code></td><td>none</td><td>none; some warning must contain the text, one directive per warning, or no warning may be raised</td></tr>
+<tr><td><code>;; TYPES:</code></td><td>as <code>--types</code></td><td><code>bignum</code></td><td><code>--types</code></td></tr>
+<tr><td><code>;; EVAL:</code></td><td><code>naive</code>, <code>semi</code>, <code>both</code></td><td><code>both</code></td><td><code>--use-naive</code> or <code>--use-semi-naive</code></td></tr>
+<tr><td><code>;; DERIVE_AC_EQS:</code></td><td><code>on</code></td><td>off</td><td><code>--derive-ac-eqs</code></td></tr>
+<tr><td><code>;; LAZY_AC_EQS:</code></td><td><code>on</code></td><td>off</td><td><code>--lazy-ac-eqs</code></td></tr>
+<tr><td><code>;; CHECK_AC_BASIS:</code></td><td><code>on</code></td><td>off</td><td><code>--check-ac-basis</code>; the harness also asserts the invariants after a successful run</td></tr>
+<tr><td><code>;; UNION_BY:</code></td><td><code>rank</code>, <code>size</code>, <code>uses</code>, <code>sum</code></td><td><code>rank</code></td><td><code>--union-by</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The harness runs every file under both the static and the runtime
+atom-scheduling modes, with the 32-bit preset and without proof recording.</p>
 <h2 id="feature-gated-diagnostics"><a class="header" href="#feature-gated-diagnostics">Feature-gated diagnostics</a></h2>
 <p>Two environment variables affect binaries built with optional instrumentation
 features; they are not command-line flags:</p>

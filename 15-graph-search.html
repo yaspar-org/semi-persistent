@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -191,9 +191,9 @@ how much of the graph it explores.</p>
 search completes within the available resources. Select UCT when a fixed
 playout budget is required. Neither algorithm is generally faster; their costs
 depend on the action graph.</p>
-<p>UCT always performs a deterministic initial rollout. A budget of
-<code>:playouts 0</code> therefore returns that initial achieved result rather than no
-result. Further playouts can improve it or exhaust the graph. The output reports
+<p>Unless the root state is already terminal, UCT performs a deterministic
+initial rollout before its first playout. A budget of <code>:playouts 0</code> therefore
+returns that initial achieved result rather than no result. Further playouts can improve it or exhaust the graph. The output reports
 <code>:completion budget</code> in the first case and <code>:completion exact</code> in the second.</p>
 <p>The following query reuses Chapter 14’s cyclic construction. With 10,000
 playouts and pair-cycle filtering, UCT exhausts this small graph and returns the
@@ -216,7 +216,7 @@ terms into achieved candidates for their parents.</li>
 </ol>
 <p>Composition during the final step is how later playouts improve on the initial
 rollout. The full procedure is specified in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md"><code>19-anti-unification.md</code>, section 3.3</a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md">design chapter 12, section 3.3</a>.</p>
 <h2 id="the-same-subproblem-reached-many-ways"><a class="header" href="#the-same-subproblem-reached-many-ways">The same subproblem, reached many ways</a></h2>
 <p>Several paths may reach the same contextual class-pair state. They share that
 state’s current value and achieved term. Selection counts remain local to the
@@ -224,7 +224,7 @@ parent-action edge, however, so traffic arriving through another parent does
 not pretend that this parent selected the shared child.</p>
 <p>Chapter 14 defines the cycle contexts that distinguish states. The shared-state
 and local-edge bookkeeping is detailed in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md"><code>19-anti-unification.md</code>, section 2.6</a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md">design chapter 12, section 2.6</a>.</p>
 <h2 id="values-are-recomputed-not-accumulated"><a class="header" href="#values-are-recomputed-not-accumulated">Values are recomputed, not accumulated</a></h2>
 <p>Ordinary tree-MCTS bookkeeping would mix unrelated traffic at a shared child.
 A child visit count includes visits from parents that the current parent never
@@ -243,13 +243,15 @@ candidate is still composed from achieved child terms rather than estimates.</p>
 <p>A structural completion check asks whether every reachable action has been
 handled and every realized child has completed. If so, a children-first pass
 recomposes all shared parents before the root is reported exact.</p>
-<p>The Rust API can additionally maintain closure incrementally. A completed
-shared state notifies every parent through reverse edges, selection skips its
-closed subgraph, and a closed root stops the run early. Closure means that no
+<p>The opt-in <code>closed_bit</code> setting of the Rust API, off by default, maintains
+closure incrementally. A completed shared state then notifies every parent
+through reverse edges, selection skips its closed subgraph, and a closed root
+stops the run early. Without that setting, including every surface command,
+the run spends its full playout budget. Closure means that no
 unresolved action remains. It cannot be inferred merely because a size lower
 bound equals the incumbent size: an equal-size action could still improve
 variant mass. Chapter 14 gives the pruning rule; the closure argument is in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md"><code>19-anti-unification.md</code>, section 9.5</a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md">design chapter 12, section 9.5</a>.</p>
 <h2 id="the-hybrid"><a class="header" href="#the-hybrid">The hybrid</a></h2>
 <p>Hybrid search hands an admitted UCT state to Exact. A completed call marks that
 state exact and terminal, so subsequent selection need not enter its subgraph.
@@ -268,7 +270,7 @@ argument are in
 Chapter 14 defines the cycle options. Incremental closure, hybrid calls, their
 admission settings, and the other search-policy controls are Rust-API
 configuration. The complete configuration table is in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md"><code>19-anti-unification.md</code>, section 7</a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md">design chapter 12, section 7</a>.</p>
 
                     </main>
 

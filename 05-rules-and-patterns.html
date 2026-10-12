@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -183,25 +183,35 @@
                     <main>
                         <h1 id="rules-and-patterns"><a class="header" href="#rules-and-patterns">Rules and patterns</a></h1>
 <p>This chapter defines all three rule forms, fixed and variadic patterns, rule
-actions and modifiers, multiplicity constraints, remainder bindings, and
-right-hand-side comprehensions.</p>
+actions and modifiers, multiplicity constraints, remainder bindings,
+right-hand-side comprehensions, sequence patterns over n-ary operators, and what
+makes matching complete over A, C, AC, and ACI operators.</p>
 <h2 id="the-grammar"><a class="header" href="#the-grammar">The grammar</a></h2>
 <p>Semper has three surface forms for defining rules:</p>
-<pre><code class="language-text">(rewrite lhs rhs [:when (pattern ...)] [:subsume] [:ruleset name])
-(birewrite lhs rhs [:when (pattern ...)] [:ruleset name])
-(rule (pattern ...) (action ...) [:ruleset name])
+<pre><code class="language-text">(rewrite lhs rhs [:when (pattern ...)] [:subsume] [:flatten] [:ruleset name])
+(birewrite lhs rhs [:when (pattern ...)] [:flatten] [:ruleset name])
+(rule (pattern ...) (action ...) [:flatten] [:ruleset name])
+(rewrite seq-lhs rhs [:let ((name expr) ...)] [:when (expr ...)]
+         [:flatten] [:ruleset name])
 
 action = (union rhs rhs)
        | (set (operator rhs ...) rhs)
        | (operator rhs ...)
 </code></pre>
-<p>Square brackets mark optional syntax. The trailing modifiers on <code>rewrite</code> and
-<code>birewrite</code> may appear in any order. Only <code>rewrite</code> accepts <code>:subsume</code>. A
-general <code>rule</code> puts its query patterns in the first parenthesized list and its
-actions in the second. Its only trailing modifier is <code>:ruleset</code>.</p>
+<p>Square brackets mark optional syntax. The trailing modifiers may appear in any
+order, and <code>:flatten</code> at most once. Only an ordinary <code>rewrite</code> accepts
+<code>:subsume</code>. A general <code>rule</code> puts its query patterns in the first parenthesized
+list and its actions in the second. Its trailing modifiers are <code>:flatten</code> and
+<code>:ruleset</code>. The last form is a sequence rewrite, whose left-hand side holds a
+sequence pattern (<a href="#sequence-patterns">Sequence patterns</a>). Its <code>:when</code> holds
+right-hand-side expressions rather than patterns, and only this form accepts
+<code>:let</code>.</p>
 <p>The <code>set</code> action is part of the surface grammar, but rule application does not
-implement it yet. A rule that reaches this action stops with an unimplemented
-action panic. <a href="A-full-grammar.html">Annex A</a> gives the complete grammar.</p>
+implement it. The sort checker rejects a rule that contains it, before any
+command runs:</p>
+<pre><code class="language-text">sort error: the `set` action (on 'f') is not implemented; write the value as a term and use `union` instead
+</code></pre>
+<p><a href="A-full-grammar.html">Annex A</a> gives the complete grammar.</p>
 <h2 id="fixed-arity-patterns"><a class="header" href="#fixed-arity-patterns">Fixed-arity patterns</a></h2>
 <p>A pattern matches the e-graph rather than one syntax tree. Each application
 must be witnessed by an e-node, but the children of that node are e-classes. A
@@ -273,8 +283,9 @@ built.</p>
 matched left-hand-side node available to later rules. A rewrite with
 <code>:subsume</code> performs the same build and merge, then marks that matched e-node so
 future pattern indexes skip it. The node remains in its e-class and remains
-available to extraction. Matches already collected for the current
-application still execute.</p>
+available to <code>(extract term)</code>. Extraction under a cost model
+(<a href="24-extraction-under-cost-models.html">Part V</a>) excludes it. Matches already
+collected for the current application still execute.</p>
 <p><code>birewrite</code> rejects <code>:subsume</code> because subsuming either trigger would disable
 one direction of the installed pair.</p>
 <h2 id="general-rules-and-actions"><a class="header" href="#general-rules-and-actions">General rules and actions</a></h2>
@@ -319,7 +330,7 @@ The following rewrite can fire only because that term was inserted. The
 <tbody>
 <tr><td><code>(union lhs rhs)</code></td><td>Build both right-hand-side terms and merge their e-classes.</td></tr>
 <tr><td><code>(operator rhs ...)</code></td><td>Build and insert a term without merging it.</td></tr>
-<tr><td><code>(set (operator rhs ...) value)</code></td><td>Reserved for a lattice-valued update and not implemented.</td></tr>
+<tr><td><code>(set (operator rhs ...) value)</code></td><td>Reserved for a lattice-valued update; the sort checker rejects it as not implemented.</td></tr>
 </tbody>
 </table>
 </div>
@@ -414,9 +425,10 @@ matches as different children satisfy the fixed elements. Splicing <code>..rest<
 on the right-hand side copies the unmatched collection into the new
 application.</p>
 <p>Chapter 4’s singleton collapse also applies to matching. A one-child pattern
-such as <code>(Set x)</code> has no one-child <code>Set</code> node to match. <code>(Set x ..rest)</code> binds
-one member while allowing the stored node to contain additional members.</p>
-<h3 id="sequence-patterns"><a class="header" href="#sequence-patterns">Sequence patterns</a></h3>
+such as <code>(Set x)</code> normally has no one-child <code>Set</code> node to match
+(<a href="#patterns-that-do-not-match">Patterns that do not match</a>). <code>(Set x ..rest)</code>
+binds one member while allowing the stored node to contain additional members.</p>
+<h3 id="ordered-patterns-assoc"><a class="header" href="#ordered-patterns-assoc">Ordered patterns (<code>:assoc</code>)</a></h3>
 <p>An associative-only operator stores an ordered, flattened sequence. Fixed
 pattern elements match a contiguous window. A rest variable after them binds
 the suffix, one before them binds the prefix, and rests on both sides bind the
@@ -609,9 +621,13 @@ literal term on the right-hand side:</p>
 <code>Count(3)</code>, while the primitive expression constructs <code>Count(13)</code>.
 Multiplicity variables are accepted only where an <code>i64</code> value is expected.</p>
 <p>A child of a variadic right-hand side may also carry an output multiplicity:
-<code>term:count</code>, <code>term:2</code>, or <code>term:(u64::- count 1)</code>. Multiplicity expressions
-use <code>u64::+</code>, <code>u64::-</code>, <code>u64::*</code>, <code>u64::/</code>, <code>u64::%</code>, <code>u64::min</code>, and
-<code>u64::max</code>.</p>
+<code>term:count</code>, <code>term:2</code>, or <code>term:(u64::- count 1)</code>. Under an AC operator it is
+the child’s count; under an associative operator the child is repeated. An ACI
+operator stores a set, so a count on its child is rejected.
+Multiplicity expressions use <code>u64::+</code>, <code>u64::-</code>, <code>u64::*</code>, <code>u64::/</code>, <code>u64::%</code>,
+<code>u64::min</code>, and <code>u64::max</code>, each with two arguments. A sequence rewrite accepts <code>+</code>, <code>-</code>, <code>*</code>,
+<code>min</code>, and <code>max</code>, with or without the <code>u64::</code> prefix, and no division or
+remainder.</p>
 <p>Subtraction is accepted only when the collected left-hand-side interval proves
 that it cannot underflow. Division and remainder require a divisor whose
 interval excludes zero. Addition and multiplication use checked arithmetic at
@@ -619,6 +635,26 @@ runtime: an overflow, or a computed count too wide for the configured
 multiplicity type, stops the run with an error naming the rule and the operands
 rather than wrapping or aborting the process. An output multiplicity of zero
 omits the child without evaluating its term.</p>
+<h3 id="occurrences-and-empty-applications"><a class="header" href="#occurrences-and-empty-applications">Occurrences and empty applications</a></h3>
+<p>A count is a number of occurrences, so it is at least 1, and an omitted count
+is 1. A count of 0 says that the element does not occur, so writing <code>x:0</code> says
+nothing: it is rejected in a ground term, a pattern, and a right-hand side. A
+count that a multiplicity expression computes to 0 is different: the child is
+absent, and it is dropped.</p>
+<p>An application of an A, AC, or ACI operator with no children denotes the
+operator’s identity. It therefore has a meaning only when the operator declares
+<code>:identity</code>, and then it reduces to the identity element. Without one it means
+nothing, and Semper never builds it:</p>
+<ul>
+<li>written in a ground term or a right-hand side, it is rejected when the program
+is checked (“operator ‘Add’ has no :identity, so an application of it with no
+children is meaningless”);</li>
+<li>written as a pattern, it is rejected because no stored node is empty;</li>
+<li>left empty at run time, because every child’s count was computed to 0 or a rest
+was empty, the action is not applied, and the run prints <code>warning: N rule action(s) not applied: the right-hand side was an application with no children of an operator without :identity, which has no meaning</code>.</li>
+</ul>
+<p>A sequence rule treats a right-hand side with no value the same way: the match
+does not fire, and the run reports the count.</p>
 <h2 id="splicing-and-comprehensions"><a class="header" href="#splicing-and-comprehensions">Splicing and comprehensions</a></h2>
 <p>A plain <code>..rest</code> splice copies a rest binding unchanged. A comprehension maps
 its elements while splicing the results into the surrounding application:</p>
@@ -655,8 +691,10 @@ comprehension uses <code>..{...}</code> and visits each member once. A multiset
 comprehension also uses braces, but requires both multiplicity annotations:
 <code>body:output-count</code> and <code>element:source-count</code>. It visits each distinct child
 once and exposes the child’s complete source count.</p>
-<p>The source after <code>in</code> must be an LHS rest binding of the required collection
-kind. A comprehension cannot iterate an arbitrary right-hand-side term.
+<p>In an ordinary rule, the source after <code>in</code> must be an LHS rest binding of the
+required collection kind. A comprehension cannot iterate an arbitrary
+right-hand-side term there. Tuple binders and expression sources belong to
+sequence rewrites (<a href="#comprehensions">Comprehensions</a>).
 Its element binder has the source collection’s element sort, and its body must
 produce the destination operator’s element sort. A comprehension can therefore
 map between sorts through a declared function. A direct <code>..rest</code> splice performs
@@ -752,6 +790,542 @@ comprehensions may reuse binder names because each introduces a new scope.</p>
 <p>Each local source count is at least one, so subtracting one is statically safe.
 The count-one child maps to zero and is omitted without constructing <code>(F a)</code>.
 The count-three child produces two copies of <code>(F b)</code>.</p>
+<h2 id="sequence-patterns"><a class="header" href="#sequence-patterns">Sequence patterns</a></h2>
+<p>A sequence pattern matches a run of children of an n-ary node in one match, and
+the right-hand side computes over the whole run. It is written at the root of a
+<code>rewrite</code> over an <code>:assoc</code>, <code>:assoc-comm</code>, or <code>:assoc-comm-idem</code> operator. Three
+items make up the pattern:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>item</th><th>under A (<code>:assoc</code>)</th><th>under AC and ACI</th></tr>
+</thead>
+<tbody>
+<tr><td>a pattern <code>P</code></td><td>the next child</td><td>one child no other item takes</td></tr>
+<tr><td><code>..name</code></td><td>a gap: zero or more consecutive children; any number per node</td><td>the children no other item takes; at most one per node</td></tr>
+<tr><td><code>(..name P)</code>, a filter</td><td>a run: zero or more consecutive children matching <code>P</code>, maximal toward adjacent gaps</td><td>every remaining child with a member matching <code>P</code>, possibly none</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every variable of a filter’s pattern binds a sequence with one entry per child the
+filter took, in the same order. A node with no matching child still matches, with
+the filter empty. The right-hand side, <code>:let</code>, and <code>:when</code> read those sequences.</p>
+<h3 id="merging-and-factoring-under-aci"><a class="header" href="#merging-and-factoring-under-aci">Merging and factoring under ACI</a></h3>
+<p>The example below is the pair of rules the book’s MLTL examples use (MLTL, a temporal
+logic with interval-bounded operators, is introduced in
+<a href="24-extraction-under-cost-models.html#when-the-cost-depends-on-a-grouping-the-e-graph-does-not-store">Chapter 24</a>). The first merges
+the always-windows of one operand into maximal runs; the second gives all the
+always-operators of a conjunction one outer window.</p>
+<pre><code class="language-lisp">(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)
+
+; Merge: every G in a conjunction over one operand whose windows form a
+; contiguous union becomes one G over that union.
+(rewrite (And (..gs (Global (Interval l u) p)) ..rest)
+         (And ..{ (Global (Interval a b) q) for (q a b) in (union-by p l u) } ..rest)
+  :when ((&lt; (count (union-by p l u)) (count gs))))
+
+; Factor: all G in a conjunction share one outer window.
+(rewrite (And (..gs (Global (Interval l u) p)) ..rest)
+         (And (Global (Interval K0 K1)
+                      (And ..{ (if (and (== l K0) (== u K1)) p (Global (Interval (- l K0) (- u K1)) p))
+                               for (l u p) in (zip l u p) }))
+              ..rest)
+  :let ((K0 (min l)) (K1 (+ K0 (min (- u l)))))
+  :when ((&gt;= (count gs) 2) (&gt; K1 0) (== (count (union-by p l u)) (count gs))))
+
+(let a (Var "a")) (let b (Var "b")) (let x (Var "x"))
+(let m (And (Global (Interval 0 3) a) (Global (Interval 4 6) a) x))
+(let f (And (Global (Interval 2 5) a) (Global (Interval 4 9) b) x))
+(run 2)
+(check (= m (And (Global (Interval 0 6) a) x)))
+(check (= f (And x (Global (Interval 2 5) (And a (Global (Interval 2 4) b))))))
+</code></pre>
+<p>The first rule merges <code>G[0,3] a</code> and <code>G[4,6] a</code> into <code>G[0,6] a</code>. The second gives
+the two windows of <code>f</code> the common outer window <code>[2,5]</code> over one inner
+conjunction. The inner window of <code>a</code> is <code>[0,0]</code>, which is <code>a</code> itself.</p>
+<p>The expressions available on the right-hand side, in <code>:let</code>, and in <code>:when</code> are:</p>
+<ul>
+<li>reductions of a sequence: <code>min</code>, <code>max</code>, <code>sum</code>, <code>count</code>;</li>
+<li>the scalar primitives of <a href="03-sorts-and-terms.html">Chapter 3</a>, applied element
+by element inside a reduction or a comprehension, and <code>if</code>;</li>
+<li>splices <code>..name</code>, which put a matched sequence back as children;</li>
+<li>comprehensions <code>..{ body for binders in source }</code>, which build unordered
+children, and <code>..[ body for binders in source ]</code>, which build ordered ones;</li>
+<li>the sequence primitives <code>(zip s1 ... sn)</code> (positions paired, shortest input
+wins), <code>(concat s1 ... sn)</code>, <code>(union-by p l u)</code> (the windows <code>[l, u]</code>
+grouped by <code>p</code> and unioned into maximal runs), <code>(narrow ...)</code>, and
+<code>(narrowed ...)</code>.</li>
+</ul>
+<p>A sequence used where a scalar is expected is rejected when the rule is checked.
+A <code>min</code> or <code>max</code> of an empty sequence has no value, and the rule does not fire on
+that node.</p>
+<h3 id="runs-under-an-associative-operator"><a class="header" href="#runs-under-an-associative-operator">Runs under an associative operator</a></h3>
+<p>Under <code>:assoc</code> the items cover the children in written order, so a pattern is a
+regular expression over the child list: one child, a run, or a gap. Any number of
+gaps is allowed. A run next to a gap is maximal toward it.</p>
+<pre><code class="language-lisp">(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function H (E) E)
+(function Cat (E) E :assoc)
+
+; Under an associative operator the items cover the children in order:
+; `..pre` and `..suf` are gaps, `(..fs (F x))` is a run of F children.
+(rewrite (Cat ..pre (..fs (F x)) ..suf) (Cat ..pre (H (Cat ..fs)) ..suf)
+  :when ((&gt;= (count fs) 2)))
+
+(let e (Cat a (F a) (F b) b (F a)))
+(run 1)
+; The run is maximal toward its gaps: both F children before `b` are taken.
+; The lone (F a) at the end is a run of length 1, which the guard rejects.
+(check (= e (Cat a (H (Cat (F a) (F b))) b (F a))))
+</code></pre>
+<h3 id="multiplicities-under-ac"><a class="header" href="#multiplicities-under-ac">Multiplicities under AC</a></h3>
+<p>Under <code>:assoc-comm</code> each child carries a multiplicity. A filter takes the
+annotation of an ordinary AC element after its name: <code>(..fs:k P)</code> takes any
+multiplicity and binds it, <code>(..fs:k&gt;=2 P)</code> takes only those at least 2, and <code>:3</code>
+takes exactly 3. An unannotated filter takes only children of multiplicity 1, as
+an unannotated AC element does. Outside the filter, <code>k</code> is a sequence parallel to
+<code>fs</code>, so <code>(sum k)</code> counts copies and <code>(count fs)</code> counts distinct children.</p>
+<pre><code class="language-lisp">(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function F (E) E)
+(function N (i64) E)
+(function Only (E) E)
+(function All (E) E)
+(function Plus (E) E :assoc-comm)
+(function Src () E)
+
+; `:k&gt;=2` takes the children of multiplicity at least 2 and binds each one's
+; multiplicity in the column `k`; `(sum k)` adds them.
+(rewrite (Plus (..fs:k&gt;=2 (F x)) ..rest) (Plus (N (sum k)) ..rest)
+  :when ((&gt;= (count fs) 1)))
+(let e (Plus (F a) (F a) (F b)))
+(run 1)
+(check (= e (Plus (N 2) (F b))))
+
+; An unannotated filter takes only children of multiplicity 1, as an
+; unannotated AC element does. `:k` with no bound takes any multiplicity.
+(let src (Src))
+(rewrite (Src) (Plus (F (a)):3 (F (b)) (c)))
+(run 1)
+(rewrite (Plus (..fs (F y)) ..rest) (Only (Plus ..fs)))
+(rewrite (Plus (..ks:k (F y)) ..rest) (All (Plus ..ks)))
+(run 1)
+(check (= src (Only (F b))))
+(check (= src (All (Plus (F a) (F a) (F a) (F b)))))
+</code></pre>
+<h3 id="several-filters-and-except"><a class="header" href="#several-filters-and-except">Several filters, and <code>:except</code></a></h3>
+<p>Filters are matched independently. A child that two filters match is given to
+each in turn, and every assignment is a match. <code>:except other</code> removes from a
+filter the children <code>other</code>’s pattern matches, for a rule that wants one
+assignment. <code>:except</code> is accepted under AC and ACI only, since under <code>:assoc</code>
+order already separates runs, and it must name a sibling filter.</p>
+<pre><code class="language-lisp">(sort E)
+(function a () E)
+(function b () E)
+(function Not (E) E)
+(function Gl (E) E)
+(function N (i64) E)
+(function Split (E E) E)
+(function Kept (E E) E)
+(function And (E) E :assoc-comm-idem)
+(function Conj (E) E :assoc-comm-idem)
+(function Both () E)
+(function One () E)
+
+; (Gl (Not a)) matches both `(Gl (Not q))` and `(Gl p)`.
+(let both (Both))
+(let one (One))
+(rewrite (Both) (And (Gl (Not (a))) (Gl (b))))
+(rewrite (One) (Conj (Gl (Not (a))) (Gl (b))))
+(run 1)
+
+; Without `:except`, a child that two filters match is given to each in turn,
+; and every assignment is a match.
+(rewrite (And (..ns (Gl (Not q))) (..gs (Gl p)) ..rest)
+         (Split (N (count ns)) (N (count gs))))
+; With `:except ns`, `gs` keeps only what `ns` does not match: one assignment.
+(rewrite (Conj (..ns (Gl (Not q))) (..gs (Gl p) :except ns) ..rest)
+         (Kept (N (count ns)) (N (count gs))))
+(run 1)
+(check (= both (Split (N 1) (N 1))))
+(check (= both (Split (N 0) (N 2))))
+(check (= one (Kept (N 1) (N 1))))
+(check (!= one (Kept (N 0) (N 2))))
+</code></pre>
+<h3 id="simple-items-beside-filters"><a class="header" href="#simple-items-beside-filters">Simple items beside filters</a></h3>
+<p>A plain pattern beside filters takes one child, and every choice of child is a
+separate match. The filters then take from the remaining children. The same
+holds for the member of a class: where several members of a child’s class match,
+each is a separate match.</p>
+<pre><code class="language-lisp">(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function Not (E) E)
+(function F (E) E)
+(function N (i64) E)
+(function Pick (E E) E)
+(function And (E) E :assoc-comm-idem)
+
+; A simple item `(Not x)` beside a filter takes one child; every choice is a
+; separate match. The filter then takes every remaining F child.
+(rewrite (And (Not x) (..fs (F y)) ..rest) (Pick x (N (count fs))))
+(let e (And (Not (a)) (Not (b)) (F (c))))
+(run 1)
+(check (= e (Pick (a) (N 1))))
+(check (= e (Pick (b) (N 1))))
+</code></pre>
+<h3 id="comprehensions"><a class="header" href="#comprehensions">Comprehensions</a></h3>
+<p>A comprehension’s binders name the columns of its source. An element
+comprehension <code>for f:k in fs</code> reads each child with its multiplicity, and the
+body states the output multiplicity after a colon. A column of a multiset
+sequence must be bound as <code>x:k</code>, or as <code>x:_</code> to drop the multiplicity; a bare <code>x</code>
+there is rejected, since whether the count is dropped would be implicit.</p>
+<pre><code class="language-lisp">(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function G (E) E)
+(function K (E E) E)
+(function Cat (E) E :assoc)
+(function Plus (E) E :assoc-comm)
+(function Pairs () E)
+(function Twice () E)
+(function Both () E)
+
+; `..[ body for binders in source ]` builds an ordered sequence; `zip` pairs
+; positions and stops at the shortest input.
+(let pairs (Pairs))
+(rewrite (Pairs) (Cat (F (a)) (F (b)) (G (b)) (G (a))))
+(run 1)
+(rewrite (Cat (..fs (F x)) (..gs (G y)))
+         (Cat ..[ (K x y) for (x y) in (zip x y) ]))
+
+; An element comprehension `for f:k in fs` reads each child with its
+; multiplicity `k`; the body states the output multiplicity.
+(let twice (Twice))
+(rewrite (Twice) (Plus (F (a)):2 (b)))
+(run 1)
+(rewrite (Plus (..fs:k&gt;=2 (F x)) ..rest) (Plus ..{ (G x):(* k k) for f:k in fs } ..rest))
+
+; `concat` joins sequences of one element type.
+(let both (Both))
+(rewrite (Both) (Cat (F (a)) (G (b))))
+(run 1)
+(rewrite (Cat (..fs (F x)) (..gs (G y))) (Plus ..{ z for z in (concat x y) }))
+(run 1)
+(check (= pairs (Cat (K (a) (b)) (K (b) (a)))))
+(check (= twice (Plus (G (a)) (G (a)) (G (a)) (G (a)) (b))))
+(check (= both (Plus (a) (b))))
+</code></pre>
+<h3 id="narrowing"><a class="header" href="#narrowing">Narrowing</a></h3>
+<p><code>(narrow c d r a b q)</code> reads one eventually-window <code>[c, d]</code> over <code>r</code> per row of
+its first three columns, and the always-windows <code>[a, b]</code> over <code>q</code> of the last
+three. For each <code>r</code> it shrinks <code>[c, d]</code> past the windows whose <code>q</code> is <code>r</code>, and
+gives one row <code>(r c2 d2)</code>. <code>(narrowed ...)</code> gives only the rows whose window
+changed, so a guard on its count keeps the rule from rewriting a node to itself.</p>
+<pre><code class="language-lisp">(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)
+
+; Narrowing: an eventually F[c,d] r beside always-windows G[a,b] (Not r) cannot
+; be satisfied inside those windows, so its window shrinks past them.
+; `(narrow c d r a b q)` gives one row (r c2 d2) per F; `(narrowed ...)` gives
+; only the rows whose window changed, which guards against a no-op rewrite.
+(rewrite (And (..ns (Global (Interval a b) (Not q)))
+              (..fs (Future (Interval c d) r)) ..rest)
+         (And ..ns ..{ (Future (Interval c2 d2) r2) for (r2 c2 d2) in (narrow c d r a b q) } ..rest)
+  :when ((&gt; (count (narrowed c d r a b q)) 0)))
+
+(let r (Var "r"))
+(let e (And (Global (Interval 0 3) (Not r)) (Future (Interval 2 6) r)))
+(run 1)
+(check (= e (And (Global (Interval 0 3) (Not r)) (Future (Interval 4 6) r))))
+</code></pre>
+<h3 id="splicing-across-operator-kinds"><a class="header" href="#splicing-across-operator-kinds">Splicing across operator kinds</a></h3>
+<p>A sequence matched under one kind can be spliced under another. From AC to ACI
+the multiplicities are dropped. From an unordered match to an ordered operator,
+the children come in the order the e-graph stores them, which is not a function
+of the e-graph’s contents, and the checker warns.</p>
+<pre><code class="language-lisp">(sort E)
+(function a () E)
+(function b () E)
+(function F (E) E)
+(function Cat (E) E :assoc)
+(function And (E) E :assoc-comm-idem)
+(function Plus (E) E :assoc-comm)
+(function Src () E)
+
+; A sequence matched under one operator kind can be spliced under another. An
+; ordered result from an unordered match takes the children in the order the
+; e-graph stores them, which the checker warns about.
+(rewrite (And (..fs (F x)) ..rest) (Cat ..fs))
+; AC to ACI: multiplicities are dropped, as ACI keeps one copy of each child.
+(rewrite (Plus (..fs:k (F x)) ..rest) (And ..fs))
+(let e (And (F (a)) (b)))
+(let p (Src))
+(rewrite (Src) (Plus (F (a)):3 (b)))
+(run 2)
+(check (= e (Cat (F (a)))))
+(check (= p (F (a))))
+</code></pre>
+<h3 id="rejected-forms"><a class="header" href="#rejected-forms">Rejected forms</a></h3>
+<p>The checker rejects the five shapes below, each with a reason. It also
+rejects a root that is not A, AC, or ACI, a sequence pattern below the root, a
+rest or a non-plain operator inside a filter’s pattern, and a name bound twice,
+by two filters or by a filter and a simple item.</p>
+<p>A sequence pattern under a <code>:comm</code> operator. Such a node has exactly two
+children, and two simple patterns already match it in both orders:</p>
+<pre><code class="language-lisp">(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Bool (bool) MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem :identity (Bool true))
+(function Cat (MLTL) MLTL :assoc)
+(function Bag (MLTL) MLTL :assoc-comm)
+(function Pair (MLTL MLTL) MLTL :comm)
+(function Global (IntervalSort MLTL) MLTL)
+(rewrite (Pair (..gs (Global (Interval l u) p)) ..rest) (Bool true))
+</code></pre>
+<p>A filter inside a filter:</p>
+<pre><code class="language-lisp">(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Bool (bool) MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem :identity (Bool true))
+(function Cat (MLTL) MLTL :assoc)
+(function Bag (MLTL) MLTL :assoc-comm)
+(function Global (IntervalSort MLTL) MLTL)
+(rewrite (And (..gs (Global (Interval l u) (And (..hs p)))) ..rest) (And ..rest))
+</code></pre>
+<p>Two bare sequences under AC or ACI, which would divide the remaining children
+with nothing to tell them apart:</p>
+<pre><code class="language-lisp">(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Bool (bool) MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem :identity (Bool true))
+(function Cat (MLTL) MLTL :assoc)
+(function Bag (MLTL) MLTL :assoc-comm)
+(function Global (IntervalSort MLTL) MLTL)
+(rewrite (And (..gs (Global (Interval l u) p)) ..a ..b) (And ..gs ..a ..b))
+</code></pre>
+<p>An <code>:except</code> cycle, where a child matching every filter of the cycle would go to
+none:</p>
+<pre><code class="language-lisp">(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Bool (bool) MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem :identity (Bool true))
+(function Cat (MLTL) MLTL :assoc)
+(function Bag (MLTL) MLTL :assoc-comm)
+(function Pair (MLTL MLTL) MLTL :comm)
+(function Global (IntervalSort MLTL) MLTL)
+(rewrite (And (..a (Global (Interval l u) p) :except b) (..b (Global (Interval m v) q) :except a) ..rest) (And ..a ..b ..rest))
+</code></pre>
+<p>A sequence pattern anywhere but the left-hand side of a <code>rewrite</code>:</p>
+<pre><code class="language-lisp">(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Bool (bool) MLTL)
+(function Var (String) MLTL)
+(function Not (MLTL) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem :identity (Bool true))
+(function Cat (MLTL) MLTL :assoc)
+(function Bag (MLTL) MLTL :assoc-comm)
+(function Global (IntervalSort MLTL) MLTL)
+(rule ((= e (And (..gs (Global (Interval l u) p)) ..rest))) ((union e e)))
+</code></pre>
+<h3 id="when-sequence-rules-run"><a class="header" href="#when-sequence-rules-run">When sequence rules run</a></h3>
+<p>Sequence rules are matched in each round on the round’s snapshot, together with
+the ordinary rules, by one <code>Collect</code> step of the compiled query. Under
+<code>--use-semi-naive</code> they are semi-naive with the ordinary rules: each rule
+assembles only the nodes whose matches can have changed, when its estimate says
+that pays, and otherwise matches naively. Without the flag they are naive.</p>
+<h3 id="alternatives-considered"><a class="header" href="#alternatives-considered">Alternatives considered</a></h3>
+<p>The design went through several forms, and four were rejected with a measured
+reason.</p>
+<ul>
+<li><strong><code>(each name pattern)</code> and a pass after each round.</strong> The first form matched
+a separate pass after each round of the ordinary rules, over ACI roots only.
+It was replaced by the filter syntax and the in-round <code>Collect</code> step. The pass
+survives only as the reference the engine’s differential tests compare
+against; on the 1,172 MLTL specifications Johannsen and Rozier publish with their FMCAD 2026 paper (<a href="24-extraction-under-cost-models.html#when-the-cost-depends-on-a-grouping-the-e-graph-does-not-store">Chapter 24</a>) the two build the same e-graph.</li>
+<li><strong>The member of smallest node id.</strong> Where a class had several matching
+members, the first implementation took the one of smallest id. That is sound,
+but the smallest id depends on insertion and merge order, so two runs building
+the same e-graph could rewrite differently.</li>
+<li><strong>All matching members in one match.</strong> Sound for ACI, but it builds one term
+holding every window, and the cheaper single-choice terms never enter the
+e-graph.</li>
+<li><strong>Keeping the pairwise rules as a backstop.</strong> Saturation with both would be
+complete by the ordinary semantics, and it grows the e-graph to 1,505,268 nodes
+at 4 rounds on one benchmark. The n-ary rules exist to avoid that.</li>
+</ul>
+<p>One property is given up by design: a filter takes the maximal set of matching
+children, never a subset. Enumerating subsets is 2^k firings on a k-ary node,
+which is the growth sequence patterns exist to avoid.</p>
+<h2 id="matching-completeness-over-a-c-ac-and-aci"><a class="header" href="#matching-completeness-over-a-c-ac-and-aci">Matching completeness over A, C, AC, and ACI</a></h2>
+<p>An e-graph stores one node per n-ary application, with its children flattened
+and normalized, and a pattern is matched against those stored children. Four
+mechanisms decide which matches exist.</p>
+<p><strong>Construction flattens.</strong> Building <code>(Flat (Flat a b) (Flat c d))</code> stores one
+node <code>Flat(a, b, c, d)</code>. Every path that builds or recanonizes an n-ary node,
+and every flattened view below, goes through one normalization function. It
+coalesces or deduplicates children, drops the identity, applies the nilpotent
+clamp, and cancels inverse pairs, so all of them agree.</p>
+<pre><code class="language-lisp">(function Flat (E) E :assoc)
+(function Spans (E E) E)
+(rewrite (Flat ..prefix x y ..suffix) (Spans x y))
+
+(let flat (Flat (Flat a b) (Flat c d)))
+(run 1)
+(check (= flat (Flat a b c d)))
+(check (= flat (Spans b c)))
+</code></pre>
+<p><strong>Nesting can still appear.</strong> A merge after construction can make a child class
+hold a node of the same operator, and the parent is not rebuilt as flat: with AC
+completion off, the nested and the flat spelling of one content can both exist.
+Completion, when on, proves the two spellings equal; it does not build the flat
+node, so a pattern still sees the stored children.</p>
+<p><strong><code>:flatten</code> matches through nesting.</strong> A rule tagged <code>:flatten</code> matches each
+n-ary node against every <em>view</em> of it. A view opens a child class that holds a
+node of the same operator, and splices that node’s children in its place. A
+class is opened only when an item takes an element from inside it, so a view
+never repeats a match the stored children already give. One node’s enumeration
+stops at 2^20 views, 2^24 steps, or 2^24 elements. A node over a bound, or one
+whose view multiplicity exceeds the configured width, is skipped with a warning
+naming the rule, and the run continues. Under <code>--use-semi-naive</code>, an ordinary
+rule tagged <code>:flatten</code> is matched naively in every round; a sequence rule
+tagged <code>:flatten</code> stays semi-naive. On a rule whose query has no A, AC, or ACI
+operator, <code>:flatten</code> has no effect, and installing the rule prints the warning
+<code>:flatten has no effect: the rule's pattern has no associative, AC, or ACI operator</code>. A <code>:comm</code> operator does not count.</p>
+<pre><code class="language-lisp">(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+
+(let va (Var "a"))
+(let vb (Var "b"))
+(let vc (Var "c"))
+(let g1 (Global (Interval 1 3) va))
+(let g2 (Global (Interval 2 5) vb))
+(let g3 (Global (Interval 3 6) vc))
+; The node And{g1, cc} is built first. Merging cc with And{g2, g3} afterwards
+; leaves it storing two children, one of them a conjunction.
+(let cc (Var "cc"))
+(let e (And g1 cc))
+(union cc (And g2 g3))
+
+; Factoring: all G of a conjunction share the outer window [K0, K1].
+(rewrite (And (..gs (Global (Interval l u) p)) ..rest)
+         (And (Global (Interval K0 K1)
+                      (And ..{ (if (and (== l K0) (== u K1)) p (Global (Interval (- l K0) (- u K1)) p))
+                               for (l u p) in (zip l u p) }))
+              ..rest)
+  :let ((K0 (min l)) (K1 (+ K0 (min (- u l)))))
+  :when ((&gt;= (count gs) 2) (&gt; K1 0) (== (count (union-by p l u)) (count gs)))
+  :flatten)
+(run 1)
+(check (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
+</code></pre>
+<p>Without the tag, the same rule reads the stored children <code>{g1, cc}</code>, which hold
+one <code>Global</code>, and the factoring does not fire:</p>
+<pre><code class="language-lisp">(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+
+(let va (Var "a"))
+(let vb (Var "b"))
+(let vc (Var "c"))
+(let g1 (Global (Interval 1 3) va))
+(let g2 (Global (Interval 2 5) vb))
+(let g3 (Global (Interval 3 6) vc))
+; The node And{g1, cc} is built first. Merging cc with And{g2, g3} afterwards
+; leaves it storing two children, one of them a conjunction.
+(let cc (Var "cc"))
+(let e (And g1 cc))
+(union cc (And g2 g3))
+
+; Factoring: all G of a conjunction share the outer window [K0, K1].
+(rewrite (And (..gs (Global (Interval l u) p)) ..rest)
+         (And (Global (Interval K0 K1)
+                      (And ..{ (if (and (== l K0) (== u K1)) p (Global (Interval (- l K0) (- u K1)) p))
+                               for (l u p) in (zip l u p) }))
+              ..rest)
+  :let ((K0 (min l)) (K1 (+ K0 (min (- u l)))))
+  :when ((&gt;= (count gs) 2) (&gt; K1 0) (== (count (union-by p l u)) (count gs)))
+)
+(run 1)
+(check (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
+</code></pre>
+<p><strong>Commutative pairs match in both orders.</strong> A <code>:comm</code> operator has exactly two
+children; a pattern over it matches both argument orders, and <code>:flatten</code> leaves
+it untouched. With neither child bound, <code>(c x y)</code> matches a stored <code>c(a, a)</code>
+twice, once per order.</p>
+<p>What is not complete, by design: scalar variables range over existing classes,
+not over unmaterialized sub-sums such as <code>Add(a,b)</code> inside <code>Add(a,b,c)</code> (below);
+a sequence filter takes the maximal set, never a subset; and an untagged rule
+reads only the stored children.</p>
+<h3 id="patterns-that-do-not-match"><a class="header" href="#patterns-that-do-not-match">Patterns that do not match</a></h3>
+<p>Patterns are matched as written. No stage normalizes a pattern by the declared
+laws, and none warns about one that construction would store in another form.
+Each pattern below loses matches:</p>
+<ul>
+<li><strong>An identity child.</strong> <code>(Plus x (Zero))</code> with <code>:identity (Zero)</code> matches no
+node, since construction, rebuild, and views drop the unit.</li>
+<li><strong>An element past a nilpotent order.</strong> <code>x:2</code> under <code>:nilpotent 2</code> never binds,
+since counts are reduced modulo the order.</li>
+<li><strong>An inverse pair.</strong> <code>(Plus x (Neg x))</code> with <code>:inverse Neg</code> never matches,
+since pairs cancel at build and rebuild.</li>
+<li><strong>A repeated element.</strong> <code>(Or x x)</code> under ACI never matches, since a stored set
+holds distinct classes. <code>(Add x x)</code> under AC never matches either; <code>x:2</code> is
+the form that does.</li>
+<li><strong>A nested same-operator application.</strong> <code>(Plus (Plus a b) x)</code> matches only
+where a child class holds a <code>Plus{a, b}</code> node. A flat stored <code>Plus{a, b, c}</code>
+gives no match, with or without <code>:flatten</code>, since views open classes, not
+sub-multisets.</li>
+<li><strong>A single element.</strong> <code>(Plus x)</code> matches only a degenerate stored node, such as
+an <code>And{K}</code> that rebuild can leave in <code>K</code>’s class, and never under <code>:flatten</code>.</li>
+</ul>
+<p>An application with no element, <code>(Plus)</code>, is rejected when the rule is checked.</p>
+<p>Two cases lose matches under <code>:flatten</code> itself. If inverse cancellation or the
+nilpotent clamp removes every element an opened class contributes, the view is
+dropped. For example, <code>Add{a, d, e, f, K}</code> with <code>K</code> equal to
+<code>Add{(Neg a), (Neg d)}</code> has the view <code>{e, f}</code>, which <code>(Add x y) :flatten</code> should
+match and does not. A degenerate node such as <code>And{K}</code> has only a single-class
+view, which is not matched, so a tagged rule misses the match an untagged one
+finds there.</p>
 <h2 id="limits-of-variadic-matching"><a class="header" href="#limits-of-variadic-matching">Limits of variadic matching</a></h2>
 <p>Semper’s AC matcher implements maximum-partition matching, not unrestricted
 classical AC matching. Scalar elements bind distinct stored children and take
@@ -794,13 +1368,14 @@ implicit sums or arbitrary subsets of one flattened node. A pattern cannot
 bind <code>x</code> to an unmaterialized <code>Add(a,b)</code> inside <code>Add(a,b,c)</code>. Another command
 must first construct that subterm, or the pattern must name its children
 separately.</p>
-<p>Sequence patterns permit one prefix and one suffix rest because their fixed
-elements describe a contiguous window. AC and ACI patterns are unordered and
-permit one remainder.</p>
+<p>An ordinary pattern under <code>:assoc</code> permits one prefix and one suffix rest,
+because its fixed elements describe a contiguous window; a sequence pattern
+permits any number of gaps. AC and ACI patterns are unordered and permit one
+remainder.</p>
 <p>The
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/09-pattern-matching.md">pattern-matching design chapter</a>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/07-rules-and-pattern-matching.md#74-pattern-matching-execution">pattern-matching design chapter</a>
 defines the matching relations and their limits. The
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-rule-application.md">rule-application design chapter</a>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/07-rules-and-pattern-matching.md#77-rule-application-and-rhs-evaluation">rule-application design chapter</a>
 specifies right-hand-side evaluation and actions.</p>
 
                     </main>

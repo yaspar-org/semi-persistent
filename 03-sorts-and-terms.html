@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -230,7 +230,8 @@ decl-kind     = "function" | "constructor"
 variant       = "(" name { name } { decl-option } ")"
 
 term          = literal | name | application
-application   = "(" operator { term } ")"
+application   = "(" operator { term-child } ")"
+term-child    = term [ ":" unsigned-integer ]
 insertion     = "(" name { term } ")"
 
 decl-option   = ":cost" unsigned-integer
@@ -248,7 +249,8 @@ decl-option   = ":cost" unsigned-integer
 Whitespace and <code>;</code> comments may appear between tokens. A nullary application
 can be written explicitly with parentheses, as in <code>(x)</code>. Ground terms contain
 no pattern variables; a bare name must resolve to a literal, a nullary operator,
-or a name introduced by an earlier <code>let</code>.</p>
+or a name introduced by an earlier <code>let</code>. A <code>term-child</code> count follows its term
+with no space before the colon.</p>
 <p>Chapter 4 defines the algebraic declaration options listed above.
 <a href="A-full-grammar.html">Annex A</a> collects the complete surface grammar, including
 patterns, rule actions, query and control commands, and every command option.</p>
@@ -338,6 +340,14 @@ total: 4
 <code>(f (x))</code>, inserts <code>(h (f (x)))</code>, and raises the total to four. <code>print-size</code>
 counts e-nodes, so merging the last two nodes into one e-class does not reduce
 the total.</p>
+<p>A child of an AC application may carry a count: <code>(Add a:3 b)</code> is
+<code>(Add a a a b)</code>, stored as one entry <code>a:3</code>, never expanded. A child of an
+associative (<code>:assoc</code>) application may carry one too, and it is then repeated
+that many times, since a sequence is positional. The count must be at least 1.
+An ACI operator stores a set, which holds each element once, so a count under it
+is rejected, as it is under any other kind of operator. A count is accepted
+wherever a term is: in a top-level insertion such as <code>(Add a:3 b)</code>, and inside
+<code>let</code>, <code>check</code>, and nested applications.</p>
 <p><code>named</code> is an e-class binding, not an alias for the syntax
 <code>(g (f (x)))</code>. After the <code>union</code>, the same binding denotes the class containing
 both <code>(g (f (x)))</code> and <code>(h (f (x)))</code>. Later commands may use <code>named</code> wherever a
@@ -361,7 +371,7 @@ earlier <code>let</code> binding, a literal, or a nullary operator.</p>
 </code></pre>
 <p><code>(x)</code> has sort <code>N</code>, so the inner <code>(f (x))</code> has sort <code>E</code>. The outer application
 of <code>f</code> requires an <code>N</code>, not an <code>E</code>. The program is rejected before execution:</p>
-<pre><code class="language-text">sort error: sort error at 165..172: argument 1 of 'f': expected sort 'N', got 'E'
+<pre><code class="language-text">sort error at line 12 column 4: argument 1 of 'f': expected sort 'N', got 'E'
 </code></pre>
 <p>These checks establish that declarations have supported forms and terms are
 well-sorted. Algebraic tags remain assertions about the intended
@@ -405,7 +415,7 @@ have the wrong sort.</p>
 <p>During term construction, Semper interns the concrete value in an internal
 literal node beneath the user-declared constructor. These internal operators
 do not appear in surface syntax. The
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/13-literal-model.md">literal-model design chapter</a>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/10-literal-model.md">literal-model design chapter</a>
 specifies their representation and the primitive-operation interface.</p>
 
                     </main>

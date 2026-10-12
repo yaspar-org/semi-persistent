@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -260,8 +260,8 @@ building an unrelated term earlier can change how a later term is spelled:</p>
 (let t2 (Mul A D (Mul D D)))
 (check (= t1 t2))
 </code></pre>
-<p>Both readings are sound — a reordering never makes a <em>false</em> equality
-provable, only a true one unprovable — and within a single term the order is
+<p>Both readings are sound. A reordering never makes a <em>false</em> equality
+provable, only a true one unprovable. Within a single term the order is
 fixed, so the effect appears only across statements. If a program depends on
 equalities like this one, that is the signal to enable <code>--derive-ac-eqs</code> or
 <code>--lazy-ac-eqs</code>, which prove it in either order. Operators declared
@@ -270,9 +270,9 @@ from the written form of the application, so it does not depend on what else
 the program has built.</p>
 <p>Chapter 23 collects the limits and qualifications of these modes. The
 procedures are specified in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-completion-spec.md"><code>ac-completion-spec.md</code></a>,
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/06-ac-congruence-closure.md#part-iii-min_monomial-a-matcher-invariant-and-implementation-correspondence">design chapter 6, Part III</a>,
 with the scope of the completeness argument in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-congruence-completeness.md"><code>ac-congruence-completeness.md</code></a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/06-ac-congruence-closure.md">design chapter 6</a>.</p>
 
                     </main>
 

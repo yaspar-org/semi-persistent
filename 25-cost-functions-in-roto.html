@@ -1,0 +1,825 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Cost functions in Roto - The Semper Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Using anti-unification to diagnose formalization problems">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/semper-blue-a28f71f5.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-d6b8dbf7.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Semper Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/yaspar-org/semi-persistent" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/yaspar-org/semi-persistent/edit/main/doc/book/src/25-cost-functions-in-roto.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="cost-functions-in-roto"><a class="header" href="#cost-functions-in-roto">Cost functions in Roto</a></h1>
+<p>A <code>:script</code> cost model is a file in <a href="https://github.com/NLnetLabs/roto">Roto</a>, a
+statically typed scripting language that compiles to native code. Semper compiles
+the script against its own binding when the program is checked. This chapter
+builds scripts from a first one to the full API; every example runs from
+<code>doc/book/examples/cost-models/</code>.</p>
+<h2 id="data-and-decisions"><a class="header" href="#data-and-decisions">Data and decisions</a></h2>
+<p>A script defines <code>fn cost(g: Graph)</code>. It does not compute a number. It runs once,
+while the problem is built, and never sees a solution. What it reads falls in two
+groups, with distinct types.</p>
+<ul>
+<li><strong>The e-graph is data.</strong> Classes, nodes, operators, children, multiplicities,
+and payloads are fixed before the script runs. The script reads them as
+<code>String</code>, <code>u64</code>, <code>i64</code>, <code>bool</code>, and lists, and may branch on them with <code>if</code>.</li>
+<li><strong>The solver’s decisions are solver values.</strong> Which node each class takes,
+whether an internal node exists, and an operand’s depth are unknown to the
+script. It holds them as <code>Bool</code> and integer values, combines them, and charges
+under them. It cannot test them with <code>if</code>.</li>
+</ul>
+<p>What the script builds is a formula: definitions, constraints, and one objective,
+the sum of its charges. The library adds the rung’s constraints, encodes the
+whole for the chosen solver, and evaluates the objective on the term the solver
+returns (<a href="24-extraction-under-cost-models.html#the-reported-cost">The reported cost</a>).</p>
+<h2 id="a-first-script"><a class="header" href="#a-first-script">A first script</a></h2>
+<p>The script of <a href="24-extraction-under-cost-models.html#a-first-extraction-under-a-cost-model">Chapter 24</a>
+charges each chosen node once:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// The term's size as a DAG: every node of the term is paid once, however many
+// parents share it. `Twice` costs 3, every other operator 1.
+fn cost(g: Graph) {
+    for n in g.nodes() {
+        if n.is("Twice") {
+            n.chosen().charge_if(3);
+        } else {
+            n.chosen().charge_if(1);
+        }
+    }
+}
+<span class="boring">}</span></code></pre>
+<p><code>g.nodes()</code> lists every candidate node of every class reachable from the root.
+<code>n.is("Twice")</code> reads the operator, a fact the script branches on. <code>n.chosen()</code> is
+a solver value: the condition that the node’s class is in the term and takes this
+node. <code>charge_if(3)</code> adds 3 to the objective where that condition holds. A node
+shared by two parents is chosen once, so it is charged once.</p>
+<h2 id="reading-the-e-graph"><a class="header" href="#reading-the-e-graph">Reading the e-graph</a></h2>
+<p>A cost that depends on context reads more of the e-graph. In this model a <code>Delay</code>
+node needs a buffer of its operand, as wide as its integer payload. A class shared
+by several <code>Delay</code> parents is buffered once, over the widest window a chosen
+parent needs. A <code>Hold</code> keeps its operand without a buffer, at a price of 4:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// The window a `Delay` node needs of its operand: its integer payload.
+fn window(n: Node) -&gt; i64 {
+    if n.is("Delay") {
+        match n.int(0) {
+            Some(w) =&gt; w,
+            None =&gt; 0,
+        }
+    } else {
+        0
+    }
+}
+
+// Each class is buffered once, over the widest window a chosen parent needs of it.
+// A `Hold` keeps its operand without a buffer, at a fixed price of 4.
+fn cost(g: Graph) {
+    for c in g.classes() {
+        let uses = [];
+        for u in c.parents() {
+            let w = window(u.parent());
+            if w &gt; 0 {
+                uses.push(g.constant(w).over().when(u.parent().chosen()));
+            }
+        }
+        g.max_over(uses).charge();
+    }
+    for n in g.nodes() {
+        if n.is("Hold") {
+            n.chosen().charge_if(4);
+        }
+    }
+}
+<span class="boring">}</span></code></pre>
+<p><code>c.parents()</code> lists the nodes that have <code>c</code> as a child, each as a <code>Use</code> whose
+<code>parent()</code> is the node. <code>n.int(0)</code> is the first integer of the node’s payload, or
+<code>None</code> past the end. <code>g.constant(w)</code> is the integer <code>w</code> as a solver value, and
+<code>.over()</code> marks it as a value the cost may overstate (<a href="#polarity">Polarity</a>).
+<code>.when(b)</code> makes it a part that counts where <code>b</code> holds, and <code>g.max_over(parts)</code> is
+the largest part that holds, 0 when none does. <code>charge()</code> adds that maximum to the
+objective.</p>
+<p>The program offers <code>(Delay 5 x)</code> and <code>(Hold x)</code> as equal terms, in two contexts:</p>
+<p>(sort E)
+(function S (String) E)
+(function Delay (i64 E) E)
+(function Hold (E) E)
+(function Pair (E E) E)</p>
+<p>; <code>x</code> delayed by 5 has two forms; in <code>shared</code>, a sibling already buffers <code>x</code> for 3.
+(union (Delay 5 (S “x”)) (Hold (S “x”)))
+(let shared (Pair (Delay 5 (S “x”)) (Delay 3 (S “x”))))
+(let alone (Pair (Delay 5 (S “x”)) (Delay 3 (S “y”))))</p>
+<p>(cost-model buffers :script “25-window.roto”)
+(extract shared :cost buffers)
+(extract alone :cost buffers)
+(cost-model no-hold :script “25-no-hold.roto”)
+(extract alone :cost no-hold)</p>
+<pre><code class="language-text">; cost 5 proved at rung selection (2 solves, 0 cycle exclusions)
+(Pair (Delay 5 (S "x")) (Delay 3 (S "x")))
+; cost 7 proved at rung selection (3 solves, 0 cycle exclusions)
+(Pair (Hold (S "x")) (Delay 3 (S "y")))
+; cost 8 proved at rung selection (2 solves, 0 cycle exclusions)
+(Pair (Delay 5 (S "x")) (Delay 3 (S "y")))
+</code></pre>
+<p>In <code>shared</code>, a sibling already buffers <code>x</code> for 3, so <code>(Delay 5 x)</code> widens the
+buffer by 2. The term keeps it, at a cost of 5. In <code>alone</code>, <code>x</code> has no other
+buffer, so <code>(Delay 5 x)</code> would add 5 and <code>(Hold x)</code> adds 4: the term costs 4 plus 3
+for <code>y</code>. The same node is chosen in one context and not in the other, which no
+price per node can state.</p>
+<p>The third model, <code>no-hold</code>, replaces the price of <code>Hold</code> by a requirement:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// The window a `Delay` node needs of its operand: its integer payload.
+fn window(n: Node) -&gt; i64 {
+    if n.is("Delay") {
+        match n.int(0) {
+            Some(w) =&gt; w,
+            None =&gt; 0,
+        }
+    } else {
+        0
+    }
+}
+
+// The buffers of 25-window.roto, with `Hold` forbidden: a requirement, not a price.
+fn cost(g: Graph) {
+    for c in g.classes() {
+        let uses = [];
+        for u in c.parents() {
+            let w = window(u.parent());
+            if w &gt; 0 {
+                uses.push(g.constant(w).over().when(u.parent().chosen()));
+            }
+        }
+        g.max_over(uses).charge();
+    }
+    for n in g.nodes() {
+        if n.is("Hold") {
+            n.chosen().not().require();
+        }
+    }
+}
+<span class="boring">}</span></code></pre>
+<p><code>n.chosen().not()</code> is the condition that the node is not chosen, and <code>require()</code>
+makes it hold in every solution. The term of <code>alone</code> must then delay <code>x</code>, at
+5 + 3 = 8.</p>
+<h2 id="recursive-attributes"><a class="header" href="#recursive-attributes">Recursive attributes</a></h2>
+<p>A cost over the whole chosen term, such as the latency of its critical path, is a
+recursive attribute. <code>g.node_values()</code> is a table of one <code>u64</code> per node, 0 where
+unset. <code>g.attribute_max(offsets)</code> defines, for each class, the chosen node’s offset
+plus the largest attribute among its operands, or the offset alone for a leaf:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// The latency of the term's critical path: a `Mul` takes 3 cycles, an `Add` 1,
+// and an input none. A node's result is ready its latency after its latest operand.
+fn latency(n: Node) -&gt; u64 {
+    if n.is("Mul") {
+        3
+    } else if n.is("Add") {
+        1
+    } else {
+        0
+    }
+}
+
+fn cost(g: Graph) {
+    let lat = g.node_values();
+    for n in g.nodes() {
+        lat.set(n, latency(n));
+    }
+    let ready = g.attribute_max(lat);
+    ready.of(g.root()).charge();
+}
+<span class="boring">}</span></code></pre>
+<p><code>ready.of(c)</code> is class <code>c</code>’s attribute, an over-estimate, and the script charges
+the root’s. The rewrite turns each doubling into an addition:</p>
+<p>(sort E)
+(function V (String) E)
+(function Two () E)
+(function Mul (E E) E)
+(function Add (E E) E)
+(rewrite (Mul x Two) (Add x x))</p>
+<p>(let e (Add (Mul (Mul (V “a”) Two) Two) (V “b”)))
+(run 2)</p>
+<p>(cost-model latency :script “25-latency.roto”)
+(extract e :cost latency)</p>
+<pre><code class="language-text">; cost 3 proved at rung selection (2 solves, 0 cycle exclusions)
+(Add (Add (Add (V "a") (V "a")) (Add (V "a") (V "a"))) (V "b"))
+</code></pre>
+<p>The written term takes 3 + 3 + 1 = 7 cycles; the extracted one takes 3, one per
+<code>Add</code>. <code>g.attribute_min(offsets)</code> uses the smallest operand instead, and gives an
+under-estimate. <code>g.attribute_max_under</code> and <code>g.attribute_min_over</code> give the same
+attributes with the opposite polarity.</p>
+<h2 id="polarity"><a class="header" href="#polarity">Polarity</a></h2>
+<p>Costs are built from order-encoded integers: a value set <code>v0 &lt; v1 &lt; ...</code> with one
+literal per value meaning “at least <code>vj</code>”. Values are signed. A solver can set
+some of these literals more freely than the term requires, so each integer has one
+of three types, which record how the encoded value relates to the value on the
+term.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>type</th><th>the encoded value is</th><th>used for</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Exact</code></td><td>equal to the true value</td><td>constants and free integers</td></tr>
+<tr><td><code>Over</code></td><td>at least the true value</td><td>what is minimized</td></tr>
+<tr><td><code>Under</code></td><td>at most the true value</td><td>what is subtracted</td></tr>
+</tbody>
+</table>
+</div>
+<p>The operations are typed so that every combination is sound:</p>
+<ul>
+<li><code>x.when(b)</code> makes a part that counts where <code>b</code> holds.
+<code>g.max_over(parts)</code> over over-estimates is an over-estimate, and
+<code>g.min_under(parts)</code> over under-estimates is an under-estimate. <code>g.max_under</code>
+and <code>g.min_over</code> are their duals.</li>
+<li><code>a.minus(b)</code> is <code>a - b</code>, unclamped. On an <code>Over</code> it accepts only an <code>Under</code> and
+gives an <code>Over</code>; on an <code>Under</code> it accepts only an <code>Over</code> and gives an <code>Under</code>.
+<code>max(a - b, 0)</code> is <code>a.minus(b).clamp(0)</code>.</li>
+<li><code>x.neg()</code> exchanges <code>Over</code> and <code>Under</code>.</li>
+<li><code>x.charge()</code> accepts an <code>Exact</code> or an <code>Over</code>, never an <code>Under</code>.</li>
+<li>A threshold of an <code>Over</code> or <code>Under</code> is one-sided and has its own type.
+<code>x.at_least(v)</code> of an <code>Over</code> is a <code>BoolOver</code>, which may hold where the true
+value is below <code>v</code>. <code>charge_if</code> accepts a <code>Bool</code> or a <code>BoolOver</code>, and <code>require</code>
+a <code>Bool</code> or a <code>BoolUnder</code>.</li>
+</ul>
+<p>Subtracting an over-estimate would let the solver report a cost below the true
+one. The types make that a compile error, reported when the program is checked,
+with the script’s line:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Subtracts an over-estimate: the delay of a sibling taken as the wait's base.
+fn cost(g: Graph) {
+    let wpd = g.attribute_max(g.node_values());
+    wpd.of(g.root()).minus(wpd.of(g.root())).charge();
+}
+<span class="boring">}</span></code></pre>
+<p>(sort T)
+(function Leaf () T)
+(cost-model broken :script “25-polarity.roto”)</p>
+<pre><code class="language-text">sort error at line 7 column 1: cost-model broken: Error: Type error: mismatched types
+   ╭─[ 25-polarity.roto:7:28 ]
+   │
+ 7 │     wpd.of(g.root()).minus(wpd.of(g.root())).charge();
+   │                            ────────┬───────  
+   │                                    ╰───────── expected `Under`, found `Over`
+───╯
+
+</code></pre>
+<p>(The listing is the message with its colour codes removed.) The error does not
+depend on the branch being taken: a mistake in a rarely reached case is rejected
+like any other.</p>
+<p>The MLTL monitor memory of <a href="24-extraction-under-cost-models.html#the-ladder-of-rungs">Chapter 24</a>
+needs both polarities. A producer that finishes early waits for its latest
+sibling, so its queue is the latest sibling’s worst-case delay (<code>wpd</code>, an
+over-estimate) less its own best-case delay (<code>bpd</code>, an under-estimate):</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>fn cost(g: Graph) {
+    let ub = g.node_values();
+    let lb = g.node_values();
+    for n in g.nodes() {
+        ub.set(n, bound(n, 1));
+        lb.set(n, bound(n, 0));
+    }
+    let wpd = g.attribute_max(ub);
+    let bpd = g.attribute_min(lb);
+    g.charge_const(1);
+    for c in g.classes() {
+        // Every sibling c may wait for, under every parent, where it is one.
+        let peers = [];
+        for u in c.parents() {
+            for s in u.siblings() {
+                peers.push(wpd.of(s.class()).when(s.present()));
+            }
+        }
+        let queue = g.max_over(peers).minus(bpd.of(c)).clamp(0);
+        if !first_is(c, "Bool") {
+            c.chosen().charge_if(1);
+            queue.charge();
+        }
+        // The same for every internal node a rendering of a flat node may contain.
+        for n in c.nodes() {
+            for t in n.inner_nodes() {
+                let sibs = [];
+                for s in t.siblings() {
+                    sibs.push(wpd.of(s.class()).when(t.exists().and(s.present())));
+                }
+                let mems = [];
+                for m in t.members() {
+                    mems.push(bpd.of(m.class()).when(t.exists().and(m.present())));
+                }
+                t.exists().charge_if(1);
+                g.max_over(sibs).minus(g.min_under(mems)).clamp(0).charge();
+            }
+        }
+    }
+}
+<span class="boring">}</span></code></pre>
+<p><code>u.siblings()</code> lists the parent’s other operands, each with <code>present()</code>, the
+condition that the parent is chosen and, where the rung renders a tree, that the
+operand is in the same block. The inner loop charges the same queue for every
+internal node of a rendered tree (<a href="#bracketed-nodes">Bracketed nodes</a>).</p>
+<h2 id="bracketed-nodes"><a class="header" href="#bracketed-nodes">Bracketed nodes</a></h2>
+<p>At the tree rungs, a bracketed node’s tree is a decision. Two parts of the API
+read it:</p>
+<ul>
+<li><code>n.inner_nodes()</code> lists the internal nodes a rendering of <code>n</code> may contain, each
+with <code>exists()</code>, <code>members()</code> (the operands that may lie under it), and
+<code>siblings()</code>. A fold’s internal nodes, its prefixes or suffixes, are listed at
+every rung, with <code>exists()</code> true whenever the fold is chosen. For an AC node or
+an <code>:assoc</code> sequence the list is empty at <code>selection</code>, so the same script runs
+at every rung.</li>
+<li><code>k.depth()</code> is a child’s depth in its node’s tree, 1 directly under the node,
+where the rung decides the tree, and <code>None</code> elsewhere. <code>k.position(d)</code> is its
+position within its block at depth <code>d</code>, at the <code>orders</code> rung only, for <code>d</code> from 1 (the
+node itself) to the tree’s depth, and <code>None</code> for any other <code>d</code>.</li>
+</ul>
+<p>This script charges the depth of the deepest operand of any chosen node:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// The depth of the deepest operand of any chosen node, an operand directly under
+// its node at depth 1. Where the rung does not decide a node's tree, `depth()` is
+// `None` and the operand is at depth 1.
+fn cost(g: Graph) {
+    let depths = [];
+    for n in g.nodes() {
+        for k in n.children() {
+            match k.depth() {
+                Some(d) =&gt; depths.push(d.over().when(n.chosen())),
+                None =&gt; depths.push(g.constant(1).over().when(n.chosen())),
+            }
+        }
+    }
+    g.max_over(depths).charge();
+}
+<span class="boring">}</span></code></pre>
+<p>(sort E)
+(function V (String) E)
+(function And (E) E :assoc-comm)
+(let e (And (V “a”) (V “b”) (V “c”) (V “d”)))</p>
+<p>(cost-model depth :script “25-depth.roto”)
+(extract e :cost depth :rung selection)
+(extract e :cost depth :rung levels)
+(extract e :cost depth :rung binary)</p>
+<pre><code class="language-text">; cost 1 proved at rung selection (2 solves, 0 cycle exclusions)
+(And (V "a") (V "b") (V "c") (V "d"))
+; cost 1 proved at rung levels (2 solves, 0 cycle exclusions)
+(And (V "a") (V "b") (V "c") (V "d"))
+; cost 2 proved at rung binary (3 solves, 0 cycle exclusions)
+(And (And (V "a") (V "b")) (And (V "c") (V "d")))
+</code></pre>
+<p>At <code>selection</code> and <code>levels</code> the flat node keeps every operand at depth 1: a chain
+of blocks only deepens some of them. <code>binary</code> requires two operands per group, and
+the shallowest binary tree over four operands has depth 2.
+<a href="26-criteria-in-asp.html#trees">Chapter 26</a> and
+<a href="27-criteria-in-minizinc.html#trees">Chapter 27</a> state the same cost in ASP and in
+MiniZinc.</p>
+<h2 id="pseudo-boolean-terms"><a class="header" href="#pseudo-boolean-terms">Pseudo-Boolean terms</a></h2>
+<p>A pseudo-Boolean term is a weighted sum of literals and a constant. It is linear
+and needs no encoding until it is compared or sorted. <code>b.times(k)</code> is <code>k</code> where
+<code>b</code> holds, <code>g.count(bs)</code> the number of <code>bs</code> that hold, <code>g.pb_const(c)</code> a constant,
+and <code>x.linear()</code> an integer’s linear form. <code>t.plus(u)</code>, <code>t.minus(u)</code>,
+<code>t.times(c)</code>, and <code>t.plus_const(k)</code> combine terms. <code>t.charge()</code> adds a term to the
+objective with no integer built. <code>t.at_least(k)</code> and <code>t.at_most(k)</code> give its
+threshold literals, and <code>t.sorted()</code> turns it into an order-encoded integer.</p>
+<p>Terms carry a polarity as integers do: <code>Pb</code>, <code>PbOver</code>, and <code>PbUnder</code>.
+<code>BoolOver.times</code> and <code>Over.linear</code> give a <code>PbOver</code>; <code>minus</code> takes a term of the
+opposite polarity; <code>charge</code> accepts a <code>Pb</code> or a <code>PbOver</code>.</p>
+<h2 id="exact-integers"><a class="header" href="#exact-integers">Exact integers</a></h2>
+<p>Roto’s own <code>i64</code> and <code>u64</code> arithmetic is not checked: <code>+</code>, <code>-</code>, and <code>*</code> wrap
+silently, and <code>/</code> and <code>%</code> by zero abort the process. A cost computed with them
+could be wrong without an error, so Semper refuses a cost script that uses any of
+these operators, or their compound forms <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>%=</code>. The script
+is refused when the program is checked, before anything runs, with the operator’s
+line and column. A <code>-</code> that starts a negative literal, as in <code>g.int([-3, 3])</code>, is
+allowed, and so are comparisons, which cannot wrap:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Roto's own `i64` arithmetic would wrap without an error, so the script is refused.
+fn cost(g: Graph) {
+    let k: i64 = 9223372036854775807;
+    g.charge_const(k + 2);
+}
+<span class="boring">}</span></code></pre>
+<p>(sort E)
+(function V (String) E)
+(let e (V “a”))</p>
+<p>(cost-model wrapped :script “25-wrap.roto”)
+(extract e :cost wrapped)</p>
+<pre><code class="language-text">sort error at line 9 column 1: cost-model wrapped: 25-wrap.roto:7:22: `+` is Roto's own arithmetic, which wraps on overflow or aborts on division by zero; cost scripts must compute with the exact methods (`plus`, `minus`, `times`, `div`, `rem`, `neg`) of IBig, UBig, and the encoded integers
+</code></pre>
+<p>All arithmetic in a cost script therefore goes through exact methods. For any
+value that can grow, such as
+a multiplicity times a weight, a sum over a large e-graph, or an interval bound,
+compute with <code>IBig</code> (signed) or <code>UBig</code> (unsigned) instead. Both are exact at any
+size, and a script may branch on their comparisons. This script charges each node
+1 plus 4 per operand copy, and a fixed 10^20:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Each chosen node costs 1 plus 4 per operand copy, computed exactly, and the
+// term carries a fixed charge of 10^20, a constant past `i64`.
+fn cost(g: Graph) {
+    let four = g.ubig(4);
+    for n in g.nodes() {
+        let total = g.ubig(1);
+        for k in n.children() {
+            total = total.plus(k.count().times(four));
+        }
+        n.chosen().charge_if_big(total);
+    }
+    g.charge_const_big(g.ibig_str("100000000000000000000"));
+}
+<span class="boring">}</span></code></pre>
+<p>(sort E)
+(function V (String) E)
+(function Plus (E) E :assoc-comm)
+(let e (Plus (V “a”):3000000000 (V “b”)))</p>
+<p>(cost-model exact :script “25-exact.roto”)
+(extract e :cost exact)</p>
+<pre><code class="language-text">; cost 100000000012000000007 proved at rung selection (2 solves, 0 cycle exclusions)
+(Plus (V "a"):3000000000 (V "b"))
+</code></pre>
+<p><code>(V "a"):3000000000</code> is one operand with a multiplicity of 3,000,000,000.
+<code>k.count()</code> reads it as a <code>UBig</code>, and the cost, 10^20 + 12,000,000,007, is
+reported exactly. The operations:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>operation</th><th></th></tr>
+</thead>
+<tbody>
+<tr><td>make</td><td><code>g.ibig(v)</code> from an <code>i64</code>, <code>g.ubig(v)</code> from a <code>u64</code>, <code>g.ibig_str("…")</code>, <code>g.ubig_str("…")</code> from a decimal string (the way to write a constant past <code>i64</code>)</td></tr>
+<tr><td>read from the e-graph</td><td><code>k.count()</code> (a child’s multiplicity, <code>UBig</code>), <code>n.nums()</code>, <code>n.num(j)</code> (the payload integers, <code>IBig</code>, an <code>IBig</code> literal past <code>i64</code> included)</td></tr>
+<tr><td>arithmetic</td><td><code>a.plus(b)</code>, <code>a.minus(b)</code>, <code>a.times(b)</code>, <code>a.div(b)</code> (truncated toward zero), <code>a.rem(b)</code> (with the sign of <code>a</code>), <code>a.max(b)</code>, <code>a.min(b)</code>; on <code>IBig</code>, <code>a.neg()</code> and <code>a.abs()</code> (a <code>UBig</code>)</td></tr>
+<tr><td>compare</td><td><code>a.lt(b)</code>, <code>a.le(b)</code>, <code>a.gt(b)</code>, <code>a.ge(b)</code>, <code>a.eq(b)</code>: ordinary <code>bool</code>s</td></tr>
+<tr><td>convert</td><td><code>a.to_ubig()</code>, <code>a.to_i64()</code> (<code>None</code> past <code>i64</code>), <code>a.to_string()</code> on <code>IBig</code>; <code>a.to_ibig()</code>, <code>a.to_u64()</code> (<code>None</code> past <code>u64</code>), <code>a.to_string()</code> on <code>UBig</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Division by zero, a <code>UBig</code> result below zero, and a malformed decimal string are
+build errors that name the operation. A big variant takes the place of each 64-bit
+constant:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>64-bit call</th><th>exact call</th></tr>
+</thead>
+<tbody>
+<tr><td><code>g.constant(v)</code>, <code>g.int(values)</code>, <code>g.pb_const(c)</code>, <code>g.charge_const(w)</code></td><td><code>g.constant_big</code>, <code>g.int_big</code>, <code>g.pb_const_big</code>, <code>g.charge_const_big</code> (<code>IBig</code>)</td></tr>
+<tr><td><code>g.at_most(bs, k)</code>, <code>g.at_least(bs, k)</code></td><td><code>g.at_most_big</code>, <code>g.at_least_big</code> (<code>UBig</code>)</td></tr>
+<tr><td><code>x.at_least(v)</code>, <code>x.at_most(v)</code>, <code>x.plus_const(k)</code>, <code>x.clamp(lo)</code>, <code>x.values()</code></td><td><code>x.at_least_big</code>, <code>x.at_most_big</code>, <code>x.plus_const_big</code>, <code>x.clamp_big</code> (<code>IBig</code>), <code>x.values_big()</code></td></tr>
+<tr><td><code>x.scale(c)</code></td><td><code>x.scale_big</code> (<code>UBig</code>, at least 1)</td></tr>
+<tr><td><code>b.times(k)</code>, <code>b.charge_if(w)</code></td><td><code>b.times_big</code>, <code>b.charge_if_big</code> (<code>UBig</code>)</td></tr>
+<tr><td><code>t.times(c)</code>, <code>t.plus_const(k)</code>, <code>t.at_least(k)</code>, <code>t.at_most(k)</code></td><td><code>t.times_big</code> (<code>UBig</code>), <code>t.plus_const_big</code>, <code>t.at_least_big</code>, <code>t.at_most_big</code> (<code>IBig</code>)</td></tr>
+<tr><td><code>v.set(n, w)</code>, <code>v.get(n)</code></td><td><code>v.set_big(n, w)</code>, <code>v.get_big(n)</code> (<code>UBig</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>A 64-bit read of a value it cannot hold, such as <code>x.values()</code>, <code>n.int(j)</code>, or
+<code>v.get(n)</code> on a value past <code>i64</code> or <code>u64</code>, is an error that names the exact call
+to use.</p>
+<p>Every value a script hands to the library, and every value the library computes
+(integers, terms, the objective, and the reported cost), is exact. A value outside
+the cap <code>--cost-bits</code> sets, if one is set, is an error. So is a value outside the
+range of the solver the problem goes to
+(<a href="28-solvers-certificates-and-export.html#number-ranges">Number ranges</a>).</p>
+<h2 id="costs-written-in-rust"><a class="header" href="#costs-written-in-rust">Costs written in Rust</a></h2>
+<p><code>(cost-model NAME :rust "id")</code> names a cost compiled into Semper. Three are
+registered: <code>mltl-memory</code>, <code>pipeline-registers</code>, and <code>monitor-history</code>, the same
+costs as the scripts in <code>egraph/tests/mltl/costs/</code>. A Rust cost runs on the
+same solvers as a script and reports its cost the same way:</p>
+<p>(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)</p>
+<p>(let e (And (Global (Interval 0 9) (Var “a0”)) (Future (Interval 2 3) (Var “a1”))
+(Global (Interval 1 4) (Var “a1”)) (Future (Interval 0 7) (Var “a0”))))</p>
+<p>(cost-model memory :script “memory.roto”)
+(cost-model memory-rs :rust “mltl-memory”)
+(extract e :cost memory :rung splits)
+(extract e :cost memory-rs :rung splits)</p>
+<pre><code class="language-text">; cost 37 proved at rung splits (3 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 37 proved at rung splits (3 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+</code></pre>
+<p>Another name is a sort error that lists the three.</p>
+<h2 id="script-api-reference"><a class="header" href="#script-api-reference">Script API reference</a></h2>
+<p>Every value the API hands out belongs to the part of the e-graph reachable from
+the root through candidates, the members that are not subsumed.</p>
+<h3 id="the-e-graph"><a class="header" href="#the-e-graph">The e-graph</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>type</th><th>methods</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Graph</code></td><td><code>classes()</code> (ascending), <code>root()</code>, <code>nodes()</code> (every candidate of every class), <code>rung()</code> (the rung’s name)</td></tr>
+<tr><td><code>Class</code></td><td><code>nodes()</code> (its candidates), <code>parents()</code> (a <code>Use</code> per node that has it as a child), <code>chosen()</code>, <code>id()</code>, <code>is_root()</code></td></tr>
+<tr><td><code>Node</code></td><td><code>op()</code>, <code>is(op)</code>, <code>kind()</code>, <code>children()</code>, <code>class()</code>, <code>ints()</code>, <code>int(j)</code>, <code>nat(j)</code> (clamped below at 0), <code>nums()</code>, <code>num(j)</code> (exact <code>IBig</code>s), <code>strings()</code>, <code>id()</code>, <code>chosen()</code>, <code>inner_nodes()</code></td></tr>
+<tr><td><code>Child</code></td><td><code>class()</code>, <code>multiplicity()</code>, <code>count()</code> (exact <code>UBig</code>), <code>index()</code>, <code>depth()</code>, <code>position(d)</code></td></tr>
+<tr><td><code>Use</code></td><td><code>parent()</code>, <code>positions()</code> (where the class occurs among the parent’s children), <code>siblings()</code></td></tr>
+<tr><td><code>Sibling</code>, <code>Member</code></td><td><code>class()</code>, <code>present()</code></td></tr>
+<tr><td><code>Inner</code></td><td><code>exists()</code>, <code>members()</code>, <code>siblings()</code>, <code>index()</code>, <code>node()</code></td></tr>
+<tr><td><code>Kind</code></td><td><code>name()</code>, <code>is_plain()</code>, <code>is_comm()</code>, <code>is_seq()</code>, <code>is_mset()</code>, <code>is_set()</code>, <code>is_flat()</code>, <code>is_bracketed()</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>n.children()</code> is one <code>Child</code> per position, except for a multiset or set node,
+where it is one per distinct operand with its multiplicity:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>n.kind()</code></th><th>the operator is</th><th><code>name()</code></th><th><code>n.children()</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>is_plain()</code></td><td>declared with positional arguments</td><td><code>plain</code></td><td>one per position</td></tr>
+<tr><td><code>is_comm()</code></td><td><code>:comm</code></td><td><code>comm</code></td><td>its two arguments</td></tr>
+<tr><td><code>is_seq()</code></td><td><code>:assoc</code>, <code>:assoc-left</code>, or <code>:assoc-right</code></td><td><code>seq</code>, <code>seq-left</code>, <code>seq-right</code></td><td>in order</td></tr>
+<tr><td><code>is_mset()</code></td><td><code>:assoc-comm</code></td><td><code>mset</code></td><td>its distinct operands, each with its multiplicity</td></tr>
+<tr><td><code>is_set()</code></td><td><code>:assoc-comm-idem</code></td><td><code>set</code></td><td>its distinct operands</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>is_flat()</code> holds for a multiset or set node. <code>is_bracketed()</code> holds for a node
+whose tree the rung decides: a flat node, or an <code>:assoc</code> sequence.</p>
+<p>A child whose sort is a value sort is not a child the script sees: it becomes
+payload of its parent. A value sort is one every node of which has only
+value-sort children, less the root’s sort; literal sorts are value sorts, and so
+is <code>IntervalSort</code> in the MLTL examples. Its scalars are collected depth first and
+left to right: an integer literal goes to <code>ints</code>, any other literal to <code>strings</code>.
+So <code>(Global (Interval 0 9) p)</code> is a node with <code>ints</code> <code>[0, 9]</code> and one child, <code>p</code>.
+A Boolean literal arrives as the string <code>"true"</code> or <code>"false"</code>.</p>
+<h3 id="solver-values"><a class="header" href="#solver-values">Solver values</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>type</th><th>is</th><th>from</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Bool</code></td><td>a conjunction of literals</td><td><code>c.chosen()</code>, <code>n.chosen()</code>, <code>s.present()</code>, <code>m.present()</code>, <code>t.exists()</code>, thresholds of an <code>Exact</code> or a <code>Pb</code></td></tr>
+<tr><td><code>BoolOver</code>, <code>BoolUnder</code></td><td>a condition that may hold where it is false (<code>Over</code>) or fail where it is true (<code>Under</code>)</td><td>the thresholds of <code>Over</code> and <code>Under</code> integers and terms</td></tr>
+<tr><td><code>Exact</code>, <code>Over</code>, <code>Under</code></td><td>an order-encoded integer</td><td><code>g.constant(v)</code>, <code>g.int(values)</code>, attributes, and the operations below</td></tr>
+<tr><td><code>OverPart</code>, <code>UnderPart</code></td><td>an integer that counts under a condition</td><td><code>x.when(b)</code></td></tr>
+<tr><td><code>Pb</code>, <code>PbOver</code>, <code>PbUnder</code></td><td>a weighted sum of literals and a constant</td><td><code>b.times(k)</code>, <code>g.count(bs)</code>, <code>x.linear()</code></td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>group</th><th>operations</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Bool</code></td><td><code>g.bool(v)</code>, <code>a.and(b)</code>, <code>g.all(list)</code> (no new variable); <code>a.or(b)</code>, <code>a.not()</code>, <code>a.implies(b)</code>, <code>g.any(list)</code> (one defined literal); <code>b.over()</code>, <code>b.under()</code> widen to <code>BoolOver</code>, <code>BoolUnder</code>; on a <code>BoolOver</code> or <code>BoolUnder</code>, <code>and</code> and <code>or</code> keep the type and <code>not</code> exchanges it</td></tr>
+<tr><td><code>Exact</code></td><td><code>g.constant(v)</code>, <code>g.int(values)</code>, <code>g.int_scaled(values, s)</code>, <code>g.unary(n)</code> (over <code>0..n</code>); <code>x.plus(y)</code>, <code>x.minus(y)</code>, <code>x.neg()</code>, <code>x.scale(c)</code>, <code>x.clamp(lo)</code>, <code>x.plus_const(k)</code>; <code>x.values()</code>, <code>x.at_least(v)</code>, <code>x.at_most(v)</code>; <code>x.over()</code>, <code>x.under()</code></td></tr>
+<tr><td><code>Over</code>, <code>Under</code></td><td><code>x.when(b)</code>; <code>g.max_over</code>, <code>g.min_over</code> (over <code>OverPart</code>s), <code>g.min_under</code>, <code>g.max_under</code> (over <code>UnderPart</code>s); <code>a.minus(b)</code> of opposite polarity; <code>a.plus(b)</code>, <code>a.plus_const(k)</code>, <code>a.scale(c)</code>, <code>a.clamp(lo)</code> keep the polarity; <code>x.neg()</code> exchanges it; <code>g.sum(list)</code> and <code>g.ite(b, x, y)</code> over <code>Over</code>s give an <code>Over</code></td></tr>
+<tr><td>attributes</td><td><code>g.node_values()</code> filled with <code>v.set(n, w)</code> and read with <code>v.get(n)</code>; <code>g.attribute_max(v)</code>, <code>g.attribute_min_over(v)</code> give an <code>Over</code> per class, <code>g.attribute_min(v)</code>, <code>g.attribute_max_under(v)</code> an <code>Under</code>; <code>attr.of(c)</code> reads class <code>c</code>’s</td></tr>
+<tr><td><code>Pb</code></td><td><code>b.times(k)</code>, <code>g.count(bs)</code>, <code>g.pb_const(c)</code>, <code>x.linear()</code>; <code>t.plus(u)</code>, <code>t.minus(u)</code>, <code>t.neg()</code>, <code>t.times(c)</code>, <code>t.plus_const(k)</code>; <code>t.at_least(k)</code>, <code>t.at_most(k)</code>, <code>t.sorted()</code>; <code>t.over()</code>, <code>t.under()</code></td></tr>
+<tr><td>sinks</td><td><code>b.require()</code> (<code>Bool</code>, <code>BoolUnder</code>), <code>g.at_most(bs, k)</code>, <code>g.at_least(bs, k)</code>, <code>x.charge()</code> (<code>Exact</code>, <code>Over</code>, <code>Pb</code>, <code>PbOver</code>), <code>b.charge_if(w)</code> (<code>Bool</code>, <code>BoolOver</code>), <code>g.charge_const(w)</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>b.require()</code> makes <code>b</code> hold in every solution; <code>g.at_most(bs, k)</code> and
+<code>g.at_least(bs, k)</code> bound the number of <code>bs</code> that hold. The objective is the sum of
+every charge. An operation whose values leave a cap set by <code>--cost-bits</code> records
+an error, and the extraction then fails with the errors in order instead of
+solving. The
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/11-extraction.md#layers">design chapter</a>
+describes how the library encodes these values.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="24-extraction-under-cost-models.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="26-criteria-in-asp.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="24-extraction-under-cost-models.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="26-criteria-in-asp.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

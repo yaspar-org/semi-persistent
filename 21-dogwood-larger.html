@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,7 +186,8 @@
 This chapter groups recurring alternatives across those queries so the review
 list grows with distinct decisions rather than with cluster pairs.</p>
 <h2 id="the-expanded-model"><a class="header" href="#the-expanded-model">The expanded model</a></h2>
-<p>The fixture retains Chapter 20’s deploy and health-check vocabulary. It adds
+<p>The fixture abstracts Chapter 20’s deploy and health-check conditions into the
+atoms <code>methodPost</code>, <code>pathDeploy</code>, and <code>successfulHealth</code>. It adds
 <code>Lte</code>, <code>Ite</code>, <code>directCopy</code>, and <code>multipartCopy</code> for a shared ground
 conditional. All five samples contain
 <code>(Ite (Lte 100 100) (directCopy) (multipartCopy))</code>. It supplies more shared

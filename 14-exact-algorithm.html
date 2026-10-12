@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -218,7 +218,7 @@ structural action is examined. Compatible e-nodes provide the other actions:</p>
 complete AC pairings. Multiplicity supplies and demands select how many copies
 of each child pair the composed result contains.</p>
 <p>The complete action-generation rules are in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md"><code>19-anti-unification.md</code>, section 3.4</a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md">design chapter 12, section 3.4</a>.</p>
 <h2 id="the-recursion"><a class="header" href="#the-recursion">The recursion</a></h2>
 <p>Let <code>G(q)</code> be the achieved baseline for state <code>q</code>: the smallest admissible term
 when the classes agree, and the generalize result otherwise. Pair-mode Exact
@@ -297,12 +297,15 @@ improve the state.</li>
 <li>If the bound is greater than the current achieved incumbent, the action
 cannot improve that incumbent.</li>
 </ol>
+<p>Both comparisons are opt-in Rust-API settings, off by default. The first is
+<code>dominance_pruning</code> in UCT; the second is <code>exact_pruning</code> in Exact and
+<code>live_incumbent_pruning</code> in UCT. The surface commands run with all three off.</p>
 <p>Both comparisons are strict and inspect size only. Equality cannot discard an
 action because an equal-size result may still have smaller variant mass. A
 discarded structural action loses no achieved term and cannot contain the
 lexicographic optimum.</p>
 <p>The bound and pruning arguments are in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md"><code>19-anti-unification.md</code>, sections 9.1-9.4</a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md">design chapter 12, sections 9.1-9.4</a>.</p>
 <h2 id="what-completion-exact-means"><a class="header" href="#what-completion-exact-means">What <code>:completion exact</code> means</a></h2>
 <p>For this algorithm, <code>:completion exact</code> says that the returned term is optimal:</p>
 <ol>
@@ -314,7 +317,7 @@ lexicographic optimum.</p>
 cycle-erasure and round-bound argument is a prose argument supported by
 regressions and a finite oracle, not a machine-checked theorem for the Rust
 solver. The current proof boundary is stated in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md"><code>19-anti-unification.md</code>, section 9.6</a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/12-anti-unification.md">design chapter 12, section 9.6</a>.</p>
 
                     </main>
 

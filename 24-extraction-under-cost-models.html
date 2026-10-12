@@ -1,0 +1,653 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Extraction under cost models - The Semper Book</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Using anti-unification to diagnose formalization problems">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/semper-blue-a28f71f5.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-d6b8dbf7.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Semper Book</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/yaspar-org/semi-persistent" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/yaspar-org/semi-persistent/edit/main/doc/book/src/24-extraction-under-cost-models.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="extraction-under-cost-models"><a class="header" href="#extraction-under-cost-models">Extraction under cost models</a></h1>
+<p><a href="08-equality-saturation.html">Chapter 8</a> defines extraction under an additive cost:
+each node has a fixed price, and a term costs the sum of its nodes. This part
+defines extraction under a cost model, a cost written by the user that need not
+be additive. The commands are part of the default build; the library that
+implements them is the module <code>semi_persistent_egraph::extraction</code>.</p>
+<p>This chapter explains what extraction under a cost model chooses and how, then covers what
+every cost model shares: the two commands, the line Semper prints for each extraction, the
+ladder of rungs, and the number ranges.
+<a href="25-cost-functions-in-roto.html">Chapter 25</a> teaches cost scripts in Roto,
+<a href="26-criteria-in-asp.html">Chapter 26</a> criteria in answer-set programming, and
+<a href="27-criteria-in-minizinc.html">Chapter 27</a> criteria in MiniZinc.
+<a href="28-solvers-certificates-and-export.html">Chapter 28</a> covers the solvers, the number
+range of each, certificates, cost bands, and the files Semper writes.</p>
+<h2 id="extraction-as-a-choice"><a class="header" href="#extraction-as-a-choice">Extraction as a choice</a></h2>
+<p>An e-graph holds many terms at once. Each class says “any one of my members”, and each
+node says “my operator applied to one term of each of my child classes”. Extracting a term
+is choosing: for the root class one member, then for each child class of that member one
+member, and so on down to the leaves. In this e-graph</p>
+<pre><code class="language-text">class 0 (root): { And(c1, c2) }
+class 1:        { G[0,9](c3),  F[0,9](c3) }
+class 2:        { F[2,3](c4) }
+class 3:        { Var "a" }
+class 4:        { Var "b" }
+</code></pre>
+<p>the only decision is which member of class 1 to take, so there are two terms.</p>
+<p><a href="08-equality-saturation.html">Chapter 8</a> makes that choice for an additive cost, a fixed
+price per node summed over the term, without a solver. Every other cost is solved by
+stating the choice as a constraint problem. Semper gives every class a Boolean “class is
+chosen” and every node a Boolean “node is chosen”, and adds the rules that make a set of
+chosen nodes a term:</p>
+<ul>
+<li>the root class is chosen;</li>
+<li>a chosen class chooses exactly one of its members;</li>
+<li>a chosen node chooses each of its child classes.</li>
+</ul>
+<p>A solution of these rules is a term, and a term is one solution. A cost is then an
+objective over the same Booleans: “this node costs 3 when it is chosen” adds 3 times that
+node’s Boolean to the sum the solver minimizes. Costs that are not sums of such prices, a
+maximum over children or a delay along a path, are built from integers whose value follows
+the choice; <a href="25-cost-functions-in-roto.html">Chapter 25</a> shows how a script writes them.</p>
+<h2 id="when-the-cost-depends-on-a-grouping-the-e-graph-does-not-store"><a class="header" href="#when-the-cost-depends-on-a-grouping-the-e-graph-does-not-store">When the cost depends on a grouping the e-graph does not store</a></h2>
+<p>An <code>:assoc-comm</code> or <code>:assoc-comm-idem</code> operator (<a href="04-declaring-algebra.html">Chapter 4</a>)
+stores every grouping and ordering of its operands as one flat node, and an <code>:assoc</code>
+operator stores every bracketing of its sequence as one node. That keeps saturation from
+enumerating them. A cost that depends on the grouping cannot be read off the flat node, so
+the extraction has to choose a grouping too, and return the tree it chose.</p>
+<p>The example of this part is the memory of an R2U2 runtime monitor. R2U2 checks a
+specification in mission-time LTL (MLTL), a temporal logic whose operators carry an
+integer interval: <code>G[l,u] p</code> says <code>p</code> holds at every step from <code>l</code> to <code>u</code> steps ahead, and
+<code>F[l,u] p</code> at some step in that range. The monitor evaluates each subformula as a stream of
+verdicts. A subformula’s verdict for a step arrives between a best-case and a worst-case
+delay: an atom has 0 and 0, and <code>F[l,u] p</code> adds <code>l</code> and <code>u</code> to the delays of <code>p</code>. A
+conjunction needs all its operands’ verdicts for the same step, so an operand that is ready
+early has to keep its verdicts in a queue until its slowest sibling catches up. Its queue
+holds <code>(worst delay of its slowest sibling) − (its own best delay)</code> verdicts, plus one.
+Johannsen and Rozier shrink these monitors with equality saturation; see their FMCAD 2026
+paper, “Shrinking Mission-time LTL Runtime Monitors with Equality Saturation”, whose
+specifications this book does not reproduce. The terms are MLTL formulas: atoms
+<code>(Var "p")</code>, the Boolean connectives, with <code>And</code> and <code>Or</code> declared <code>:assoc-comm-idem</code>, and
+<code>Global</code>, <code>Future</code>, <code>Until</code>, and <code>Release</code> over an <code>(Interval l u)</code>. The rules, ported from
+their artifact (<code>egraph/tests/mltl/rules/mltl.egg</code>), produce equivalent formulas that need
+less memory. The one that saves the most factors a common window out of a conjunction:
+<code>G[2,5] p ∧ G[3,9] q</code> equals <code>G[2,5] (p ∧ G[1,4] q)</code>, and its memory falls from 15 to 10,
+because the conjunction inside waits for less. The memory to minimize counts one slot per
+subformula and per group, one for the specification, and every queue; the
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/11-extraction.md#the-terms-the-rules-and-the-cost">design chapter</a>
+gives the full definition.</p>
+<p>Take <code>p ∧ q ∧ r</code>, where <code>p</code> and <code>q</code> are atoms and <code>r = F[0,10] s</code>, so <code>r</code> may be 10 steps
+late and everything else is on time. A group of operands acts as one operand whose worst
+delay is its slowest member’s and whose best delay is its fastest member’s:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>term</th><th>who queues</th><th>memory</th></tr>
+</thead>
+<tbody>
+<tr><td><code>And(p, q, r)</code></td><td><code>p</code> and <code>q</code> each wait 10 for <code>r</code></td><td>26</td></tr>
+<tr><td><code>And(And(p, q), r)</code></td><td>only the group <code>{p, q}</code> waits 10 for <code>r</code></td><td>17</td></tr>
+<tr><td><code>And(And(p, r), q)</code></td><td><code>p</code> waits 10 for <code>r</code>, and <code>q</code> waits 10 for the group</td><td>27</td></tr>
+</tbody>
+</table>
+</div>
+<p>The memory counts one slot per subformula and group as well as the queues. All three terms
+are the same flat node in the e-graph. The cheapest one groups the fast operands and leaves
+the slow one outside, which no price on the flat node can say. With the cost script of
+<a href="25-cost-functions-in-roto.html#bracketed-nodes">Chapter 25</a>:</p>
+<p>(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Future (IntervalSort MLTL) MLTL)</p>
+<p>;; p ∧ q ∧ r with r = F[0,10] s.
+(let flat (And (Var “p”) (Var “q”) (Future (Interval 0 10) (Var “s”))))</p>
+<p>(cost-model memory :script “memory.roto”)
+(extract flat :cost memory :rung selection)
+(extract flat :cost memory :rung splits)</p>
+<pre><code class="language-text">; cost 26 proved at rung selection (2 solves, 0 cycle exclusions)
+(And (Future 0 10 (Var "s")) (Var "p") (Var "q"))
+; cost 17 proved at rung splits (4 solves, 0 cycle exclusions)
+(And (And (Var "p") (Var "q")) (Future 0 10 (Var "s")))
+</code></pre>
+<h2 id="how-the-grouping-becomes-part-of-the-choice"><a class="header" href="#how-the-grouping-becomes-part-of-the-choice">How the grouping becomes part of the choice</a></h2>
+<p>Listing every grouping of every flat node would bring back the blow-up the flat nodes
+avoid: ten operands have 282,137,824 groupings. Semper instead adds a few Booleans per
+operand of each flat node, and rules under which each grouping is exactly one solution. In
+outline, every operand of a flat node gets a depth (“how many groups deep it sits”) and, at
+each depth, a label saying which sub-group it continues into. Operands with the same labels
+down to some depth are in one group there. The rules number the groups by their smallest
+operand, so a grouping cannot be written twice, and they forbid a group of one. For each
+group that may exist, the cost sees an inner node: whether it exists, its members, and its
+siblings. An operand repeated <code>k</code> times in an AC node is one operand at every rung, so the
+number of groupings depends only on the distinct operands.</p>
+<p>Different costs need different amounts of this structure, and more structure is a bigger
+problem. <code>:rung</code> chooses how much to add; the next section lists the rungs.</p>
+<h2 id="a-first-extraction-under-a-cost-model"><a class="header" href="#a-first-extraction-under-a-cost-model">A first extraction under a cost model</a></h2>
+<p>The program below has two equal terms. <code>(Twice x)</code> costs 3, and the rewrite gives
+the class a second member, <code>(Add x x)</code>, whose two children are one shared class:</p>
+<p>(sort E)
+(function V (String) E)
+(function F (E) E)
+(function Add (E E) E)
+(function Twice (E) E :cost 3)
+(rewrite (Twice x) (Add x x))</p>
+<p>(let e (Twice (F (F (V “a”)))))
+(run 1)</p>
+<p>; Additive extraction (Chapter 8): a shared child is paid at every use.
+(extract e)
+; The same prices, with every node of the term paid once.
+(cost-model dag :script “24-first.roto”)
+(extract e :cost dag)
+; The term additive extraction chooses, scored by the model.
+(extract e :cost dag :solver greedy)</p>
+<p>The model <code>dag</code> is a Roto script. It charges every chosen node once, whatever the
+number of its parents:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// The term's size as a DAG: every node of the term is paid once, however many
+// parents share it. `Twice` costs 3, every other operator 1.
+fn cost(g: Graph) {
+    for n in g.nodes() {
+        if n.is("Twice") {
+            n.chosen().charge_if(3);
+        } else {
+            n.chosen().charge_if(1);
+        }
+    }
+}
+<span class="boring">}</span></code></pre>
+<p>Run from <code>doc/book/examples/cost-models/</code>, the program prints:</p>
+<pre><code class="language-text">(Twice (F (F (V a))))
+; cost 4 proved at rung selection (2 solves, 0 cycle exclusions)
+(Add (F (F (V "a"))) (F (F (V "a"))))
+; cost 6 greedy at rung selection
+(Twice (F (F (V "a"))))
+</code></pre>
+<p>The first line is Chapter 8’s extraction. It counts the shared subterm
+<code>(F (F (V "a")))</code> once per use, so <code>Add</code> costs 7 against 6 for <code>Twice</code>. The model
+pays each node of the term once. <code>(Add x x)</code> then costs 1 plus 3 for the shared
+subterm, which is 4, and the extraction proves that no term costs less. The last
+extraction scores the additive choice under the model: 3 for <code>Twice</code> plus 3, so 6.</p>
+<h2 id="declaring-a-cost-model"><a class="header" href="#declaring-a-cost-model">Declaring a cost model</a></h2>
+<p>A cost model is named once and used by any number of <code>extract</code> commands:</p>
+<pre><code class="language-text">(cost-model NAME :script "f.roto")
+(cost-model NAME :asp "f.lp")
+(cost-model NAME :minizinc "f.mzn")
+(cost-model NAME :rust "id")
+</code></pre>
+<p>Each language works on its own view of the e-graph:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>declaration</th><th>the cost is</th><th>solved by</th><th>chapter</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:script "f.roto"</code></td><td>a Roto script, compiled against Semper’s binding</td><td>the library’s encoding, on CaDiCaL, RoundingSat, an OPB solver, or clingo</td><td><a href="25-cost-functions-in-roto.html">25</a></td></tr>
+<tr><td><code>:asp "f.lp"</code></td><td>answer-set rules over the e-graph’s facts</td><td>clingo</td><td><a href="26-criteria-in-asp.html">26</a></td></tr>
+<tr><td><code>:minizinc "f.mzn"</code></td><td>MiniZinc over the e-graph’s data and variables</td><td>CP-SAT, Chuffed, Gecode, HiGHS, or CBC</td><td><a href="27-criteria-in-minizinc.html">27</a></td></tr>
+<tr><td><code>:rust "id"</code></td><td>a cost registered in Rust</td><td>as <code>:script</code></td><td><a href="25-cost-functions-in-roto.html#costs-written-in-rust">25</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>A path is relative to the working directory, not to the program file. The model
+is loaded when the program is checked, before any command runs. A script is
+compiled then, so a type error in it is a sort error of the program. An ASP or
+MiniZinc file is read then, and a missing file is a sort error too.</p>
+<h2 id="the-extract-command"><a class="header" href="#the-extract-command">The extract command</a></h2>
+<pre><code class="language-text">(extract TERM :cost NAME [:rung R] [:solver S] [:budget N]
+              [:file "f.json"] [:proof "dir"] [:band LO HI] [:count K])
+</code></pre>
+<p>The keywords after <code>TERM</code> may come in any order. <code>:cost</code> is required, and the
+others have defaults:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>keyword</th><th>default</th><th>meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:cost NAME</code></td><td>none</td><td>the cost model</td></tr>
+<tr><td><code>:rung R</code></td><td><code>selection</code></td><td>how much of a bracketed node’s tree the cost decides (<a href="#the-ladder-of-rungs">The ladder of rungs</a>)</td></tr>
+<tr><td><code>:solver S</code></td><td><code>internal</code></td><td>the solver (<a href="28-solvers-certificates-and-export.html#solvers">Chapter 28</a>)</td></tr>
+<tr><td><code>:budget N</code></td><td>3,000,000</td><td>the estimated clauses above which the rung steps down</td></tr>
+<tr><td><code>:file "f.json"</code></td><td>none</td><td>write the term as JSON (<a href="28-solvers-certificates-and-export.html#writing-the-term">Writing the term</a>)</td></tr>
+<tr><td><code>:proof "dir"</code></td><td>none</td><td>keep a VeriPB certificate (<a href="28-solvers-certificates-and-export.html#certificates">Certificates</a>)</td></tr>
+<tr><td><code>:band LO HI</code></td><td>none</td><td>list the terms whose cost lies in <code>[LO, HI]</code> instead of the cheapest one (<a href="28-solvers-certificates-and-export.html#listing-terms-in-a-cost-band">Listing terms in a cost band</a>)</td></tr>
+<tr><td><code>:count K</code></td><td>10</td><td>the largest number of terms <code>:band</code> lists; without <code>:band</code> it has no effect</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>LO</code>, <code>HI</code>, <code>K</code>, and <code>N</code> are non-negative integers. A model, a rung, and a solver
+must agree, and the checker rejects a disagreement before the program runs:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>combination</th><th>rejected because</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:band</code> with a <code>:solver</code> other than <code>internal</code></td><td>a band runs on the internal solver</td></tr>
+<tr><td><code>:proof</code> with a <code>:solver</code> other than <code>roundingsat</code> or <code>(opb ...)</code></td><td>a certificate needs a proof-logging pseudo-Boolean solver</td></tr>
+<tr><td>an <code>:asp</code> model with a <code>:solver</code> other than <code>(asp ...)</code></td><td>ASP criteria are solved by clingo</td></tr>
+<tr><td>a <code>:minizinc</code> model with a <code>:solver</code> other than <code>(minizinc ...)</code></td><td>MiniZinc criteria are solved through MiniZinc</td></tr>
+<tr><td>a <code>(minizinc ...)</code> solver with any other model</td><td>a MiniZinc solver reads only MiniZinc criteria</td></tr>
+<tr><td>an unknown rung</td><td>the rungs are <code>selection</code>, <code>levels</code>, <code>splits</code>, <code>binary</code>, <code>orders</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The five programs <code>manual/24-check-*.egg</code> differ only in their last line. Their
+messages are:</p>
+<pre><code class="language-text">sort error at line 11 column 1: :band runs on the internal solver
+sort error at line 11 column 1: :proof needs a proof-logging pseudo-Boolean solver, :solver (opb ...)
+sort error at line 11 column 1: cost-model dag-asp is written in ASP: it is solved by clingo, :solver (asp "clingo")
+sort error at line 11 column 1: cost-model dag-mzn is written in MiniZinc: it is solved through minizinc, :solver (minizinc "cp-sat")
+sort error at line 11 column 1: cost-model dag is not written in MiniZinc: a MiniZinc solver takes (cost-model NAME :minizinc "f.mzn")
+</code></pre>
+<h2 id="the-reported-cost"><a class="header" href="#the-reported-cost">The reported cost</a></h2>
+<p>The first line of each extraction has the form:</p>
+<pre><code class="language-text">; cost C STATUS at rung R (n solves, m cycle exclusions)
+</code></pre>
+<p><code>C</code> is the reported cost, <code>R</code> the rung the problem was built at, and <code>STATUS</code>
+<code>proved</code> or <code>bounded</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>status</th><th>meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>proved</code></td><td>the solver showed that no term of the rung costs less than <code>C</code></td></tr>
+<tr><td><code>bounded</code></td><td>a limit ran out (solves, time, or the solver’s own limit); the term is an upper bound on the optimum</td></tr>
+</tbody>
+</table>
+</div>
+<p>When no term exists, or a limit runs out before the first term, the extraction
+stops with an error instead: <code>no term: Infeasible</code> or <code>no term: Bounded</code>.</p>
+<p><code>m</code> counts the clauses added to exclude a cyclic solution
+(<a href="28-solvers-certificates-and-export.html#solvers">Chapter 28</a>). <code>n</code> counts the SAT
+calls of the internal solver’s descent, the last one included. It is 1 for a
+script solved by clingo, and 0 where Semper makes no SAT call: an OPB solver, and
+an ASP or MiniZinc model.</p>
+<p>The reported cost is not the solver’s objective. For a script or a Rust cost, the
+library evaluates the cost the script stated on the term it returns, recursive
+attributes included. A one-directional encoding lets a solution’s objective exceed
+its term’s true cost, and evaluating on the term removes the difference. For ASP
+and MiniZinc, Semper solves a second time with the term fixed: every choice atom or
+variable takes the value the term gives it. The reported cost is then the file’s
+definition evaluated on the term. The
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/11-extraction.md#soundness-of-the-reported-cost">design chapter</a>
+gives the argument.</p>
+<p>Some lines can follow the first one, before the term:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>line</th><th>printed for</th></tr>
+</thead>
+<tbody>
+<tr><td><code>; solver objective [v1, v2, ...] (most important first)</code></td><td>an ASP model: clingo’s values, one per priority (<a href="26-criteria-in-asp.html#several-objectives">Chapter 26</a>)</td></tr>
+<tr><td><code>; solver lower bound B</code></td><td>a MiniZinc model whose solver reports a bound (<a href="27-criteria-in-minizinc.html#choosing-a-solver">Chapter 27</a>)</td></tr>
+<tr><td><code>; certificate ...: veripb FILE.opb FILE.pbp</code></td><td>an extraction with <code>:proof</code> (<a href="28-solvers-certificates-and-export.html#certificates">Certificates</a>)</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>:solver greedy</code> prints <code>; cost C greedy at rung selection</code>, whatever <code>:rung</code>
+says. It solves nothing: it takes the term Chapter 8’s additive extraction
+chooses and reports its cost under the model.</p>
+<h2 id="the-ladder-of-rungs"><a class="header" href="#the-ladder-of-rungs">The ladder of rungs</a></h2>
+<p><code>:rung</code> chooses how much of a bracketed node’s structure the cost can see. A
+bracketed node is an AC node (<code>:assoc-comm</code>, <code>:assoc-comm-idem</code>) or an <code>:assoc</code>
+sequence. A fold (<code>:assoc-left</code>, <code>:assoc-right</code>) has one bracketing, its prefixes
+or its suffixes, at every rung. Each rung represents every candidate tree
+exactly once:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>rung</th><th>AC node</th><th><code>:assoc</code> sequence</th><th>the cost can depend on</th></tr>
+</thead>
+<tbody>
+<tr><td><code>selection</code></td><td>flat</td><td>flat</td><td>which nodes are chosen</td></tr>
+<tr><td><code>levels</code></td><td>chains of nested blocks</td><td>chains of nested intervals</td><td>the depth of each operand</td></tr>
+<tr><td><code>splits</code></td><td>every tree over its operands</td><td>every tree over contiguous blocks</td><td>the grouping</td></tr>
+<tr><td><code>binary</code></td><td>every binary tree</td><td>every full bracketing</td><td>the binary grouping</td></tr>
+<tr><td><code>orders</code></td><td>every ordered tree</td><td>as <code>splits</code>: the order is fixed</td><td>the grouping and the order</td></tr>
+</tbody>
+</table>
+</div>
+<p>A sequence of k operands has the little Schröder number of trees at <code>splits</code> (3,
+11, 45 for k = 3, 4, 5) and the Catalan number at <code>binary</code> (2, 5, 14). An operand
+of multiplicity k in an AC node is one leaf with all its copies at every rung. The
+reconstructed term writes it once with its count, <code>x:k</code>, the syntax Semper reads
+back. A class at two positions of a sequence is two leaves.</p>
+<p>What each rung adds:</p>
+<ul>
+<li><code>selection</code> adds nothing: a flat node is costed as written, each operand’s siblings being
+all the other operands.</li>
+<li><code>levels</code> gives each operand a depth. Operands at one depth form one group, and each group
+holds the next, so the trees are chains: <code>And(And(p, q), r)</code>, but not
+<code>And(And(a, b), And(c, d))</code>.</li>
+<li><code>splits</code> adds the labels that let a group split into several sub-groups: every tree.</li>
+<li><code>binary</code> keeps the labels of <code>splits</code> and requires exactly two children per group.</li>
+<li><code>orders</code> adds a position for each operand inside its group, for at most 8 operands.</li>
+</ul>
+<p>A cost reads the rung through four views, and each is empty where the rung decides nothing.
+Every language has them:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>view</th><th>Roto (<a href="25-cost-functions-in-roto.html#bracketed-nodes">Chapter 25</a>)</th><th>ASP (<a href="26-criteria-in-asp.html#trees">Chapter 26</a>)</th><th>MiniZinc (<a href="27-criteria-in-minizinc.html#trees">Chapter 27</a>)</th></tr>
+</thead>
+<tbody>
+<tr><td>the siblings of an operand</td><td><code>u.siblings()</code>, each with <code>present()</code></td><td><code>parent/3</code> and <code>bmem/3</code></td><td><code>parent_leaf</code>, <code>parent_blk</code>, <code>bmem</code></td></tr>
+<tr><td>the groups that may exist</td><td><code>n.inner_nodes()</code>: <code>exists()</code>, <code>members()</code>, <code>siblings()</code></td><td><code>inner/2</code>, with members <code>bmem/3</code></td><td><code>inner[b]</code>, <code>bmem[b,p]</code></td></tr>
+<tr><td>an operand’s depth</td><td><code>k.depth()</code></td><td><code>depth/3</code></td><td><code>depth[n,p]</code></td></tr>
+<tr><td>an operand’s position</td><td><code>k.position(d)</code></td><td><code>pos/4</code></td><td><code>pos_leaf</code>, <code>pos_blk</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>A cost written over siblings and groups, as the monitor memory is, runs unchanged at every
+rung; only <code>:rung</code> changes. The monitor memory of the introduction, as a script
+(<a href="25-cost-functions-in-roto.html#polarity">Chapter 25</a>), at each rung:</p>
+<p>(sort IntervalSort)
+(function Interval (i64 i64) IntervalSort)
+(sort MLTL)
+(function Var (String) MLTL)
+(function And (MLTL) MLTL :assoc-comm-idem)
+(function Global (IntervalSort MLTL) MLTL)
+(function Future (IntervalSort MLTL) MLTL)</p>
+<p>(let e (And (Global (Interval 0 9) (Var “a0”)) (Future (Interval 2 3) (Var “a1”))
+(Global (Interval 1 4) (Var “a1”)) (Future (Interval 0 7) (Var “a0”))))</p>
+<p>(cost-model memory :script “memory.roto”)
+(extract e :cost memory :rung selection)
+(extract e :cost memory :rung levels)
+(extract e :cost memory :rung splits)
+(extract e :cost memory :rung binary)
+(extract e :cost memory :rung orders)
+(extract e :cost memory :solver greedy)</p>
+<pre><code class="language-text">; cost 39 proved at rung selection (2 solves, 0 cycle exclusions)
+(And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
+; cost 37 proved at rung levels (4 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 37 proved at rung splits (3 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 40 proved at rung binary (5 solves, 0 cycle exclusions)
+(And (And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0"))) (Global 0 9 (Var "a0")))
+; cost 37 proved at rung orders (3 solves, 0 cycle exclusions)
+(And (And (Future 2 3 (Var "a1")) (Global 1 4 (Var "a1"))) (Future 0 7 (Var "a0")) (Global 0 9 (Var "a0")))
+; cost 39 greedy at rung selection
+(And (Future 0 7 (Var "a0")) (Future 2 3 (Var "a1")) (Global 0 9 (Var "a0")) (Global 1 4 (Var "a1")))
+</code></pre>
+<p>At <code>selection</code> the conjunction stays flat and costs 39. At <code>levels</code>, <code>splits</code>, and
+<code>orders</code> the two operands over <code>a1</code> are grouped, which removes two slots of queue
+memory and costs 37. <code>binary</code> allows only two operands per group, and its best
+tree costs 40. The last line scores the term additive extraction chooses
+(<code>:solver greedy</code>) under the same model.</p>
+<h3 id="choosing-a-rung"><a class="header" href="#choosing-a-rung">Choosing a rung</a></h3>
+<p>Choose the lowest rung that decides what the cost depends on:</p>
+<ul>
+<li><code>selection</code> when the cost depends only on which nodes the term uses. It builds
+no tree variables, so it is the smallest problem.</li>
+<li><code>levels</code> when the cost depends on how deep each operand sits, as a delay through
+a chain of operators does.</li>
+<li><code>splits</code> when the cost depends on which operands are grouped, as the monitor
+memory does.</li>
+<li><code>binary</code> when the target only has two-operand operators, so every group must
+have two members.</li>
+<li><code>orders</code> when the order of the operands within a group also matters.</li>
+</ul>
+<p><code>levels</code> and <code>splits</code> each offer every term of the rung before them, and more, and so
+does <code>orders</code> for nodes of at most 8 operands. <code>binary</code> offers only binary trees: it excludes the flat node and every
+group of three or more operands, which is why it costs 40 above. A higher rung
+builds a larger problem. A rung whose estimated encoding exceeds <code>:budget</code> clauses (default
+3,000,000) steps down the ladder and says so on standard error:</p>
+<pre><code class="language-text">warning: rung splits estimated above the budget; extracting at selection
+</code></pre>
+<p><code>orders</code> steps to <code>splits</code>, <code>splits</code> to <code>levels</code>, <code>levels</code> to <code>selection</code>, and
+<code>binary</code> straight to <code>selection</code>. The rung printed in the first line is the one
+used. A bracketed node with fewer than 3 operands has one tree. One with more than
+16 operands (more than 8 at <code>orders</code> for an AC node) is kept flat at every rung.
+Raise <code>:budget</code> for an instance that needs a higher rung and fits in memory.</p>
+<h2 id="number-ranges"><a class="header" href="#number-ranges">Number ranges</a></h2>
+<p>Semper’s own arithmetic on costs is exact: a value past 64 bits is held exactly,
+never wrapped. Two ranges decide whether a cost is computed correctly.</p>
+<ul>
+<li>The cost width, <code>--cost-bits 32</code>, <code>64</code>, or <code>big</code> (the default, no cap). Under a
+cap, every integer of a script or Rust cost and the reported cost must lie in
+that signed width, and one outside it is an error naming the operation.</li>
+<li>The solver’s range. Semper checks every number it writes for a solver against
+that solver’s range and refuses one outside it with an error naming the solver.</li>
+</ul>
+<p>ASP and MiniZinc criteria compute inside the solver, and Semper does not check
+that arithmetic. <strong>If you write cost functions that can overflow the solver’s
+internal number representation, you are on your own.</strong>
+<a href="28-solvers-certificates-and-export.html#number-ranges">Number ranges</a> in Chapter 28
+lists each solver’s range, as measured, and the recommended choices.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="23-limits.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="25-cost-functions-in-roto.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="23-limits.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="25-cost-functions-in-roto.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

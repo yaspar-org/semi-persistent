@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -231,6 +231,7 @@ explains term construction in detail.</p>
 <tr><td><code>(rewrite lhs rhs tags...)</code></td><td>Match <code>lhs</code>, build <code>rhs</code>, and merge it with the matched root class.</td></tr>
 <tr><td><code>(birewrite lhs rhs tags...)</code></td><td>Install one rewrite in each direction. Both sides use pattern syntax.</td></tr>
 <tr><td><code>(rule (pattern...) (action...) tags...)</code></td><td>Run a conjunctive query and execute its actions for every match.</td></tr>
+<tr><td><code>(rewrite (op ... (..g P) ..rest) rhs tags...)</code></td><td>A sequence rewrite: filters <code>(..g P)</code> and bare sequences <code>..name</code> over the children of an <code>:assoc</code>, <code>:assoc-comm</code>, or <code>:assoc-comm-idem</code> root (<a href="05-rules-and-patterns.html#sequence-patterns">Chapter 5</a>). It accepts <code>:let</code>, <code>:when</code>, <code>:flatten</code>, and <code>:ruleset</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -241,14 +242,17 @@ explains term construction in detail.</p>
 </thead>
 <tbody>
 <tr><td><code>:when (pattern...)</code></td><td><code>rewrite</code>, <code>birewrite</code></td><td>Add conjuncts to the query. A primitive predicate here computes over bound literal values.</td></tr>
-<tr><td><code>:subsume</code></td><td><code>rewrite</code></td><td>After applying the rewrite, hide the matched e-node from future pattern indexes.</td></tr>
-<tr><td><code>:ruleset r</code></td><td>all three forms</td><td>Put the installed rule in declared ruleset <code>r</code> instead of the default ruleset.</td></tr>
+<tr><td><code>:when (expr...)</code></td><td>sequence <code>rewrite</code></td><td>Require each right-hand-side expression, computed over the matched sequences, to be <code>true</code>.</td></tr>
+<tr><td><code>:subsume</code></td><td>ordinary <code>rewrite</code></td><td>After applying the rewrite, hide the matched e-node from future pattern indexes and from extraction under a cost model.</td></tr>
+<tr><td><code>:let ((x e)...)</code></td><td>sequence <code>rewrite</code></td><td>Name values computed from the matched sequences, for the right-hand side and <code>:when</code>.</td></tr>
+<tr><td><code>:flatten</code></td><td>all four forms</td><td>Match every associative, AC, or ACI operator of the pattern on the flattened form of a node, where a child class holding a node of the same operator contributes that node’s children. Nothing stored changes. At most once per rule. On a rule without such an operator it has no effect and raises a warning; a <code>:comm</code> operator does not count.</td></tr>
+<tr><td><code>:ruleset r</code></td><td>all four forms</td><td>Put the installed rule in declared ruleset <code>r</code> instead of the default ruleset.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Modifiers may appear in any order. <code>birewrite</code> rejects <code>:subsume</code>; a general
-<code>rule</code> puts guards in its query list and accepts only <code>:ruleset</code> as a trailing
-modifier.</p>
+<p>Modifiers may appear in any order. <code>birewrite</code> rejects <code>:subsume</code>, and so does a
+sequence rewrite. A general <code>rule</code> puts guards in its query list and accepts
+only <code>:flatten</code> and <code>:ruleset</code> as trailing modifiers.</p>
 <h3 id="general-rule-actions"><a class="header" href="#general-rule-actions">General-rule actions</a></h3>
 <div class="table-wrapper">
 <table>
@@ -258,7 +262,7 @@ modifier.</p>
 <tbody>
 <tr><td><code>(union lhs rhs)</code></td><td>Build both RHS terms and merge their classes.</td></tr>
 <tr><td><code>(f rhs...)</code></td><td>Build and insert an application. RHS splices and comprehensions are accepted in its variadic children.</td></tr>
-<tr><td><code>(set (f rhs...) value)</code></td><td>Reserved syntax. It parses, but execution is not implemented.</td></tr>
+<tr><td><code>(set (f rhs...) value)</code></td><td>Reserved syntax. It parses, and the sort checker rejects it as not implemented.</td></tr>
 </tbody>
 </table>
 </div>
@@ -295,6 +299,13 @@ defines scope lifetime and <code>:shrink</code>.</p>
 <tr><td><code>(check (= a b))</code></td><td>Rebuild and require <code>a</code> and <code>b</code> to belong to the same e-class.</td></tr>
 <tr><td><code>(check (!= a b))</code></td><td>Rebuild and require the terms to belong to different e-classes under the selected completion mode.</td></tr>
 <tr><td><code>(extract term)</code></td><td>Rebuild and print a lowest-cost extractable representative.</td></tr>
+<tr><td><code>(cost-model name :script "file.roto")</code></td><td>Compile a cost script when the program is checked (<a href="24-extraction-under-cost-models.html">Part V</a>).</td></tr>
+<tr><td><code>(cost-model name :rust "id")</code></td><td>Name a cost registered in Rust (<a href="24-extraction-under-cost-models.html">Part V</a>).</td></tr>
+<tr><td><code>(cost-model name :asp "file.lp")</code></td><td>Name a cost written as answer-set rules over the e-graph’s facts, solved by clingo (<a href="24-extraction-under-cost-models.html">Part V</a>).</td></tr>
+<tr><td><code>(cost-model name :minizinc "file.mzn")</code></td><td>Name a cost written in MiniZinc, solved through <code>minizinc</code> (<a href="24-extraction-under-cost-models.html">Part V</a>).</td></tr>
+<tr><td><code>(extract term :cost name [:rung r] [:solver s] [:budget n] [:file "f"] [:proof "d"])</code></td><td>Extract under a cost model, print the cost, its status, and the term (<a href="24-extraction-under-cost-models.html">Part V</a>). <code>r</code> is <code>selection</code> (the default), <code>levels</code>, <code>splits</code>, <code>binary</code>, or <code>orders</code>. <code>s</code> is <code>internal</code> (the default), <code>dpw</code>, <code>roundingsat</code>, <code>greedy</code>, <code>(opb "prog" ...)</code>, <code>(asp "clingo" ...)</code>, or <code>(minizinc "solver" ...)</code>. <code>:proof</code> needs <code>roundingsat</code> or an <code>opb</code> solver.</td></tr>
+<tr><td><code>(extract term :cost name :band lo hi [:count n] ...)</code></td><td>List up to <code>n</code> (default 10) terms whose cost lies in <code>[lo, hi]</code>, on the internal solver (<a href="24-extraction-under-cost-models.html">Part V</a>).</td></tr>
+<tr><td><code>(dump-egraph term :file "f")</code></td><td>Write the whole e-graph as JSON in egglog’s format, <code>term</code>’s class as the root. Classes and nodes are named and ordered by content colour, so equal e-graphs write equal bytes (<a href="24-extraction-under-cost-models.html">Part V</a>).</td></tr>
 <tr><td><code>(print-size)</code></td><td>Print nonzero per-operator e-node counts and the total.</td></tr>
 <tr><td><code>(print-size f)</code></td><td>Print the e-node count for operator <code>f</code>.</td></tr>
 <tr><td><code>(print-stats)</code></td><td>Print current graph counts and the most recent run’s counters.</td></tr>

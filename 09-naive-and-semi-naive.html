@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -212,10 +212,12 @@ restricts atom <code>i</code> to <code>delta</code>, and leaves later atoms on <
 match belongs to the variant containing its first delta atom, so the variants
 do not duplicate one another.</p>
 <p>Equality constraints, primitive predicates, and global comparisons are filters,
-not relation-scanning atoms. Some equality and global-reference shapes can
-become enabled by a merge that no scanning atom represents. Semper evaluates
-those rules against the full index in every iteration rather than applying an
-unsafe delta restriction.</p>
+not relation-scanning atoms. Some rule shapes can become enabled by a merge
+that no scanning atom represents. Semper evaluates those rules against the
+full index in every iteration rather than applying an unsafe delta
+restriction. These shapes are a rule with no scanning atom, a rule tagged
+<code>:flatten</code>, an equality constraint on an atom’s node variable, and a global
+in a child or element position.</p>
 <h2 id="delta-boundaries"><a class="header" href="#delta-boundaries">Delta boundaries</a></h2>
 <p>Rule actions performed during an iteration are outside its delta and become
 visible in the next iteration. The four indexed relations, by operator, class
@@ -227,22 +229,40 @@ a child merge, and a class merge can expose new membership without changing the
 surviving representative. Recanonicalized parents and absorbed class members
 are therefore recorded in the touched log. Restricting only the operator scan
 would miss or duplicate matches reached through child and containment indexes.</p>
+<h3 id="sequence-rules-and-flatten-rules"><a class="header" href="#sequence-rules-and-flatten-rules">Sequence rules and <code>:flatten</code> rules</a></h3>
+<p>A sequence rule (<a href="05-rules-and-patterns.html#sequence-patterns">Chapter 5</a>) is one
+query over a whole node, so it has no per-atom variants. Under
+<code>--use-semi-naive</code> it is evaluated against the round’s delta instead. A root
+node’s matches can change only if the node is in the delta or one of its child
+classes is affected: the root class of a delta row of one of the rule’s item
+patterns, or the class of a node subsumed this round. For each rule and round,
+Semper estimates from index sizes, before doing the work, whether testing that
+condition pays. When it does, the rule assembles only the nodes that pass, either
+filtering naive’s candidates or listing the nodes directly when their parents
+are few; otherwise it is matched naively. On the 1,172 MLTL specifications Johannsen and Rozier publish with their FMCAD 2026 paper (<a href="24-extraction-under-cost-models.html#when-the-cost-depends-on-a-grouping-the-e-graph-does-not-store">Chapter 24</a>) the
+estimate chooses naive in all 11,555 rule rounds, since a test costs more than the
+assembly it can save on graphs that small, and naive and semi-naive saturation
+build identical e-graphs.</p>
+<p>An ordinary rule tagged <code>:flatten</code> is matched naively in every iteration: a view
+changes when a class below the node gains a member of the same operator, and no
+variant’s delta holds the root then.</p>
 <p>These rules implement the delta decomposition described in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/18-semi-naive-evaluation.md">design chapter 18</a>.
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/09-saturation.md#92-semi-naive-evaluation">design §9.2</a>.
 The index relations are specified in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/06-index.md">design chapter 6</a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/08-indexes-and-leapfrog.md#81-index-construction">design §8.1</a>.</p>
 <h2 id="equivalent-outcomes"><a class="header" href="#equivalent-outcomes">Equivalent outcomes</a></h2>
 <p>The user-facing contract is equivalent derivable equalities and check outcomes,
 not identical execution traces. Naive evaluation emits old matches again.
 Semi-naive evaluation emits delta-involving matches and uses full matching for
 the exceptional rule shapes above. The strategies can consequently report
 different emitted matches, node counts, iteration counts, and match-step counts.</p>
-<p>The Chapter 9 fixture changes only the harness mode applied to the <code>dbl</code>
-program introduced in Chapter 8:</p>
+<p>The Chapter 9 fixture <code>09-eval-strategies.egg</code> runs a variant of the <code>dbl</code>
+program from Chapter 8, with <code>z</code> and <code>s</code> declared as constructors and an input
+of three. It selects both strategies with the harness directive:</p>
 <pre><code class="language-text">;; EVAL: both
 </code></pre>
-<p>The harness executes the multi-round program once with each strategy. Its
-equality and disequality checks must pass in both executions.</p>
+<p>The harness executes the multi-round program under each strategy. Its
+equality and disequality checks must pass in every execution.</p>
 <p>The repository also differentially compares the resulting equality partition
 over shared input nodes and exercises fresh nodes, recanonicalization, class
 growth, variadic atoms, subsumption, globals, and equality constraints.

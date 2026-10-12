@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -190,6 +190,12 @@ cargo build --release
 <p>The workspace requires Rust 1.98.1, pinned in <code>rust-toolchain.toml</code>. <code>rustup</code>
 selects this compiler when Cargo runs in the checkout. A normal build does not
 require Verus; the proof annotations compile away under <code>rustc</code>.</p>
+<p>The build also requires a C++ compiler: the extractor’s internal SAT solver is
+CaDiCaL, which Cargo compiles from source (crate <code>cadical-sys</code>). Xcode’s command-line
+tools provide one on macOS (<code>xcode-select --install</code>), and <code>g++</code> or <code>clang++</code> does on
+Linux (Debian and Ubuntu: <code>apt install build-essential</code>). The external solvers that
+cost models can use (RoundingSat, clingo, MiniZinc) are optional and found on the
+<code>PATH</code> at run time; <a href="24-extraction-under-cost-models.html">Part V</a> lists them.</p>
 <p>Cargo writes the command-line program to <code>target/release/semi-persistent</code>. Run
 its help command to confirm the build:</p>
 <pre><code class="language-bash">./target/release/semi-persistent --help
@@ -254,6 +260,7 @@ names appear in stack traces. This table maps those names to their source paths.
 <tr><td><code>traversals-compile-tests</code></td><td><code>traversals/compile-tests/</code></td><td>Downstream compile tests for the generated traversal API.</td></tr>
 <tr><td><code>semi-persistent-abstract-domains</code></td><td><code>abstract-domains/</code></td><td>Verus-verified bitvector abstract domains and their executable mirrors.</td></tr>
 <tr><td><code>semi-persistent-au-verus</code></td><td><code>au-verus/</code></td><td>Machine-checked lemmas for the positional anti-unification model.</td></tr>
+<tr><td><code>semi-persistent-satcore</code></td><td><code>satcore/</code></td><td>Companion SAT/SMT layer that uses the e-graph as its equality theory.</td></tr>
 </tbody>
 </table>
 </div>
@@ -268,10 +275,11 @@ the command completed in 6 minutes 2 seconds.</p>
 <code>egraph/tests/egg/</code>. The harness in <code>egraph/tests/egg_tests.rs</code> sends each
 registered <code>.egg</code> program through the parser, sort checker, and interpreter.
 Unless overridden by a fixture directive, it runs the program with both naive
-and semi-naive evaluation.</p>
-<p>The same harness defines <code>book_examples</code>. It scans <code>doc/book/examples/</code> for
-every file with the <code>.egg</code> extension and sends each one through the same
-checker. Chapters include those files directly, so every book example is a
+and semi-naive evaluation, each under the static and the runtime atom-scheduling
+modes.</p>
+<p>The same harness defines <code>book_examples</code>. It scans the top level of
+<code>doc/book/examples/</code> for every file with the <code>.egg</code> extension and sends each one
+through the same checker. Chapters include those files directly, so every book example is a
 test. Adding an example to that directory does not require separate Rust test
 registration.</p>
 <p>The ignored count includes manual diagnostics and measurements rather than one

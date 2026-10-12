@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -211,7 +211,10 @@ resulting difference.</p>
 <p>Chapter 5’s scalar variables bind complete stored children and their
 multiplicities. They do not range over implicit sub-sums or split one stored
 multiplicity among several scalar variables. The implemented relation is a
-specialization of classical AC matching, not a complete implementation of it.</p>
+specialization of classical AC matching, not a complete implementation of it.
+<a href="05-rules-and-patterns.html#matching-completeness-over-a-c-ac-and-aci">Chapter 5</a>
+lists what matching does and does not reach over A, C, AC, and ACI nodes,
+including <code>:flatten</code> views and the subsets a sequence filter gives up.</p>
 <h2 id="au-optimality-has-three-qualifications"><a class="header" href="#au-optimality-has-three-qualifications">AU optimality has three qualifications</a></h2>
 <p>As Chapters 14 and 16 show, <code>:completion exact</code> certifies the minimum under the
 <code>(size, variant_mass)</code> objective, over the equalities in the current e-graph
@@ -219,7 +222,8 @@ snapshot, and within the derivations admitted by the selected cycle policy.
 Changing any of those three inputs can change the result.</p>
 <h2 id="the-production-solver-is-not-machine-verified"><a class="header" href="#the-production-solver-is-not-machine-verified">The production solver is not machine-verified</a></h2>
 <p>The <code>au-verus</code> crate proves objective and recurrence lemmas, not end-to-end
-refinement of the Rust solver. Pair-cycle erasure, AC and ACI transport, and
+refinement of the Rust solver. Its lemmas do not prove that the recurrence
+value equals the optimum. Pair-cycle erasure, AC and ACI transport, and
 global optimality retain prose arguments plus finite oracle and regression
 evidence. Chapter 16 and the
 <a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/future/au-correctness-and-validation.md">AU correctness plan</a>
@@ -244,6 +248,13 @@ decisions.</p>
 clustering command. That grid is practical for the three-to-five-sample
 workflow in this book. Larger collections require host code to group e-class
 identifiers.</p>
+<h2 id="a-solvers-arithmetic-is-its-own"><a class="header" href="#a-solvers-arithmetic-is-its-own">A solver’s arithmetic is its own</a></h2>
+<p>Semper checks every number it hands a solver against that solver’s range, but ASP and
+MiniZinc criteria compute inside the solver, and clasp, clingo, Chuffed, and COIN-BC
+were measured giving wrong optima, with no error, on values past their ranges. A cost
+function that overflows the solver’s number representation is the author’s
+responsibility; <a href="24-extraction-under-cost-models.html#number-ranges">Number ranges</a> lists
+each solver’s range and the solvers to use for large costs.</p>
 <h2 id="the-application-evidence-is-limited"><a class="header" href="#the-application-evidence-is-limited">The application evidence is limited</a></h2>
 <p>The examples in Part IV are constructed cases. The repository’s formalizer
 pilot uses one system to produce both readings and explicitly reports an
@@ -262,7 +273,7 @@ alternative should be enforced.</p>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="A-full-grammar.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="24-extraction-under-cost-models.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -276,7 +287,7 @@ alternative should be enforced.</p>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="A-full-grammar.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="24-extraction-under-cost-models.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

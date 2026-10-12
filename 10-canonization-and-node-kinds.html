@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1788232c.js";
+            window.path_to_searchindex_js = "searchindex-3462bf7d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-87de0060.js"></script>
+        <script src="toc-d6b8dbf7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -242,21 +242,26 @@ children by the same representatives, sorts them to the same pair, and finds
 the existing <code>eq</code> node.</p>
 <p>Ground-term insertion and rewrite right-hand-side evaluation use this same
 pipeline. The full procedure is specified in
-<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/04-canonization.md"><code>04-canonization.md</code></a>.</p>
+<a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/05-algebraic-operators.md#52-canonization-algorithms">design §5.2</a>.</p>
 <h2 id="recanonization-during-rebuild"><a class="header" href="#recanonization-during-rebuild">Recanonization during rebuild</a></h2>
 <p>A class merge can make a stored child id noncanonical or make two direct
 children equal. Rebuild revisits affected parents, replaces their direct
 children with current representatives, and reapplies the representation’s
 sorting, coalescing, deduplication, unit removal, and multiplicity clamp. A
 hash-cons collision then triggers the generic congruence merge described in
-Chapter 6.</p>
+Chapter 6. Recanonization does not cancel inverse pairs. A separate repair
+round in every rebuild cancels the pairs that later merges form. A coalesced
+multiplicity past the configured width leaves the node unchanged, and the
+command or run reports the overflow as an error.</p>
 <p>Multisets retain the original multiplicities until the configured clamp runs.
 Nilpotent operators therefore remain <code>MSet</code> nodes even at order two. Sets store
 no explicit counts because every represented count is one.</p>
 <p>Sequence nodes have a narrower rebuild boundary. Rebuild recanonizes the ids
 already present in a sequence span, but it cannot enlarge that span when a
 child class later acquires a same-operator sequence. Chapter 11 describes the
-optional associative inter-reduction work that can add further equalities.</p>
+optional associative inter-reduction work that can add further equalities, and a
+rule tagged <code>:flatten</code> matches through such nesting without changing what is
+stored (<a href="05-rules-and-patterns.html#matching-completeness-over-a-c-ac-and-aci">Chapter 5</a>).</p>
 <h2 id="the-boundary"><a class="header" href="#the-boundary">The boundary</a></h2>
 <p>Canonization normalizes one node under its selected representation. It does not
 derive consequences that require equations between separate stored nodes.
