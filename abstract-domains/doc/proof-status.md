@@ -66,3 +66,15 @@ and Unum conversions/arithmetic helpers.
 Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
 L4 soundness work.
+
+## Wrapped widening and shared-facts refinement
+
+The moving-bound widening proves containment and the termination condition:
+the result is unchanged, Top, or has at least twice the previous cardinality.
+Public size bounds and `lemma_size_monotone` support use of that measure by
+callers. Endpoint advance/retreat lemmas and the constructor's exact size
+contract connect native wrapping operations to the cardinality proof.
+`Refine` proves preservation of the intersection with `Facts<W>` and no growth
+outside the input. Split intersections fall back to the original arc when their
+single-arc cover would grow outside it. `wrapped_refine` checks fact export,
+refinement stability, and product reduction against concrete u8 membership.
