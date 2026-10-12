@@ -133,6 +133,9 @@ cargo verus verify
 # Verify only the Unum module
 cargo verus verify -- --verify-only-module unum
 
+# Verify IntervalZ
+cargo verus focus -p semi-persistent-abstract-domains -- --verify-only-module interval_z --rlimit 50
+
 # Per-module timing breakdown
 cargo verus verify -- --time-expanded
 
@@ -148,7 +151,7 @@ cargo run --features bin
 - `cargo verus verify` reports 0 errors (checked in CI)
 - no project-local `admit()`/`assume()` calls (CI source gate)
 - pinned `vstd` admitted specifications remain in the trust boundary
-- `IBig` (`num-bigint` wrapper): 7 `external_body` functions and 1 axiom, listed in the
+- `IBig` (`num-bigint` wrapper): 11 `external_body` functions and 1 axiom, listed in the
   [trust ledger](doc/domain-traits.md#7-trust); machine-word domains do not use it
 - 32 Rust mirror tests and 3 exhaustive reference-domain tests, all passing
 - 4 enabled bit-widths: u8, u16, u32, u64
@@ -163,6 +166,4 @@ cargo run --features bin
 - [Abstract domains design](doc/design.md): overall architecture and proof methodology.
 - [Interval soundness](doc/interval-soundness.md): the contracts implemented
   by the current unsigned interval component.
-- [Interval extensions](doc/future/interval-extensions.md): interval division
-  with alarms, abstract comparisons and narrowing, wrapped intervals, and
-  strided intervals.
+- [IntervalZ](doc/interval-z.md): unbounded integer intervals over `IBig`.
