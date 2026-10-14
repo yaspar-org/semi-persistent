@@ -178,6 +178,34 @@ lift. It implements:
 `tests/domain_traits.rs` checks both domains at runtime against brute-force
 concretization.
 
+**`Congruence<W>`** (`congruence.rs`, semantic core #106, helpers #112,
+integration #114) has private canonical fields. A progression must have at
+least two representable members; otherwise it normalizes to a singleton.
+It implements:
+
+- `Domain<C = W>` and `Canonical`, reusing proved nonemptiness and canonicality;
+- exact `leq` (also available as inherent `refines`);
+- exact `meet -> BotOr<Self>`, using shared CRT `Class`/`Singleton`/`Empty`;
+- least-upper-bound `join`, with a stronger semantic contract than the shared
+  trait requires: every common upper bound also contains the result;
+- `widen` as join: the fixed-width carrier has finitely many canonical classes,
+  so ascending chains stabilize. The shared trait requires only soundness;
+- `Arith<Unsigned<W>>`: sound add/sub/neg with explicit constant exactness
+  contracts on both inherent and trait methods. Constant operands return
+  modulus zero and exactly the corresponding `Unsigned<W>` residue.
+  `max_member` proves the greatest concrete member. Addition and direct
+  subtraction preserve `gcd(s1, s2)` when all results occupy one wrapping
+  segment, using `checked_add`/`checked_sub` on extreme members. Mixed wrapping
+  conservatively uses `gcd(gcd(s1, s2), 2^N)`; full wrap splitting is deferred.
+  Negation is subtraction from zero, retaining the stride when zero is absent.
+  Runtime arithmetic uses `W: Word`, including u128, without conversion bridges.
+
+All result construction uses canonical constructors. No `Word` assumptions
+or shared trait requirements were strengthened. Signed arithmetic instances,
+multiplication, and division remain deferred. `tests/congruence.rs` exercises
+the real generic implementation, including explicit trait calls, all canonical
+u8 classes for unary/boundary checks, and concrete-set lattice/transfer oracles.
+
 ## 7. Trust
 
 Machine domains add nothing to the trust boundary. `IBig` (`ibig.rs`) is a
