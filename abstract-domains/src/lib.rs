@@ -23,9 +23,13 @@
 //!   (Bool4). See doc/reduced-product.md.
 
 pub mod anum;
+pub mod arithmetic;
 pub mod bool4;
 pub mod bools;
 pub mod chopped;
+pub mod congruence;
+pub mod congruence_laws;
+pub mod congruence_refine;
 pub mod div;
 pub mod domains;
 pub mod exec_tnum;
