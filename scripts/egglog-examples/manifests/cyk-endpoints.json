@@ -1,0 +1,125 @@
+{
+  "group": "cyk-endpoints",
+  "upstream_revision": "593df10e1465904e8b7a3dc85d8ef3976842b509",
+  "examples": [
+    {
+      "id": "cykjson",
+      "source": {
+        "path": "tests/cykjson.egg",
+        "sha256": "6079518ee2d4d505394f665c30d777c940da4508e631ed7d3deb24fb4530f17a",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/cykjson.egg",
+        "vendored_path": "fixtures/cyk-endpoints/cykjson/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Inline the archived grammar CSV rows and all 801 source token rows as native facts/sets or encoded presence witnesses; runtime CSV parsing is removed from the runnable source case.",
+        "Retain all three parsing rules. In the encoded terminal rule use [pos,pos+1); in the two composition rules join [start,mid) and [mid,end). Map (span,start) observations to (start,start+span).",
+        "Keep every relation-consumer presence witness and the audited free-tree Pair/Different/Conflict validation. The native B/getString :no-merge tables become immutable facts plus delayed conflict checks.",
+        "Preserve native run 10000 and encoded compute 10000 then validate 10000 schedules; retain the ours-only two print-stats commands and existing dialect/negative-check differences.",
+        "Observe source B(801,1,\"VAL\") definedness with HasB(1,802,\"VAL\"), alongside P root presence and absence of Conflict. The unused native root binding is renamed from $test1 to $root.",
+        "Keep the exact upstream source and its three active CSV dependencies under cykjson/tests; selected executable cases are self-contained. Inputs and the small chart oracle are recorded in cykjson/observations.json.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "A finite source example with 801 tokens from the original mixed/nested JSON, not a 400-element flat-array benchmark or an additional independent CYK family.",
+        "source-801 has only root presence, root definedness, and conflict observations; no independent full-chart oracle or parse-tree output comparison is supplied for it.",
+        "validation-4 checks all 28 saved positive chart facts and 40 sampled negatives for nine tokens; it does not exhaust negative facts or compare full engine states or parse-tree outputs.",
+        "Requires finite immutable positive positions/spans with no i64 overflow and free immutable T/NT trees; arbitrary tree unions, evolving keys, runtime CSV APIs, and general no-merge tables are outside scope.",
+        "Conflict rejection is delayed in encoded programs. ambiguous-three is runtime_failure in native egglog and check_failure at the explicit encoded Conflict check; this refines the audit broad runtime_failure label without changing the encoded program body.",
+        "No arbitrary-input equivalence, intermediate-round equivalence, resource bound, or performance improvement is claimed."
+      ],
+      "cases": [
+        {
+          "id": "source-801",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/cyk-endpoints/cykjson/source-801/original.egglog.egg",
+              "sha256": "102deccf4055e1818257dbee97d82afde63d4fba2aa1a4b7887daee1303f9a7f",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/cyk-endpoints/cykjson/source-801/encoded.egglog.egg",
+              "sha256": "f64e85d20026400990fc20ee5026f6e28a0ad24cfd7e5044ecfc15b945fce7c0",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/cyk-endpoints/cykjson/source-801/encoded.ours.egg",
+              "sha256": "8799bb7edff5a0b03f03551c7d068f13f9e14b0988b416a13b8c6f056c98efed",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "validation-4",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/cyk-endpoints/cykjson/validation-4/original.egglog.egg",
+              "sha256": "8f7b497201aa38249c1cc53f36bca78321b6ab01d29c97319249cc00dbce84a3",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/cyk-endpoints/cykjson/validation-4/encoded.egglog.egg",
+              "sha256": "77da9f853f97752c99934c2d81a8040f3e14c3d633baaac2833929f59819fb76",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/cyk-endpoints/cykjson/validation-4/encoded.ours.egg",
+              "sha256": "ce43f0bec0771f60510ec60a78ee5f6b26a78f3e2a0fbd941e57b3e2e09a6a40",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "ambiguous-three",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/cyk-endpoints/cykjson/ambiguous-three/original.egglog.egg",
+              "sha256": "9a2e797cb7900376ec9065612f87001ee28a95fe40003337c68c92301cb60eca",
+              "expected": "runtime_failure",
+              "stderr_contains": [
+                "Illegal merge attempted for function B"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/cyk-endpoints/cykjson/ambiguous-three/encoded.egglog.egg",
+              "sha256": "b350fd974a205def0681e8042da7e6b5a801255a22c155a613c1eba0a42e8a48",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Command should have failed."
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/cyk-endpoints/cykjson/ambiguous-three/encoded.ours.egg",
+              "sha256": "a65769b4e99c1af5adb86810b5c7db0d2033371ae24ade589cf25de5327a3889",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed: terms are equal"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

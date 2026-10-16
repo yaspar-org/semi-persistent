@@ -1,0 +1,16 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(datatype Nat
+    (Num i64)
+    (OtherNum i64))
+
+
+
+(rule ((= y 3))
+      ((union (OtherNum y) (Num y))))
+
+(Num 3)
+
+
+(run 100)
+
+(check (= (OtherNum 3) (Num 3)))

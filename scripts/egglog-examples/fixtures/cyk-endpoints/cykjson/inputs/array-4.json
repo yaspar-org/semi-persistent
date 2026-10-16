@@ -1,0 +1,47 @@
+{
+  "tokens": [
+    [
+      1,
+      "["
+    ],
+    [
+      2,
+      "num"
+    ],
+    [
+      3,
+      ","
+    ],
+    [
+      4,
+      "num"
+    ],
+    [
+      5,
+      ","
+    ],
+    [
+      6,
+      "num"
+    ],
+    [
+      7,
+      ","
+    ],
+    [
+      8,
+      "num"
+    ],
+    [
+      9,
+      "]"
+    ]
+  ],
+  "token_count": 9,
+  "position_extent": 9,
+  "grammar": {
+    "Prod": "sources/cykjson_Prod.csv",
+    "End": "sources/cykjson_End.csv",
+    "added_productions": []
+  }
+}

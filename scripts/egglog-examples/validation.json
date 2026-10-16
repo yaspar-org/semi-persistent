@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-16",
+  "scope": "Finite-example correctness revalidation; no performance claim.",
+  "ours_source_revision": "c4b7cfb4db8a9b9b2076ebffa3ff96e1e559852f",
+  "egglog_source_revision": "593df10e1465904e8b7a3dc85d8ef3976842b509",
+  "platform": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.14.2"
+  },
+  "build": "cargo build --locked --release -p semi-persistent-egraph --bin semi-persistent",
+  "binaries": {
+    "ours": {
+      "name": "semi-persistent",
+      "sha256": "f06ae841eb60fdbd2542c475ea7c9f3ce7a2fd85798ee1eecb3507144d670177"
+    },
+    "egglog": {
+      "name": "egglog",
+      "sha256": "d2443b27741845aea0d38ae42c9a4c2303feb62b858695f072e747c4bfb085c9"
+    }
+  },
+  "runner_sha256": "e800588aa63f9b150d63334e21333e8dea0e43a71b39586dcf1270afa1212d35",
+  "manifests": {
+    "collections.json": "dee322d33bdbc2cabb1fe0fe8a6e61f095de77b98325efbd89e7aeb78c9ad869",
+    "constructors.json": "d998e70d475ce1a64265a9f17d75df292abca377e9aa1bcda36f7d7db310df24",
+    "core.json": "2035eee4c6602eb1e9a2e80d11ecd46d0d1670799e793879b755f7650ed4cc10",
+    "cyk-endpoints.json": "3c44a1f12168cdaa102f1eb86ee95ee471309b2e84eafc6809723e4eaa0d77d5",
+    "primitives.json": "f5e58dd2a93746baf51b2563360c4fde2836756eaf7e3fc040f56b77f2ea976b",
+    "relations.json": "3207178cf608abd556de98656cf1184ea3cab4a7358c4c30e4ae348c3bd6a797"
+  },
+  "command": "python3 -B scripts/egglog-examples/run.py --ours <fresh-release-binary> --egglog <pinned-egglog-binary> --output <new-results-directory>",
+  "timeout_seconds": 30.0,
+  "output_limit_mib": 8.0,
+  "examples": 33,
+  "summary": {
+    "processes": 554,
+    "matched_expectations": 554,
+    "expected_outcomes": {
+      "pass": 378,
+      "check_failure": 164,
+      "runtime_failure": 12
+    }
+  },
+  "source_processes": 198,
+  "configurations": {
+    "egglog/encoded/naive": 93,
+    "egglog/encoded/semi-naive": 93,
+    "egglog/original/naive": 91,
+    "egglog/original/semi-naive": 91,
+    "ours/encoded/naive": 93,
+    "ours/encoded/semi-naive": 93
+  },
+  "groups": {
+    "collections": 72,
+    "constructors": 72,
+    "core": 120,
+    "cyk-endpoints": 18,
+    "primitives": 180,
+    "relations": 92
+  },
+  "timeouts": 0,
+  "note": "This compact record omits machine-local logs. Rerun the command to produce all 554 per-process records and stdout/stderr files. Source manifests and binaries are identified above.",
+  "complete": true,
+  "planned_processes": 554,
+  "runner_tests_passed": 9
+}

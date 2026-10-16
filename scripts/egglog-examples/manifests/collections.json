@@ -1,0 +1,499 @@
+{
+  "group": "collections",
+  "upstream_revision": "593df10e1465904e8b7a3dc85d8ef3976842b509",
+  "examples": [
+    {
+      "id": "map",
+      "source": {
+        "path": "tests/map.egg",
+        "sha256": "b5b556e25a8460c577922a166de1ae9b41df7b46e582cbe03b8baf8db5e7c25c",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/map.egg",
+        "vendored_path": "fixtures/collections/map/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Ordered association lists with runtime insert/overwrite/get rewriting; boxed string lookup results; decoded map extraction.",
+        "Primitive operations become helper computations. Extraction representation/cost changes; decoded contents are checked.",
+        "Retained source observations: Both map bindings, original lookup check and map extraction.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Complete finite immutable-map source test, with extra updates; not a general native Map API.",
+        "Other native map operations and abstract keys are outside the source.",
+        "Only these finite source/validation/control cases are claimed; no arbitrary-input semantic equivalence.",
+        "Extraction oracles preserve decoded immutable-map contents; native map-of and encoded MCons forms differ, and ours prints these simple strings without quotes."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/map/source/original.egglog.egg",
+              "sha256": "f04dd1863e3c3d4c3eae1ffe562006943cc1518f6f05aca6301bbc341e7b85da",
+              "expected": "pass",
+              "stdout_contains": [
+                "(map-of 1 \"one\" 2 \"two\")"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/map/source/encoded.egglog.egg",
+              "sha256": "b5ae870a1adf689f0f9a661c239aed97230c64533774c99d42290d5aa4b3ff1c",
+              "expected": "pass",
+              "stdout_contains": [
+                "(MCons 1 \"one\" (MCons 2 \"two\" (MNil)))"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/map/source/encoded.ours.egg",
+              "sha256": "8dbdf338b35eb0429e35a17337fa17adfac69e87e9c56f92aaeff75aef9ad682",
+              "expected": "pass",
+              "stdout_contains": [
+                "(MCons 1 one (MCons 2 two (MNil)))"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "update-3",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/map/update-3/original.egglog.egg",
+              "sha256": "45fed600eea0c32b1df511bf39e1fd95584d244190191633535b5693dae50071",
+              "expected": "pass",
+              "stdout_contains": [
+                "(map-of 1 \"one\" 2 \"two\")",
+                "(map-of 1 \"changed\" 2 \"two\" 3 \"extra\")"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/map/update-3/encoded.egglog.egg",
+              "sha256": "8c07d13bf9d5e5608cee53e798071159aa7bc73f9168bbaae151e8c1321581b8",
+              "expected": "pass",
+              "stdout_contains": [
+                "(MCons 1 \"one\" (MCons 2 \"two\" (MNil)))",
+                "(MCons 1 \"changed\" (MCons 2 \"two\" (MCons 3 \"extra\" (MNil))))"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/map/update-3/encoded.ours.egg",
+              "sha256": "32e8fcdad8a86ccd1023ac827bf2481d5cc2d24b4a623f7eb6493cbd682ab5a2",
+              "expected": "pass",
+              "stdout_contains": [
+                "(MCons 1 one (MCons 2 two (MNil)))",
+                "(MCons 1 changed (MCons 2 two (MCons 3 extra (MNil))))"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "negative-wrong-value",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/map/negative-wrong-value/original.egglog.egg",
+              "sha256": "d4af5f8f3efb904b68039413ddf35a5fd30c7ea8fbe3860b2aff468ed6e2d7d0",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed:"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/map/negative-wrong-value/encoded.egglog.egg",
+              "sha256": "22398c2388bcccc10224ab876473cb280ac1b6d833f2665eac17664601f35a61",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed:"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/map/negative-wrong-value/encoded.ours.egg",
+              "sha256": "1c50ccfab3ea18b041fbadc3b28c4da3b0d586d8507bcf91cd99d48f670d1f0f",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed: terms are not equal"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "set",
+      "source": {
+        "path": "tests/web-demo/set.egg",
+        "sha256": "bb9c20751e9e50d12060cc2dc0a81fe43a69b10ea03f58783a63f3044f3be628",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/set.egg",
+        "vendored_path": "fixtures/collections/set/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Runtime ordered lists implement insert, union, remove, cardinality and indexed access; order is i64 unsigned-bit order. Reified enumeration uses boxed results and explicit Stored witnesses.",
+        "Each source enumeration round is preceded by 32 helper rounds. Primitive queries become demanded terms. No per-round trace equivalence is claimed.",
+        "Retained source observations: All original checks, input sets, reified IS wrapper, both enumeration rules and their length guards; 100 enumeration rounds.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Complete finite source-test encoding; bounded helper evaluation, not a general native Set API.",
+        "Abstract element ordering and changing element/key equivalence are outside this i64 source. General no-merge table conflicts are not established by this consistent trace.",
+        "Only these finite source/validation/control cases are claimed; no arbitrary-input semantic equivalence."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/set/source/original.egglog.egg",
+              "sha256": "714d6ef3255b168be5cf2eb42e6bbb1a4f21e2bcc9982e85473eb1e3111f44f7",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/set/source/encoded.egglog.egg",
+              "sha256": "d5c83809eecb784e406e403c48637f785c39585a34dec5619bb09ee7f2a34d61",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/set/source/encoded.ours.egg",
+              "sha256": "366edfc0019e79b1440c8d6d2b50b7b16fcf89c40ad4c4e72f75fbc9e98c07db",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "input-3",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/set/input-3/original.egglog.egg",
+              "sha256": "4bf066182632df76d5c13e078b399bc800ff7b337024d810c56dac99b4b7f781",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/set/input-3/encoded.egglog.egg",
+              "sha256": "88ebd07bd81791ec2f9e8c3f24bd15f1ecac781997029a907c64a4bae942938d",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/set/input-3/encoded.ours.egg",
+              "sha256": "5b25b3231484966f7393e2a549a981ebd1da6ea2c340e4ccc3495690622ee748",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "negative-multiplicity",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/set/negative-multiplicity/original.egglog.egg",
+              "sha256": "85ea20033e689ab8cb3e2fa7a04ffef176609ea00f2af5aeff97677a7b469aa1",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed:"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/set/negative-multiplicity/encoded.egglog.egg",
+              "sha256": "93a038a687773469eafd8c5045ce5969ce635a0fe3f95191db7de4b93a9e0bdf",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed:"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/set/negative-multiplicity/encoded.ours.egg",
+              "sha256": "35dbbbb4497a2ba2b2d28b6ce3497f5eea86e2b4d2b339096bc72454d7256cd3",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed: terms are not equal"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unstable-fn",
+      "source": {
+        "path": "tests/web-demo/unstable-fn.egg",
+        "sha256": "c17069f325ae1185f59f988bc6f514315d852084ec835c4de54f05270702aeb4",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/unstable-fn.egg",
+        "vendored_path": "fixtures/collections/unstable-fn/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "SquareFn, MulBy, Compose and TimesBy closure constructors, explicit Apply dispatch, recursive list-map and primitive multiplication.",
+        "Closure sorts are specialized to source callbacks; unused nullary function sort is erased. Saturation becomes 20 dispatch(100)/math(100) cycles; immediate first dispatch has its own phase. Decoding maps SquareFn back to the source function value.",
+        "Retained source observations: Every computational rule, list input, partial application, composition check, primitive callback result and final function-value extraction.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Complete finite source-test encoding for the concrete closures used here; not general UnstableFn/context dispatch.",
+        "Arbitrary callback registration, dynamic type dispatch and application-time effect contexts are not implemented.",
+        "Only these finite source/validation/control cases are claimed; no arbitrary-input semantic equivalence.",
+        "The extraction oracle decodes (SquareFn) as the concrete source (unstable-fn \"square\") function value; extraction cost and spelling are not preserved."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/unstable-fn/source/original.egglog.egg",
+              "sha256": "11a2850c1a0c00917226a0167595eecf288ba83832d56cca0c3250e37423241d",
+              "expected": "pass",
+              "stdout_contains": [
+                "(unstable-fn \"square\")"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/unstable-fn/source/encoded.egglog.egg",
+              "sha256": "5deec890c113237c76bb073db71203badf8009ed9444f28439cfc75a57186151",
+              "expected": "pass",
+              "stdout_contains": [
+                "(SquareFn)"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/unstable-fn/source/encoded.ours.egg",
+              "sha256": "81fe7318aae6cd5e5a55cf6a9f2b069926e1497f4f3a8bf2050c0dfc21d0b7c9",
+              "expected": "pass",
+              "stdout_contains": [
+                "(SquareFn)"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "input-3",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/unstable-fn/input-3/original.egglog.egg",
+              "sha256": "75a1a31172d013a09791d43c52cec50bb7badf975178ab0727532e03e167e4c8",
+              "expected": "pass",
+              "stdout_contains": [
+                "(unstable-fn \"square\")"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/unstable-fn/input-3/encoded.egglog.egg",
+              "sha256": "8a9db7128b8ae80f21f2d73f6ecb5a210ec7df7cdbc04a6be995981ae6473f11",
+              "expected": "pass",
+              "stdout_contains": [
+                "(SquareFn)"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/unstable-fn/input-3/encoded.ours.egg",
+              "sha256": "f4db83d5e599c2f58b1536977b11a045c3bfc0f1046aaf5cb73dad910671f92a",
+              "expected": "pass",
+              "stdout_contains": [
+                "(SquareFn)"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "negative-wrong-result",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/unstable-fn/negative-wrong-result/original.egglog.egg",
+              "sha256": "8808eef6ae1c361637ab81d77c90bbceee0b3e89ceb3a1929b0d52ab2f624e3c",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed:"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/unstable-fn/negative-wrong-result/encoded.egglog.egg",
+              "sha256": "e8019a94ab60d17f07de895403fd0fe5d46c89149bbcc6d43fe33051aa51b065",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed:"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/unstable-fn/negative-wrong-result/encoded.ours.egg",
+              "sha256": "ddd3e9f5482601055f462f72e94a76bc194a71ca5da18c91817b8fc18150ab02",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed: terms are not equal"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eqsat-basic-multiset",
+      "source": {
+        "path": "tests/web-demo/eqsat-basic-multiset.egg",
+        "sha256": "7813dd58cc5c3a7b0905b3c59ce779b2d18848a182ce37c6f367667e270d1224",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/eqsat-basic-multiset.egg",
+        "vendored_path": "fixtures/collections/eqsat-basic-multiset/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Empty/One/Join bags, explicit AC and identity rewrites, boxed length, positive membership witnesses, one-occurrence Remove, Pick and MapTmp for the captured tmp-fn callback.",
+        "Primitive computations have explicit demand/helper rules and share the 100-round schedule. No native AC variant or idempotence is assigned.",
+        "Retained source observations: Both input expressions, Add/Mul conversions, empty/singleton rules, distribution membership and length>1 guards, both numeric folds with membership after removal, run 100 and final equality.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Complete finite arithmetic source workload with explicit bag encoding; not an arbitrary MultiSet API or fixed-round trace theorem.",
+        "No general equivalence of intermediate iteration states, large-scale resource bound or arbitrary bag callback interface is claimed.",
+        "Only these finite source/validation/control cases are claimed; no arbitrary-input semantic equivalence."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/eqsat-basic-multiset/source/original.egglog.egg",
+              "sha256": "127c2aa82f805fe293987f60e53b1d5f417af955c12fedbf5b32c884371ad884",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/eqsat-basic-multiset/source/encoded.egglog.egg",
+              "sha256": "9c81baf1beef92852e612f886eb2fbe8270670256bfdf65ee432a6119f261ffe",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/eqsat-basic-multiset/source/encoded.ours.egg",
+              "sha256": "1ec0e720c71b85644ff71becfbd11b2df054cc803ee3ddd9d9aeed5d14f2d5ce",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "input-3",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/eqsat-basic-multiset/input-3/original.egglog.egg",
+              "sha256": "67d22c3058c0968c0891c9ecc081ab8799ff212962dd179d23009e262fa73404",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/eqsat-basic-multiset/input-3/encoded.egglog.egg",
+              "sha256": "c9b3d533818680cc76ab2101ba5ece78d06d580d4a45a657a3fa28bee60ee22e",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/eqsat-basic-multiset/input-3/encoded.ours.egg",
+              "sha256": "a0b3a556ac384811d24e7a87417d05e8bcf5df37eeaba2ae46e480f33612772e",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "negative-not-constant",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/collections/eqsat-basic-multiset/negative-not-constant/original.egglog.egg",
+              "sha256": "d6fee062205bc2a3578feee5b8c2ceec7ce4c161c3e75af382f6b03375c91e4c",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed:"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/collections/eqsat-basic-multiset/negative-not-constant/encoded.egglog.egg",
+              "sha256": "d42a94cec0debbc9f6a59e1e36aff4f343afae7df0cc3a43f1e0cc6ab77c89c0",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed:"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/collections/eqsat-basic-multiset/negative-not-constant/encoded.ours.egg",
+              "sha256": "89c5f3ff60ef1decd7cf2305b5ccad3fb9571506bd2200725927ffd70369c455",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed: terms are not equal"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

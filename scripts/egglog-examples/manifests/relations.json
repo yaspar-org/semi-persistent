@@ -1,0 +1,577 @@
+{
+  "group": "relations",
+  "upstream_revision": "593df10e1465904e8b7a3dc85d8ef3976842b509",
+  "examples": [
+    {
+      "id": "points-to",
+      "source": {
+        "path": "tests/web-demo/points-to.egg",
+        "sha256": "9e4a71a84fd5f78cf4e18cdc963c842103d5cbb27d27ac97e4009077add92947",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/points-to.egg",
+        "vendored_path": "fixtures/relations/points-to/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Represent each relation with a private row sort/constructor and a separate AuditHolds_<relation>(Row) = AuditPresent witness; accepted encodings never union distinct rows.",
+        "Retain the original three rounds and all five points-to assertions.",
+        "Translate primitive operator spellings and negative assertions to each engine dialect; retain the audited observation checks.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Only the named finite source example and selected validation/control cases are claimed; no full native relation API or arbitrary-input equivalence.",
+        "Validation adds class/field distinctions, additive store updates, cyclic assignment, missing facts, and push/pop; ignore-load-field deliberately drops the load-field identity guard and must fail."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/points-to/source/original.egglog.egg",
+              "sha256": "9d0a4dcff5594bfe6e7586d2df0fbe3eb757652dd4026729e0a6c269b3b382b3",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/points-to/source/encoded.egglog.egg",
+              "sha256": "43ba79f513891cf5fd9cfd47bf26d0b8b0e4b79e84829b74d0016d9e00dbacf5",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/points-to/source/encoded.ours.egg",
+              "sha256": "9ae398080e976e3a8e0a31bb1d2be70b18310d701b176451c9c31ccef8250980",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "updates-scopes",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/points-to/updates-scopes/original.egglog.egg",
+              "sha256": "30819c34f6c613d3d32c41a6346984176e6010624e2c834e803e5ebca18e63bd",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/points-to/updates-scopes/encoded.egglog.egg",
+              "sha256": "cae85a6ec4243e0b0eea289fedadfb1e7f42e4e81e51513f83fefe22dd47e039",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/points-to/updates-scopes/encoded.ours.egg",
+              "sha256": "1eee1a50acfb9353e8b24ed27a7fa79952ea2d309bf679e080a9e47be6886330",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "ignore-load-field",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/points-to/ignore-load-field/original.egglog.egg",
+              "sha256": "8b77561899b5e121bd24c92ab47e58d12caef731153a844b1eee10997f738d00",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Command should have failed."
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/points-to/ignore-load-field/encoded.egglog.egg",
+              "sha256": "fa2f68c60e60249320f2f686f3ccfa21a1bf5248dbff45a9cbacd1fa05bf3aa0",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Command should have failed."
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/points-to/ignore-load-field/encoded.ours.egg",
+              "sha256": "4393ba10dc3c2667a5bd19b5c5b5674d322fca634ad26c9d97166c368886052b",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed: terms are equal"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "schedule-demo",
+      "source": {
+        "path": "tests/web-demo/schedule-demo.egg",
+        "sha256": "85933cb19663e4cf5bca2b056aa02f6b448bbd29dbffe7204bd3564ba2148d06",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/schedule-demo.egg",
+        "vendored_path": "fixtures/relations/schedule-demo/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Represent each relation with a private row sort/constructor and a separate AuditHolds_<relation>(Row) = AuditPresent witness; accepted encodings never union distinct rows.",
+        "Expand the alternating repeat schedule in its original order; each saturate phase becomes two bounded rounds under the one-step frontier invariant.",
+        "Translate primitive operator spellings and negative assertions to each engine dialect; retain the audited observation checks.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Only the named finite source example and selected validation/control cases are claimed; no full native relation API or arbitrary-input equivalence.",
+        "The source has ten repetitions; steps-2 and steps-5 validate smaller repetition counts. Bounded saturation lowering is specific to this frontier invariant."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/schedule-demo/source/original.egglog.egg",
+              "sha256": "71b48218b78fe7874a4b8fc60a17a80b5d8f24424996dabecec81d6520b5816a",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/schedule-demo/source/encoded.egglog.egg",
+              "sha256": "1409349c121f2854ba4b3199e9fb85e7b5b9d8a85d5159bf3f2e15a3f9b0688e",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/schedule-demo/source/encoded.ours.egg",
+              "sha256": "e5d174fb7a09c310f6760c8b15fdf2d3d9f3412c8100d6404f86eb493a180cfb",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "steps-2",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/schedule-demo/steps-2/original.egglog.egg",
+              "sha256": "97968e8675a4308f64bdb898fda2b6aa71ef9c678ad9da03d4dee4dfb900b09d",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/schedule-demo/steps-2/encoded.egglog.egg",
+              "sha256": "14bb2ce0d7a9fd53a5b10c0cada1147912756c494b235320f9684fa9668b49a4",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/schedule-demo/steps-2/encoded.ours.egg",
+              "sha256": "185383646e5b6d43defc2a25003b360d43719d7a7eb9ff53ba00c1773b61b125",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "steps-5",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/schedule-demo/steps-5/original.egglog.egg",
+              "sha256": "cd26f23085c6389da4d428c11c3a68f585fe34be1cb0fd02d8305e9fb13101a7",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/schedule-demo/steps-5/encoded.egglog.egg",
+              "sha256": "96b4f603eb202190f689048ce2290c3574aa7cb66fa71ea3de9d5b0d49b15f42",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/schedule-demo/steps-5/encoded.ours.egg",
+              "sha256": "3f1fde3777cc6a3fae926ecf6dc05c188c729bb5d32ed1ab8e85e2eba6a81f19",
+              "expected": "pass"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relation-query-allowed",
+      "source": {
+        "path": "tests/relation-query-allowed.egg",
+        "sha256": "cc55ba8cd66212ed3124307545eac74e4af6aed340d02b4939975fd6650800cb",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/relation-query-allowed.egg",
+        "vendored_path": "fixtures/relations/relation-query-allowed/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Represent each relation with a private row sort/constructor and a separate AuditHolds_<relation>(Row) = AuditPresent witness; accepted encodings never union distinct rows.",
+        "Keep equality guards on private row identities while querying presence separately through AuditHolds_myrel(row) = AuditPresent.",
+        "Translate primitive operator spellings and negative assertions to each engine dialect; retain the audited observation checks.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Only the named finite source example and selected validation/control cases are claimed; no full native relation API or arbitrary-input equivalence.",
+        "third-row checks a third present row and absent rows; identity-counterexample is a deliberately incorrect shared-marker encoding that collapses distinct rows. It is only a failing control, never the accepted encoding."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/relation-query-allowed/source/original.egglog.egg",
+              "sha256": "5b348fd0cf859af9f3095791f09ccc87f9ed658e7ff4920d2775853c59ef98cd",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/relation-query-allowed/source/encoded.egglog.egg",
+              "sha256": "50a9d74adc0f8830f3f35e44321486cd21058e892b22c9bd86e7f72eb37c04c1",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/relation-query-allowed/source/encoded.ours.egg",
+              "sha256": "9c155f68a040bd67d1272ab08a74a1eb730c5d516e8d6ee1ffe496039ae412ab",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "third-row",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/relation-query-allowed/third-row/original.egglog.egg",
+              "sha256": "1ada9de24d53b2676fa0fae98091a6ec93513d591722d54c14b152afd68a1d17",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/relation-query-allowed/third-row/encoded.egglog.egg",
+              "sha256": "f6547d294953ec02d2f2340c01405578bf7596b5a1b23715e139448637f7d210",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/relation-query-allowed/third-row/encoded.ours.egg",
+              "sha256": "b048cabacb8bd6166c36805c63121fd463660790ccc0d9facf299eb3cf0fb809",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "identity-counterexample",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/relation-query-allowed/identity-counterexample/encoded.egglog.egg",
+              "sha256": "c0ed1753faab5b9b133b4b52b4eb5c7d2ec83f92558cbf0af7d4e8196f22da49",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Command should have failed."
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/relation-query-allowed/identity-counterexample/encoded.ours.egg",
+              "sha256": "b510d88bf88db019ec6a240dbf81f48a388fe256ebd95dbd7725de0b4ff89dd0",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed: terms are equal"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "test-combined",
+      "source": {
+        "path": "tests/test-combined.egg",
+        "sha256": "3f41da4f15e07ebdce411f1ef164aaa68c106edb921c4bb8808ce32d3940be88",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/test-combined.egg",
+        "vendored_path": "fixtures/relations/test-combined/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Represent each relation with a private row sort/constructor and a separate AuditHolds_<relation>(Row) = AuditPresent witness; accepted encodings never union distinct rows.",
+        "Clone the combined ruleset members into one ruleset so each of the original three rounds has a shared snapshot; retain all seven original checks.",
+        "Translate primitive operator spellings and negative assertions to each engine dialect; retain the audited observation checks.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Only the named finite source example and selected validation/control cases are claimed; no full native relation API or arbitrary-input equivalence.",
+        "late-edge checks propagation after a later edge and absent reverse reachability. Only this finite combined-ruleset schedule is covered."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/test-combined/source/original.egglog.egg",
+              "sha256": "501e5f4c7e99b336e1a42083bfb2d3fc88a9b2fa1f3940f9b133009e3d3edc4b",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined/source/encoded.egglog.egg",
+              "sha256": "19ff8b6a47fe384b07fbea720b72ba97f541c800fbb955356f4044255d5ebbe7",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined/source/encoded.ours.egg",
+              "sha256": "f95533fe4d274290639f418de16e7ee9f452e64c7fc61a0180d30ba3f3af4e8f",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "late-edge",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/test-combined/late-edge/original.egglog.egg",
+              "sha256": "d4c675f1bdce0dc1319e99681b4ce8c98cd04b3b3f659b4384df26579f540b9b",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined/late-edge/encoded.egglog.egg",
+              "sha256": "8a6d51600d249893a7e39719afbbc5f8b03f9d3211c43f73ed6dc3d368369a81",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined/late-edge/encoded.ours.egg",
+              "sha256": "526195807e6159103870875c14c6686cbf615261c1b9c1fb0da214f90400d8a9",
+              "expected": "pass"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "test-combined-steps",
+      "source": {
+        "path": "tests/test-combined-steps.egg",
+        "sha256": "47cea019586d61f1fed04559381844a042641e8b722f1cffcb88761254b24e52",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/test-combined-steps.egg",
+        "vendored_path": "fixtures/relations/test-combined-steps/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Represent each relation with a private row sort/constructor and a separate AuditHolds_<relation>(Row) = AuditPresent witness; accepted encodings never union distinct rows.",
+        "Clone combined rules into a single ruleset with one shared snapshot per round; expand repeat and bounded saturate phases while preserving order and all intermediate/final checks.",
+        "Translate primitive operator spellings and negative assertions to each engine dialect; retain the audited observation checks.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Only the named finite source example and selected validation/control cases are claimed; no full native relation API or arbitrary-input equivalence.",
+        "steps-3 checks a shorter schedule. snapshot-counterexample deliberately runs child rulesets sequentially and must fail; it is not the accepted combined-snapshot encoding. Bounded saturation relies on the source frontier invariant."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/test-combined-steps/source/original.egglog.egg",
+              "sha256": "b955e51a68df67dd537aa533233414cd3e9c62e2a6d50da5604ec56ef5dda4ad",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined-steps/source/encoded.egglog.egg",
+              "sha256": "2d49a77241fcc83ef2e83cbdb2920444e90f6d3514f867fe8bdae5a846fc0a4b",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined-steps/source/encoded.ours.egg",
+              "sha256": "fd4cb91159866e3d05ddfbbe48584b2d9a377933e62a38f57a2047c4dc033514",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "steps-3",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/test-combined-steps/steps-3/original.egglog.egg",
+              "sha256": "d12487f6b2a135c57c9422f117f4e36595870d005032e3cb4b4acd4b1ec5db87",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined-steps/steps-3/encoded.egglog.egg",
+              "sha256": "7de94ef76a5c85c3932afa5297dd7a4af0114841d6b8ae6653f86491ab9f1225",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined-steps/steps-3/encoded.ours.egg",
+              "sha256": "8d7a4f236cc49b2b49697ba4c5f2c7ab6b13962818796f764bb6ec988803a388",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "snapshot-counterexample",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined-steps/snapshot-counterexample/encoded.egglog.egg",
+              "sha256": "752b547594a5b40d8ed01b2f2c6fac863a9f895d7478d46d90675072149a3756",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Command should have failed."
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/test-combined-steps/snapshot-counterexample/encoded.ours.egg",
+              "sha256": "3f9677159bacf8493bc410e97e0ccc1a74639584ff9e2d6e60d48defd765651c",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed: terms are equal"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stratified",
+      "source": {
+        "path": "tests/stratified.egg",
+        "sha256": "8851870489d209e59369c328bca848535d350b9afef884ba1e5af902f95fa9bb",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/stratified.egg",
+        "vendored_path": "fixtures/relations/stratified/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Represent each relation with a private row sort/constructor and a separate AuditHolds_<relation>(Row) = AuditPresent witness; accepted encodings never union distinct rows.",
+        "Retain separate default and named rulesets and the original three-default/one-named round schedule.",
+        "Translate primitive operator spellings and negative assertions to each engine dialect; retain the audited observation checks.",
+        "Add a provenance/license comment before each runnable program; preserve the archived program body and the exact upstream.egg bytes."
+      ],
+      "limitations": [
+        "Only the named finite source example and selected validation/control cases are claimed; no full native relation API or arbitrary-input equivalence.",
+        "phase-boundaries checks delayed base facts, partial closure, subsequent full reachability, and absent reverse reachability. The observed finite phases do not establish arbitrary stratified programs."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/stratified/source/original.egglog.egg",
+              "sha256": "e86e360dd323134e658ad67ef40e5a79733770a21095764493a95708a26e6f4e",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/stratified/source/encoded.egglog.egg",
+              "sha256": "9deab6a948d0a1f2396266bb2cda93272fe4920d7c512f77b10b704deda0d169",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/stratified/source/encoded.ours.egg",
+              "sha256": "80e977dcc2aea3db798966e6ca87cf6e08a868310a40f230419471bb9a5c1490",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "phase-boundaries",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/relations/stratified/phase-boundaries/original.egglog.egg",
+              "sha256": "14e57b40ae1c5a7d65610dd192cf0b239683e07e11284558b829cd3880c66e31",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/relations/stratified/phase-boundaries/encoded.egglog.egg",
+              "sha256": "60a90f58ba7166266d270bc72325da262be54e65e9f460929a7dcdff7c79d9c7",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/relations/stratified/phase-boundaries/encoded.ours.egg",
+              "sha256": "8f3ae4381c45331a0c23add21fe16582fe14fa23379ec79b9f81645ecf9343a4",
+              "expected": "pass"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+
+
+(relation myrel (String))
+
+(myrel "@hey")
+
+(extract "@hello")
+(check (myrel "@hey"))
+(fail (check (myrel "@missing")))

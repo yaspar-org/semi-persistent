@@ -1,0 +1,24 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+;; Each asserted relation tuple is a constructor equated with Present.
+;; Rule bodies must require Present, and checks must compare with Present:
+;; a bare (check (Path ...)) would insert a term rather than test membership.
+;; TYPES: machine
+(datatype Node (mk i64))
+(datatype Fact (Present))
+(constructor Edge (Node Node) Fact)
+(constructor Path (Node Node) Fact)
+
+(rule ((= fact (Edge x y)) (= fact (Present)))
+      ((union (Path x y) (Present))))
+(rule ((= fact1 (Path x y)) (= fact1 (Present))
+       (= fact2 (Edge y z)) (= fact2 (Present)))
+      ((union (Path x z) (Present))))
+
+(union (Edge (mk 1) (mk 2)) (Present))
+(union (Edge (mk 2) (mk 3)) (Present))
+(union (Edge (mk 5) (mk 6)) (Present))
+(union (mk 3) (mk 5))
+
+(run 10)
+(check (= (Edge (mk 3) (mk 6)) (Present)))
+(check (= (Path (mk 1) (mk 6)) (Present)))

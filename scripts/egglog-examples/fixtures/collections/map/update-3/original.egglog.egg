@@ -1,0 +1,13 @@
+; Adapted from egglog tests/map.egg at 593df10e1465904e8b7a3dc85d8ef3976842b509 (MIT); see LICENSE.egglog at corpus root.
+(sort MyMap (Map i64 String))
+
+(let $my_map1 (map-insert (map-empty) 1 "one"))
+(let $my_map2 (map-insert $my_map1 2 "two"))
+
+(check (= "one" (map-get $my_map1 1)))
+(extract $my_map2)
+(let $updated (map-insert (map-insert $my_map2 3 "extra") 1 "changed"))
+(check (= (map-get $updated 1) "changed"))
+(check (= (map-get $my_map1 1) "one"))
+(check (= (map-get $updated 3) "extra"))
+(extract $updated)

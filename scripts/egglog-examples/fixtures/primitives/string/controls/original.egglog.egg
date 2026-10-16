@@ -1,0 +1,20 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+; Tests for the string sort
+
+; Concatenation
+(check (= (+ "a" "bc" "de") "abcde"))
+; Counting the number of substring occurances
+(check (= (count-matches "ab ab" "ab") 2))
+; replacing a substring
+(check (= (replace "ab ab" "ab" "cd") "cd cd"))
+
+(check (= (count-matches "aaaa" "aa") 2))
+(check (= (replace "aaa" "aa" "b") "ba"))
+(check (= (replace "aa" "a" "aa") "aaaa"))
+(check (= (count-matches "" "") 1))
+(check (= (count-matches "é🙂" "") 3))
+(check (= (replace "é🙂" "" "=") "=é=🙂="))
+(check (= (replace "" "" "x") "x"))
+(check (= (replace "abc" "z" "Q") "abc"))
+(check (= (count-matches "abc" "z") 0))
+(check (= (+ "" "é" "🙂") "é🙂"))

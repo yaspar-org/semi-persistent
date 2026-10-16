@@ -1,0 +1,9 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(check (= (+ 2 2)  4))
+(check (= (- 2 1)  1))
+(check (= (- 1 2) -1))
+(check (< 1 2))
+(check (> 1 -2))
+(check (= (+ -9 4) -5))
+(check (< -4 0))
+(check (> 0 -1))

@@ -292,3 +292,11 @@ egglog's own performance suite (`scripts/bench.py`) is lattice, container and
 schedule workloads outside the intersection; the comparison covers the eqsat
 core of their test corpus, not their headline benchmarks, and conversely
 those workloads exercise machinery we do not implement.
+
+## Additional finite example corpus
+
+The [egglog example corpus](../../scripts/egglog-examples/README.md) provides
+33 additional finite-example ports or encodings with source provenance,
+selected validation controls, and a portable runner. It is separate from
+the 17 registered performance families; example-file counts do not
+increase the benchmark-family count.

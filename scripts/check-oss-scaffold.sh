@@ -37,7 +37,11 @@ done < <(
 # translations of egglog's tests, which say so in their first six lines; egglog is MIT.
 # --others: a file not yet added is checked too, so the check holds before a commit.
 while IFS= read -r source; do
-    case "$source" in scripts/egglog-compare/programs/*) continue ;; esac
+    case "$source" in
+        scripts/egglog-compare/programs/*) continue ;;
+        # Exact upstream bytes, hashed in the corpus manifests; retain egglog's MIT license.
+        scripts/egglog-examples/fixtures/*/*/upstream.egg) continue ;;
+    esac
     if [[ "$source" == *.egg ]] &&
         head -n 6 "$source" | grep -Eq "egglog (tests/|'s tests)|from egglog"; then
         continue

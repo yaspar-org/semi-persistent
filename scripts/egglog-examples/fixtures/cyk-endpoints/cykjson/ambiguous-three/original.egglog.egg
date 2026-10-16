@@ -1,0 +1,73 @@
+; Adapted from egglog tests/cykjson.egg at 593df10e1465904e8b7a3dc85d8ef3976842b509 (MIT); see LICENSE.egglog at corpus root.
+(datatype tree (NT String tree tree)
+                  (T String String))
+
+(function getString (i64) String :no-merge)
+
+(relation Prod (String String String))
+(relation End (String String))
+
+
+(relation P (i64 i64 String))
+(function B (i64 i64 String) tree :no-merge)
+
+(rule ((End a s)
+       (= s (getString pos)))
+      ((P 1 pos a)
+       (set (B 1 pos a) (T a s)))) 
+
+(rule ((Prod a b c) ;; a -> bc
+       (P p1 s b)
+       (P p2 (+ s p1) c))
+      ((P (+ p1 p2) s a)))
+
+
+(rule ((Prod a b c)
+       (= f1 (B p1 s b))
+       (= f2 (B p2 (+ s p1) c)))
+      ((set (B (+ p1 p2) s a) 
+       (NT a f1 f2))))
+
+
+
+(Prod "VAL" "H0" "H1")
+(Prod "VAL" "H2" "H1")
+(Prod "VAL" "H3" "H4")
+(Prod "VAL" "H5" "H4")
+(Prod "MEM" "H6" "MEM")
+(Prod "MEM" "H7" "VAL")
+(Prod "PR" "H7" "VAL")
+(Prod "ELM" "H8" "ELM")
+(Prod "ELM" "H0" "H1")
+(Prod "ELM" "H2" "H1")
+(Prod "ELM" "H3" "H4")
+(Prod "ELM" "H5" "H4")
+(Prod "H2" "H0" "MEM")
+(Prod "H5" "H3" "ELM")
+(Prod "H6" "PR" "H9")
+(Prod "H7" "H10" "H11")
+(Prod "H8" "VAL" "H9")
+(Prod "VAL" "VAL" "VAL")
+(End "VAL" "str")
+(End "VAL" "num")
+(End "VAL" "true")
+(End "VAL" "false")
+(End "VAL" "null")
+(End "ELM" "str")
+(End "ELM" "num")
+(End "ELM" "true")
+(End "ELM" "false")
+(End "ELM" "null")
+(End "H0" "{")
+(End "H1" "}")
+(End "H3" "[")
+(End "H4" "]")
+(End "H9" ",")
+(End "H10" "str")
+(End "H11" ":")
+(set (getString 1) "num")
+(set (getString 2) "num")
+(set (getString 3) "num")
+(run 10000)
+(let $root (B 3 1 "VAL"))
+(check (P 3 1 "VAL"))
