@@ -282,8 +282,13 @@ macro_rules! abstract_domain {
                     chop_id(self.val as nat, $bits as nat);
                     chop_id(self.mask as nat, $bits as nat);
                 }
-                #[inline] pub fn constant(n: $uint) -> (r: ExecTnum) ensures r.wf() {
-                    proof { assert(n & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                #[inline] pub fn constant(n: $uint) -> (r: ExecTnum) ensures r.wf(), r.has(n) {
+                    proof {
+                        assert(n & (0 as $uint) == (0 as $uint)) by(bit_vector);
+                        assert(n & !(0 as $uint) == n) by(bit_vector);
+                        native_and_not(n, 0);
+                        Tnum { val: n as nat, mask: 0 }.has_equiv(n as nat);
+                    }
                     ExecTnum { val: n, mask: 0 }
                 }
                 #[inline] pub fn top() -> (r: ExecTnum) ensures r.wf() {
@@ -435,15 +440,44 @@ macro_rules! abstract_domain {
                 #[inline] pub fn sub(&self, t: &ExecTnum) -> (r: ExecTnum) requires self.wf(), t.wf() ensures r.wf() {
                     self.add(&t.neg())
                 }
-                #[inline] pub fn rsh(&self) -> (r: ExecTnum) requires self.wf() ensures r.wf() {
+                /// Membership in native terms: the known bits of `c` are `val`.
+                proof fn has_native(self, c: $uint)
+                    ensures self.has(c) <==> (c & !self.mask) == self.val
+                {
+                    native_and_not(c, self.mask);
+                    self.to_tn().has_equiv(c as nat);
+                }
+                #[inline] pub fn rsh(&self) -> (r: ExecTnum)
+                    requires self.wf()
+                    ensures r.wf(), forall|c: $uint| #[trigger] self.has(c) ==> r.has(c >> (1 as $uint))
+                {
                     let v = self.val; let m = self.mask;
                     proof { assert(v & m == (0 as $uint) ==> (v >> (1 as $uint)) & (m >> (1 as $uint)) == (0 as $uint)) by(bit_vector); }
-                    ExecTnum { val: v >> 1, mask: m >> 1 }
+                    let r = ExecTnum { val: v >> 1, mask: m >> 1 };
+                    proof {
+                        assert forall|c: $uint| #[trigger] self.has(c) implies r.has(c >> (1 as $uint)) by {
+                            self.has_native(c);
+                            r.has_native(c >> (1 as $uint));
+                            assert((c & !m) == v ==> ((c >> (1 as $uint)) & !(m >> (1 as $uint))) == (v >> (1 as $uint))) by(bit_vector);
+                        }
+                    }
+                    r
                 }
-                #[inline] pub fn lsh(&self) -> (r: ExecTnum) requires self.wf() ensures r.wf() {
+                #[inline] pub fn lsh(&self) -> (r: ExecTnum)
+                    requires self.wf()
+                    ensures r.wf(), forall|c: $uint| #[trigger] self.has(c) ==> r.has(c << (1 as $uint))
+                {
                     let v = self.val; let m = self.mask;
                     proof { assert(v & m == (0 as $uint) ==> (v << (1 as $uint)) & (m << (1 as $uint)) == (0 as $uint)) by(bit_vector); }
-                    ExecTnum { val: v << 1, mask: m << 1 }
+                    let r = ExecTnum { val: v << 1, mask: m << 1 };
+                    proof {
+                        assert forall|c: $uint| #[trigger] self.has(c) implies r.has(c << (1 as $uint)) by {
+                            self.has_native(c);
+                            r.has_native(c << (1 as $uint));
+                            assert((c & !m) == v ==> ((c << (1 as $uint)) & !(m << (1 as $uint))) == (v << (1 as $uint))) by(bit_vector);
+                        }
+                    }
+                    r
                 }
                 #[inline] pub fn join(&self, t: &ExecTnum) -> (r: ExecTnum)
                     requires self.wf(), t.wf()
@@ -623,7 +657,14 @@ macro_rules! abstract_domain {
                     eq_from_bits(bw_and_not(n as nat, max_nat), 0);
                     Tnum::ctor(0, max_nat).has_equiv(n as nat);
                 }
-                #[inline] pub fn constant(n: $uint) -> ExecAnum { ExecAnum { base: n, span: 0 } }
+                #[inline] pub fn constant(n: $uint) -> (r: ExecAnum) ensures r.has(n) {
+                    let r = ExecAnum { base: n, span: 0 };
+                    proof {
+                        r.has_eq_uint(n);
+                        assert((0 as $uint) & !(0 as $uint) == (0 as $uint)) by(bit_vector);
+                    }
+                    r
+                }
                 #[inline] pub fn top() -> ExecAnum { ExecAnum { base: 0, span: !(0 as $uint) } }
                 // No `rlimit` here, deliberately. This carried `rlimit(2000)` while
                 // the soundness fact below was one 11-variable bit-vector query;
@@ -888,7 +929,8 @@ macro_rules! abstract_domain {
                     Unum::offset_from_bound((!(0 as $uint)) as nat, n as nat);
                 }
 
-                #[inline] pub fn constant(n: $uint) -> ExecUnum {
+                #[inline] pub fn constant(n: $uint) -> (r: ExecUnum) ensures r.has(n) {
+                    proof { Unum::zero_offset_admitted((!(0 as $uint)) as nat, true); }
                     ExecUnum { base: n, walls: !(0 as $uint), extent: 0 }
                 }
                 #[inline] pub fn top() -> (r: ExecUnum)
@@ -1053,7 +1095,9 @@ macro_rules! abstract_domain {
                 /// We need -d which ranges from -max to 0.
                 /// So result.base = -v - total_max, result uncertainty = same structure.
                 #[inline] pub fn neg(&self) -> ExecUnum {
-                    if self.base.wrapping_add(self.extent) < self.base {
+                    // The negated range wraps when the input range does, or when it
+                    // holds 0 and something else: -[0, e] = {0} u [-e, MAX].
+                    if self.base.wrapping_add(self.extent) < self.base || (self.base == 0 && self.extent != 0) {
                         return ExecUnum::top();
                     }
                     let new_v = (0 as $uint).wrapping_sub(self.base).wrapping_sub(self.extent);

@@ -16,7 +16,10 @@
 //!
 //! Division by zero has no meaning here: every division contract excludes zero
 //! divisors and reports them through `transfer::DivZero`.
+// `pow2` is used only by spec functions, which are erased outside Verus.
+#![allow(unused_imports)]
 use crate::word::*;
+use vstd::arithmetic::power2::*;
 use vstd::prelude::*;
 
 verus! {
@@ -47,6 +50,18 @@ pub trait Semantics {
     spec fn lt(a: Self::V, b: Self::V) -> bool;
 
     spec fn le(a: Self::V, b: Self::V) -> bool;
+
+    /// Whether `k` is a shift amount the shifts below are defined for: below
+    /// the width for machine words (C makes larger ones undefined, Rust
+    /// panics on them), nonnegative for integers.
+    spec fn shift_ok(k: Self::V) -> bool;
+
+    /// Left shift, meaningful only when `shift_ok(k)`.
+    spec fn shl(a: Self::V, k: Self::V) -> Self::V;
+
+    /// Right shift, meaningful only when `shift_ok(k)`: logical for unsigned
+    /// words, arithmetic (rounding down) for signed words and integers.
+    spec fn shr(a: Self::V, k: Self::V) -> Self::V;
 }
 
 pub open spec fn iabs(a: int) -> int {
@@ -122,6 +137,18 @@ impl<W: Word> Semantics for Unsigned<W> {
     open spec fn le(a: W, b: W) -> bool {
         a.view() <= b.view()
     }
+
+    open spec fn shift_ok(k: W) -> bool {
+        k.view() < W::bits()
+    }
+
+    open spec fn shl(a: W, k: W) -> W {
+        W::from_int((a.view() * pow2(k.view())) as int)
+    }
+
+    open spec fn shr(a: W, k: W) -> W {
+        W::from_int((a.view() / pow2(k.view())) as int)
+    }
 }
 
 impl<W: Word> Semantics for Signed<W> {
@@ -170,6 +197,19 @@ impl<W: Word> Semantics for Signed<W> {
     open spec fn le(a: W, b: W) -> bool {
         signed_view(a) <= signed_view(b)
     }
+
+    open spec fn shift_ok(k: W) -> bool {
+        k.view() < W::bits()
+    }
+
+    open spec fn shl(a: W, k: W) -> W {
+        W::from_int(signed_view(a) * pow2(k.view()))
+    }
+
+    /// `int` division by a positive divisor rounds down.
+    open spec fn shr(a: W, k: W) -> W {
+        W::from_int(signed_view(a) / (pow2(k.view()) as int))
+    }
 }
 
 impl Semantics for Euclid {
@@ -215,6 +255,18 @@ impl Semantics for Euclid {
     open spec fn le(a: int, b: int) -> bool {
         a <= b
     }
+
+    open spec fn shift_ok(k: int) -> bool {
+        k >= 0
+    }
+
+    open spec fn shl(a: int, k: int) -> int {
+        a * pow2(k as nat)
+    }
+
+    open spec fn shr(a: int, k: int) -> int {
+        a / (pow2(k as nat) as int)
+    }
 }
 
 impl Semantics for Trunc {
@@ -258,6 +310,18 @@ impl Semantics for Trunc {
 
     open spec fn le(a: int, b: int) -> bool {
         a <= b
+    }
+
+    open spec fn shift_ok(k: int) -> bool {
+        k >= 0
+    }
+
+    open spec fn shl(a: int, k: int) -> int {
+        a * pow2(k as nat)
+    }
+
+    open spec fn shr(a: int, k: int) -> int {
+        a / (pow2(k as nat) as int)
     }
 }
 
