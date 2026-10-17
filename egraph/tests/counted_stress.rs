@@ -628,7 +628,7 @@ fn spellings_agree<P: Preset>(t: &T) -> Result<(), TestCaseError> {
     let n = norm(t);
     let c = render(t, Style::Counted);
     let prog = format!(
-        "(let t0 {c})\n(check (= t0 {}))\n(check (= t0 {}))\n(check (= t0 {}))\n(check (= t0 {}))\n(check (!= t0 {}))",
+        "(let t0 {c})\n(prove (= t0 {}))\n(prove (= t0 {}))\n(prove (= t0 {}))\n(prove (= t0 {}))\n(prove (!= t0 {}))",
         render(t, Style::Expanded),
         render(t, Style::Split),
         render_n(&n, false),
@@ -657,7 +657,7 @@ fn spellings_agree<P: Preset>(t: &T) -> Result<(), TestCaseError> {
         prog
     );
     // ...and that text reads back as the same class, adding no node.
-    let back = format!("(let t0 {c})\n(check (= t0 {}))", info.extract);
+    let back = format!("(let t0 {c})\n(prove (= t0 {}))", info.extract);
     let once = P::run(&format!("(let t0 {c})"), NAIVE, &[]);
     let twice = P::run(&back, NAIVE, &[]);
     match (once, twice) {
@@ -683,7 +683,7 @@ fn contexts_agree<P: Preset>(t: &T, strategy: SaturationStrategy) -> Result<(), 
     // Top level, union, bare check, and a rule right-hand side, all counted; each is held
     // against the expanded normal form.
     let prog = format!(
-        "(let w (W))\n{c}\n(union (Z) {})\n(check (= (Z) {}))\n(check {})\n(rewrite (W) {c})\n(run 1)\n(check (= w {}))\n(check (= w (Z)))",
+        "(let w (W))\n{c}\n(union (Z) {})\n(prove (= (Z) {}))\n(prove {})\n(rewrite (W) {c})\n(run 1)\n(prove (= w {}))\n(prove (= w (Z)))",
         render(t, Style::Split),
         render_n(&n, true),
         render(t, Style::Expanded),
@@ -735,7 +735,7 @@ fn mult_expr<P: Preset>(
         format!("(G (Add {} (L1)))", counted("(L0)", r))
     };
     let prog = format!(
-        "(let w (W))\n(rewrite (W) (Add (L0):{j} (L1)))\n(rewrite (Add x:k (L1)) (G (Add x:({op} k {d}) (L1))))\n(run 2)\n(check (= w {want}))"
+        "(let w (W))\n(rewrite (W) (Add (L0):{j} (L1)))\n(rewrite (Add x:k (L1)) (G (Add x:({op} k {d}) (L1))))\n(run 2)\n(prove (= w {want}))"
     );
     P::run(&prog, s, &[])
         .prop_ok()
@@ -788,7 +788,7 @@ fn overflow_cases(max: u64) -> Vec<(&'static str, String, Want)> {
         (
             "split sum at the max",
             format!(
-                "(let t (Add (L0):{} (L0):{half}))\n(check (= t (Add (L0):{max})))",
+                "(let t (Add (L0):{} (L0):{half}))\n(prove (= t (Add (L0):{max})))",
                 half - 1
             ),
             Want::Ok,
@@ -796,7 +796,7 @@ fn overflow_cases(max: u64) -> Vec<(&'static str, String, Want)> {
         (
             "nested product at the max",
             format!(
-                "(let t (Add (Add (L0):{root_lo} (L1)):{root_hi} (L2)))\n(check (= t (Add (L0):{max} (L1):{root_hi} (L2))))"
+                "(let t (Add (Add (L0):{root_lo} (L1)):{root_hi} (L2)))\n(prove (= t (Add (L0):{max} (L1):{root_hi} (L2))))"
             ),
             Want::Ok,
         ),
@@ -818,7 +818,7 @@ fn overflow_cases(max: u64) -> Vec<(&'static str, String, Want)> {
         (
             "union coalesces to the max",
             format!(
-                "(let t (Add (L0):{} (L1)))\n(union (L0) (L1))\n(run 1)\n(check (= t (Add (L0):{max})))",
+                "(let t (Add (L0):{} (L1)))\n(union (L0) (L1))\n(run 1)\n(prove (= t (Add (L0):{max})))",
                 max - 1
             ),
             Want::Ok,
@@ -845,7 +845,7 @@ fn overflow_cases(max: u64) -> Vec<(&'static str, String, Want)> {
         (
             "rhs x:k x:k at the max",
             format!(
-                "(let t (Add (L0):{} (L1)))\n(rewrite (Add x:k (L1)) (G (Add x:k x:k (L1))))\n(run 1)\n(check (= t (G (Add (L0):{} (L1)))))",
+                "(let t (Add (L0):{} (L1)))\n(rewrite (Add x:k (L1)) (G (Add x:k x:k (L1))))\n(run 1)\n(prove (= t (G (Add (L0):{} (L1)))))",
                 half - 1,
                 max - 1
             ),
@@ -889,7 +889,7 @@ fn overflow_cases(max: u64) -> Vec<(&'static str, String, Want)> {
         ),
         (
             "ground count of 2^64 in check",
-            "(let t (Add (L0) (L1)))\n(check (!= t (Add (L0):18446744073709551616)))".to_string(),
+            "(let t (Add (L0) (L1)))\n(prove (!= t (Add (L0):18446744073709551616)))".to_string(),
             Want::Overflow,
         ),
         (
@@ -1032,7 +1032,7 @@ fn boundaries<P: Preset>() {
     for prog in [
         format!("(let t (Add (L0):{over}))"),
         format!("(Add (L0):{over} (L1))"),
-        format!("(check (= (L0) (Add (L0):{over})))"),
+        format!("(prove (= (L0) (Add (L0):{over})))"),
         format!("(union (Z) (Add (L1) (L0):{over}))"),
     ] {
         let e = P::run(&prog, NAIVE, &[]).error(&prog);
@@ -1047,7 +1047,7 @@ fn boundaries<P: Preset>() {
     for prog in [
         "(let t (Add (L0):0 (L1)))",
         "(Add (L0):0 (L1))",
-        "(check (= (L1) (Add (L0):0 (L1))))",
+        "(prove (= (L1) (Add (L0):0 (L1))))",
         "(union (Z) (Add (L0):0 (L1)))",
         "(let t (Cat (L0):0 (L1)))",
         "(let t (Add (L0):000 (L1)))",
@@ -1061,7 +1061,7 @@ fn boundaries<P: Preset>() {
 
     // 1: the same node as no annotation, and `(Add c:1)` is `c`.
     let d = P::run(
-        "(let t (Add (L0):1 (L1)))\n(let u (Add (L0) (L1)))\n(check (= t u))\n(check (= (Add (L0):1) (L0)))",
+        "(let t (Add (L0):1 (L1)))\n(let u (Add (L0) (L1)))\n(prove (= t u))\n(prove (= (Add (L0):1) (L0)))",
         NAIVE,
         &["t"],
     )
@@ -1216,7 +1216,7 @@ fn seq<P: Preset>() {
 
     // A counted nested sequence splices as its positions.
     P::run(
-        "(check (= (Cat (Cat (L0) (L1)):3 (L2)) (Cat (L0) (L1) (L0) (L1) (L0) (L1) (L2))))\n(check (= (Cat (L0):3 (L1)) (Cat (L0) (L0):2 (L1))))",
+        "(prove (= (Cat (Cat (L0) (L1)):3 (L2)) (Cat (L0) (L1) (L0) (L1) (L0) (L1) (L2))))\n(prove (= (Cat (L0):3 (L1)) (Cat (L0) (L0):2 (L1))))",
         NAIVE,
         &[],
     )
@@ -1440,7 +1440,7 @@ fn extract_roundtrip<P: Preset>() {
         text,
         format!("(Add (F (Add (L2):{max})):{max} (L0):{max} (L1))")
     );
-    let back = format!("{prog}\n(check (= t {text}))");
+    let back = format!("{prog}\n(prove (= t {text}))");
     let again = P::run(&back, NAIVE, &[]).ok(&back);
     assert_eq!(
         again.nodes, d.nodes,

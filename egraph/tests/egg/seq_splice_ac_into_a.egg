@@ -16,4 +16,4 @@
 (let e (Plus (F a) (F a) b))
 (rewrite (Plus (..fs:k (F x)) ..rest) (Cat ..fs))
 (run 1)
-(check (= e (Cat (F a) (F a))))
+(prove (= e (Cat (F a) (F a))))

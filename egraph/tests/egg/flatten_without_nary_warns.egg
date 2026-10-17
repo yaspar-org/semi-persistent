@@ -15,5 +15,5 @@
 (rewrite (F x) (G x) :flatten)
 (rule ((F x)) ((union (F x) (H x))) :flatten)
 (run 2)
-(check (= t (G (a))))
-(check (= t (H (a))))
+(prove (= t (G (a))))
+(prove (= t (H (a))))

@@ -82,9 +82,9 @@ fn rhs_comprehensions_map_between_element_sorts() {
 (let mset (WrapA (AMset a b b)))
 (run 2)
 
-(check (= seq (WrapB (BS (F a) (F b) (F b)))))
-(check (= set (WrapB (BSet (F a) (F b)))))
-(check (= mset (WrapB (BMset (F a) (F b) (F b)))))
+(prove (= seq (WrapB (BS (F a) (F b) (F b)))))
+(prove (= set (WrapB (BSet (F a) (F b)))))
+(prove (= mset (WrapB (BMset (F a) (F b) (F b)))))
 ");
 }
 
@@ -148,7 +148,7 @@ fn until_stops_before_the_budget() {
     // only other way out. The goal holds after one iteration, and the run has to stop there.
     for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {
         let interp = run_with(
-            &format!("{UNBOUNDED}(run 100 :until (= start (s (s (a)))))"),
+            &format!("{UNBOUNDED}(run 100 :goal (= start (s (s (a)))))"),
             strategy,
         );
         let sat = interp.last_sat().expect("a run happened");
@@ -167,9 +167,7 @@ fn until_shortens_the_run() {
     // The control for the test above: the same program without a goal runs longer, and
     // reports no goal. Stated as a contrast rather than an iteration count, which would pin
     // how fast this particular rule reaches its fixpoint.
-    let with = run(&format!(
-        "{UNBOUNDED}(run 100 :until (= start (s (s (a)))))"
-    ));
+    let with = run(&format!("{UNBOUNDED}(run 100 :goal (= start (s (s (a)))))"));
     let without = run(&format!("{UNBOUNDED}(run 100)"));
     let (a, b) = (
         with.last_sat().expect("run").iterations,
@@ -189,7 +187,7 @@ fn until_already_satisfied_runs_no_iterations() {
 (constructor b () E)
 (let x (a))
 (let y (b))
-(run 50 :until (!= x y))
+(run 50 :goal (!= x y))
 ");
     let sat = interp.last_sat().expect("a run happened");
     assert_eq!(sat.iterations, 0);
@@ -208,7 +206,7 @@ fn until_reports_a_goal_joined_by_rebuild() {
 (let fb (f (b)))
 (seed)
 (rule ((seed)) ((union (a) (b))))
-(run 1 :until (= fa fb))
+(run 1 :goal (= fa fb))
 ";
     for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {
         let interp = run_with(src, strategy);
@@ -241,7 +239,7 @@ fn until_disequality_rebuilds_before_observing_a_dirty_graph() {
 (seed)
 (rule ((seed)) ((union (a) (b))))
 (run 1)
-(run 1 :until (!= fa fb))
+(run 1 :goal (!= fa fb))
 ";
     for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {
         let interp = run_with(src, strategy);
@@ -265,7 +263,7 @@ fn until_disequality_rebuilds_before_observing_a_dirty_graph() {
 
 #[test]
 fn a_named_run_leaves_the_default_ruleset_alone() {
-    // `tests/egg/ruleset_scoping.egg` pins the same scoping through `(check …)`; this asserts
+    // `tests/egg/ruleset_scoping.egg` pins the same scoping through `(prove …)`; this asserts
     // it on the class ids, where "did not fire" is directly visible.
     let mut interp = run("
 (sort E)
@@ -333,7 +331,7 @@ fn pop_reuses_global_ids_for_later_rules() {
 (f (c))
 (rewrite (f live) (hit))
 (run 2)
-(check (= (f (c)) (hit)))
+(prove (= (f (c)) (hit)))
 ");
 }
 
@@ -356,8 +354,8 @@ fn pop_restores_a_shadowed_global_name() {
 (f (b))
 (rewrite (f chosen) (hit))
 (run 2)
-(check (= (f (a)) (hit)))
-(check (!= (f (b)) (hit)))
+(prove (= (f (a)) (hit)))
+(prove (!= (f (b)) (hit)))
 ");
 }
 
@@ -377,7 +375,7 @@ fn check_rebuilds_pending_congruence_after_budgeted_run() {
 (seed)
 (rule ((seed)) ((union (a) (b))))
 (run 1)
-(check (= fa fb))
+(prove (= fa fb))
 ");
 }
 

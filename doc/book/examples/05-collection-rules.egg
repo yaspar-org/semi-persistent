@@ -31,6 +31,6 @@
 (let m (And (Global (Interval 0 3) a) (Global (Interval 4 6) a) x))
 (let f (And (Global (Interval 2 5) a) (Global (Interval 4 9) b) x))
 (run 2)
-(check (= m (And (Global (Interval 0 6) a) x)))
-(check (= f (And x (Global (Interval 2 5) (And a (Global (Interval 2 4) b))))))
+(prove (= m (And (Global (Interval 0 6) a) x)))
+(prove (= f (And x (Global (Interval 2 5) (And a (Global (Interval 2 4) b))))))
 ;; ANCHOR_END: collection-rules

@@ -20,7 +20,7 @@
   :when ((>= (count fs) 1)))
 (let e (Plus (F a) (F a) (F b)))
 (run 1)
-(check (= e (Plus (N 2) (F b))))
+(prove (= e (Plus (N 2) (F b))))
 
 ; An unannotated filter takes only children of multiplicity 1, as an
 ; unannotated AC element does. `:k` with no bound takes any multiplicity.
@@ -30,6 +30,6 @@
 (rewrite (Plus (..fs (F y)) ..rest) (Only (Plus ..fs)))
 (rewrite (Plus (..ks:k (F y)) ..rest) (All (Plus ..ks)))
 (run 1)
-(check (= src (Only (F b))))
-(check (= src (All (Plus (F a) (F a) (F a) (F b)))))
+(prove (= src (Only (F b))))
+(prove (= src (All (Plus (F a) (F a) (F a) (F b)))))
 ;; ANCHOR_END: seq-ac-multiplicity

@@ -61,16 +61,16 @@
 
 ;; ANCHOR: larger-partition
 ;; Partition: {sampleA1, sampleA2}, {sampleB}, {sampleC1, sampleC2}.
-(check (= sampleA1 sampleA2))
-(check (!= sampleA1 sampleB))
-(check (!= sampleA1 sampleC1))
-(check (!= sampleA1 sampleC2))
-(check (!= sampleA2 sampleB))
-(check (!= sampleA2 sampleC1))
-(check (!= sampleA2 sampleC2))
-(check (!= sampleB sampleC1))
-(check (!= sampleB sampleC2))
-(check (= sampleC1 sampleC2))
+(prove (= sampleA1 sampleA2))
+(prove (!= sampleA1 sampleB))
+(prove (!= sampleA1 sampleC1))
+(prove (!= sampleA1 sampleC2))
+(prove (!= sampleA2 sampleB))
+(prove (!= sampleA2 sampleC1))
+(prove (!= sampleA2 sampleC2))
+(prove (!= sampleB sampleC1))
+(prove (!= sampleB sampleC2))
+(prove (= sampleC1 sampleC2))
 ;; ANCHOR_END: larger-partition
 
 ;; ANCHOR: larger-queries

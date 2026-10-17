@@ -50,12 +50,12 @@
 (extract s2)
 (extract s3)
 (extract s4)
-(check (= s1 s2))
-(check (!= s1 s3))
-(check (!= s1 s4))
-(check (!= s2 s3))
-(check (!= s2 s4))
-(check (!= s3 s4))
+(prove (= s1 s2))
+(prove (!= s1 s3))
+(prove (!= s1 s4))
+(prove (!= s2 s3))
+(prove (!= s2 s4))
+(prove (!= s3 s4))
 
 ;; This deployment defines the named predicate by two concrete regions.
 (rewrite
@@ -68,12 +68,12 @@
 (extract s2)
 (extract s3)
 (extract s4)
-(check (= s1 s2))
-(check (= s1 s3))
-(check (!= s1 s4))
-(check (= s2 s3))
-(check (!= s2 s4))
-(check (!= s3 s4))
+(prove (= s1 s2))
+(prove (= s1 s3))
+(prove (!= s1 s4))
+(prove (= s2 s3))
+(prove (!= s2 s4))
+(prove (!= s3 s4))
 ;; ANCHOR_END: clustering-program
 
 ;; ANCHOR: cluster-explanation
@@ -84,13 +84,13 @@
 ;; ANCHOR: speculative-resolution
 (push)
 (union (euWest (destination)) (apSouth (destination)))
-(check (= s1 s4))
-(check (= s2 s4))
-(check (= s3 s4))
+(prove (= s1 s4))
+(prove (= s2 s4))
+(prove (= s3 s4))
 (pop)
 
 ;; Pop restores the two-cluster partition.
-(check (= s1 s3))
-(check (!= s1 s4))
-(check (!= s3 s4))
+(prove (= s1 s3))
+(prove (!= s1 s4))
+(prove (!= s3 s4))
 ;; ANCHOR_END: speculative-resolution

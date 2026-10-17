@@ -84,6 +84,9 @@ pub enum Atom {
     },
     /// Equality constraint: two vars must be in the same e-class.
     Eq(String, String),
+    /// Disequality constraint: two vars must be in different e-classes, `(!= p q)`.
+    /// Binds nothing: both sides need a binding from the rest of the query.
+    Neq(String, String),
     /// Primitive predicate guard: `expr` must evaluate to a true boolean over the
     /// literal values bound elsewhere in the query. Binds nothing and scans no
     /// relation.

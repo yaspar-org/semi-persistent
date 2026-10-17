@@ -16,5 +16,5 @@
 (rewrite (Plus x:4294967295 (b)) (Hit x))
 (rewrite (Plus x:4294967294 (b)) (Miss))
 (run 1)
-(check (= w (Hit (F (a)))))
-(check (!= w (Miss)))
+(prove (= w (Hit (F (a)))))
+(prove (!= w (Miss)))

@@ -11,5 +11,5 @@
 
 (Add (A):3 (B))
 (let t (Add (A):3 (B)))
-(check (= t (Add (A) (A) (A) (B))))
-(check (!= t (Add (A):2 (B))))
+(prove (= t (Add (A) (A) (A) (B))))
+(prove (!= t (Add (A):2 (B))))

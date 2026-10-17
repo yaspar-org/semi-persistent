@@ -15,9 +15,9 @@
 (union (add a b d) n)
 
 (function f (E) E)
-(check (= (f (add a b)) (f c)))
+(prove (= (f (add a b)) (f c)))
 
 ;; Eager completion has retained the substituted sum.
 (print-size)
-(check (= n (add c d)))
+(prove (= n (add c d)))
 ;; ANCHOR_END: completion-example

@@ -58,6 +58,6 @@
                                                                                           (Add (Const 2.0)
                                                                                                (Const 1.0)))))))))))))))))))))
 (run add_ac 1)
-(check (= res goal))
+(prove (= res goal))
 (print-size)
 (print-stats :file "addac-n20.native.stats.json")

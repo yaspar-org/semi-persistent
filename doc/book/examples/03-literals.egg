@@ -18,10 +18,10 @@
 (let real (Real 3.5))
 (let text (Text "Semper"))
 
-(check (= truth (Lit true)))
-(check (= big (Big 42)))
-(check (= machine (Machine 42)))
-(check (= real (Real 3.5)))
-(check (= text (Text "Semper")))
-(check (!= big machine))
+(prove (= truth (Lit true)))
+(prove (= big (Big 42)))
+(prove (= machine (Machine 42)))
+(prove (= real (Real 3.5)))
+(prove (= text (Text "Semper")))
+(prove (!= big machine))
 ;; ANCHOR_END: literals

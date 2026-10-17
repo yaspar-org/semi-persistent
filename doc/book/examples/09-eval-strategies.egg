@@ -19,6 +19,6 @@
 
 ;; Several rounds propagate the recursive result through fresh parent nodes.
 (run 10)
-(check (= result six))
-(check (!= result input))
+(prove (= result six))
+(prove (!= result input))
 ;; ANCHOR_END: eval-strategies

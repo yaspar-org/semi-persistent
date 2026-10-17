@@ -167,15 +167,15 @@
 (rewrite (secsTimes x y) (secs (IBig::* x y)))
 (birewrite (tLte a b) (tGte b a))
 (run 4)
-(check (= (mins 15) (secs 900)))
+(prove (= (mins 15) (secs 900)))
 ;; ANCHOR_END: dogwood-identity
 
-(check (!= candA candB))
-(check (!= repaired candA))
-(check (!= repaired candB))
-(check (!= pickWorst candA))
-(check (!= pickWorst candB))
-(check (!= repaired pickWorst))
+(prove (!= candA candB))
+(prove (!= repaired candA))
+(prove (!= repaired candB))
+(prove (!= pickWorst candA))
+(prove (!= pickWorst candB))
+(prove (!= repaired pickWorst))
 
 ;; ANCHOR: dogwood-main-query
 (antiunify candA candB :algorithm exact)

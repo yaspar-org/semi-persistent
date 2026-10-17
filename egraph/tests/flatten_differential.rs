@@ -1089,7 +1089,7 @@ fn a_flattened_union_cites_the_rule() {
 (rewrite (And (Not a0) (Not a1) ..rest) (And (Not (Or a0 a1)) ..rest) :flatten)
 (run 1)
 (let want (And (Not (Or (p) (q))) (r)))
-(check (= e want))
+(prove (= e want))
 ";
     let cmds = semi_persistent_egraph::parser::parse_program_v2(program).expect("parse");
     let mut it: Interpreter<DefaultConfig, MachineLit, MachineModel, false, true> =

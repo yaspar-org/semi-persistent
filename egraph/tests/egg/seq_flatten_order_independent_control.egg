@@ -14,6 +14,6 @@
 (constructor Blob () E)
 
 (let n (F (A) (B)))
-(check (= (F (F (A) (B)) (C)) (F (A) (B) (C))))
+(prove (= (F (F (A) (B)) (C)) (F (A) (B) (C))))
 (union n (Blob))
-(check (= (F (F (A) (B)) (C)) (F (A) (B) (C))))
+(prove (= (F (F (A) (B)) (C)) (F (A) (B) (C))))

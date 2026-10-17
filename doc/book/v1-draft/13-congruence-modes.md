@@ -105,7 +105,7 @@ ok — 9 nodes
 Two properties bound what lazy mode can serve: the trigger is an equality check,
 and consecutive checks share one transaction.
 
-**The trigger is an equality check.** `(check (= a b))` and `(check (!= a b))` are
+**The trigger is an equality check.** `(prove (= a b))` and `(prove (!= a b))` are
 the only two commands that open the transaction. The first command that is not one
 of them closes it and restores. So lazy mode answers questions asked in that form,
 and does nothing for a computation that consults equality some other way.
@@ -126,7 +126,7 @@ enters one caution about `!=` under the default.
 | eager (`--derive-ac-eqs`) | completion on every rebuild | you need the full relation available to something other than an equality check |
 | lazy (`--lazy-ac-eqs`) | completion per equality check, then rolled back | a few `=`/`!=` questions over a large graph you do not want to grow |
 
-One caution about the default. A `(check (!= a b))` that passes in plain mode means
+One caution about the default. A `(prove (!= a b))` that passes in plain mode means
 "plain congruence did not derive this", which is weaker than "the theory does not
 entail it". If a `!=` over AC operators is carrying a claim, run it under eager
 completion, where a passing `!=` means the closure the engine implements found no

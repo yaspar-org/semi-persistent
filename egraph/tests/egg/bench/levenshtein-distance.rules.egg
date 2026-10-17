@@ -59,10 +59,10 @@
 (run 100)
 
 (extract test1)
-(check (= test1 (Num 3)))
+(prove (= test1 (Num 3)))
 (extract test2)
-(check (= test2 (Num 5)))
+(prove (= test2 (Num 5)))
 (extract test3)
-(check (= test3 (Num 5)))
+(prove (= test3 (Num 5)))
 (print-size)
 (print-stats :file "levenshtein-distance.rules.stats.json")

@@ -19,17 +19,17 @@
 
 ;; The first iteration exposes another recursive dbl application.
 (run 1)
-(check (!= d2 four))
+(prove (!= d2 four))
 
 ;; Two more iterations finish this input.
 (run 2)
-(check (= d2 four))
+(prove (= d2 four))
 
 ;; This run reaches an action-counter fixpoint before its bound.
 (let d4 (dbl four))
 (let eight (s (s (s (s (s (s (s (s z)))))))))
 (run 10)
-(check (= d4 eight))
+(prove (= d4 eight))
 (print-stats)
 ;; ANCHOR_END: saturation
 
@@ -39,10 +39,10 @@
 
 ;; The rewrite can keep producing larger terms. The equality goal stops this
 ;; run before the iteration bound.
-(run 100 :until (= (up z) (up (s (s (s z))))))
-(check (= (up z) (up (s (s (s z))))))
+(run 100 :goal (= (up z) (up (s (s (s z))))))
+(prove (= (up z) (up (s (s (s z))))))
 (print-stats)
 ;; ANCHOR_END: until-goal
 
 ;; Keep an assertion after the final diagnostic command.
-(check (= d4 eight))
+(prove (= d4 eight))

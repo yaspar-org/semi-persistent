@@ -11,5 +11,5 @@
 (let s (add (a) (b)))
 (push)
 (union (b) (zero))
-(check (= s (a)))
+(prove (= s (a)))
 (pop)

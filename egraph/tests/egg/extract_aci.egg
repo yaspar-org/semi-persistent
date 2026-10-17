@@ -16,5 +16,5 @@
 (let p (Or (A) (Or (Not (Not (B))) (C))))
 (run 10)
 
-(check (= (Not (Not (B))) (B)))
+(prove (= (Not (Not (B))) (B)))
 (extract p)

@@ -43,4 +43,4 @@
   :let ((K0 (min l)) (K1 (+ K0 (min (- u l)))))
   :when ((>= (count gs) 2) (> K1 0) (== (count (union-by p l u)) (count gs))))
 (run 1)
-(check (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
+(prove (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))

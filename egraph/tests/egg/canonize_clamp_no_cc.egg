@@ -20,18 +20,18 @@
 (let x_aab  (xr (a) (a) (b)))    ;; {a:2,b:1} → {b} = b
 (let mt_aa  (mt (a) (a)))        ;; {a} = a (idempotent dedup + size-1)
 (let pl_ae  (pl (a) (e)))        ;; identity drop → {a} = a
-(check (= x_aa (e)))
-(check (= x_aaa (a)))
-(check (= x_aab (b)))
-(check (= mt_aa (a)))
-(check (= pl_ae (a)))
+(prove (= x_aa (e)))
+(prove (= x_aaa (a)))
+(prove (= x_aab (b)))
+(prove (= mt_aa (a)))
+(prove (= pl_ae (a)))
 
 ;; --- recanonize-path canonization (node built well-formed, a child merge makes it degenerate) ---
 (let x_ab  (xr (a) (b)))         ;; {a,b}; after a=b → {a:2} → {} = e
 (let mt_ab (mt (a) (b)))         ;; {a,b}; after a=b → {a} = a
 (union a b)
-(check (= x_ab (e)))
-(check (= mt_ab (a)))
+(prove (= x_ab (e)))
+(prove (= mt_ab (a)))
 
 ;; --- recanonize-path unit-drop (a summand merges INTO the unit's class) ---
 (function c () E)
@@ -39,5 +39,5 @@
 (let pl_cd (pl (c) (d)))         ;; {c,d}; after d=e → {c} = c
 (let xr_cd (xr (c) (d)))         ;; {c,d}; after d=e → {c} = c
 (union d e)
-(check (= pl_cd (c)))
-(check (= xr_cd (c)))
+(prove (= pl_cd (c)))
+(prove (= xr_cd (c)))

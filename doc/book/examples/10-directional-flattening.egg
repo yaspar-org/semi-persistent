@@ -8,15 +8,15 @@
 (function c () E)
 
 (function L (E) E :assoc-left)
-(check (= (L (L a b) c) (L a b c)))
-(check (!= (L a (L b c)) (L a b c)))
+(prove (= (L (L a b) c) (L a b c)))
+(prove (!= (L a (L b c)) (L a b c)))
 
 (function R (E) E :assoc-right)
-(check (= (R a (R b c)) (R a b c)))
-(check (!= (R (R a b) c) (R a b c)))
+(prove (= (R a (R b c)) (R a b c)))
+(prove (!= (R (R a b) c) (R a b c)))
 
 (function A (E) E :assoc)
-(check (= (A (A a b) c) (A a b c)))
-(check (= (A a (A b c)) (A a b c)))
-(check (!= (A a b c) (A c b a)))
+(prove (= (A (A a b) c) (A a b c)))
+(prove (= (A a (A b c)) (A a b c)))
+(prove (!= (A a b c) (A c b a)))
 ;; ANCHOR_END: directional-flattening

@@ -17,5 +17,5 @@
 (run 1)
 
 ;; Both should fire
-(check (= t (Got (A) (Add (B) (B)))))
-(check (= t (Got (B) (Add (A) (A) (A)))))
+(prove (= t (Got (A) (Add (B) (B)))))
+(prove (= t (Got (B) (Add (A) (A) (A)))))

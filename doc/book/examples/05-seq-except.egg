@@ -31,8 +31,8 @@
 (rewrite (Conj (..ns (Gl (Not q))) (..gs (Gl p) :except ns) ..rest)
          (Kept (N (count ns)) (N (count gs))))
 (run 1)
-(check (= both (Split (N 1) (N 1))))
-(check (= both (Split (N 0) (N 2))))
-(check (= one (Kept (N 1) (N 1))))
-(check (!= one (Kept (N 0) (N 2))))
+(prove (= both (Split (N 1) (N 1))))
+(prove (= both (Split (N 0) (N 2))))
+(prove (= one (Kept (N 1) (N 1))))
+(prove (!= one (Kept (N 0) (N 2))))
 ;; ANCHOR_END: seq-except

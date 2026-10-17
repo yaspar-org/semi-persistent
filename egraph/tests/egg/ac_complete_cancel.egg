@@ -32,4 +32,4 @@
 (run 10)
 
 ;; Without completion the rule never fires; with it, the term reduces to 0.
-(check (= t (Zero)))
+(prove (= t (Zero)))

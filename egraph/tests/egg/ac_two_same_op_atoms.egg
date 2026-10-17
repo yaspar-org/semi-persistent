@@ -25,4 +25,4 @@
 (run 10)
 
 ;; If matching survives, g(a) exists (x binds a summand of the first add).
-(check (= (g (a)) (g (a))))
+(prove (= (g (a)) (g (a))))

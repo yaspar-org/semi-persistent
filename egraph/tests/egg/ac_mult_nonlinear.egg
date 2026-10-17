@@ -18,5 +18,5 @@
 (rewrite (Add x:k y:k ..rest) (Balanced x y))
 (run 1)
 
-(check (= t (Balanced (A) (B))))
-(check (= t (Balanced (B) (A))))
+(prove (= t (Balanced (A) (B))))
+(prove (= t (Balanced (B) (A))))

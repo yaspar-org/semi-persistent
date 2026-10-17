@@ -14,4 +14,4 @@
 (let e (And (Wrap A) (Wrap B)))
 (rewrite (And (..gs (Wrap a)) ..rest) (Mark (And ..gs)))
 (run 1)
-(check (= e (Mark (Wrap A))))
+(prove (= e (Mark (Wrap A))))

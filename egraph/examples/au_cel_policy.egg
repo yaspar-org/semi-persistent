@@ -52,7 +52,7 @@
 ; Supply distributivity explicitly to recognize the corrected factorization.
 (rewrite (And a (Or b c)) (Or (And a b) (And a c)))
 (run 2)
-(check (= candidateA corrected))
-(check (!= candidateA candidateB))
+(prove (= candidateA corrected))
+(prove (!= candidateA candidateB))
 (antiunify candidateA corrected :algorithm exact)
 (checkau candidateA corrected :max_size 9 :algorithm exact)

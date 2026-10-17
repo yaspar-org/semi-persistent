@@ -903,7 +903,7 @@ fn book_examples() {
 //
 // The same programs `scripts/egglog-compare/compare.py` times against egglog and
 // `benches/corpus.rs` times in process. Registered here because they carry
-// `(check ...)` commands: their correctness is a test, their timing is not.
+// `(prove ...)` commands: their correctness is a test, their timing is not.
 
 egg_test!(
     bench_acgen_native,

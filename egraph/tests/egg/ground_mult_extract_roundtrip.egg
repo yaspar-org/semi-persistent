@@ -12,4 +12,4 @@
 (function Plus (E) E :assoc-comm)
 (let t (Plus (F (a)) (F (a)) (F (a)) (b)))
 (extract t)
-(check (= t (Plus (F (a)):3 (b))))
+(prove (= t (Plus (F (a)):3 (b))))

@@ -17,4 +17,4 @@
 (rewrite (Add (Num 0) ..rest) (Add ..rest))
 (let t (Add (x) (Sub (Num 1) (Num 1))))
 (run 4)
-(check (= t (x)))
+(prove (= t (x)))

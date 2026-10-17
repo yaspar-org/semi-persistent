@@ -13,15 +13,15 @@
 (function d () E)
 
 ;; Nested same-op constructions all canonicalize to the same flat node.
-(check (= (Add (Add (a) (b)) (c)) (Add (a) (b) (c))))
-(check (= (Add (a) (Add (b) (c))) (Add (a) (b) (c))))
-(check (= (Add (Add (a) (b)) (Add (c) (d))) (Add (a) (b) (c) (d))))
+(prove (= (Add (Add (a) (b)) (c)) (Add (a) (b) (c))))
+(prove (= (Add (a) (Add (b) (c))) (Add (a) (b) (c))))
+(prove (= (Add (Add (a) (b)) (Add (c) (d))) (Add (a) (b) (c) (d))))
 
 ;; Deeper nesting flattens to a fixpoint.
-(check (= (Add (Add (Add (a) (b)) (c)) (d)) (Add (a) (b) (c) (d))))
+(prove (= (Add (Add (Add (a) (b)) (c)) (d)) (Add (a) (b) (c) (d))))
 
 ;; Multiplicity is preserved through flattening: Add(Add(a,a), b) = {a:2, b:1}.
-(check (= (Add (Add (a) (a)) (b)) (Add (a) (a) (b))))
+(prove (= (Add (Add (a) (a)) (b)) (Add (a) (a) (b))))
 
 ;; Negative control: flattening does not conflate distinct flat terms.
-(check (!= (Add (a) (b)) (Add (a) (c))))
+(prove (!= (Add (a) (b)) (Add (a) (c))))

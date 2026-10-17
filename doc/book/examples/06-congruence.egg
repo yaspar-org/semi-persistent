@@ -23,10 +23,10 @@
 ;; ANCHOR: congruence
 ;; This parent is distinct until its two argument classes are merged.
 (let right (f (b) (b)))
-(check (!= left right))
+(prove (!= left right))
 
 ;; No rewrite runs. Congruence alone merges the parent classes.
 (union (a) (b))
-(check (= left right))
+(prove (= left right))
 (print-size)
 ;; ANCHOR_END: congruence

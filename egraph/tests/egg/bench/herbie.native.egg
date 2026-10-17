@@ -286,7 +286,7 @@
 (push)
 (let e (Add one zero))
 (run 1)
-(check (= e one))
+(prove (= e one))
 (pop)
 
 (push)
@@ -294,7 +294,7 @@
 (let six (Num 6/1))
 (let e2 (Add one five))
 (run 1)
-(check (= e2 six))
+(prove (= e2 six))
 (pop)
 
 (let x (Var "x"))
@@ -302,48 +302,48 @@
 (push)
 (let e3 (Add x zero))
 (run 1)
-(check (= e3 x))
+(prove (= e3 x))
 (pop)
 
 (push)
 (let e4 (Sub x zero))
 (run 1)
-(check (= e4 x))
+(prove (= e4 x))
 (pop)
 
 (push)
 
 (let e5 (Mul x one))
 (run 1)
-(check (= e5 x))
+(prove (= e5 x))
 (pop)
 
 (push)
 
 (let e6 (Div x one))
 (run 1)
-(check (= e6 x))
+(prove (= e6 x))
 (pop)
 
 (push)
 
 (let e7 (Sub (Mul one x) (Mul (Add x one) one)))
 (run 3)
-(check (= e7 (Num -1/1)))
+(prove (= e7 (Num -1/1)))
 (pop)
 
 (push)
 
 (let e8 (Sub (Add x one) x))
 (run 4)
-(check (= e8 one))
+(prove (= e8 one))
 (pop)
 
 (push)
 
 (let e9 (Sub (Add x one) one))
 (run 4)
-(check (= e9 x))
+(prove (= e9 x))
 (pop)
 
 
@@ -352,19 +352,19 @@
 
 (let e11 (Sub (Mul (Sqrt (Add x one)) (Sqrt (Add x one))) (Mul (Sqrt x) (Sqrt x))))
 (run 5)
-(check (= one e11))
+(prove (= one e11))
 (pop)
 
 (push)
 (let e12 (Add (Num 1/5) (Num 3/10)))
 (run 1)
-(check (= e12 (Num 1/2)))
+(prove (= e12 (Num 1/2)))
 (pop)
 
 (push)
 (let e13 (Unary "cos" (Const "PI")))
 (run 1)
-(check (= e13 (Num -1/1)))
+(prove (= e13 (Num -1/1)))
 (pop)
 (print-size)
 (print-stats :file "herbie.native.stats.json")

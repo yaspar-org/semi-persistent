@@ -12,7 +12,7 @@
 
 (union (Add (Num) (Num)) (Num))
 ;; Congruence through a datatype variant, unchanged by the tags.
-(check (= (Mul (Add (Num) (Num)) (Num)) (Mul (Num) (Num))))
+(prove (= (Mul (Add (Num) (Num)) (Num)) (Mul (Num) (Num))))
 ;; The :unextractable variant's class extracts through the variant it was merged with.
 (union (Tmp (Num)) (Num))
 (extract (Tmp (Num)))

@@ -15,4 +15,4 @@
 (let e (Cat (F a) (F b) (G c)))
 (rewrite (Cat (..fs (F x)) (..gs (G y))) (Cat ..[ (P x y) for (x y) in (zip x y) ]))
 (run 1)
-(check (= e (P a c)))
+(prove (= e (P a c)))

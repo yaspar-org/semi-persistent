@@ -22,5 +22,5 @@
 (let q1 (mul (a) (a) (b)))
 (let q2 (mul (a) (b) (b)))
 (run 8)
-(check (= q1 (a)))
-(check (= q2 (b)))
+(prove (= q1 (a)))
+(prove (= q2 (b)))

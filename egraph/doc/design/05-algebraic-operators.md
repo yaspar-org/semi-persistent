@@ -167,7 +167,7 @@ enough, and left plain mode inconsistent with itself — `(+ a (neg b))` followe
 ```lisp
 (let s (Add (A) (Neg (B))))
 (union (A) (B))
-(check (= s (Zero)))          ;; used to fail; the control order always passed
+(prove (= s (Zero)))          ;; used to fail; the control order always passed
 ```
 
 The law is therefore re-applied after merges, by `canon_repair_round` in `rebuild`. That pass

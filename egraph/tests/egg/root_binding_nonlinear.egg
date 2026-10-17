@@ -15,7 +15,7 @@
 (union f g)
 (union g h)
 (run 3)
-(check (= (Tag (Num 1) (Num 2)) (Num 3)))
+(prove (= (Tag (Num 1) (Num 2)) (Num 3)))
 
 ;; Two of the three share a class, the third does not: no match.
 (let f2 (F (Num 4)))
@@ -23,4 +23,4 @@
 (let h2 (H (Num 6)))
 (union f2 g2)
 (run 3)
-(check (!= (Tag (Num 4) (Num 5)) (Num 6)))
+(prove (!= (Tag (Num 4) (Num 5)) (Num 6)))

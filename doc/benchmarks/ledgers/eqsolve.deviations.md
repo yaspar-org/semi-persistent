@@ -29,7 +29,7 @@ joined `(Var "x")` to `(Num 5)` while all seven of the source's checks
 already pass; at `(run 6)` all three answers hold. egglog's output is
 identical at 5 and at 6, so both engines run one program.
 
-**The three answers are asserted, not only printed.** `(check (= (Var "x")
+**The three answers are asserted, not only printed.** `(prove (= (Var "x")
 (Num 5)))` and its two siblings are added to every configuration. The source
 only extracts them, and an extraction is not a check; asserting them makes
 the engines' agreement on the answers part of the validation.

@@ -7,4 +7,4 @@
 (rewrite (= v (F x)) (G v))
 (let t (F (V 1)))
 (run 3)
-(check (= t (G (F (V 1)))))
+(prove (= t (G (F (V 1)))))

@@ -14,4 +14,4 @@
 (let s_ab (add (a) (b)))
 (union (zero) (b))
 (run 5)
-(check (= s_ab (a)))
+(prove (= s_ab (a)))

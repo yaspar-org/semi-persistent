@@ -22,5 +22,5 @@
 (rewrite (Plus (..fs (F y)) ..rest) (Only (Plus ..fs)))
 (rewrite (Plus (..ks:k (F y)) ..rest) (All (Plus ..ks)))
 (run 1)
-(check (= src (Only (F b))))
-(check (= src (All (Plus (F a) (F a) (F a) (F b)))))
+(prove (= src (Only (F b))))
+(prove (= src (All (Plus (F a) (F a) (F a) (F b)))))

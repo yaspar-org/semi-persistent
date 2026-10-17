@@ -13,10 +13,10 @@
 (let s (Add (Var "p") (Var "q")))
 (let m (Mul (Var "q") (Const 1)))
 (run 5)
-(check (= (Var "p") (Var "q")))
+(prove (= (Var "p") (Var "q")))
 
 ;; The join holds for r/s too, but the `Mul` over s carries 9, not 1: no union.
 (let s2 (Add (Var "r") (Var "s")))
 (let m2 (Mul (Var "s") (Const 9)))
 (run 5)
-(check (!= (Var "r") (Var "s")))
+(prove (!= (Var "r") (Var "s")))

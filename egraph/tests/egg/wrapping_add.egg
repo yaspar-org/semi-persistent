@@ -6,4 +6,4 @@
 (rewrite (Add (Num x) (Num y)) (Num (i64::wrapping_add x y)))
 (let e (Add (Num 9223372036854775807) (Num 1)))
 (run 10)
-(check (= e (Num -9223372036854775808)))
+(prove (= e (Num -9223372036854775808)))

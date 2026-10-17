@@ -13,4 +13,4 @@
 (let t (Plus (c):2000000 (d):2000000))
 (union (Plus (c) (d)) (b))
 (run 1)
-(check (= t (Plus (b):2000000)))
+(prove (= t (Plus (b):2000000)))

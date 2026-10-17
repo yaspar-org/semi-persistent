@@ -32,13 +32,13 @@
 (run 5)
 
 ;; The entailed equality:  e = +(c,d).
-(check (= (e) s_cd))
+(prove (= (e) s_cd))
 
 ;; Sanity: the original equalities still hold.
-(check (= s_ab (c)))
-(check (= s_abd (e)))
+(prove (= s_ab (c)))
+(prove (= s_abd (e)))
 
 ;; Negative control: completion must not collapse unrelated classes.
 ;; +(a,d) is not entailed equal to e here.
 (let s_ad (Add (a) (d)))
-(check (!= (e) s_ad))
+(prove (!= (e) s_ad))

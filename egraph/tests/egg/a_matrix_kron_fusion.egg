@@ -90,11 +90,11 @@
 
 (run 20)
 
-(check (= (nrows matB) dimM))
-(check (= (nrows (Kron (Id dimN) matB)) (Times dimN dimM)))
+(prove (= (nrows matB) dimM))
+(prove (= (nrows (Kron (Id dimN) matB)) (Times dimN dimM)))
 (let simpleEx1 (Kron matA matB))
-(check (= ex1 simpleEx1))
+(prove (= ex1 simpleEx1))
 
 (let ex2 (MMul (Kron (Id dimP) matC) (Kron matA (Id dimM))))
 (run 10)
-(check (!= ex2 (Kron matA matC)))
+(prove (!= ex2 (Kron matA matC)))

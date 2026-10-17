@@ -58,7 +58,7 @@ produce it. Reproduction:
 (constructor seq (G) G :assoc)
 (let x1 (seq (seq (Aa) (Bb)) (Cc)))
 (let x3 (seq (Aa) (Bb) (Cc)))
-(check (= x1 x3))
+(prove (= x1 x3))
 ```
 
 ```

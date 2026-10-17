@@ -25,11 +25,11 @@
 (num 7)
 (run 2)
 
-(check (!= waiting (result item)))
-(check (= (small (num 3)) (num 3)))
-(check (!= (small (num 7)) (num 7)))
+(prove (!= waiting (result item)))
+(prove (= (small (num 3)) (num 3)))
+(prove (!= (small (num 7)) (num 7)))
 
 (assumption)
 (run 2)
-(check (= waiting (result item)))
+(prove (= waiting (result item)))
 ;; ANCHOR_END: guards

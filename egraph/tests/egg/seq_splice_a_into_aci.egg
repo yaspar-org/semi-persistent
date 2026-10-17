@@ -14,4 +14,4 @@
 (let e (Cat (F a) (F b) (F a)))
 (rewrite (Cat (..fs (F x))) (And ..fs))
 (run 1)
-(check (= e (And (F a) (F b))))
+(prove (= e (And (F a) (F b))))

@@ -26,5 +26,5 @@
 (let s_ad (add (a) (d)))
 
 (run 5)
-(check (= s_a0 (a)))
-(check (= (c) s_ad))
+(prove (= s_a0 (a)))
+(prove (= (c) s_ad))

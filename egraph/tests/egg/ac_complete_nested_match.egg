@@ -23,4 +23,4 @@
 (run 10)
 
 ;; The rule fired (x bound to a summand of the first add): g(a) exists.
-(check (= (g (a)) (g (a))))
+(prove (= (g (a)) (g (a))))

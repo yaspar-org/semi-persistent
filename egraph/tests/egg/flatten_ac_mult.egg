@@ -22,5 +22,5 @@
 (rewrite (Plus x:6 y) (Six x y) :flatten)
 (rewrite (Plus x:3 y:2) (Th x y) :flatten)
 (run 1)
-(check (= one (Six (b) (a))))
-(check (= two (Th (b) (c))))
+(prove (= one (Six (b) (a))))
+(prove (= two (Th (b) (c))))

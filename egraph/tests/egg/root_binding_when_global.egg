@@ -12,5 +12,5 @@
 (let a (Add (V 0) (V 5)))
 (let b (Add (V 1) (V 5)))
 (run 3)
-(check (= a (Mul (V 0) (V 5))))
-(check (!= b (Mul (V 1) (V 5))))
+(prove (= a (Mul (V 0) (V 5))))
+(prove (!= b (Mul (V 1) (V 5))))

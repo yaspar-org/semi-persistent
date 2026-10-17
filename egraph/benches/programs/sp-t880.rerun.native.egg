@@ -907,7 +907,7 @@
 (union (Var "spu0a") (Var "spu0b"))
 (union (Num 627246265) (Num 254804333))
 (run 1)
-(check (= (Add (Num 10000000) (Num 10000001)) (Num 20000001)))
+(prove (= (Add (Num 10000000) (Num 10000001)) (Num 20000001)))
 
 (print-size)
 (print-stats :file "sp-t880.rerun.native.stats.json")

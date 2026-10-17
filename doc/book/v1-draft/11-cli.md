@@ -61,7 +61,7 @@ default.
 With completion off, leapfrog matching still enumerates sub-multisets of AC
 nodes, so AC **matching** is complete; what is off is the completion procedure
 in rebuild. This distinction is the subject of
-`ac-congruence-completeness.md`, and it is the reason `(check (!= ...))` is a
+`ac-congruence-completeness.md`, and it is the reason `(prove (!= ...))` is a
 statement about the implemented search rather than a semantic theorem. The two
 flags are mutually exclusive.
 

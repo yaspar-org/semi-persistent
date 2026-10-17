@@ -81,18 +81,18 @@ runner of [chapter 9](09-corpus.md).
 ```
 
 Run up to ten rounds of rule application, stopping early if a round adds
-nothing new. `(run 10 :until (= a b))` stops as soon as the two terms are
+nothing new. `(run 10 :goal (= a b))` stops as soon as the two terms are
 proved equal.
 
 ## Checking
 
 ```lisp
-(check (= expr (Num 8)))
+(prove (= expr (Num 8)))
 ```
 
 Assert that the two terms are in the same e-class. If they are not, the program
 fails with `error: check failed: terms are not equal` and a nonzero exit
-status. `(check (!= a b))` asserts the opposite, and is weaker than it looks:
+status. `(prove (!= a b))` asserts the opposite, and is weaker than it looks:
 it passes when the engine's search did not derive equality, which is not the
 same as a proof that the two terms are unequal. Chapter 12 says more about
 that.

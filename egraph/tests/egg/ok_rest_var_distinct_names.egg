@@ -12,4 +12,4 @@
 (let t (S (a) (b) (c)))
 (rule ((S ..p x ..q)) ((union (W) x)))
 (run 2)
-(check (= (W) (b)))
+(prove (= (W) (b)))

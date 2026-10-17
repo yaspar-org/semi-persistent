@@ -310,7 +310,7 @@ a singleton value" or to an equality the e-graph already accepts:
 
 **Disequalities.** An empty meet between two classes proves `a ≠ b` in every
 model. The analysis does not merge anything on this basis. It can answer
-`(check (!= a b))`, feed guards that test disequality, and turn a later merge
+`(prove (!= a b))`, feed guards that test disequality, and turn a later merge
 of `a` and `b` into a conflict. Disequality is the only fact the analysis
 derives from non-singleton values.
 

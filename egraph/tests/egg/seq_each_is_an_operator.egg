@@ -10,4 +10,4 @@
 (let e (each A A))
 (rewrite (each x y) (Mark x))
 (run 1)
-(check (= e (Mark A)))
+(prove (= e (Mark A)))

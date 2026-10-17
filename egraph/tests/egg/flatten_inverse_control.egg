@@ -15,4 +15,4 @@
 (union k (add (neg (a)) (b) (c)))
 (rewrite (add x y) (Pair x y))
 (run 1)
-(check (= top (Pair (b) (c))))
+(prove (= top (Pair (b) (c))))

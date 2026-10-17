@@ -470,7 +470,7 @@ fn to_script(t: &Printed, sigs: &Sigs, value: &HashSet<String>) -> String {
 /// The book's cost-model examples (`doc/book/examples/cost-models/`), run from
 /// their own directory so their script paths resolve. Each prints the costs of
 /// its `.out` file, and each term it prints is in the class of the name it was
-/// extracted from: `(check (= name term))` over the same script passes. Which of
+/// extracted from: `(prove (= name term))` over the same script passes. Which of
 /// several terms of equal cost is printed, and the solve counts, are not
 /// compared ([`skeleton`]). An example marked `;; EXPECT: sort-error` is rejected
 /// naming its script.
@@ -551,7 +551,7 @@ fn book_cost_model_examples() {
                     };
                     costed = false;
                     let term = to_script(&parse_printed(&mut &line[..]), &sigs, &value);
-                    checks.push_str(&format!("(check (= {name} {term}))\n"));
+                    checks.push_str(&format!("(prove (= {name} {term}))\n"));
                 }
             }
             assert_eq!(

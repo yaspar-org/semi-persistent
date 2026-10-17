@@ -14,39 +14,39 @@
 (print-size)
 (let eq_ba (eq b a))
 (print-size)
-(check (= eq_ab eq_ba))
+(prove (= eq_ab eq_ba))
 ;; ANCHOR_END: node-kinds
 
 ;; A plain operator stores an ordered, fixed-arity tuple.
 (function pair (E E) E)
-(check (!= (pair a b) (pair b a)))
+(prove (!= (pair a b) (pair b a)))
 
 ;; An associative operator stores an order-preserving sequence.
 (function seq (E) E :assoc)
-(check (= (seq (seq a b) c) (seq a b c)))
-(check (= (seq a (seq b c)) (seq a b c)))
-(check (= (seq a) a))
-(check (!= (seq a b) (seq b a)))
+(prove (= (seq (seq a b) c) (seq a b c)))
+(prove (= (seq a (seq b c)) (seq a b c)))
+(prove (= (seq a) a))
+(prove (!= (seq a b) (seq b a)))
 
 ;; An AC operator stores a sorted multiset and retains multiplicity.
 (function add (E) E :assoc :comm)
-(check (= (add a b) (add b a)))
-(check (= (add (add a b) c) (add a b c)))
-(check (!= (add a a) (add a)))
-(check (= (add a) a))
+(prove (= (add a b) (add b a)))
+(prove (= (add (add a b) c) (add a b c)))
+(prove (!= (add a a) (add a)))
+(prove (= (add a) a))
 
 ;; An ACI operator stores a sorted set, so repetition is absent.
 (function conj (E) E :assoc-comm-idem)
-(check (= (conj a b) (conj b a)))
-(check (= (conj (conj a b) c) (conj a b c)))
-(check (= (conj a a) a))
-(check (= (conj a a b) (conj a b)))
+(prove (= (conj a b) (conj b a)))
+(prove (= (conj (conj a b) c) (conj a b c)))
+(prove (= (conj a a) a))
+(prove (= (conj a a b) (conj a b)))
 
 ;; Literal leaves carry values rather than child classes.
 (function isTrue (bool) E)
-(check (= (isTrue true) (isTrue true)))
-(check (!= (isTrue true) (isTrue false)))
+(prove (= (isTrue true) (isTrue true)))
+(prove (!= (isTrue true) (isTrue false)))
 
-(check (= (seq a (seq b (seq c a))) (seq a b c a)))
-(check (= (conj a (conj b (conj c a))) (conj a b c)))
+(prove (= (seq a (seq b (seq c a))) (seq a b c a)))
+(prove (= (conj a (conj b (conj c a))) (conj a b c)))
 (print-size)

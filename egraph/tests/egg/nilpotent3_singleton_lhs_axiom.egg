@@ -15,4 +15,4 @@
 (union t (b))
 (let u (x3 (a) (b)))
 (run 5)
-(check (= u (e)))
+(prove (= u (e)))

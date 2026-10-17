@@ -12,5 +12,5 @@
 (function Add (Math) Math :assoc-comm)
 
 (let nested (Add a (Add b c)))
-(check (= nested (Add c a b)))
+(prove (= nested (Add c a b)))
 ;; ANCHOR_END: ac-canonization

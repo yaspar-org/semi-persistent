@@ -22,5 +22,5 @@
 (union named (h (f (x))))
 (print-size)
 
-(check (= named (h (f (x)))))
+(prove (= named (h (f (x)))))
 ;; ANCHOR_END: building-terms

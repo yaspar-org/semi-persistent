@@ -12,6 +12,6 @@
 (Num 3)
 (Num 7)
 (run 3)
-(check (= (Mark (Num 3)) (Num 3)))
+(prove (= (Mark (Num 3)) (Num 3)))
 ;; The soundness counterpart: the guard is false for 7, so the rewrite does not fire.
-(check (!= (Mark (Num 7)) (Num 7)))
+(prove (!= (Mark (Num 7)) (Num 7)))

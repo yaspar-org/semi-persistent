@@ -41,7 +41,7 @@
 ;; Structural identity is free: the same term built twice is the same e-class,
 ;; because every term is hash-consed on insertion.
 (let sum_again (add (f (x)) (f (y))))
-(check (= sum sum_again))
+(prove (= sum sum_again))
 
 ;; `union` asserts an equality the program did not derive.
 (union fx fy)
@@ -50,20 +50,20 @@
 ;; arguments make equal applications. Nothing declared `add` to be commutative or
 ;; anything else, yet `add(fx, fy) = add(fy, fx)` now holds, because `fx` and
 ;; `fy` are the same class and so both terms are the same node.
-(check (= (add fx fy) (add fy fx)))
+(prove (= (add fx fy) (add fy fx)))
 ;; It propagates upward through any number of layers.
-(check (= (neg (add fx fx)) (neg (add fy fy))))
+(prove (= (neg (add fx fx)) (neg (add fy fy))))
 
 ;; What congruence does NOT give you: it never equates terms with different
 ;; operators or different arity at the root.
-(check (!= (add fx fx) (neg fx)))
+(prove (!= (add fx fx) (neg fx)))
 
-;; `(check t)` is the third form, and it is worth being precise about what it does,
+;; `(prove t)` is the third form, and it is worth being precise about what it does,
 ;; because the name invites a wrong reading. It is NOT a presence test. It builds
 ;; the term, so it asserts that the term sort-checks and it inserts the term if the
-;; term was not already there. A `(check t)` that names something the program never
+;; term was not already there. A `(prove t)` that names something the program never
 ;; derived succeeds, and leaves it in the graph.
 ;;
 ;; The two forms that assert something about the equality relation are `(= a b)`
 ;; and `(!= a b)`. Use those to state what a program should have derived.
-(check (add fx fy))
+(prove (add fx fy))

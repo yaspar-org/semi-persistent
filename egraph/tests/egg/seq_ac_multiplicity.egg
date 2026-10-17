@@ -13,4 +13,4 @@
 (let e (Plus (F a) (F a) (F b)))
 (rewrite (Plus (..fs:k>=2 (F x)) ..rest) (Plus (N (sum k)) ..rest) :when ((>= (count fs) 1)))
 (run 1)
-(check (= e (Plus (N 2) (F b))))
+(prove (= e (Plus (N 2) (F b))))

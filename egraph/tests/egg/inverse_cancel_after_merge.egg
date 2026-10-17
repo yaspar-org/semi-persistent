@@ -25,6 +25,6 @@
 (let s (Add (A) (Neg (B))))
 (union (A) (B))
 ;; Congruence alone gives this one.
-(check (= (Neg (A)) (Neg (B))))
+(prove (= (Neg (A)) (Neg (B))))
 ;; This is the one the missing re-application lost.
-(check (= s (Zero)))
+(prove (= s (Zero)))

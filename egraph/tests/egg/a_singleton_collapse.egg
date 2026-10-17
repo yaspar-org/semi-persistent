@@ -14,14 +14,14 @@
 (constructor b () E)
 
 ;; The law itself, at every nesting depth. No rule and no run: this is canonization.
-(check (= (seq (a)) (a)))
-(check (= (seq (seq (a))) (a)))
-(check (= (seq (seq (a) (b))) (seq (a) (b))))
+(prove (= (seq (a)) (a)))
+(prove (= (seq (seq (a))) (a)))
+(prove (= (seq (seq (a) (b))) (seq (a) (b))))
 
 ;; A singleton in argument position collapses before the parent is built, so it
 ;; leaves no trace in the parent's sequence.
-(check (= (seq (seq (a)) (b)) (seq (a) (b))))
-(check (= (seq (a) (seq (b))) (seq (a) (b))))
+(prove (= (seq (seq (a)) (b)) (seq (a) (b))))
+(prove (= (seq (a) (seq (b))) (seq (a) (b))))
 
 ;; A shrinking n-ary rewrite reaches its element through the collapse: deleting the
 ;; marker from a two-element sequence leaves one element, which IS that element. The
@@ -31,8 +31,8 @@
 (let r (seq (a) (unit)))
 (let m (seq (a) (unit) (b)))
 (run 10)
-(check (= l (a)))
-(check (= r (a)))
-(check (= m (seq (a) (b))))
+(prove (= l (a)))
+(prove (= r (a)))
+(prove (= m (seq (a) (b))))
 ;; ... and l = r, since both are (a).
-(check (= l r))
+(prove (= l r))

@@ -20,7 +20,7 @@ as rewrite rules), `math-add-ac.native.egg` (ours, native AC).
 2. **`(push)`/`(pop)` dropped.** Nothing follows the block in the standalone file, so the
    scope has no effect. Saturation is timed identically with or without it.
 3. **Appended `(print-size)`, `(print-stats)`, `(print-stats :file "…")`,** after the
-   `(check …)`, for the harness. Cannot affect the saturation being timed.
+   `(prove …)`, for the harness. Cannot affect the saturation being timed.
 
 No rule, term, budget, or check was altered.
 

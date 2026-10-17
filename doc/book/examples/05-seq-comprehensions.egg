@@ -36,7 +36,7 @@
 (run 1)
 (rewrite (Cat (..fs (F x)) (..gs (G y))) (Plus ..{ z for z in (concat x y) }))
 (run 1)
-(check (= pairs (Cat (K (a) (b)) (K (b) (a)))))
-(check (= twice (Plus (G (a)) (G (a)) (G (a)) (G (a)) (b))))
-(check (= both (Plus (a) (b))))
+(prove (= pairs (Cat (K (a) (b)) (K (b) (a)))))
+(prove (= twice (Plus (G (a)) (G (a)) (G (a)) (G (a)) (b))))
+(prove (= both (Plus (a) (b))))
 ;; ANCHOR_END: seq-comprehensions

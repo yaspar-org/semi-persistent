@@ -19,10 +19,10 @@
 
 (run extra 10)
 ;; The named rule fired ...
-(check (= y (c)))
+(prove (= y (c)))
 ;; ... and the untagged one did not: x is still alone in its class.
-(check (!= x y))
+(prove (!= x y))
 
 (run 10)
 ;; The default run fires the untagged rule.
-(check (= x y))
+(prove (= x y))

@@ -16,5 +16,5 @@
 (let aac (x3 (a) (a) (c)))
 (let bbc (x3 (b) (b) (c)))
 (run 6)
-(check (= (b) aac))
-(check (= (a) bbc))
+(prove (= (b) aac))
+(prove (= (a) bbc))

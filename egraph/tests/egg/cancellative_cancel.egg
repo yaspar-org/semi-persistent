@@ -13,4 +13,4 @@
 (let bc (add (b) (c)))
 (union ac bc)
 (run 5)
-(check (= (a) (b)))
+(prove (= (a) (b)))

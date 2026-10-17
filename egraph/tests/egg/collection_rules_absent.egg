@@ -16,4 +16,4 @@
 (let a (Var "a")) (let b (Var "b")) (let c (Var "c")) (let x (Var "x"))
 (let f (And (Global (Interval 2 5) a) (Global (Interval 4 9) b) (Global (Interval 3 4) c) x))
 (run 3)
-(check (= f (And x (Global (Interval 2 3) (And (Global (Interval 0 2) a) (Global (Interval 2 6) b) (Global (Interval 1 1) c))))))
+(prove (= f (And x (Global (Interval 2 3) (And (Global (Interval 0 2) a) (Global (Interval 2 6) b) (Global (Interval 1 1) c))))))

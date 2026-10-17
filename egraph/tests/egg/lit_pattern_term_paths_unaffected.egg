@@ -13,9 +13,9 @@
 (let b (Add (Const 1) (Const 3)))
 
 ;; Term-position literals: equal terms are equal, unequal ones are not.
-(check (= a (Add (Const 1) (Const 2))))
-(check (!= a b))
-(check (!= (Const 1) (Const 2)))
+(prove (= a (Add (Const 1) (Const 2))))
+(prove (!= a b))
+(prove (!= (Const 1) (Const 2)))
 
 ;; Extraction over a term holding literals.
 (extract a)

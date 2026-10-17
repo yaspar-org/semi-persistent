@@ -30,9 +30,9 @@
 (let bag (Bag a b b c c c))
 (run 1)
 
-(check (= sequence (Seq (F a) (F b) (F c))))
-(check (= set (Set (F a) (F b) (F c))))
-(check (= bag (Bag (F a) (F b) (F b) (F c) (F c) (F c))))
+(prove (= sequence (Seq (F a) (F b) (F c))))
+(prove (= set (Set (F a) (F b) (F c))))
+(prove (= bag (Bag (F a) (F b) (F b) (F c) (F c) (F c))))
 ;; ANCHOR_END: comprehension-forms
 
 ;; ANCHOR: comprehension-filter
@@ -52,7 +52,7 @@
   (FilterBox (Num 1)
              (FilterBag marker a b b c c c)))
 (run 1)
-(check (= filtered
+(prove (= filtered
           (FilterBag (F b) (F b) (F c) (F c) (F c))))
 ;; ANCHOR_END: comprehension-filter
 
@@ -66,7 +66,7 @@
 
 (let reduced (ReducedBag marker a b b b))
 (run 1)
-(check (= reduced (ReducedBag (F b) (F b))))
+(prove (= reduced (ReducedBag (F b) (F b))))
 ;; ANCHOR_END: comprehension-count
 
 ;; ANCHOR: comprehension-scope
@@ -82,7 +82,7 @@
 
 (let scoped (ScopeBox a (ScopeSeq b c marker)))
 (run 1)
-(check (= scoped (ScopeSeq (F c) (F marker) (Keep a))))
+(prove (= scoped (ScopeSeq (F c) (F marker) (Keep a))))
 ;; ANCHOR_END: comprehension-scope
 
 ;; ANCHOR: multiplicity-as-term
@@ -101,5 +101,5 @@
 (let measured
   (MeasureBox (Num 10) (MeasureBag a a a)))
 (run 1)
-(check (= measured (CountPair (Count 3) (Count 13))))
+(prove (= measured (CountPair (Count 3) (Count 13))))
 ;; ANCHOR_END: multiplicity-as-term

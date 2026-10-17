@@ -11,4 +11,4 @@
 (let t (Plus (a):4294967295 (b)))
 (rewrite (Plus x:4294967295 (b)) (Hit x))
 (run 1)
-(check (= t (Hit (a))))
+(prove (= t (Hit (a))))

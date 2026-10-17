@@ -14,4 +14,4 @@
 (rewrite (Cat ..pre (..fs (F x)) ..suf) (Cat ..pre (H (Cat ..fs)) ..suf)
   :when ((>= (count fs) 1)))
 (run 1)
-(check (= e (Cat a (H (F a)) (F b) b)))
+(prove (= e (Cat a (H (F a)) (F b) b)))

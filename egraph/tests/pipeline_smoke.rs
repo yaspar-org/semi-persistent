@@ -54,7 +54,7 @@ fn full_pipeline_smoke() {
 (rewrite (Mul a b) (Mul b a))
 (let e (Mul (Num 3) (Add (Num 4) (Num 5))))
 (run 10)
-(check (= e (Num 27)))
+(prove (= e (Num 27)))
 "#,
     );
 
@@ -66,7 +66,7 @@ fn full_pipeline_smoke() {
 (function A () S)
 (function B () S)
 (Eq (A) (B))
-(check (= (Eq (A) (B)) (Eq (B) (A))))
+(prove (= (Eq (A) (B)) (Eq (B) (A))))
 "#,
     );
 
@@ -82,7 +82,7 @@ fn full_pipeline_smoke() {
 (rewrite (Cat ..pre (A) (B) ..suf) (Cat ..pre (F (A)) ..suf))
 (let s (Cat (A) (B) (C)))
 (run 10)
-(check (= s (Cat (F (A)) (C))))
+(prove (= s (Cat (F (A)) (C))))
 "#,
     );
 
@@ -111,7 +111,7 @@ fn full_pipeline_smoke() {
 (rewrite (Neg (Neg x)) x)
 (let p (Or (Neg (Neg (A))) (B)))
 (run 10)
-(check (= (Neg (Neg (A))) (A)))
+(prove (= (Neg (Neg (A))) (A)))
 "#,
     );
 
@@ -123,7 +123,7 @@ fn full_pipeline_smoke() {
 (rewrite (Add a b) (Add b a))
 (let x (Add (Num 3) (Num 5)))
 (run 10)
-(check (= x (Num 8)))
+(prove (= x (Num 8)))
 "#,
     );
 
@@ -135,11 +135,11 @@ fn full_pipeline_smoke() {
 (push)
 (let a (P (N 1) (N 2)))
 (run 10)
-(check (= a (N 3)))
+(prove (= a (N 3)))
 (pop)
 (let b (P (N 10) (N 20)))
 (run 10)
-(check (= b (N 30)))
+(prove (= b (N 30)))
 "#,
     );
 
@@ -156,7 +156,7 @@ fn full_pipeline_smoke() {
 (Edge (Y) (Z))
 (rule ((Edge x y) (Edge y z)) ((Path x z)))
 (run 10)
-(check (Path (X) (Z)))
+(prove (Path (X) (Z)))
 "#,
     );
 
@@ -168,7 +168,7 @@ fn full_pipeline_smoke() {
 (rewrite (T2 x y) (T3 x y))
 (let a (T1 1 2))
 (run 10)
-(check (= a (T3 1 2)))
+(prove (= a (T3 1 2)))
 "#,
     );
 
@@ -180,7 +180,7 @@ fn full_pipeline_smoke() {
 (rewrite (EG (EA)) (EB))
 (run 10)
 (extract x)
-(check (= (EG (EA)) (EB)))
+(prove (= (EG (EA)) (EB)))
 "#,
     );
 
@@ -193,7 +193,7 @@ fn full_pipeline_smoke() {
 (rewrite (Pair a x) (Pair b x))
 (let t (Pair a b))
 (run 10)
-(check (= t (Pair (V 2) (V 2))))
+(prove (= t (Pair (V 2) (V 2))))
 "#,
     );
 
@@ -208,7 +208,7 @@ fn full_pipeline_smoke() {
 (rewrite (Plus x y) (H x y))
 (let q (Plus (A) (B)))
 (run 1)
-(check (= q (H (A) (B))))
+(prove (= q (H (A) (B))))
 "#,
     );
 
@@ -223,7 +223,7 @@ fn full_pipeline_smoke() {
 (rewrite (Or x y) (H x y))
 (let q (Or (A) (B)))
 (run 1)
-(check (= q (H (A) (B))))
+(prove (= q (H (A) (B))))
 "#,
     );
 
@@ -266,7 +266,7 @@ fn full_pipeline_smoke() {
 (rewrite (Cat x y) (H x y))
 (let q (Cat (A) (B)))
 (run 1)
-(check (= q (H (A) (B))))
+(prove (= q (H (A) (B))))
 "#,
     );
 
@@ -276,7 +276,7 @@ fn full_pipeline_smoke() {
 (datatype M (N IBig))
 (let a (N 1))
 (let b (N 2))
-(check (!= a b))
+(prove (!= a b))
 "#,
     );
 

@@ -35,12 +35,12 @@
 (run 5)
 
 ;; The entailed equality from the critical pair.
-(check (= s_cd s_ae))
+(prove (= s_cd s_ae))
 
 ;; Sanity: the asserted equalities still hold.
-(check (= s_ab (c)))
-(check (= s_bd (e)))
+(prove (= s_ab (c)))
+(prove (= s_bd (e)))
 
 ;; Negative control: an unrelated sum is not dragged in.
 (let s_ac (Add (a) (c)))
-(check (!= s_ac s_cd))
+(prove (!= s_ac s_cd))

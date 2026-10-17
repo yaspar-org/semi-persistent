@@ -16,4 +16,4 @@
 (run 1)
 (rewrite (G (Plus x:4294967295 (c))) (Hit x))
 (run 1)
-(check (= w (Hit (F (a)))))
+(prove (= w (Hit (F (a)))))

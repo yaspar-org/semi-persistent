@@ -31,18 +31,18 @@
 (push)
 (gmul gA4 gA4)
 
-(run 10000 :until (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
+(run 10000 :goal (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
 
-(check (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
+(prove (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
 (pop)
 
 ;; --- block 2 ---
 (push)
 (gmul (gmul gA2 gA2) (gmul gA2 gA2))
 
-(run 10000 :until (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
+(run 10000 :goal (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
 (gmul gA2 (gmul gA2 (gmul gA2 gA2)))))
-(check (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
+(prove (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
 (gmul gA2 (gmul gA2 (gmul gA2 gA2)))))
 (pop)
 
@@ -57,16 +57,16 @@
 
 (gmul (gmul gb (gmul (inv ga) ga)) (inv gb))
 
-(run 100000 :until (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
+(run 100000 :goal (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
 
-(check (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
+(prove (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
 
 (pop)
 
 ;; --- block 4 ---
 (push)
 (gmul gb (inv gb))
-(run 100000 :until (= (gmul gb (inv gb)) gI))
-(check (= (gmul gb (inv gb)) gI))
+(run 100000 :goal (= (gmul gb (inv gb)) gI))
+(prove (= (gmul gb (inv gb)) gI))
 
 (pop)

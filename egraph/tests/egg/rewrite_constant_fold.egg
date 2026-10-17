@@ -10,4 +10,4 @@
 
 (let e (Mul (Num 3) (Add (Num 4) (Num 5))))
 (run 10)
-(check (= e (Num 27)))
+(prove (= e (Num 27)))

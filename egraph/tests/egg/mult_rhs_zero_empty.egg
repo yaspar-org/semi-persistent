@@ -12,4 +12,4 @@
 (let t (Add (a):2))
 (rewrite (Add x:k>=2) (G (Add x:(u64::- k 2))))
 (run 1)
-(check (!= t (G (a))))
+(prove (!= t (G (a))))

@@ -39,4 +39,4 @@
 (let t1 (Mul (D) (D) (A) (D)))
 (let t2 (Mul (A) (D) (Mul (D) (D))))
 ;; True in the AC theory; NOT derived by canonization plus congruence alone.
-(check (= t1 t2))
+(prove (= t1 t2))

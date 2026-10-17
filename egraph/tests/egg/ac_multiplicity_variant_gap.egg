@@ -15,4 +15,4 @@
 
 (let sq (Add (Const 4) (Const 4)))
 (run 3)
-(check (= sq (Const 8)))
+(prove (= sq (Const 8)))

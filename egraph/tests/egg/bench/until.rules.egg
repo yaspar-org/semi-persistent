@@ -30,9 +30,9 @@
 (allgs gA)
 
 ; if you remove :until, this will take a very long time
-(run 10000 :until (= gA8 gI))
-(check (= gA8 gI))
-(check (!= gB gA))
-(check (!= gI gA))
+(run 10000 :goal (= gA8 gI))
+(prove (= gA8 gI))
+(prove (!= gB gA))
+(prove (!= gI gA))
 (print-size)
 (print-stats :file "until.rules.stats.json")

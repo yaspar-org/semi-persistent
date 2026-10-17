@@ -11,4 +11,4 @@
 (let t (xor255 (a) (a)))
 (run 3)
 ;; count 2 mod 255 = 2, so xor255(a,a) is NOT the unit (unlike order 2).
-(check (= t t))
+(prove (= t t))

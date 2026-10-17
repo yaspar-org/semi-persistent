@@ -18,18 +18,18 @@
 
 ;; A named run selects only rules tagged with that ruleset.
 (run selected 2)
-(check (= term (b)))
-(check (!= term (a)))
+(prove (= term (b)))
+(prove (!= term (a)))
 
 ;; A bare run selects only untagged rules.
 (run 2)
-(check (= term (a)))
+(prove (= term (a)))
 
 ;; Distinct classes satisfy an inequality goal before the first iteration.
-(run 10 :until (!= (a) (c)))
-(check (!= (a) (c)))
+(run 10 :goal (!= (a) (c)))
+(prove (!= (a) (c)))
 
 ;; Equal classes cannot become distinct during saturation.
-(run 1 :until (!= term (a)))
-(check (= term (a)))
+(run 1 :goal (!= term (a)))
+(prove (= term (a)))
 ;; ANCHOR_END: run-forms

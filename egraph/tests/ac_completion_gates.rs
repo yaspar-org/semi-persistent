@@ -67,7 +67,7 @@ fn lazy_disequality_is_inconclusive_when_completion_hits_its_budget() {
         (function e () E)
         (union (Add (a) (b)) (c))
         (union (Add (b) (d)) (e))
-        (check (!= (a) (b)))
+        (prove (!= (a) (b)))
     "#;
     let commands = parse_program_v2(source).expect("program parses");
     let mut interp =

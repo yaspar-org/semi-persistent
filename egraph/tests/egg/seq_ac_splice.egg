@@ -13,4 +13,4 @@
 (let e (Plus (F a) (F a) b))
 (rewrite (Plus (..fs (F x)) ..rest) (Wrap (Plus ..fs ..rest)))
 (run 1)
-(check (= e (Wrap (Plus (F a) (F a) b))))
+(prove (= e (Wrap (Plus (F a) (F a) b))))

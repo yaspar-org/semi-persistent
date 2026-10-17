@@ -91,7 +91,7 @@ five (Add (Num f) (Num f')) and five (Mul (Num g) (Num g'))   ; ten fresh terms
 (union (Var "spuKa") (Var "spuKb"))                            ; fresh classes
 (union (Num b) (Num b'))                                       ; two BASE classes
 (run 1)
-(check ...)
+(prove ...)
 (pop)
 ```
 

@@ -12,4 +12,4 @@
 (let t (Plus (b):4294967295 (c):4294967295))
 (union (b) (c))
 (run 1)
-(check (= t (Plus (b):8589934590)))
+(prove (= t (Plus (b):8589934590)))

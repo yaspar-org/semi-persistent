@@ -13,6 +13,6 @@
 (let a (A 1 2))
 (run 10)
 ;; A was subsumed, B was created, C was created from B
-(check (= a (C 1 2)))
+(prove (= a (C 1 2)))
 ;; B should also be equal (union chain)
-(check (= a (B 1 2)))
+(prove (= a (B 1 2)))

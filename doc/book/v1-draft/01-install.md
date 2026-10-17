@@ -41,7 +41,7 @@ target/release/semi-persistent egraph/examples/basic.egg
 ok — 14 nodes
 ```
 
-That last line goes to standard error. `ok` means every `(check ...)` in the
+That last line goes to standard error. `ok` means every `(prove ...)` in the
 program passed and nothing failed to parse or sort-check; the count is the
 number of e-nodes in the e-graph when the program finished. Query output
 (`extract`, `antiunify`, `print-size`) goes to standard output, so the two are
@@ -56,7 +56,7 @@ target/release/semi-persistent prog.egg > results.txt
 | outcome | stderr | exit |
 | --- | --- | --- |
 | every check passed | `ok — N nodes` | 0 |
-| a `(check ...)` failed | `error: check failed: terms are not equal` | 1 |
+| a `(prove ...)` failed | `error: check failed: terms are not equal` | 1 |
 | the program did not parse | `parse error: ...` | 1 |
 | a declaration or term did not sort-check | `sort error: ...` | 1 |
 

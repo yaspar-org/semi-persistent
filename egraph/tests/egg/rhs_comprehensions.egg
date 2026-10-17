@@ -157,32 +157,32 @@
 
 (run 1)
 
-(check (= seq_term (Seq (F a) (F b) (F c))))
-(check (= set_term (Set (F a) (F b) (F c))))
-(check (= bag_term (Bag (F a) (F b) (F b) (F c) (F c) (F c))))
-(check (= count_term (CountBag (CountF b) (CountF b))))
-(check (= count_use_term
+(prove (= seq_term (Seq (F a) (F b) (F c))))
+(prove (= set_term (Set (F a) (F b) (F c))))
+(prove (= bag_term (Bag (F a) (F b) (F b) (F c) (F c) (F c))))
+(prove (= count_term (CountBag (CountF b) (CountF b))))
+(prove (= count_use_term
           (CountUseBag
             (CountPair (CountLit 2) (CountLit 12))
             (CountPair (CountLit 3) (CountLit 13)))))
-(check (= filter_term (FilterSeq (F b) (F c))))
-(check (= count_filter_term
+(prove (= filter_term (FilterSeq (F b) (F c))))
+(prove (= count_filter_term
           (CountFilterBag (F b) (F b) (F c) (F c) (F c))))
-(check (= node_shadow_term
+(prove (= node_shadow_term
           (ShadowSeq (F c) (F d) (Keep a))))
-(check (= mult_shadow_term
+(prove (= mult_shadow_term
           (ShadowBag (F b) (F b) (F b) (Outer) (Outer))))
-(check (= sibling_term
+(prove (= sibling_term
           (SiblingSeq (F b) (F c) (G b) (G c))))
-(check (= nested_term
+(prove (= nested_term
           (ResultSeq
             (InnerSeq (Pair z z) (Pair d d) (Keep b))
             (InnerSeq (Pair z z) (Pair d d) (Keep c)))))
-(check (= row_one
+(prove (= row_one
           (RowWrap (RowSeq (Keep a) (F b)))))
-(check (= row_two
+(prove (= row_two
           (RowWrap (RowSeq (Keep c) (F d) (F y)))))
-(check (= rule_term
+(prove (= rule_term
           (RuleBag (F a) (F b) (F b) (F c) (F c) (F c))))
-(check (= rule_term
+(prove (= rule_term
           (RuleBag (G a) (G b) (G b) (G c) (G c) (G c))))

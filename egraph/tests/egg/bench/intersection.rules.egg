@@ -40,8 +40,8 @@
 (extract t3)
 
 ;; f(f(a)) = f(f(b)) is preserved
-(check (= (f (f a3)) (f (f b3))))
+(prove (= (f (f a3)) (f (f b3))))
 ;; but not f(a) = f(b), it was only in e-graph 1
-(check (!= (f a3) (f b3)))
+(prove (!= (f a3) (f b3)))
 (print-size)
 (print-stats :file "intersection.rules.stats.json")

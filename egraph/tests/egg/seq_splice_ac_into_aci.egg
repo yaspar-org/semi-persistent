@@ -16,4 +16,4 @@
 (let e (Plus (F a) (F a) (F b)))
 (rewrite (Plus (..fs:k (F x)) ..rest) (And ..fs))
 (run 1)
-(check (= e (And (F a) (F b))))
+(prove (= e (And (F a) (F b))))

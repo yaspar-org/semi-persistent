@@ -118,10 +118,10 @@ def cycle_body(k, terms, native, pushpop, run=True):
     if run:
         out.append("(run 1)")
         # A folding consequence of this cycle's own first fresh term.
-        out.append(f"(check (= (Add (Num {f}) (Num {f + 1})) (Num {2 * f + 1})))")
+        out.append(f"(prove (= (Add (Num {f}) (Num {f + 1})) (Num {2 * f + 1})))")
     else:
         # Without a run the only new consequence is the union just asserted.
-        out.append(f'(check (= (Var "spu{k}a") (Var "spu{k}b")))')
+        out.append(f'(prove (= (Var "spu{k}a") (Var "spu{k}b")))')
     if pushpop:
         out.append("(pop)")
     return "\n".join(out) + "\n"

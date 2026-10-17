@@ -21,4 +21,4 @@
 (run 1)
 (rewrite (Plus (..fs:k>=2 (F x)) ..rest) (Plus ..{ (G x):(* k k) for f:k in fs } ..rest))
 (run 1)
-(check (= narrow (Plus (G b) (G b) (G b) (G b) (G b) (G b) (G b) (G b) (G b) (a))))
+(prove (= narrow (Plus (G b) (G b) (G b) (G b) (G b) (G b) (G b) (G b) (G b) (a))))

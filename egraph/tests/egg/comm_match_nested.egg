@@ -15,4 +15,4 @@
 (let x (Plus (Eq (C) (F (D))) (D)))
 (rewrite (Plus (Eq (F p) q) r) (G))
 (run 2)
-(check (= x (G)))
+(prove (= x (G)))

@@ -10,9 +10,9 @@
 
 (let t (Mul (Add (Num 1) (Num 2)) (Num 1000000000000000000000000)))
 (run 5)
-(check (= t (Add (Num 1) (Num 2))))
+(prove (= t (Add (Num 1) (Num 2))))
 
 ;; A neighbouring bignum in the same position does not match.
 (let u (Mul (Num 7) (Num 1000000000000000000000001)))
 (run 5)
-(check (!= u (Num 7)))
+(prove (!= u (Num 7)))

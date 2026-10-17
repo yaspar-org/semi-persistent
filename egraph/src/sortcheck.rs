@@ -84,6 +84,15 @@ pub enum CCommand<O, S, L> {
     Check(CTerm<O, S, L>),
     CheckEq(CTerm<O, S, L>, CTerm<O, S, L>),
     CheckNeq(CTerm<O, S, L>, CTerm<O, S, L>),
+    /// `(check fact ...)`: egglog's check, a query over the current e-graph that
+    /// succeeds when it has a match. It builds nothing.
+    CheckQuery(Box<CheckQuery<O, S, L>>),
+    /// `(run N :until fact ...)`: the run stops before a round once `goal` holds.
+    RunUntil {
+        ruleset: Option<crate::apply::RulesetId>,
+        limit: u64,
+        goal: Box<CheckQuery<O, S, L>>,
+    },
     Extract(CTerm<O, S, L>),
     /// `(extract t :cost NAME …)`, with the model compiled at check time.
     ExtractWith {
@@ -148,6 +157,95 @@ pub enum CCommand<O, S, L> {
     },
     Push(bool), // true = shrink on mark
     Pop,
+}
+
+/// A sort-checked `(check fact ...)`.
+#[derive(Clone, Debug)]
+pub struct CheckQuery<O, S, L> {
+    /// The facts that need matching; `None` when every fact is one of `global_eqs`.
+    pub query: Option<ResolvedQuery<O, S, L>>,
+    /// Facts `(= x y)` between two globals. No pattern binds either side, so they are
+    /// compared on the globals' classes rather than matched.
+    pub global_eqs: Vec<(String, String)>,
+    /// The facts as written, for the failure message.
+    pub text: String,
+    /// Questionable names found by the sort check, printed when the command runs.
+    pub warnings: Vec<String>,
+    /// For a check of one fact `(= p q)` over ground terms or globals: each side's class.
+    /// Lazy AC mode decides the pair as `prove` does, with the pair as the completion goal.
+    pub pair: Option<[PairSide<O, S, L>; 2]>,
+    /// What the check requires of its matches.
+    pub cond: crate::surface_ast::CheckCond,
+    /// The check's named variables in `query`, with their names: matches are counted
+    /// as distinct assignments of these, so the variables flattening introduces do not
+    /// count.
+    pub vars: Vec<VarId>,
+    pub var_names: Vec<String>,
+    /// `(query ...)`: print up to this many matches instead of requiring `cond`.
+    pub print: Option<u64>,
+}
+
+/// One side of a ground `(= p q)` check.
+#[derive(Clone, Debug)]
+pub enum PairSide<O, S, L> {
+    /// A global: its class.
+    Global(String),
+    /// A ground term: a query for it, and the variable holding its root class.
+    Term(Box<ResolvedQuery<O, S, L>>, VarId),
+}
+
+/// Every occurrence of a name in check facts: pattern variables with their spans, and
+/// whether the occurrence is a bare side of a top-level `(= v p)`. Rest, sequence and
+/// filter names count as variables but are not reported.
+fn fact_names(facts: &[SurfacePattern]) -> (Vec<(String, Span, bool)>, bool) {
+    fn walk(
+        p: &SurfacePattern,
+        binder: bool,
+        out: &mut Vec<(String, Span, bool)>,
+        rest: &mut bool,
+    ) {
+        match p {
+            SurfacePattern::Var(v, sp) => out.push((v.clone(), *sp, binder)),
+            SurfacePattern::Lit(..) => {}
+            SurfacePattern::App {
+                prefix,
+                children,
+                suffix,
+                ..
+            } => {
+                *rest |= prefix.is_some() || suffix.is_some();
+                for c in children {
+                    match c {
+                        SurfacePatChild::Elem(q) | SurfacePatChild::ElemMult(q, _) => {
+                            walk(q, false, out, rest)
+                        }
+                        SurfacePatChild::Seq(..) => *rest = true,
+                        SurfacePatChild::Filter { base, .. } => {
+                            *rest = true;
+                            walk(base, false, out, rest)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut rest = false;
+    for f in facts {
+        match f {
+            SurfacePattern::App { op, children, .. } if op == EQ_FORM => {
+                for c in children {
+                    if let SurfacePatChild::Elem(q) = c {
+                        walk(q, true, &mut out, &mut rest);
+                    } else if let SurfacePatChild::ElemMult(q, _) = c {
+                        walk(q, false, &mut out, &mut rest);
+                    }
+                }
+            }
+            _ => walk(f, false, &mut out, &mut rest),
+        }
+    }
+    (out, rest)
 }
 
 /// A sort-checked `:until` goal: the two ground terms, and whether the run stops when their
@@ -423,6 +521,8 @@ use crate::surface_ast::{SurfaceCommand, SurfacePatChild, SurfacePattern};
 /// Reserved rather than looked up: a declaration named `=` would otherwise shadow the
 /// form and silently change what every existing `(= …)` in a rule body means.
 pub const EQ_FORM: &str = "=";
+/// The disequality form of rule bodies and checks, `(!= p q)`.
+pub const NEQ_FORM: &str = "!=";
 
 /// Flatten surface patterns directly to `FlatQuery`, skipping `Pattern`.
 pub fn flatten_surface<O, S, const TRACK: bool>(
@@ -472,6 +572,29 @@ where
     /// guard, which is a constraint rather than a subterm and so has no meaningful
     /// nested reading.
     fn flatten_root(&mut self, pat: &SurfacePattern) -> Result<String, String> {
+        // `(!= p q)` with an e-class pattern on a side is a class disequality, not a
+        // guard: a guard reads literal values, and `p` names a class. So are two bare
+        // variables when no literal sort declares a primitive `!=`; when one does, they
+        // are decided at resolve time, once their sorts are known.
+        if let SurfacePattern::App { op, children, .. } = pat
+            && op == NEQ_FORM
+            && let [SurfacePatChild::Elem(a), SurfacePatChild::Elem(b)] = children.as_slice()
+            && ([a, b].iter().any(|p| match p {
+                SurfacePattern::App { op, .. } => self
+                    .ops
+                    .id_by_name(op)
+                    .is_none_or(|id| !self.ops.is_prim_op(id)),
+                _ => false,
+            }) || self
+                .ops
+                .id_by_name(NEQ_FORM)
+                .is_none_or(|id| !self.ops.is_prim_op(id)))
+        {
+            let ra = self.flatten_child(a)?;
+            let rb = self.flatten_child(b)?;
+            self.atoms.push(Atom::Neq(ra, rb));
+            return Ok(self.fresh("neq"));
+        }
         if let SurfacePattern::App { op, .. } = pat
             && op != EQ_FORM
             && let Some(op_id) = self.ops.id_by_name(op)
@@ -935,6 +1058,181 @@ where
 {
     match cmd {
         SurfaceCommand::Pass(c) => sortcheck_pass(c, eg, model, globals, rulesets),
+        SurfaceCommand::RunUntil {
+            ruleset,
+            limit,
+            facts,
+            text,
+        } => {
+            let rid = rulesets.resolve(&ruleset)?;
+            let check = SurfaceCommand::Check {
+                facts,
+                text,
+                cond: crate::surface_ast::CheckCond::Exists,
+                print: None,
+            };
+            match sortcheck_one(check, eg, model, globals, rulesets)? {
+                CCommand::CheckQuery(goal) => Ok(CCommand::RunUntil {
+                    ruleset: rid,
+                    limit,
+                    goal,
+                }),
+                _ => unreachable!("a check lowers to CheckQuery"),
+            }
+        }
+        SurfaceCommand::Check {
+            facts,
+            text,
+            cond,
+            print,
+        } => {
+            let span = facts.first().map_or(Span::Dummy, |p| p.span());
+            // Names resolve as in rule bodies: a global is the global, and any other
+            // name is a variable of this one query. egglog rejects a variable named
+            // like a function or sort (`Shadowing`); here that also catches a nullary
+            // operator written without its parentheses.
+            let (names, has_rest) = fact_names(&facts);
+            let mut free: Vec<(String, Span, bool)> = Vec::new();
+            for (name, sp, binder) in &names {
+                if globals.get(name.as_str()).is_some() {
+                    continue;
+                }
+                if eg.ops().id_by_name(name).is_some() {
+                    return Err(serr(
+                        format!(
+                            "`{name}` names an operator, not a check variable; a nullary \
+                             term is written `({name})`"
+                        ),
+                        *sp,
+                    ));
+                }
+                if eg.sorts().id_by_name(name).is_some() {
+                    return Err(serr(
+                        format!("`{name}` names a sort, not a check variable"),
+                        *sp,
+                    ));
+                }
+                free.push((name.clone(), *sp, *binder));
+            }
+            let mut warnings = Vec::new();
+            let mut seen: Vec<&str> = Vec::new();
+            for (name, _, binder) in &free {
+                if seen.contains(&name.as_str()) {
+                    continue;
+                }
+                seen.push(name);
+                let n = free.iter().filter(|(m, _, _)| m == name).count();
+                if n == 1 && !*binder && !name.starts_with('_') {
+                    warnings.push(format!(
+                        "check: `{name}` occurs once, so it matches any e-class; no global \
+                         of that name is defined (write `_{name}` for a wildcard)"
+                    ));
+                }
+            }
+            let is_global = |p: &SurfacePattern| matches!(p, SurfacePattern::Var(v, _) if globals.get(v.as_str()).is_some());
+            let eq_sides = |p: &SurfacePattern| -> Option<[SurfacePattern; 2]> {
+                match p {
+                    SurfacePattern::App { op, children, .. } if op == EQ_FORM => {
+                        match children.as_slice() {
+                            [SurfacePatChild::Elem(a), SurfacePatChild::Elem(b)] => {
+                                Some([a.clone(), b.clone()])
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            };
+            let mut global_eqs = Vec::new();
+            let mut matched = Vec::new();
+            for f in &facts {
+                match (f, eq_sides(f)) {
+                    (_, Some([SurfacePattern::Var(a, _), SurfacePattern::Var(b, _)]))
+                        if globals.get(a.as_str()).is_some()
+                            && globals.get(b.as_str()).is_some() =>
+                    {
+                        global_eqs.push((a.clone(), b.clone()));
+                    }
+                    // A bare global holds: its class exists.
+                    (SurfacePattern::Var(..), _) if is_global(f) => {}
+                    (SurfacePattern::Var(v, sp), _) => {
+                        return Err(serr(
+                            format!(
+                                "a check fact is a pattern or `(= p q)`; `{v}` alone matches \
+                                 every e-class"
+                            ),
+                            *sp,
+                        ));
+                    }
+                    _ => matched.push(f.clone()),
+                }
+            }
+            let query = if matched.is_empty() {
+                None
+            } else {
+                let fq = flatten_surface(&matched, eg.ops()).map_err(|e| serr(e, span))?;
+                Some(
+                    resolve(&fq, eg.ops(), eg.sorts(), model, globals)
+                        .map_err(|e| serr(e.to_string(), span))?,
+                )
+            };
+            let ground = free.is_empty() && !has_rest;
+            let pair = match (facts.as_slice(), facts.first().and_then(eq_sides)) {
+                ([_], Some(sides)) if ground => {
+                    let mut out = Vec::with_capacity(2);
+                    for side in &sides {
+                        if let SurfacePattern::Var(v, _) = side {
+                            out.push(PairSide::Global(v.clone()));
+                            continue;
+                        }
+                        let fq = flatten_surface(std::slice::from_ref(side), eg.ops())
+                            .map_err(|e| serr(e, span))?;
+                        let root = fq.root_vars[0].clone();
+                        let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
+                            .map_err(|e| serr(e.to_string(), span))?;
+                        if let Some(v) = rq.shape.find_var(&root) {
+                            out.push(PairSide::Term(Box::new(rq), v));
+                        }
+                    }
+                    <[_; 2]>::try_from(out).ok()
+                }
+                _ => None,
+            };
+            let mut vars = Vec::new();
+            let mut var_names = Vec::new();
+            if let Some(q) = &query {
+                for (name, _, _) in &free {
+                    if let Some(v) = q.shape.find_var(name)
+                        && !vars.contains(&v)
+                    {
+                        vars.push(v);
+                        var_names.push(name.clone());
+                    }
+                }
+            }
+            // The single-pair decision answers existence only.
+            let pair = if cond == crate::surface_ast::CheckCond::Exists && print.is_none() {
+                pair
+            } else {
+                None
+            };
+            Ok(CCommand::CheckQuery(Box::new(CheckQuery {
+                query,
+                global_eqs,
+                text,
+                // A query prints its variables; one used once is the point, not a slip.
+                warnings: if print.is_some() {
+                    Vec::new()
+                } else {
+                    warnings
+                },
+                pair,
+                cond,
+                vars,
+                var_names,
+                print,
+            })))
+        }
         SurfaceCommand::CollectionRewrite(r) => {
             let ruleset = rulesets.resolve(&r.ruleset)?;
             rulesets.collection_rules += 1;

@@ -12,4 +12,4 @@
 (let e (Plus (F a):18446744073709551617 b))
 (rewrite (Plus (..fs:k<=18446744073709551615 (F x)) ..rest) (Z) :when ((>= (count fs) 1)))
 (run 1)
-(check (= e (Z)))
+(prove (= e (Z)))

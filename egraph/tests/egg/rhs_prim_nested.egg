@@ -20,6 +20,6 @@
 (let nested (Win (I 4 9) (Win (I 6 8) (Var "p"))))
 (run 1)
 ;; lower: 4 + (6 - 1) = 9.  upper: min(4,6) + min(9-4, 8-6) = 4 + 2 = 6.
-(check (= nested (Win (I 9 6) (Var "p"))))
+(prove (= nested (Win (I 9 6) (Var "p"))))
 ;; The rewrite computed those two bounds and no others.
-(check (!= nested (Win (I 9 7) (Var "p"))))
+(prove (!= nested (Win (I 9 7) (Var "p"))))

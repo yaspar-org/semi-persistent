@@ -45,8 +45,8 @@
 
 (run 8)
 
-(check (= a_cd a_ae))
-(check (= o_cd o_ae))
-(check (= m_cd m_ae))
+(prove (= a_cd a_ae))
+(prove (= o_cd o_ae))
+(prove (= m_cd m_ae))
 ;; No cross-op contamination between the two Set ops.
-(check (!= a_ab o_ab))
+(prove (!= a_ab o_ab))

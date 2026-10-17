@@ -19,4 +19,4 @@
 ;; `:assoc` alone, so `cat` is a `Seq`, and `:identity` does not apply to it.
 (function cat (E) E :assoc :identity (nil))
 
-(check (= (cat a nil) a))
+(prove (= (cat a nil) a))

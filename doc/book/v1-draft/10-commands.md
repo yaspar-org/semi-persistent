@@ -84,8 +84,8 @@ fixpoint of.
 ```text
 (run n)
 (run ruleset n)
-(run n :until (= t1 t2))
-(run n :until (!= t1 t2))
+(run n :goal (= t1 t2))
+(run n :goal (!= t1 t2))
 ```
 
 Applies rules for at most `n` rounds, stopping early on saturation or when the
@@ -98,16 +98,16 @@ This section lists the four assertion forms and enters one caution about `!=`.
 
 | command | passes when |
 | --- | --- |
-| `(check (= t1 t2))` | the two terms are in the same e-class |
-| `(check (!= t1 t2))` | they are not |
-| `(check t)` | `t` is present in the e-graph |
+| `(prove (= t1 t2))` | the two terms are in the same e-class |
+| `(prove (!= t1 t2))` | they are not |
+| `(prove t)` | `t` is present in the e-graph |
 | `(checkau t1 t2 ... :max_size n)` | the anti-unifier's size is at most `n` |
 
 A failed check aborts the program with exit status 1. This is what makes an
 example file a test: every example in this book ends in checks, and the test
 suite runs them.
 
-`(check (!= t1 t2))` deserves a caution. It passes when the engine has not
+`(prove (!= t1 t2))` deserves a caution. It passes when the engine has not
 derived equality, which is a statement about what the declared rules proved, not
 about semantic disequality. Under `--lazy-ac-eqs` it additionally means a
 goal-directed completion search reached its fixpoint without deriving equality.

@@ -25,6 +25,6 @@
 (let s_af (Or (a) (f)))
 
 (run 5)
-(check (= s_ac (c)))
-(check (= s_bc (c)))
-(check (= s_af (f)))
+(prove (= s_ac (c)))
+(prove (= s_bc (c)))
+(prove (= s_af (f)))

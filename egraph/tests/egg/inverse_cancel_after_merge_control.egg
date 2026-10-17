@@ -15,4 +15,4 @@
 
 (union (A) (B))
 (let s (Add (A) (Neg (B))))
-(check (= s (Zero)))
+(prove (= s (Zero)))

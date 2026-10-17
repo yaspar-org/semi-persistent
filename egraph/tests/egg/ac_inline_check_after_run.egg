@@ -16,4 +16,4 @@
 (run 5)
 ;; Add(a,b,d) and Add(c,d) are built inline here — fresh nodes — and their equality is an AC
 ;; congruence consequence of Add(a,b)=c that completion must derive after a rebuild.
-(check (= (Add (a) (b) (d)) (Add (c) (d))))
+(prove (= (Add (a) (b) (d)) (Add (c) (d))))

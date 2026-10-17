@@ -11,4 +11,4 @@
     (A) (B) (C) (X)
     (S E :assoc))
 (union (S (A) (B)) (S (C) (X)))
-(check (= (S (A) (B) (X)) (S (C) (X) (X))))
+(prove (= (S (A) (B) (X)) (S (C) (X) (X))))

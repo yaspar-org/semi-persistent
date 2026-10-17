@@ -18,6 +18,6 @@
 (rewrite (And (Not x) (..fs (F y)) ..rest) (Pick x (N (count fs))))
 (let e (And (Not (a)) (Not (b)) (F (c))))
 (run 1)
-(check (= e (Pick (a) (N 1))))
-(check (= e (Pick (b) (N 1))))
+(prove (= e (Pick (a) (N 1))))
+(prove (= e (Pick (b) (N 1))))
 ;; ANCHOR_END: seq-simple-items

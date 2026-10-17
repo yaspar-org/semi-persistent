@@ -18,4 +18,4 @@
 (let x (Eq (C) (F (D))))
 (rewrite (Eq (F p) q) (G))
 (run 2)
-(check (= x (G)))
+(prove (= x (G)))

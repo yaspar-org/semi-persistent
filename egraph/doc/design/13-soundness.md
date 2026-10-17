@@ -89,7 +89,7 @@ So the only polarity a caller may trust is "same e-class implies equivalent."
 "Different e-class" is not a disequality; reading it as "semantically distinct" is
 a usage error. This is the standard reading of any congruence-closure or
 saturation engine: equalities accumulate monotonically, and an absent equality is
-absence of evidence, not evidence of absence. `(check (!= a b))` tests this
+absence of evidence, not evidence of absence. `(prove (!= a b))` tests this
 current non-membership after whatever work its configured mode performs; it
 does not assert or maintain a semantic disequation. Only a separately justified
 complete decision procedure for the relevant fragment could turn such a

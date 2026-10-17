@@ -62,7 +62,7 @@ A concrete literal written inside a rule's left-hand side does not match. The wh
 (rewrite (Add a (Const 0)) a)
 (Add (Var "p") (Const 0))
 (run 5)
-(check (= (Add (Var "p") (Const 0)) (Var "p")))    ;; fails on our engine, passes on egglog
+(prove (= (Add (Var "p") (Const 0)) (Var "p")))    ;; fails on our engine, passes on egglog
 ```
 
 Three probes bound the defect. Replacing `(Const 0)` with a nullary constructor `(Zero)`
@@ -175,7 +175,7 @@ stays commented out; all seven seed terms and `(run 11)` are unchanged.
 
 ## Semantic cross-check
 
-The benchmark ships no `(check …)` commands, so the cross-check was constructed: seed
+The benchmark ships no `(prove …)` commands, so the cross-check was constructed: seed
 `(Mul (Add (Var "p") (Var "q")) (Var "r"))` and `(Add (Mul (Var "q") (Var "p")) (Const 0))`
 before the run, and assert after it that the first equals
 `(Add (Mul (Var "p") (Var "r")) (Mul (Var "q") (Var "r")))` (distribution modulo

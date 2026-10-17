@@ -67,4 +67,4 @@
 ; Two Variants retain the conflicting method and prefix readings.
 (antiunify candidateA candidateB :algorithm exact)
 (checkau candidateA candidateB :max_size 21 :algorithm exact)
-(check (!= candidateA candidateB))
+(prove (!= candidateA candidateB))

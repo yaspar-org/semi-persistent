@@ -10,5 +10,5 @@
 (push)
 (let scoped (a))
 (pop)
-(check (= scoped (a)))
+(prove (= scoped (a)))
 ;; ANCHOR_END: scoped-name-error

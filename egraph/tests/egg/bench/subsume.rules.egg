@@ -20,9 +20,9 @@
 
 (run 10)
 
-(check (= x (Mul (Num 2) (Add (Var "x") (Add (Var "x") (Var "x"))))))
+(prove (= x (Mul (Num 2) (Add (Var "x") (Add (Var "x") (Var "x"))))))
 (extract x)
-(check (= x (Mul (Num 2) (Mul (Num 3) (Var "x")))))
+(prove (= x (Mul (Num 2) (Mul (Num 3) (Var "x")))))
 
 (rewrite (Mul a b) (Mul b a))
 (run 10)

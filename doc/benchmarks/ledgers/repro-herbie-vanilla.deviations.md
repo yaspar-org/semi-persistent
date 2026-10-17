@@ -22,7 +22,7 @@ unsoundness bug in typed lowering, not a simplification benchmark:
   ruleset detects merges across differently-typed lowered terms - the bug the
   repro exists to catch.
 - The schedule
-  `(run-schedule (repeat 3 (seq (run rewrite) (run const-fold) (run bad-merge-rule :until (bad-merge?)))))`
+  `(run-schedule (repeat 3 (seq (run rewrite) (run const-fold) (run bad-merge-rule :goal (bad-merge?)))))`
   followed by `(saturate unsound)` and `(saturate lower)`.
 - The 471 `(rewrite ...)` forms are herbie's `rewrite`/`const-fold` rulesets
   plus per-precision duplicates of the lowering equations, not 2.9x the
@@ -40,7 +40,7 @@ drop-don't-fudge rule:
    with no evidence the two programs agree, which section 3 of
    `methodology.md` rules out as a basis for claims.
 2. **Lattice function in the driving loop.** `bad-merge?` is a `:merge`
-   lattice function and its `:until (bad-merge?)` guard is the schedule's
+   lattice function and its `:goal (bad-merge?)` guard is the schedule's
    stopping condition. Lattice functions are documented as outside the
    intersection set (herbie's own interval analysis was stripped for the same
    reason); here the lattice is not an optional analysis but part of the

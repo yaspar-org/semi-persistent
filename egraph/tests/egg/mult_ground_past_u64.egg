@@ -9,5 +9,5 @@
 (function a () E)
 (function Plus (E) E :assoc-comm)
 (let t (Plus (a):18446744073709551615 (a)))
-(check (= t (Plus (a):18446744073709551616)))
-(check (!= t (Plus (a):18446744073709551615)))
+(prove (= t (Plus (a):18446744073709551616)))
+(prove (!= t (Plus (a):18446744073709551615)))

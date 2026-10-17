@@ -20,7 +20,7 @@ const PROGRAM: &str = r#"
 (let e (W s))
 (rewrite (W x) (Add x (V "d")))
 (run 1)
-(check (= e (Add (V "b") (V "c") (V "d"))))
+(prove (= e (Add (V "b") (V "c") (V "d"))))
 "#;
 
 fn run(flag: bool, program: &str) -> bool {

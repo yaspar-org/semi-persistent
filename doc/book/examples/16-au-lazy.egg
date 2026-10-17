@@ -10,8 +10,8 @@
 ;; the point of the file.
 ;;
 ;; The reason is the trigger. Lazy completion opens its transaction when an equality
-;; check asks a question plain congruence cannot answer, and `(check (= a b))` and
-;; `(check (!= a b))` are the only two commands that count. `antiunify` and `checkau`
+;; check asks a question plain congruence cannot answer, and `(prove (= a b))` and
+;; `(prove (!= a b))` are the only two commands that count. `antiunify` and `checkau`
 ;; are not equality checks. They close any open transaction, which restores the
 ;; graph and discards whatever completion had derived, and only then does the solver
 ;; take its snapshot. So the snapshot it searches is the plain graph.

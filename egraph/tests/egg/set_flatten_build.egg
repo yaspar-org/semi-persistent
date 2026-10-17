@@ -16,5 +16,5 @@
 (let deep (Or (Or (Or (x) (y)) (z)) (w)))
 (let flat4 (Or (x) (y) (z) (w)))
 (run 3)
-(check (= nested flat))
-(check (= deep flat4))
+(prove (= nested flat))
+(prove (= deep flat4))

@@ -14,11 +14,11 @@
 (let g (Mul (Var "p") (Const 1)))
 (let t (Add (Var "p") (Var "p")))
 (run 5)
-(check (= t (Mul (Var "p") (Const 2))))
+(prove (= t (Mul (Var "p") (Const 2))))
 
 ;; It is not satisfiable for `q` — the only `Mul` over `q` carries a different literal, so
 ;; the guard's payload check rejects it and the rule does not fire.
 (let h (Mul (Var "q") (Const 7)))
 (let u (Add (Var "q") (Var "q")))
 (run 5)
-(check (!= u (Mul (Var "q") (Const 2))))
+(prove (!= u (Mul (Var "q") (Const 2))))

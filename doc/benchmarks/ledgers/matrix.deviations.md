@@ -39,7 +39,7 @@ the repeated variable is what requires the two to be one class rather than two:
          (= q (ncols b)) (= q (nrows d))))
 ```
 
-Both of the benchmark's assertions turn on this rule: `(check (= $ex1 $simple_ex1))`
+Both of the benchmark's assertions turn on this rule: `(prove (= $ex1 $simple_ex1))`
 derives through it and through nothing else, and the `fail` check exists to show that the
 guard blocks the analogous term whose dimensions do not line up. Dropping the rule would
 leave fifteen unconditional rules and no assertions.
@@ -50,7 +50,7 @@ leave fifteen unconditional rules and no assertions.
 `matA` and `$n` becomes `dimN`, because `A` and `n` are pattern variables in the rules
 above and our globals share one namespace with them. Mechanical.
 
-**`(fail (check (= a b)))` becomes `(check (!= a b))`.** We have no `fail` wrapper; the
+**`(fail (prove (= a b)))` becomes `(prove (!= a b))`.** We have no `fail` wrapper; the
 `!=` form asserts what the wrapped check was there to deny, that the two classes are
 distinct. Both forms build their terms before comparing.
 
@@ -95,7 +95,7 @@ dimensions, with no crash. Fixed in the matcher, fenced by
 `egraph/tests/egg/a_matrix_kron_fusion.egg` (this program) and by the minimal
 `a_prebound_fixed_child.egg`; the registry entry is section 6 of `methodology.md`. The
 draft file is gone, the column is validated below, and this program's negative check
-`(check (!= ex2 (Kron matA matC)))` is what asserts the guard is enforced.
+`(prove (!= ex2 (Kron matA matC)))` is what asserts the guard is enforced.
 
 ## Validated
 

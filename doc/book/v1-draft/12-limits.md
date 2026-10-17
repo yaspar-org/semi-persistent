@@ -73,7 +73,7 @@ distributivity, De Morgan, absorption, or anything else about Boolean algebra.
 Those are rewrite rules you write, and writing them changes what the engine
 proves equal and therefore what it reports as agreed.
 
-## `(check (!= ...))` is weaker than it looks
+## `(prove (!= ...))` is weaker than it looks
 
 This section states what a passing disequality check means under each completion
 setting.

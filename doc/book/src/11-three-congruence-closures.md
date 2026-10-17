@@ -68,7 +68,7 @@ building an unrelated term earlier can change how a later term is spelled:
 (let t0 (Add (Mul D D) A))    ; delete this line, or move it below, and
 (let t1 (Mul D D A D))        ; the following check passes instead of failing
 (let t2 (Mul A D (Mul D D)))
-(check (= t1 t2))
+(prove (= t1 t2))
 ```
 
 Both readings are sound. A reordering never makes a *false* equality

@@ -69,9 +69,10 @@ declaration has already been registered before any interpreted `Push`.
 | `Let(name, ct)` | Build CTerm → bind in globals |
 | `Insert(ct)` | Build CTerm |
 | `Union(a, b)` | Build both → merge → rebuild |
-| `Check(ct)` | Build CTerm (assert exists) |
-| `CheckEq(a, b)` | Build both → rebuild → check equality; Lazy may run goal-directed completion |
-| `CheckNeq(a, b)` | Build both → rebuild → check current non-membership; Lazy searches before accepting |
+| `Check(ct)` | `(prove t)`: build CTerm |
+| `CheckEq(a, b)` | `(prove (= a b))`: build both → rebuild → check equality; Lazy may run goal-directed completion |
+| `CheckNeq(a, b)` | `(prove (!= a b))`: build both → rebuild → check current non-membership; Lazy searches before accepting |
+| `CheckQuery(cq)` | `(check fact ...)`, `(query ...)`: rebuild → one naive match of the query → test the count condition, or print the matches; builds nothing (see Check Queries) |
 | `Extract(ct)` | Build → rebuild → extract_best → print |
 | `ExtractWith { .. }` | Build → rebuild → extract under a cost model (`cost_models::run`) |
 | `CollectionRule(r)` | Register the sequence rule → push to rules |
@@ -79,12 +80,39 @@ declaration has already been registered before any interpreted `Push`.
 | `Rewrite { query, rhs, .. }` | Compile RHS → push to rules (with its ruleset) |
 | `Rule { query, actions, .. }` | Compile actions → push to rules (with its ruleset) |
 | `Run { ruleset, limit, until }` | Build the goal terms → saturate under a `RunSpec` |
+| `RunUntil { ruleset, limit, goal }` | Saturate with the query as the driver's stop goal (`saturate::StopGoal`) |
 | `PrintSize(op)` | Per-op node counts and total, or one op's count |
 | `PrintStats(file)` | Last run's counters, as text or JSON |
 | `AntiUnify { .. }` | Build both → rebuild → construct `AuSnapshot` → run Exact or UCT |
 | `CheckAu { .. }` | Build both → rebuild → construct `AuSnapshot` → run AU and assert the returned size bound |
 | `Push(shrink)` | With `TRACK = true`, snapshot e-graph + rule/global counts (`:shrink` reclaims capacity) |
 | `Pop` | `restore_and_pop` the e-graph + truncate rules and runtime globals; `PopWithoutPush` with no open mark |
+
+### Check Queries
+
+`(check fact ...)` is egglog's check. Its facts are a rule body's: patterns,
+`(= p q)`, `(!= p q)` and guards. Sortcheck lowers them as it lowers a rule body
+(`flatten_surface`, then `resolve`), and the interpreter runs the query once,
+naive, over the rebuilt graph, with no actions. A ground subterm is matched, not
+built, so a term the program never built has no match. A name that is a global
+denotes it; any other name is a variable scoped to this one check. A fact
+`(= x y)` between two globals has no pattern to bind either side, so it is decided
+on the globals' classes outside the query.
+
+Matches are counted as distinct assignments of the check's named variables, as
+canonical classes. `:count k`, `:min k` and `:none` test that count; the default
+asks for one match. `(query ...)` runs the same lowering and prints the
+assignments, ordered by content colour (`canon_colour`), so its output does not
+depend on class ids.
+
+In lazy AC mode a check runs inside the shared check transaction, so nothing it
+derives survives it. The rebuild runs completion. A single ground fact `(= p q)`
+is then decided as `prove` decides it, with the pair as the completion goal. Any
+other check whose condition does not yet hold runs the ordinary rules interleaved
+with completion, one round at a time, up to `lazy_ac_rounds`. Existence and
+`:min` stop when they hold; `:count`, `:none` and `query` wait for the fixpoint,
+because a later round can still add a match or merge two assignments. A budget
+stop is reported as inconclusive.
 
 ### Building a `CTerm`
 
@@ -210,7 +238,7 @@ Ruleset names and ids are static: their name table lives for one
 are runtime state, so a rule command interpreted after `(push)` is removed
 by the matching `(pop)`.
 
-`(run [ruleset] N :until (= a b))`, or `(!= a b)`, stops the run as
+`(run [ruleset] N :goal (= a b))`, or `(!= a b)`, stops the run as
 soon as the goal holds. The goal's terms are ground, so they are built
 once, before the run; only their classes move afterwards, and the check
 is two `find`s. Every observation follows rebuild, then occurs before rule
@@ -221,9 +249,16 @@ distinguishes stopping on the goal from reaching a fixpoint: the goal can be
 met with rules still firing.
 
 Building the goal's terms adds those nodes to the e-graph, which is
-observable: the same nodes a `(check …)` of the goal would add.
+observable: the same nodes a `(prove …)` of the goal would add.
 
-For `:until (!= a b)`, "holds" means the two current representatives differ.
+`(run [ruleset] N :until fact ...)` is egglog's goal: the facts are lowered as a
+check's are, and the driver evaluates the query on the rebuilt graph at the same
+points as the ground goal. It builds nothing. In lazy AC mode the query sees the
+graph without completion, as `:goal` does: completing and rolling back inside
+the run would clear the semi-naive delta, so completion can only delay the stop,
+never change the run's result.
+
+For `:goal (!= a b)`, "holds" means the two current representatives differ.
 It is not a maintained semantic disequality, and it commonly succeeds at
 iteration zero when the rebuilt terms begin apart.
 

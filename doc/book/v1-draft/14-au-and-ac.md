@@ -100,7 +100,7 @@ error: check failed: anti-unifier size 5 exceeds max_size 2
 The result is identical to plain mode, including the compression ratio.
 
 The reason is the trigger from chapter 13. Lazy completion opens its transaction only
-for `(check (= a b))` and `(check (!= a b))`. `antiunify` and `checkau` are not
+for `(prove (= a b))` and `(prove (!= a b))`. `antiunify` and `checkau` are not
 equality checks, so they close any open transaction, which restores the graph and
 discards whatever completion derived, and only then does the solver take its
 snapshot. The snapshot it searches is the plain graph.

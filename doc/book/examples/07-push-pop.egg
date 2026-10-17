@@ -17,7 +17,7 @@
 
 (push)
 (union (a) (b))
-(check (= left right))
+(prove (= left right))
 
 (push)
 (let nested (g left))
@@ -25,16 +25,16 @@
 (pop)
 
 ;; The inner pop keeps the equality from the outer scope.
-(check (= left right))
+(prove (= left right))
 (pop)
 
-(check (!= left right))
+(prove (!= left right))
 (print-size)
 ;; ANCHOR_END: push-pop
 
 ;; ANCHOR: push-shrink
 (push :shrink)
-(check (!= left right))
+(prove (!= left right))
 (pop)
 ;; ANCHOR_END: push-shrink
 
@@ -42,7 +42,7 @@
 (let chosen (a))
 (push)
 (let chosen (b))
-(check (= chosen (b)))
+(prove (= chosen (b)))
 (pop)
-(check (= chosen (a)))
+(prove (= chosen (a)))
 ;; ANCHOR_END: shadowed-global

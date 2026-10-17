@@ -14,5 +14,5 @@
   :identity (Zero)
   :inverse Neg)
 
-(check (= (Add A A (Neg A)) A))
+(prove (= (Add A A (Neg A)) A))
 ;; ANCHOR_END: inverse-cancellation

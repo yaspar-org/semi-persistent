@@ -108,8 +108,8 @@ and `extract` commands:
 (let a (Add (Num 3) (Num 4))) ;; bind name 'a' to a term
 (let b (Mul (Num 2) (Num 5)))
 (union a b)                   ;; assert a = b
-(check (= a b))               ;; verify a and b are equal
-(check (!= a (Num 0)))        ;; verify a ≠ 0
+(prove (= a b))               ;; verify a and b are equal
+(prove (!= a (Num 0)))        ;; verify a ≠ 0
 (extract a)                   ;; print cheapest term in a's class
 ```
 
@@ -122,7 +122,7 @@ mark/complete/restore transaction. Consecutive equality checks share that
 temporary transaction; it is restored before the next non-equality command or
 at the end of the checked program, so its derived nodes and merges do not
 persist in the program state.
-Under lazy mode, `(check (!= ...))` passes only when the implemented bounded
+Under lazy mode, `(prove (!= ...))` passes only when the implemented bounded
 completion/rule search reaches its operational fixpoint without deriving the
 equality. That is the command's operational criterion, not a proved statement
 of semantic non-equality in the abstract AC theory. The two flags are mutually exclusive;
@@ -643,7 +643,7 @@ recent snapshot:
 (push)
   (union a b)
   (run 10)
-  (check (= a b))
+  (prove (= a b))
 (pop)
 ;; a and b are no longer equal
 ```
@@ -694,13 +694,13 @@ added to it inside a pushed scope does not survive the matching pop.
 which is how a search reports time-to-goal rather than time-to-budget:
 
 ```
-(run 1000 :until (= lhs rhs))
-(run fast 50 :until (!= a b))
+(run 1000 :goal (= lhs rhs))
+(run fast 50 :goal (!= a b))
 ```
 
 The goal is checked after rebuild and before every iteration, including the
 first, so a goal that already holds costs no iterations. Its terms are built
-once, before the run: the same nodes a `(check …)` of the goal would add.
+once, before the run: the same nodes a `(prove …)` of the goal would add.
 
 ## Statistics
 

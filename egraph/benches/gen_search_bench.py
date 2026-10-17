@@ -82,7 +82,7 @@ def portfolio(n_candidates, base_k, run_steps):
         # Commit to a speculative equality, then let congruence propagate it.
         L.append(f"(union {a} {b})")
         L.append(f"(run {run_steps})")
-        L.append(f"(check (= {a} {b}))")
+        L.append(f"(prove (= {a} {b}))")
         L.append("(pop)")
     return "\n".join(L) + "\n"
 
@@ -95,7 +95,7 @@ def dfs(depth, base_k, run_steps):
     def emit(level, path):
         if level == depth:
             i = (path * 13) % base_k
-            L.append(f"(check (= b{i} b{i}))")
+            L.append(f"(prove (= b{i} b{i}))")
             return
         for choice in (0, 1):
             a = f"b{(path * 5 + choice) % base_k}"

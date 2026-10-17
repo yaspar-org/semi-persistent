@@ -1819,7 +1819,7 @@ Three properties of the lazy mode:
   first equality check that plain congruence cannot decide, and the restore happens at the first non-equality-check
   command (or program end), so a run of checks accumulates completion and
   alternation state instead of each re-deriving from scratch. A bare
-  `(check t)` closes the transaction too: it materializes its term
+  `(prove t)` closes the transaction too: it materializes its term
   permanently, which an open transaction would discard.
 - **Goal polling inside the completion loop.** The queried pair is installed
   as the e-graph's completion goal; the loop polls it between passes *and

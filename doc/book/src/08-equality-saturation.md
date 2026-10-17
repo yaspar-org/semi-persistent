@@ -46,7 +46,7 @@ the graph.
 This is an operational fixpoint of the selected declared rules and the current
 driver. It is not a completeness result for an unstated theory. A law that was
 neither declared as an algebraic property nor encoded by a rule is absent.
-Likewise, a successful `(check (!= a b))` says only that `a` and `b` currently
+Likewise, a successful `(prove (!= a b))` says only that `a` and `b` currently
 belong to different classes.
 
 If the iteration bound is reached first, the run stops with `saturated: false`.
@@ -62,8 +62,8 @@ goal:
 | --- | --- |
 | `(run n)` | Run the untagged default ruleset for at most `n` iterations. |
 | `(run ruleset n)` | Run only rules tagged with that declared ruleset. |
-| `(run n :until (= a b))` | Stop when the two ground terms join. |
-| `(run n :until (!= a b))` | Stop when the two ground terms are in different classes. |
+| `(run n :goal (= a b))` | Stop when the two ground terms join. |
+| `(run n :goal (!= a b))` | Stop when the two ground terms are in different classes. |
 
 A named run may also carry either `:until` goal. Each run selects exactly one
 ruleset. It does not combine the named ruleset with untagged rules.
@@ -75,7 +75,7 @@ later iteration. It is rebuilt and tested once more after the final permitted
 round. A goal that already holds still costs zero iterations. An equality goal
 can become true as classes merge. An inequality goal either succeeds initially
 or cannot become true during that run: saturation merges classes and never
-splits them. `:until (!= ...)` records no permanent disequality constraint.
+splits them. `:goal (!= ...)` records no permanent disequality constraint.
 
 ## Runs that do not saturate
 

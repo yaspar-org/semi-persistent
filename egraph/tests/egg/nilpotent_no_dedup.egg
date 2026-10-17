@@ -13,4 +13,4 @@
 (function xor (E) E :assoc :comm :nilpotent :identity (e))
 (let x_aa (xor (a) (a)))
 (run 3)
-(check (= x_aa (a)))
+(prove (= x_aa (a)))

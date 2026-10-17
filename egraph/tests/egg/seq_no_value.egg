@@ -14,4 +14,4 @@
 (let e (Box a b))
 (rewrite (Box (..gs (F x)) ..rest) (Mark (Box ..gs)))
 (run 2)
-(check (!= e (Mark a)))
+(prove (!= e (Mark a)))

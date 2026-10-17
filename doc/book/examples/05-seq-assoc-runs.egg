@@ -19,5 +19,5 @@
 (run 1)
 ; The run is maximal toward its gaps: both F children before `b` are taken.
 ; The lone (F a) at the end is a run of length 1, which the guard rejects.
-(check (= e (Cat a (H (Cat (F a) (F b))) b (F a))))
+(prove (= e (Cat a (H (Cat (F a) (F b))) b (F a))))
 ;; ANCHOR_END: seq-assoc-runs

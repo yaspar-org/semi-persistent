@@ -19,4 +19,4 @@
 (rewrite (And (..gs (N p)) ..rest) (And ..rest) :flatten)
 (let t (And (a) (b)))
 (run 1)
-(check (= t (N (a))))
+(prove (= t (N (a))))

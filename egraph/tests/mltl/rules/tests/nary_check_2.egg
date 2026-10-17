@@ -25,4 +25,4 @@
 (let n (And (Global (Interval 0 3) (Not a)) (Global (Interval 4 6) (Not a)) (Future (Interval 2 9) a)))
 (let d (Or (Future (Interval 2 5) a) (Future (Interval 4 9) b) x))
 (run 3)
-(check (= m (And (Global (Interval 0 6) a) (Global (Interval 10 12) a) x)))
+(prove (= m (And (Global (Interval 0 6) a) (Global (Interval 10 12) a) x)))

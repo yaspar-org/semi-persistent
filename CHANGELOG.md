@@ -4,6 +4,13 @@
 
 ### Added
 
+- `(query fact ... :limit n)` prints a query's matches, each named variable as a term
+  extracted from its class, ordered by content colour so the output does not depend on
+  class ids.
+- `(check ... :count k)`, `:min k` and `:none` count a check's matches, as distinct
+  assignments of its named variables.
+- `(!= p q)` in checks and rule bodies requires two different e-classes. Literal values
+  are compared by the typed guard (`IBig::!=`).
 - `SpMap` has a key discipline parameter: `SpMap<K, V, I, TRACK, UNIQUE>`,
   with `SpUniqueMap<K, V, I, TRACK>` as the `UNIQUE = true` alias. Under it
   no key occurs twice in the log — `try_insert` refuses a present key with
@@ -52,6 +59,16 @@
 
 ### Changed
 
+- `check` has egglog's semantics: `(check fact ...)` is a conjunctive query over the
+  e-graph in the language of rule bodies, it builds nothing, and it succeeds when the
+  query has a match. A name that is not a global is a variable of that one check. In
+  lazy AC mode a check runs completion, and rule rounds when needed, inside the check
+  transaction, and reports a budget stop as inconclusive. The previous meaning (build the
+  terms, rebuild, compare classes) is `prove`; every check in the repository was rewritten
+  to `prove` by `scripts/migrate-check.py`. **Breaking:** a program whose check names a
+  term it never built now fails; write `prove` for the old meaning.
+- `(run N :until fact ...)` takes a query goal, as egglog's does. The ground goal that
+  builds its terms once is `(run N :goal (= a b))`.
 - `explain_deep`'s memoization is now recorded in full: the code comment,
   design chapter 15 and a regression test (`deep_proof_diamond_is_linear`)
   state both failure modes the two pair sets prevent, exponential

@@ -80,7 +80,7 @@ Syntax, sort-checking, failed-check, and other run-time errors exit with status
 | Status | Cause | Standard error |
 | --- | --- | --- |
 | 0 | The program ran and every check passed. | `ok — N nodes` |
-| 1 | A `check` or `checkau` assertion failed. | `error: check failed: ...` |
+| 1 | A `check`, `prove`, or `checkau` assertion failed. | `error: check failed: ...` |
 | 1 | Another command failed while running, for example a `(pop)` without a `(push)`. | `error: ...` |
 | 1 | The parser rejected the program. | `parse error: ...` |
 | 1 | A declaration or term failed sort-checking. | `sort error: ...` or `sort error at line L column C: ...` |

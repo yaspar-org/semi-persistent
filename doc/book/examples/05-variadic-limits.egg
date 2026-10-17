@@ -24,10 +24,10 @@
 (run 1)
 
 ;; The binary-shaped pattern cannot split a:2 between x and y.
-(check (!= repeated (PairFound)))
-(check (= repeated (Repeated a)))
+(prove (!= repeated (PairFound)))
+(prove (= repeated (Repeated a)))
 
 ;; Without a rest variable, two scalar elements cannot absorb a third child or
 ;; bind an implicit sub-sum such as Add(a,b).
-(check (!= triple (PairFound)))
+(prove (!= triple (PairFound)))
 ;; ANCHOR_END: variadic-limits

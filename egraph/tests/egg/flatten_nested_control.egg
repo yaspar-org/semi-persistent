@@ -15,4 +15,4 @@
 (union k (And (Not (q)) (r)))
 (rewrite (And (Not a0) (Not a1) ..rest) (And (Not (Or a0 a1)) ..rest))
 (run 1)
-(check (= top (And (Not (Or (p) (q))) (r))))
+(prove (= top (And (Not (Or (p) (q))) (r))))

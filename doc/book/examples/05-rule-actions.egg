@@ -24,6 +24,6 @@
 (edge b c)
 (run 3)
 
-(check (= (path a c) (witnessed a c)))
-(check (= (group a) (group c)))
+(prove (= (path a c) (witnessed a c)))
+(prove (= (group a) (group c)))
 ;; ANCHOR_END: rule-actions

@@ -8,4 +8,4 @@
 
 (let expr (Add (Num 3) (Num 5)))
 (run 10)
-(check (= expr (Num 8)))
+(prove (= expr (Num 8)))

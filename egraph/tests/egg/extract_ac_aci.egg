@@ -24,7 +24,7 @@
 (let p (or (not (not (one))) (two)))
 (run 10)
 
-(check (= (not (not (one))) (one)))
+(prove (= (not (not (one))) (one)))
 (extract p)
 ;; expected: (or (one) (two)) or (or (two) (one))
 
@@ -33,6 +33,6 @@
 
 (let q (add (zero) (three)))
 (run 10)
-(check (= q (three)))
+(prove (= q (three)))
 (extract q)
 ;; expected: (three)

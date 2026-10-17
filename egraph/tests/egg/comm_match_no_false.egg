@@ -19,5 +19,5 @@
 (rewrite (Eq (F p) (F q)) (G))
 (rewrite (Eq (F p) (C)) (H p) :flatten)
 (run 2)
-(check (!= x (G)))
-(check (!= y (H (D))))
+(prove (!= x (G)))
+(prove (!= y (H (D))))

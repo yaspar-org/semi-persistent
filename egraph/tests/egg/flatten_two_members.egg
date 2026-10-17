@@ -17,5 +17,5 @@
 (union k (And (Not (s)) (t)))
 (rewrite (And (Not a0) (Not a1) ..rest) (And (Not (Or a0 a1)) ..rest) :flatten)
 (run 1)
-(check (= top (And (Not (Or (p) (q))) (r))))
-(check (= top (And (Not (Or (p) (s))) (t))))
+(prove (= top (And (Not (Or (p) (q))) (r))))
+(prove (= top (And (Not (Or (p) (s))) (t))))

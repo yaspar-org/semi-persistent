@@ -10,8 +10,8 @@
 
 (let e (If (B true) (Lit (Num 10)) (Lit (Num 20))))
 (run 10)
-(check (= e (Lit (Num 10))))
+(prove (= e (Lit (Num 10))))
 
 (let f (If (B false) (Lit (Num 10)) (Lit (Num 20))))
 (run 10)
-(check (= f (Lit (Num 20))))
+(prove (= f (Lit (Num 20))))

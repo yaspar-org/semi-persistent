@@ -16,5 +16,5 @@
 (let ac (xor (a) (c)))
 (let bc (xor (b) (c)))
 (run 6)
-(check (= (b) ac))
-(check (= (a) bc))
+(prove (= (b) ac))
+(prove (= (a) bc))

@@ -1179,7 +1179,7 @@ fn pattern_as_rhs(p: &SurfacePattern) -> ModalResult<RhsTerm> {
     }
 }
 
-/// `:until (= a b)` / `:until (!= a b)` — two ground terms and the relation that stops the run.
+/// `:goal (= a b)` / `:goal (!= a b)` — two ground terms and the relation that stops the run.
 fn parse_run_goal(input: &mut &str, base: usize) -> ModalResult<RunGoal> {
     cut_char(input, '(')?;
     ws(input)?;
@@ -1192,7 +1192,7 @@ fn parse_run_goal(input: &mut &str, base: usize) -> ModalResult<RunGoal> {
     } else {
         let mut e = ContextError::new();
         e.push(StrContext::Expected(StrContextValue::Description(
-            ":until goal must be (= a b) or (!= a b)",
+            ":goal must be (= a b) or (!= a b)",
         )));
         return Err(ErrMode::Cut(e));
     };
@@ -1423,17 +1423,45 @@ fn parse_command(
             };
             let limit = number(input)?;
             ws(input)?;
-            let until = if input.starts_with(":until") {
+            // `:until fact ...` is egglog's query goal; `:goal (= a b)` / `:goal (!= a b)`
+            // is the ground goal, which builds its terms once.
+            if input.starts_with(":until") {
                 *input = &input[":until".len()..];
-                Some(parse_run_goal(input, base)?)
+                ws(input)?;
+                let start = *input;
+                let mut facts = Vec::new();
+                loop {
+                    ws(input)?;
+                    if input.starts_with(')') {
+                        break;
+                    }
+                    facts.push(parse_pattern(input, base)?);
+                }
+                if facts.is_empty() {
+                    let mut e = ContextError::new();
+                    e.push(StrContext::Label(":until needs at least one fact"));
+                    return Err(ErrMode::Cut(e));
+                }
+                let text = start[..start.len() - input.len()].trim().to_owned();
+                SurfaceCommand::RunUntil {
+                    ruleset,
+                    limit,
+                    facts,
+                    text,
+                }
             } else {
-                None
-            };
-            SurfaceCommand::Pass(Command::Run {
-                ruleset,
-                limit,
-                until,
-            })
+                let until = if input.starts_with(":goal") {
+                    *input = &input[":goal".len()..];
+                    Some(parse_run_goal(input, base)?)
+                } else {
+                    None
+                };
+                SurfaceCommand::Pass(Command::Run {
+                    ruleset,
+                    limit,
+                    until,
+                })
+            }
         }
         "print-size" => {
             ws(input)?;
@@ -1456,7 +1484,70 @@ fn parse_command(
             };
             SurfaceCommand::Pass(Command::PrintStats(file))
         }
-        "check" => {
+        "check" | "query" => {
+            let printing = kw == "query";
+            ws(input)?;
+            let start = *input;
+            let mut facts = Vec::new();
+            loop {
+                ws(input)?;
+                if input.starts_with(')') || input.starts_with(':') {
+                    break;
+                }
+                facts.push(parse_pattern(input, base)?);
+            }
+            if facts.is_empty() {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label("check needs at least one fact"));
+                return Err(ErrMode::Cut(e));
+            }
+            let text = start[..start.len() - input.len()].trim().to_owned();
+            let print = if !printing {
+                None
+            } else if input.starts_with(":limit") {
+                *input = &input[6..];
+                ws(input)?;
+                Some(number(input)?)
+            } else if input.starts_with(':') {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label("a query option is :limit n"));
+                return Err(ErrMode::Cut(e));
+            } else {
+                Some(10)
+            };
+            let cond = if printing {
+                crate::surface_ast::CheckCond::Exists
+            } else if input.starts_with(":count") || input.starts_with(":min") {
+                let count = input.starts_with(":count");
+                *input = &input[if count { 6 } else { 4 }..];
+                ws(input)?;
+                let k = number(input)?;
+                if count {
+                    crate::surface_ast::CheckCond::Count(k)
+                } else {
+                    crate::surface_ast::CheckCond::Min(k)
+                }
+            } else if input.starts_with(":none") {
+                *input = &input[5..];
+                crate::surface_ast::CheckCond::None
+            } else if input.starts_with(':') {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label(
+                    "a check option is :count k, :min k, or :none",
+                ));
+                return Err(ErrMode::Cut(e));
+            } else {
+                crate::surface_ast::CheckCond::Exists
+            };
+            SurfaceCommand::Check {
+                facts,
+                text,
+                cond,
+                print,
+            }
+        }
+        // `prove`: build the terms, rebuild, and compare classes.
+        "prove" => {
             ws(input)?;
             let cmd = if input.starts_with("(!=") || input.starts_with("( !=") {
                 cut_char(input, '(')?;
@@ -2039,10 +2130,13 @@ mod alg_tag_tests {
         };
         assert_eq!(one("(run 12)"), (None, 12, None));
         assert_eq!(one("(run fast 3)"), (Some("fast".to_string()), 3, None));
-        let (rs, limit, until) = one("(run fast 3 :until (!= a b))");
+        let (rs, limit, until) = one("(run fast 3 :goal (!= a b))");
         assert_eq!((rs, limit), (Some("fast".to_string()), 3));
         assert!(!until.expect("goal").equal);
-        assert!(one("(run 5 :until (= a b))").2.expect("goal").equal);
+        assert!(one("(run 5 :goal (= a b))").2.expect("goal").equal);
+        // `:goal` reads the same ground goal (doc/goal-egglog-check.md).
+        assert!(one("(run 5 :goal (= a b))").2.expect("goal").equal);
+        assert!(!one("(run 5 :goal (!= a b))").2.expect("goal").equal);
     }
 
     #[test]

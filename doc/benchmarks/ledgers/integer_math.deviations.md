@@ -125,7 +125,7 @@ needs no restatement: `Div` is an ordinary binary constructor.
 
 ## Cross-check
 
-`(check (= startexpr equivexpr))` passes in all three configurations, unchanged
+`(prove (= startexpr equivexpr))` passes in all three configurations, unchanged
 from the original. Its derivation uses only unguarded rules , 
 `(Mul x (Pow (Const 2) y)) → (LShift x y)`, `(Sub a a) → (Const 0)`,
 `(Add a (Const 0)) → a`, `(Not (Not x)) → x`, `(Mul a (Const 1)) → a`: which is

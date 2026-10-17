@@ -11,5 +11,5 @@
 (let t (G (Add (a):2 (b))))
 (rewrite (G (Add (a):k>=2 (b))) (G (Add (a):(u64::- k 2))))
 (run 2)
-(check (= x (G (Zero))))
-(check (= t (G (Zero))))
+(prove (= x (G (Zero))))
+(prove (= t (G (Zero))))

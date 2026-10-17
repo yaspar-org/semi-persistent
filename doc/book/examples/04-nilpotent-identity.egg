@@ -7,6 +7,6 @@
 (function A () E)
 (function Xor (E) E :assoc :comm :nilpotent 2 :identity (Zero))
 
-(check (= (Xor) (Zero)))
-(check (= (Xor (A) (A)) (Zero)))
+(prove (= (Xor) (Zero)))
+(prove (= (Xor (A) (A)) (Zero)))
 ;; ANCHOR_END: nilpotent-identity

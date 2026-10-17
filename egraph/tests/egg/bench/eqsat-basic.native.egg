@@ -22,6 +22,6 @@
          (Num (i64::* a b)))
 
 (run 10)
-(check (= expr1 expr2))
+(prove (= expr1 expr2))
 (print-size)
 (print-stats :file "eqsat-basic.native.stats.json")

@@ -16,14 +16,14 @@
 
 (union (a) (b))
 ;; Congruence: a = b, so f(a,c) = f(b,c).
-(check (= (f (a) (c)) (f (b) (c))))
-(check (= (h (a)) (h (b))))
+(prove (= (f (a) (c)) (f (b) (c))))
+(prove (= (h (a)) (h (b))))
 
 ;; Constructors match on the LHS of a rewrite like any other op. The `g` node has to exist
 ;; before the run for the rule to have anything to match.
 (let x (g (a)))
 (rewrite (g (a)) (c))
 (run 10)
-(check (= x (c)))
+(prove (= x (c)))
 ;; a = b, so the same node is reached through either leaf.
-(check (= (g (b)) (c)))
+(prove (= (g (b)) (c)))

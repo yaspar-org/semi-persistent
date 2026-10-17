@@ -15,5 +15,5 @@
 (let ac (join (a) (c)))
 (let bc (join (b) (c)))
 (run 6)
-(check (= ac (c)))
-(check (= bc (c)))
+(prove (= ac (c)))
+(prove (= bc (c)))

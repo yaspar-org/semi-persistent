@@ -19,4 +19,4 @@
 (extract x)
 ;; expected output: (f b b)
 
-(check (= (g (a)) (b)))
+(prove (= (g (a)) (b)))

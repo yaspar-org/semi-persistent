@@ -11,7 +11,7 @@ as a rewrite rule), `eqsat-basic.native.egg` (ours, commutativity native).
 1. Appended `(print-size)`, `(print-stats)`, and
    `(print-stats :file "eqsat-basic.egglog.stats.json")`. The original reports nothing;
    the harness needs node counts and an iteration count. The three commands run after
-   the `(check …)`, so they cannot affect the saturation being timed.
+   the `(prove …)`, so they cannot affect the saturation being timed.
 
 No other change. The program is otherwise byte-identical to theirs.
 
@@ -26,7 +26,7 @@ No other change. The program is otherwise byte-identical to theirs.
    reads JSON. `(print-size)` is kept on both sides.
 
 Nothing else differs: same datatype, same four rules, same two terms, same `(run 10)`,
-same `(check (= expr1 expr2))`.
+same `(prove (= expr1 expr2))`.
 
 ## Deviation specific to the native configuration
 
@@ -41,7 +41,7 @@ rules are unchanged and still match up to the commutative swap.
 
 ## Semantic cross-check
 
-`(check (= expr1 expr2))` passes in all three configurations, at the same 3 iterations.
+`(prove (= expr1 expr2))` passes in all three configurations, at the same 3 iterations.
 
 Node counts differ by construction, and the differences are explained:
 

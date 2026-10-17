@@ -15,5 +15,5 @@
 
 ;; Prints (wrap (unit)), whose cost is 2.
 (extract (expensive))
-(check (= (expensive) (wrap (unit))))
+(prove (= (expensive) (wrap (unit))))
 ;; ANCHOR_END: extraction

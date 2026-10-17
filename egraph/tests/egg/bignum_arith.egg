@@ -7,4 +7,4 @@
 (rewrite (Mul (Num x) (Num y)) (Num (IBig::* x y)))
 (let e (Mul (Num 1000000000000) (Num 1000000000000)))
 (run 10)
-(check (= e (Num 1000000000000000000000000)))
+(prove (= e (Num 1000000000000000000000000)))

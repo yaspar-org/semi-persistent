@@ -578,7 +578,7 @@ pub enum Command {
     Let(String, Term),
     Union(Term, Term),
     Insert(Term),
-    /// `(run [ruleset] N [:until (= a b) | :until (!= a b)])`.
+    /// `(run [ruleset] N [:goal (= a b) | :goal (!= a b)])`.
     Run {
         /// The ruleset to run, or `None` for the default one (rules with no `:ruleset` tag).
         ruleset: Option<String>,

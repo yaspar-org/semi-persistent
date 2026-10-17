@@ -20,10 +20,10 @@
 (let value (old item))
 
 (run simplify 2)
-(check (= value (reduced item)))
-(check (!= value (final item)))
+(prove (= value (reduced item)))
+(prove (!= value (final item)))
 
 (run 2)
-(check (= value (final item)))
-(check (!= value (stale item)))
+(prove (= value (final item)))
+(prove (!= value (stale item)))
 ;; ANCHOR_END: subsumption-rulesets

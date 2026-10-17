@@ -22,4 +22,4 @@
 ;; No structural attribute, so `dup` is an ordinary binary Plain node.
 (function dup (E E) E :idempotent)
 
-(check (= (dup a a) a))
+(prove (= (dup a a) a))

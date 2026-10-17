@@ -22,4 +22,4 @@
 (let c (Add (A) (B)))
 (let n (Neg c))
 (let t (Add c n))
-(check (= t (Zero)))
+(prove (= t (Zero)))

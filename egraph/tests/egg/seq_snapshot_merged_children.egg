@@ -19,4 +19,4 @@
 (rewrite (G b) (F (a)))
 (rewrite (And (..gs (G y)) ..rest) (And (N (count gs)) ..rest))
 (run 1)
-(check (= e (And (N 1) (F a))))
+(prove (= e (And (N 1) (F a))))

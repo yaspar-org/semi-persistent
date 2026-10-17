@@ -7,6 +7,6 @@
 (sort E)
 (constructor hidden () E :unextractable)
 (let value (hidden))
-(check value)
+(prove value)
 (extract value)
 ;; ANCHOR_END: extraction-failure

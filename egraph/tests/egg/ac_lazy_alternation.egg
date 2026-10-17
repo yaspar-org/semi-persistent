@@ -41,4 +41,4 @@
 ;; Holds only through the rules-and-completion interaction: eager completion
 ;; reaches it, plain saturation does not, and the lazy transaction derives it
 ;; in one goal-directed alternation and then restores the 69-node graph.
-(check (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))
+(prove (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))

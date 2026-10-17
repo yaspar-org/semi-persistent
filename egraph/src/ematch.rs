@@ -1427,6 +1427,7 @@ impl<'q, Cfg: EGraphConfig, L: LitVal, S: Copy> Adaptive<'q, Cfg, L, S> {
                 atom,
                 crate::resolve::RAtom::Eq(..)
                     | crate::resolve::RAtom::EqGlobal(..)
+                    | crate::resolve::RAtom::Neq(..)
                     | crate::resolve::RAtom::Pred { .. }
             ) {
                 costed |= 1 << i;
@@ -1891,6 +1892,11 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         }
         Step::CheckEq { a, b } => {
             if canon(index, eg, env.get(*a)) == canon(index, eg, env.get(*b)) {
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
+            }
+        }
+        Step::CheckNeq { a, b } => {
+            if canon(index, eg, env.get(*a)) != canon(index, eg, env.get(*b)) {
                 run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
         }
@@ -3206,6 +3212,16 @@ where
             Step::CheckEq { a, b } => {
                 if canon(self.index, self.eg, self.env.get(*a))
                     == canon(self.index, self.eg, self.env.get(*b))
+                {
+                    self.cursor += 1;
+                    Enter::Advanced
+                } else {
+                    Enter::Failed
+                }
+            }
+            Step::CheckNeq { a, b } => {
+                if canon(self.index, self.eg, self.env.get(*a))
+                    != canon(self.index, self.eg, self.env.get(*b))
                 {
                     self.cursor += 1;
                     Enter::Advanced

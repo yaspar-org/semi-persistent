@@ -25,4 +25,4 @@
 (union (x) (zero))
 
 (run 5)
-(check (= t_cd t_af))
+(prove (= t_cd t_af))

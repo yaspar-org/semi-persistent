@@ -11,4 +11,4 @@
 (function add (E) E :assoc :comm :identity (zero) :inverse neg)
 (let a_neg_a (add (a) (neg (a))))
 (run 5)
-(check (= a_neg_a (zero)))
+(prove (= a_neg_a (zero)))

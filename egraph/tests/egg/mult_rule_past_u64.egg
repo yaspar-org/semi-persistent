@@ -13,5 +13,5 @@
 (rewrite (W) (Plus (F (a)):4294967296 (b)))
 (rewrite (Plus x:k<=4294967296 (b)) (G (Plus x:(u64::* k k) (b))))
 (run 3)
-(check (= w (Plus (F (a)):4294967296 (b))))
-(check (= w (G (Plus (F (a)):18446744073709551616 (b)))))
+(prove (= w (Plus (F (a)):4294967296 (b))))
+(prove (= w (G (Plus (F (a)):18446744073709551616 (b)))))

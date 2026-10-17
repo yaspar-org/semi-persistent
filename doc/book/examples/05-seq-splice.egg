@@ -23,6 +23,6 @@
 (let p (Src))
 (rewrite (Src) (Plus (F (a)):3 (b)))
 (run 2)
-(check (= e (Cat (F (a)))))
-(check (= p (F (a))))
+(prove (= e (Cat (F (a)))))
+(prove (= p (F (a))))
 ;; ANCHOR_END: seq-splice

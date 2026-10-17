@@ -16,7 +16,7 @@
 (run 10)
 
 ;; Forward: (f a) -> (g a).
-(check (= p (g (a))))
+(prove (= p (g (a))))
 ;; Reverse: (g b) -> (f b). Building (f b) here hash-conses onto the node the reverse
 ;; direction created; without that direction it would be a fresh, unrelated class.
-(check (= q (f (b))))
+(prove (= q (f (b))))

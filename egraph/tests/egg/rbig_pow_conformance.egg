@@ -13,7 +13,7 @@
 (let pf3 (P (Num 2/3) (E 3)))
 (run 2)
 ;; 0^0 = 1, the edge case the source pins
-(check (= p00 (Num 1/1)))
-(check (= p02 (Num 0/1)))
-(check (= p22 (Num 4/1)))
-(check (= pf3 (Num 8/27)))
+(prove (= p00 (Num 1/1)))
+(prove (= p02 (Num 0/1)))
+(prove (= p22 (Num 4/1)))
+(prove (= pf3 (Num 8/27)))

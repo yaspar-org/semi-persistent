@@ -13,11 +13,11 @@
 
 (let u (Zero))
 (run 5)
-(check (= u (Const 0)))
+(prove (= u (Const 0)))
 
 ;; And the two directions agree: a rule whose LHS literal is the same value as an RHS
 ;; literal built elsewhere lands in one class.
 (rewrite (Add a (Const 0)) a)
 (let t (Add (Zero) (Const 0)))
 (run 5)
-(check (= t (Zero)))
+(prove (= t (Zero)))

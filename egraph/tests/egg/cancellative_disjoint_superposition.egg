@@ -22,4 +22,4 @@
 (let q1 (mul (a) (a)))
 (let q2 (mul (d) (dp)))
 (run 8)
-(check (= q1 q2))
+(prove (= q1 q2))

@@ -9,9 +9,9 @@
 (rewrite (Add (Num x) (Num y)) (Num (i64::+ x y)))
 (let e (Add (Num 3) (Num 5)))
 (run 10)
-(check (= e (Num 8)))
+(prove (= e (Num 8)))
 
 ;; Mixing eager eval with rewrites
 (let f (Add (Num (i64::+ 1 2)) (Num (i64::* 3 4))))
 (run 10)
-(check (= f (Num 15)))
+(prove (= f (Num 15)))

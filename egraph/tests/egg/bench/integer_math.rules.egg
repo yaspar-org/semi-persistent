@@ -73,6 +73,6 @@
 
 (run 4)
 
-(check (= startexpr equivexpr))
+(prove (= startexpr equivexpr))
 (print-size)
 (print-stats :file "integer_math.rules.stats.json")

@@ -11,6 +11,6 @@
 
 (let t (Add (Num 1) (Num 2)))
 (run 3)
-(check (= (Mark t) t))
+(prove (= (Mark t) t))
 ;; Nothing else was marked: the rule binds a root, it does not create classes.
-(check (!= (Mark (Num 1)) (Num 1)))
+(prove (!= (Mark (Num 1)) (Num 1)))

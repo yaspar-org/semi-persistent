@@ -20,7 +20,7 @@
                            (Add (Const 6.0)
                                 (Const 7.0))))))))
 (run add_ac 7)
-(check (= res
+(prove (= res
   (Add (Const 7.0)
        (Add (Const 6.0)
             (Add (Const 5.0)

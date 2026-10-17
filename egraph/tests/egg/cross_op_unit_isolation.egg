@@ -15,4 +15,4 @@
 (let s (mul (a) (b)))
 (union (b) (zero))
 (run 5)
-(check (= s (a)))
+(prove (= s (a)))

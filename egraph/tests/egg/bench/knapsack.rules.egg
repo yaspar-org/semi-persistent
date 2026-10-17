@@ -38,6 +38,6 @@
 
 (run 100)
 
-(check (= test1 (Num 13)))
+(prove (= test1 (Num 13)))
 (print-size)
 (print-stats :file "knapsack.rules.stats.json")

@@ -16,5 +16,5 @@
 ;; 5w = 12 does not: nothing is derived for w.
 (union (Mul (Num 5) (Var "w")) (Num 12))
 (run 3)
-(check (= (Var "y") (Num 4)))
-(check (!= (Var "w") (Num 2)))
+(prove (= (Var "y") (Num 4)))
+(prove (!= (Var "w") (Num 2)))
