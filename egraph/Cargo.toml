@@ -38,7 +38,7 @@ slow-tests = []
 
 [dependencies]
 semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.3.0", features = ["literal-types"] }
-vstd = "=0.0.0-2026-09-20-0158"
+vstd = "=0.0.0-2026-10-04-0306"
 clap = { version = "4.6.0", features = ["derive"] }
 num-bigint.workspace = true
 num-rational.workspace = true
