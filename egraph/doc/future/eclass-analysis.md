@@ -470,3 +470,183 @@ value change that creates no node and merges no class. Building those once
 for class analysis leaves lattice functions as a declaration form, a table
 index, and the `:merge` restriction to verified domains that
 [lattice-functions.md](lattice-functions.md) already requires.
+
+## 13. Further directions
+
+These directions extend the design without changing §4 to §8. Each states
+what it adds, what it costs, and what would decide it.
+
+### 13.1 Downward iteration, and the constraint-propagation literature
+
+A class is a conjunction: every node in it is a true statement about the
+same value. Classical abstract interpretation joins at control-flow merges
+and iterates upward from bottom; its iterates are sound only at the
+fixpoint, which is why it needs widening. Here the iteration starts at top
+and only takes meets, so every iterate is sound, which is what lets §7 stop
+on a budget and lose only precision.
+
+Forward transfer from children followed by backward transfer to children,
+over a DAG with shared subterms, is the HC4 algorithm of interval constraint
+programming (Benhamou, Goualard, Granvilliers and Puget, "Revising Hull and
+Box Consistency", ICLP 1999): HC4-revise evaluates a constraint's expression
+tree bottom-up, then projects the result top-down. A class with several
+nodes is a shared subexpression with several defining equations, a case HC4
+handles by running revise per constraint until no domain changes. That
+literature has the scheduling heuristics this design will need: propagate a
+change only when it shrinks a domain by more than a threshold, and order the
+queue by depth. It also documents the slow convergence §7 bounds by a
+budget.
+
+### 13.2 Cycle acceleration
+
+`x = x + 1` over ℤ descends `[0, ∞)`, `[1, ∞)`, `[2, ∞)` one step per
+iteration and never reaches the empty set within a budget, although the
+equation has no solution in ℤ; modulo 2^N it has none either, for N ≥ 1.
+Labeled union-find (§11) removes the chain by turning the merge into a
+labeled edge, at a cost in the verified class layer.
+
+**Proposed instead, for a first version: acceleration on the propagation
+cycle.** Acceleration applies when the cycle is, syntactically, a chain of
+nodes that add or subtract constants, so that following it from a class
+back to itself composes to `x ↦ x + d` with `d` a known constant. The
+class's values then satisfy `x = x + d`. Over ℤ with `d ≠ 0`, and modulo 2^N
+with `d ≢ 0 (mod 2^N)`, that equation has no solution, so the limit of the
+descending sequence is the empty set and the class is bottom in one step.
+Bottom is a conflict: the asserted equalities have no model. A value that
+merely shrinks by a constant on each traversal is not enough to accelerate,
+because the shrink can come from other nodes of the cycle's classes. This
+is acceleration in the sense of Gonnord and Halbwachs ("Combining Widening
+and Acceleration in Linear Relation Analysis", SAS 2006), applied to a
+descending sequence. It needs no change to the union-find; its cost is
+detecting such cycles when the propagation queue revisits a class. Revisit labeled union-find if
+offset chains that acceleration cannot recognize dominate the budget on the
+benchmark set.
+
+### 13.3 Relational precision by term synthesis
+
+The domains are non-relational, but the e-graph is not. A node `sub(a, b)`
+in its own class has a value, and an interval on that class is a zone
+constraint between `a` and `b`; an AC sum `add(a, b, c)` with a value is a
+linear constraint over the three. The analysis therefore gains relational
+precision whenever such terms exist, without a relational domain.
+
+**Proposed: create them on purpose.** Where a comparison `lt(a, b)` or an
+equality between sums occurs, add the node `sub(a, b)` (or the difference
+of the two sums) to the graph. Its class value starts at the forward
+transfer and is refined by every path that reaches it, which is the
+relational information a zone domain would track. The cost is nodes:
+bound it by synthesizing only for comparisons that the analysis has not
+already decided, and only for operands of one sort. What would decide it:
+the number of comparisons decided with and without synthesis, on the
+benchmark set of §13.6.
+
+### 13.4 Transfers for flat A, AC and ACI nodes
+
+A flat AC node holds a multiset of children with multiplicities. Its forward
+transfer folds the domain's binary operator over the children, with
+`k · x` for a child of multiplicity `k` computed by the domain's
+multiplication by a constant rather than by `k` additions. Its backward
+transfer refines each child by the class value minus the sum of the other
+children: computed naively, that is O(n²) per node; with prefix and suffix
+folds it is O(n), and n is unbounded for flat nodes. An ACI node uses the
+idempotent operator and needs no multiplicities. An A node folds its children
+in order. Associativity makes every grouping of that fold equal on concrete
+values, but an abstract operator need not be associative, so groupings can
+give different values; each is sound, and their meet is too.
+
+AC completion creates nodes, and every new node is one more component of its
+class, so completion also tightens values. The interaction runs both ways:
+a value that becomes a singleton turns into a literal (§8), which completion
+then treats as a constant.
+
+### 13.5 Facts as conflicts and as costs
+
+Two uses of the values follow from §8 without new machinery.
+
+- **Conflicts.** An empty meet proves that the asserted equalities have no
+  model. A front end that asserts assumptions, as the CBMC e-graph dumps do,
+  learns that its assumptions are infeasible; an SMT-style front end learns
+  that its input is unsatisfiable.
+- **Costs.** A cost model can read a class's value. A bit-width cost derived
+  from an interval is how hardware datapath optimization extracts narrower
+  operators (Coward, Constantinides and Drane, §11). The cost-model
+  interface reads per-node data today; reading a class value needs one more
+  accessor, and the value is fixed during extraction, so the cost stays a
+  function of the selection.
+
+### 13.6 Measuring before building
+
+The synthetic benchmarks of `abstract-domains/bench/synth` (proposed in a
+separate change) already run this design's propagation outside the e-graph:
+classes and nodes from CBMC e-graph dumps, forward and backward transfers
+with the crate's `Facts<W>` and `ExecTnum`, a per-class change budget, and
+an answer key from sampled and enumerated models. Their first results, over
+107 dumps and 233,408 classes, name work this design depends on:
+
+| Finding | Measured | Consequence for this design |
+|---|---|---|
+| `Compare` on `Facts<W>` answers `Top` | 0 of 144 planted comparisons decided | §6's `ite` rule decides nothing until the comparison transfers land |
+| `ExecTnum::bw_and` keeps unknown bits under a known zero | 72 of 174 known-bits points found; 332 of 335 with the eBPF `and` | a precise `and` belongs in the verified tnum before `bits` joins `Facts<W>` |
+| reduction between interval and tnum | tnum excess 2.71 bits unreduced, 0.64 reduced | the reduction of §1 is worth its cost on these graphs |
+
+Once the analysis exists in the e-graph, the same benchmarks run through it
+and give a differential check against the harness, which is the way to
+settle the open budget question of §7 and the term synthesis of §13.3.
+
+### 13.7 Class analysis and lattice functions: how they differ, how they coexist
+
+§12 orders the two features. This section states how they differ in kind,
+and how a program uses both.
+
+**What each feature is.** A lattice function is egglog's mechanism and the
+subject of [lattice-functions.md](lattice-functions.md): a table from argument
+tuples to values of a declared lattice, whose rows are written by rules and
+whose colliding rows are combined by `:merge`. The class analysis of this
+document attaches one value to each e-class of an interpreted sort, computed
+by verified transfers named in the operators' signatures.
+
+| | Lattice function | Class analysis |
+|---|---|---|
+| Keyed by | any argument tuple: `(path a b)`, `(lo e)` | one e-class |
+| Value | one value of one declared lattice | the reduced product of the sort's domains (§5) |
+| Who writes the transfers | the user, one rule per operator and direction | the library: `:interp` maps an operator to verified forward and backward transfers (§6) |
+| On a class merge | colliding rows are combined by `:merge`, an expression that egglog does not check to be a lattice operation | meet, then reduction between the domains; an empty meet is a conflict (§1) |
+| Several analyses | separate tables (Herbie's `lo` and `hi`), related only by further rules | components of one product, related by verified reduction channels |
+| Equalities back into the e-graph | only through a rule that writes `union` | singletons become constants, decided conditions and `ite` branches merge (§8) |
+| Trust | the rules are trusted, as rewrites are | transfers, meets and reductions are verified; tier 3 facts are trusted (§6) |
+| Covers | any monotone table: costs, shortest paths, points-to sets, types | the set of concrete values a term of an interpreted sort can take |
+
+The difference is one of kind. Abstract interpretation assigns each
+operator a fixed abstract semantics and runs it over the program; the class
+analysis is that, with the e-graph's classes as the program's terms, which
+is why it needs no rules and can be verified once for every program. A
+lattice function is a monotone Datalog table: more general, because its key
+is any tuple and its lattice any lattice, and less specific, because every
+transfer is a rule the user writes and checks.
+
+**Each one alone.** Herbie's analysis (§12) is an interval and a nonzero
+flag on every `Math` term: the class analysis expresses it with no rules,
+and adds backward propagation and verified transfers. A shortest-path
+table `(function path (Node Node) i64 :merge (min old new))` relates two
+classes: the class analysis cannot express it, because its value describes
+one term's concrete value and not a relation between terms.
+
+**Both in one program.** Three connections make the features compose:
+
+- a rule body can test a class fact (§6, tier 3) and write a lattice table,
+  so a table can be seeded from the analysis: a cost table whose entry for a
+  node reads the bit-width that the node's interval implies;
+- a lattice function whose value sort is a verified domain takes that
+  domain's join or meet as its `:merge`, the restriction
+  [lattice-functions.md](lattice-functions.md) already requires, so such a
+  table is sound by the domain's proofs rather than by trust in `:merge`;
+- both store values in the semi-persistent value pools and record a
+  value-only change in the touched log (§12), so a change in either reaches
+  the next semi-naive round and rolls back with `pop`.
+
+**What stays distinct.** Only the class analysis derives equalities back
+into the e-graph (§8), because only its values are verified
+over-approximations of a single term. Only lattice functions are keyed by
+tuples. A program therefore uses the class analysis for facts about values
+of interpreted sorts, and lattice functions for relations over tuples of
+classes and for egglog programs whose tables are not facts about one term.
