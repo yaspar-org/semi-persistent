@@ -15,7 +15,7 @@ required-features = ["bin"]
 bin = []
 
 [dependencies]
-vstd = "=0.0.0-2026-09-20-0158"
+vstd = "=0.0.0-2026-10-04-0306"
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 
