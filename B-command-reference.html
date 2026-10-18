@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-16c64170.js";
+            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -277,8 +277,9 @@ rest variables, comprehensions, modifiers, and action ordering.</p>
 <tbody>
 <tr><td><code>(run n)</code></td><td>Run the untagged default ruleset for at most <code>n</code> iterations.</td></tr>
 <tr><td><code>(run r n)</code></td><td>Run only declared ruleset <code>r</code> for at most <code>n</code> iterations.</td></tr>
-<tr><td><code>(run n :until (= a b))</code></td><td>Stop early when <code>a</code> and <code>b</code> join. A named run may use the same goal.</td></tr>
-<tr><td><code>(run n :until (!= a b))</code></td><td>Stop early when the two terms are in different classes. This does not assert a persistent disequality.</td></tr>
+<tr><td><code>(run n :until fact ...)</code></td><td>Stop early, before a round, once the facts have a match, as <code>check</code> would find one. In lazy AC mode the goal is evaluated without completion, so completion can only delay the stop.</td></tr>
+<tr><td><code>(run n :goal (= a b))</code></td><td>Build <code>a</code> and <code>b</code> once, then stop early when they join. A named run may use the same goal.</td></tr>
+<tr><td><code>(run n :goal (!= a b))</code></td><td>Stop early when the two terms are in different classes. This does not assert a persistent disequality.</td></tr>
 <tr><td><code>(push)</code></td><td>Record a semi-persistent scope.</td></tr>
 <tr><td><code>(push :shrink)</code></td><td>Reclaim sufficiently overallocated storage, then record a scope.</td></tr>
 <tr><td><code>(pop)</code></td><td>Restore the most recent scope, including e-graph, installed-rule, and runtime-name state.</td></tr>
@@ -295,9 +296,12 @@ defines scope lifetime and <code>:shrink</code>.</p>
 <tr><th>Command</th><th>Effect</th></tr>
 </thead>
 <tbody>
-<tr><td><code>(check term)</code></td><td>Build <code>term</code>. This form has no additional truth or equality test.</td></tr>
-<tr><td><code>(check (= a b))</code></td><td>Rebuild and require <code>a</code> and <code>b</code> to belong to the same e-class.</td></tr>
-<tr><td><code>(check (!= a b))</code></td><td>Rebuild and require the terms to belong to different e-classes under the selected completion mode.</td></tr>
+<tr><td><code>(check fact ...)</code></td><td>Rebuild and require the conjunctive query to have a match. The facts are those of a rule body: a pattern, <code>(= p q)</code>, <code>(!= p q)</code> (the classes differ), or a guard. Literal values are compared by the typed guard, such as <code>(IBig::!= n m)</code>, where egglog writes <code>(!= n m)</code>. The check builds nothing: a term that was never built has no match. A name that is a global refers to it; any other name is a variable of this one check.</td></tr>
+<tr><td><code>(check fact ... :count k)</code>, <code>:min k</code>, <code>:none</code></td><td>Require exactly <code>k</code> matches, at least <code>k</code>, or none. Matches are counted as distinct assignments of the check’s named variables. In lazy AC mode, <code>:count</code> and <code>:none</code> are decided at the completion fixpoint.</td></tr>
+<tr><td><code>(query fact ... [:limit n])</code></td><td>Print the matches of the facts, up to <code>n</code> (default 10): each named variable as a term extracted from its class. Matches are ordered by content colour, so the output does not depend on class ids. Nothing is built or required.</td></tr>
+<tr><td><code>(prove term)</code></td><td>Build <code>term</code>. This form has no additional truth or equality test.</td></tr>
+<tr><td><code>(prove (= a b))</code></td><td>Build both terms, rebuild, and require them to belong to the same e-class.</td></tr>
+<tr><td><code>(prove (!= a b))</code></td><td>Build both terms, rebuild, and require them to belong to different e-classes under the selected completion mode.</td></tr>
 <tr><td><code>(extract term)</code></td><td>Rebuild and print a lowest-cost extractable representative.</td></tr>
 <tr><td><code>(cost-model name :script "file.roto")</code></td><td>Compile a cost script when the program is checked (<a href="24-extraction-under-cost-models.html">Part V</a>).</td></tr>
 <tr><td><code>(cost-model name :rust "id")</code></td><td>Name a cost registered in Rust (<a href="24-extraction-under-cost-models.html">Part V</a>).</td></tr>

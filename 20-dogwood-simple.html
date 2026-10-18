@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-16c64170.js";
+            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -464,15 +464,15 @@ main correspondences are:</p>
 (rewrite (secsTimes x y) (secs (IBig::* x y)))
 (birewrite (tLte a b) (tGte b a))
 (run 4)
-(check (= (mins 15) (secs 900)))
+(prove (= (mins 15) (secs 900)))
 ;; ANCHOR_END: dogwood-identity
 
-(check (!= candA candB))
-(check (!= repaired candA))
-(check (!= repaired candB))
-(check (!= pickWorst candA))
-(check (!= pickWorst candB))
-(check (!= repaired pickWorst))
+(prove (!= candA candB))
+(prove (!= repaired candA))
+(prove (!= repaired candB))
+(prove (!= pickWorst candA))
+(prove (!= pickWorst candB))
+(prove (!= repaired pickWorst))
 
 ;; ANCHOR: dogwood-main-query
 (antiunify candA candB :algorithm exact)
@@ -494,7 +494,7 @@ main correspondences are:</p>
 (rewrite (secsTimes x y) (secs (IBig::* x y)))
 (birewrite (tLte a b) (tGte b a))
 (run 4)
-(check (= (mins 15) (secs 900)))
+(prove (= (mins 15) (secs 900)))
 </code></pre>
 <p>The first rule builds <code>(secsTimes 15 60)</code>. The second rule binds both operands
 as <code>IBig</code> literal values and evaluates the eager <code>IBig::*</code> primitive, reducing

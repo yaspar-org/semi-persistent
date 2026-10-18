@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-16c64170.js";
+            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -319,7 +319,7 @@ their e-classes.</p>
 (union named (h (f (x))))
 (print-size)
 
-(check (= named (h (f (x)))))
+(prove (= named (h (f (x)))))
 </code></pre>
 <p>The three <code>print-size</code> commands report:</p>
 <pre><code class="language-text">x: 1
@@ -397,12 +397,12 @@ literal models so it can use machine and arbitrary-precision sorts together.</p>
 (let real (Real 3.5))
 (let text (Text "Semper"))
 
-(check (= truth (Lit true)))
-(check (= big (Big 42)))
-(check (= machine (Machine 42)))
-(check (= real (Real 3.5)))
-(check (= text (Text "Semper")))
-(check (!= big machine))
+(prove (= truth (Lit true)))
+(prove (= big (Big 42)))
+(prove (= machine (Machine 42)))
+(prove (= real (Real 3.5)))
+(prove (= text (Text "Semper")))
+(prove (!= big machine))
 </code></pre>
 <p>The two occurrences of <code>42</code> have the same spelling, but <code>Big</code> requires an
 <code>IBig</code> while <code>Machine</code> requires an <code>i64</code>. Similarly, <code>true</code> is parsed as

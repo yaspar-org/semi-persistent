@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-16c64170.js";
+            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -195,7 +195,7 @@ rules. The most familiar example is associativity and commutativity:</p>
 (function Add (Math) Math :assoc-comm)
 
 (let nested (Add a (Add b c)))
-(check (= nested (Add c a b)))
+(prove (= nested (Add c a b)))
 </code></pre>
 <p>Applications of <code>Add</code> are flattened and stored as sorted multisets.
 Reassociation and permutation therefore disappear from the representation: a
@@ -239,8 +239,8 @@ there is no separate empty <code>Xor</code> node connected to the identity by a 
 (function A () E)
 (function Xor (E) E :assoc :comm :nilpotent 2 :identity (Zero))
 
-(check (= (Xor) (Zero)))
-(check (= (Xor (A) (A)) (Zero)))
+(prove (= (Xor) (Zero)))
+(prove (= (Xor (A) (A)) (Zero)))
 </code></pre>
 <p>Semper rejects both a <code>:nilpotent</code> declaration without an identity and an
 empty variadic application whose operator has no identity. A nullary operator
@@ -283,7 +283,7 @@ not general group reasoning.</p>
   :identity (Zero)
   :inverse Neg)
 
-(check (= (Add A A (Neg A)) A))
+(prove (= (Add A A (Neg A)) A))
 </code></pre>
 <p><code>Neg</code> must have signature <code>E -&gt; E</code>, and <code>Add</code> must declare an identity. This
 declaration asserts that <code>Add(x, Neg(x)) = Zero</code>. Semper cancels such explicit

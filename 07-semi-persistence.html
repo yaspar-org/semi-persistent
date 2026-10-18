@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-16c64170.js";
+            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -202,7 +202,7 @@ scope.</p>
 
 (push)
 (union (a) (b))
-(check (= left right))
+(prove (= left right))
 
 (push)
 (let nested (g left))
@@ -210,10 +210,10 @@ scope.</p>
 (pop)
 
 ;; The inner pop keeps the equality from the outer scope.
-(check (= left right))
+(prove (= left right))
 (pop)
 
-(check (!= left right))
+(prove (!= left right))
 (print-size)
 </code></pre>
 <p>Before the first push, <code>a</code>, <code>b</code>, <code>f(a)</code>, and <code>f(b)</code> account for four e-nodes.
@@ -271,7 +271,7 @@ the request. Shrinking can move live storage and add work to <code>push</code>; 
 does not perform another shrink. The option does not promise that every
 allocation is returned.</p>
 <pre><code class="language-lisp">(push :shrink)
-(check (!= left right))
+(prove (!= left right))
 (pop)
 </code></pre>
 <h2 id="nesting-and-lifetime"><a class="header" href="#nesting-and-lifetime">Nesting and lifetime</a></h2>
@@ -289,7 +289,7 @@ scope is unavailable after its matching pop:</p>
 (push)
 (let scoped (a))
 (pop)
-(check (= scoped (a)))
+(prove (= scoped (a)))
 </code></pre>
 <p>This program is rejected during whole-program sortchecking because <code>scoped</code>
 is no longer in the global-name environment at the final check. If an inner
@@ -297,9 +297,9 @@ is no longer in the global-name environment at the final check. If an inner
 <pre><code class="language-lisp">(let chosen (a))
 (push)
 (let chosen (b))
-(check (= chosen (b)))
+(prove (= chosen (b)))
 (pop)
-(check (= chosen (a)))
+(prove (= chosen (a)))
 </code></pre>
 <p>Sort and operator declarations are different. Semper sortchecks the complete
 program before interpretation and registers declarations in source order, so

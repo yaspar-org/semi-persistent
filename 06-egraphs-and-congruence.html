@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-16c64170.js";
+            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -251,16 +251,16 @@ arguments are equal. The example first creates a second parent and confirms
 that it is distinct from <code>left</code>. It then merges only the leaf classes:</p>
 <pre><code class="language-lisp">;; This parent is distinct until its two argument classes are merged.
 (let right (f (b) (b)))
-(check (!= left right))
+(prove (!= left right))
 
 ;; No rewrite runs. Congruence alone merges the parent classes.
 (union (a) (b))
-(check (= left right))
+(prove (= left right))
 (print-size)
 </code></pre>
 <p>After <code>(union (a) (b))</code>, both parent nodes have the canonical key
 <code>f(Cab, Cab)</code>. Rebuild detects that collision and merges the parent classes, so
-<code>(check (= left right))</code> passes without a rewrite rule.</p>
+<code>(prove (= left right))</code> passes without a rewrite rule.</p>
 <p>The final <code>print-size</code> reports:</p>
 <pre><code class="language-text">a: 1
 b: 1
@@ -295,7 +295,7 @@ construction and parent recanonization. The
 <a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/04-egraph.md">e-graph design chapter</a>
 specifies the rebuild worklist and use-list algorithm.</p>
 <h2 id="what-an-equality-check-asks"><a class="header" href="#what-an-equality-check-asks">What an equality check asks</a></h2>
-<p><code>(check (= t1 t2))</code> builds both ground terms, rebuilds the e-graph, and asks
+<p><code>(prove (= t1 t2))</code> builds both ground terms, rebuilds the e-graph, and asks
 whether their e-nodes have the same union-find representative. It does not
 compare two extracted syntax trees.</p>
 <p>A passing check means the asserted unions, fired rules, declared algebraic
@@ -303,9 +303,19 @@ canonization, and active congruence procedure derived the equality. A failing
 check means the terms remain in different classes in the graph as currently
 computed. It is not a proof that the terms are unequal in every model of the
 declared laws.</p>
-<p>Likewise, <code>(check (!= t1 t2))</code> accepts when the two current representatives are
+<p>Likewise, <code>(prove (!= t1 t2))</code> accepts when the two current representatives are
 different. Chapter 11 explains how plain, eager, and lazy congruence modes
 change the work performed before that decision.</p>
+<p><code>(check fact ...)</code> asks a different question, egglog’s: does the e-graph already
+contain a match for these facts? A check builds nothing. <code>(check (= t1 t2))</code>
+succeeds only if both terms exist and share a class, so it fails on a term that
+no command built, where <code>prove</code> would build it and possibly join it by
+congruence. Names that are not globals are variables of the one check:
+<code>(check (= e (f x)))</code> asks whether some class contains an <code>f</code> node, and
+<code>(check (= e (f x)) (= x (a)))</code> whether one has the class of <code>(a)</code> as its child.
+<code>(!= p q)</code> requires different classes, and <code>:count k</code>, <code>:min k</code> and <code>:none</code>
+count the matches. Equivalence is proved with <code>prove</code>; <code>check</code> tests what the
+graph holds.</p>
 <p>The storage structures are specified in the design chapters for
 <a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/01-node-storage.md">nodes</a>,
 <a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/02-classes-and-union-find.md">e-classes</a>,

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-16c64170.js";
+            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -235,8 +235,8 @@ class, even when the complete nested term was never inserted.</p>
 (union a inner)
 (run 1)
 
-(check (= outer (seen b)))
-(check (= pair_term (same_args a)))
+(prove (= outer (seen b)))
+(prove (= pair_term (same_args a)))
 </code></pre>
 <p>The program never inserts <code>(f (g b))</code>. It inserts <code>(f a)</code> and <code>(g b)</code>, then
 places <code>a</code> and <code>(g b)</code> in the same e-class. The pattern <code>(f (g x))</code> can match
@@ -271,10 +271,10 @@ built.</p>
 (let reverse (h c))
 (run 3)
 
-(check (= forward (g a)))
-(check (= forward (h a)))
-(check (!= rhs_only (f b)))
-(check (= reverse (f c)))
+(prove (= forward (g a)))
+(prove (= forward (h a)))
+(prove (!= rhs_only (f b)))
+(prove (= reverse (f c)))
 </code></pre>
 <p>The first rule uses <code>(f a)</code> to build <code>(g a)</code>. It does not use <code>(g b)</code> to build
 <code>(f b)</code>. A <code>birewrite</code> installs two rewrites, one in each direction. Thus
@@ -314,8 +314,8 @@ merge.</p>
 (edge b c)
 (run 3)
 
-(check (= (path a c) (witnessed a c)))
-(check (= (group a) (group c)))
+(prove (= (path a c) (witnessed a c)))
+(prove (= (group a) (group c)))
 </code></pre>
 <p>The shared <code>y</code> requires the destination of the first edge and the source of the
 second to be in the same e-class. The bare <code>(path x z)</code> action inserts a term.
@@ -362,13 +362,13 @@ query rows and apply the same actions more than once.</p>
 (num 7)
 (run 2)
 
-(check (!= waiting (result item)))
-(check (= (small (num 3)) (num 3)))
-(check (!= (small (num 7)) (num 7)))
+(prove (!= waiting (result item)))
+(prove (= (small (num 3)) (num 3)))
+(prove (!= (small (num 7)) (num 7)))
 
 (assumption)
 (run 2)
-(check (= waiting (result item)))
+(prove (= waiting (result item)))
 </code></pre>
 <p>Before <code>(assumption)</code> is inserted, the first rewrite cannot fire. Once that
 unrelated fact exists, it enables the rewrite for <code>waiting</code>. A fact inserted
@@ -400,12 +400,12 @@ Untagged rules belong to the default ruleset.</p>
 (let value (old item))
 
 (run simplify 2)
-(check (= value (reduced item)))
-(check (!= value (final item)))
+(prove (= value (reduced item)))
+(prove (!= value (final item)))
 
 (run 2)
-(check (= value (final item)))
-(check (!= value (stale item)))
+(prove (= value (final item)))
+(prove (!= value (stale item)))
 </code></pre>
 <p>The first run selects <code>simplify</code>, so only the tagged rewrite fires. It merges
 <code>value</code> with <code>(reduced item)</code> and subsumes the matched <code>(old item)</code> node. The
@@ -445,10 +445,10 @@ prefix and suffix around a sliding window.</p>
 (let back (Back a b c))
 (run 1)
 
-(check (= front (First a)))
-(check (= back (Last c)))
-(check (!= front (First b)))
-(check (!= back (Last a)))
+(prove (= front (First a)))
+(prove (= back (Last c)))
+(prove (!= front (First b)))
+(prove (!= back (Last a)))
 </code></pre>
 <p>The front rule binds the first child, while the back rule binds the last.
 Changing source order changes both matches.</p>
@@ -459,10 +459,10 @@ Changing source order changes both matches.</p>
 (let window (Window a b c d))
 (run 1)
 
-(check (= window (Adjacent a b)))
-(check (= window (Adjacent b c)))
-(check (= window (Adjacent c d)))
-(check (!= window (Adjacent a c)))
+(prove (= window (Adjacent a b)))
+(prove (= window (Adjacent b c)))
+(prove (= window (Adjacent c d)))
+(prove (!= window (Adjacent a c)))
 </code></pre>
 <p>The two fixed variables slide across three adjacent pairs in a four-child
 sequence. They never match the nonadjacent pair <code>a,c</code>. Without either rest
@@ -485,8 +485,8 @@ The rest receives all unbound children with their complete multiplicities.</p>
 (let sum (Add a a a b b))
 (run 1)
 
-(check (= sum (Selected a (Add b b))))
-(check (= sum (Selected b (Add a a a))))
+(prove (= sum (Selected a (Add b b))))
+(prove (= sum (Selected b (Add a a a))))
 </code></pre>
 <p>The one node has two matches. Binding <code>x</code> to <code>a</code> also binds <code>k</code> to <code>3</code> and
 gives <code>b:2</code> to <code>rest</code>. Binding <code>x</code> to <code>b</code> binds <code>k</code> to <code>2</code> and gives <code>a:3</code> to
@@ -532,8 +532,8 @@ it non-linear: all occurrences must bind the same count.</p>
 
 (let exact (Mul a a b))
 (run 1)
-(check (= exact (Twice a)))
-(check (!= exact (Twice b)))
+(prove (= exact (Twice a)))
+(prove (!= exact (Twice b)))
 
 (function Sum (E) E :assoc-comm)
 (function Balanced () E)
@@ -542,8 +542,8 @@ it non-linear: all occurrences must bind the same count.</p>
 (let balanced (Sum c c g g))
 (let unbalanced (Sum c c c g g))
 (run 1)
-(check (= balanced (Balanced)))
-(check (!= unbalanced (Balanced)))
+(prove (= balanced (Balanced)))
+(prove (!= unbalanced (Balanced)))
 </code></pre>
 <p>The exact rule accepts <code>a:2</code> but not <code>b:1</code>. The non-linear rule accepts the
 node where two distinct children both have count two and rejects the node
@@ -560,8 +560,8 @@ unbound member.</p>
 (let ordered (Conj a b c))
 (let permuted (Conj b a c))
 (run 1)
-(check (= ordered permuted))
-(check (= ordered (Absorbed (Conj d c))))
+(prove (= ordered permuted))
+(prove (= ordered (Absorbed (Conj d c))))
 
 (function Pick (E) E :assoc-comm-idem)
 (function Pair (E E) E)
@@ -571,9 +571,9 @@ unbound member.</p>
 
 (let pair_source (Pick a c))
 (run 1)
-(check (= pair_source (Pair a c)))
-(check (= pair_source (Pair c a)))
-(check (!= pair_source (RepeatedSet)))
+(prove (= pair_source (Pair a c)))
+(prove (= pair_source (Pair c a)))
+(prove (!= pair_source (RepeatedSet)))
 
 (function ExactSet (E) E :assoc-comm-idem)
 (function Exactly () E)
@@ -582,8 +582,8 @@ unbound member.</p>
 (let exact_pair (ExactSet a b))
 (let exact_triple (ExactSet a b c))
 (run 1)
-(check (= exact_pair (Exactly)))
-(check (!= exact_triple (Exactly)))
+(prove (= exact_pair (Exactly)))
+(prove (!= exact_triple (Exactly)))
 </code></pre>
 <p>The first rule finds <code>a</code> and <code>b</code> in either source order and reconstructs the
 remainder with <code>d</code>. The second rule’s two variables bind distinct set members.
@@ -615,7 +615,7 @@ literal term on the right-hand side:</p>
 (let measured
   (MeasureBox (Num 10) (MeasureBag a a a)))
 (run 1)
-(check (= measured (CountPair (Count 3) (Count 13))))
+(prove (= measured (CountPair (Count 3) (Count 13))))
 </code></pre>
 <p>The query binds <code>count</code> to three. <code>(Count count)</code> constructs the literal term
 <code>Count(3)</code>, while the primitive expression constructs <code>Count(13)</code>.
@@ -682,9 +682,9 @@ its elements while splicing the results into the surrounding application:</p>
 (let bag (Bag a b b c c c))
 (run 1)
 
-(check (= sequence (Seq (F a) (F b) (F c))))
-(check (= set (Set (F a) (F b) (F c))))
-(check (= bag (Bag (F a) (F b) (F b) (F c) (F c) (F c))))
+(prove (= sequence (Seq (F a) (F b) (F c))))
+(prove (= set (Set (F a) (F b) (F c))))
+(prove (= bag (Bag (F a) (F b) (F b) (F c) (F c) (F c))))
 </code></pre>
 <p>A sequence comprehension uses <code>..[...]</code> and visits its source in order. A set
 comprehension uses <code>..{...}</code> and visits each member once. A multiset
@@ -720,7 +720,7 @@ truthy.</p>
   (FilterBox (Num 1)
              (FilterBag marker a b b c c c)))
 (run 1)
-(check (= filtered
+(prove (= filtered
           (FilterBag (F b) (F b) (F c) (F c) (F c))))
 </code></pre>
 <p>The filter combines the LHS-bound <code>threshold</code> with the current source
@@ -762,7 +762,7 @@ disappear after the comprehension. Outer query bindings remain unchanged.</p>
 
 (let scoped (ScopeBox a (ScopeSeq b c marker)))
 (run 1)
-(check (= scoped (ScopeSeq (F c) (F marker) (Keep a))))
+(prove (= scoped (ScopeSeq (F c) (F marker) (Keep a))))
 </code></pre>
 <p>The local <code>element</code> maps <code>c</code> and <code>marker</code>. After the comprehension, the final
 <code>(Keep element)</code> refers to the unchanged outer binding <code>a</code>. Sibling and nested
@@ -785,7 +785,7 @@ comprehensions may reuse binder names because each introduces a new scope.</p>
 
 (let reduced (ReducedBag marker a b b b))
 (run 1)
-(check (= reduced (ReducedBag (F b) (F b))))
+(prove (= reduced (ReducedBag (F b) (F b))))
 </code></pre>
 <p>Each local source count is at least one, so subtracting one is statically safe.
 The count-one child maps to zero and is omitted without constructing <code>(F a)</code>.
@@ -844,8 +844,8 @@ always-operators of a conjunction one outer window.</p>
 (let m (And (Global (Interval 0 3) a) (Global (Interval 4 6) a) x))
 (let f (And (Global (Interval 2 5) a) (Global (Interval 4 9) b) x))
 (run 2)
-(check (= m (And (Global (Interval 0 6) a) x)))
-(check (= f (And x (Global (Interval 2 5) (And a (Global (Interval 2 4) b))))))
+(prove (= m (And (Global (Interval 0 6) a) x)))
+(prove (= f (And x (Global (Interval 2 5) (And a (Global (Interval 2 4) b))))))
 </code></pre>
 <p>The first rule merges <code>G[0,3] a</code> and <code>G[4,6] a</code> into <code>G[0,6] a</code>. The second gives
 the two windows of <code>f</code> the common outer window <code>[2,5]</code> over one inner
@@ -886,7 +886,7 @@ gaps is allowed. A run next to a gap is maximal toward it.</p>
 (run 1)
 ; The run is maximal toward its gaps: both F children before `b` are taken.
 ; The lone (F a) at the end is a run of length 1, which the guard rejects.
-(check (= e (Cat a (H (Cat (F a) (F b))) b (F a))))
+(prove (= e (Cat a (H (Cat (F a) (F b))) b (F a))))
 </code></pre>
 <h3 id="multiplicities-under-ac"><a class="header" href="#multiplicities-under-ac">Multiplicities under AC</a></h3>
 <p>Under <code>:assoc-comm</code> each child carries a multiplicity. A filter takes the
@@ -912,7 +912,7 @@ an unannotated AC element does. Outside the filter, <code>k</code> is a sequence
   :when ((&gt;= (count fs) 1)))
 (let e (Plus (F a) (F a) (F b)))
 (run 1)
-(check (= e (Plus (N 2) (F b))))
+(prove (= e (Plus (N 2) (F b))))
 
 ; An unannotated filter takes only children of multiplicity 1, as an
 ; unannotated AC element does. `:k` with no bound takes any multiplicity.
@@ -922,8 +922,8 @@ an unannotated AC element does. Outside the filter, <code>k</code> is a sequence
 (rewrite (Plus (..fs (F y)) ..rest) (Only (Plus ..fs)))
 (rewrite (Plus (..ks:k (F y)) ..rest) (All (Plus ..ks)))
 (run 1)
-(check (= src (Only (F b))))
-(check (= src (All (Plus (F a) (F a) (F a) (F b)))))
+(prove (= src (Only (F b))))
+(prove (= src (All (Plus (F a) (F a) (F a) (F b)))))
 </code></pre>
 <h3 id="several-filters-and-except"><a class="header" href="#several-filters-and-except">Several filters, and <code>:except</code></a></h3>
 <p>Filters are matched independently. A child that two filters match is given to
@@ -959,10 +959,10 @@ order already separates runs, and it must name a sibling filter.</p>
 (rewrite (Conj (..ns (Gl (Not q))) (..gs (Gl p) :except ns) ..rest)
          (Kept (N (count ns)) (N (count gs))))
 (run 1)
-(check (= both (Split (N 1) (N 1))))
-(check (= both (Split (N 0) (N 2))))
-(check (= one (Kept (N 1) (N 1))))
-(check (!= one (Kept (N 0) (N 2))))
+(prove (= both (Split (N 1) (N 1))))
+(prove (= both (Split (N 0) (N 2))))
+(prove (= one (Kept (N 1) (N 1))))
+(prove (!= one (Kept (N 0) (N 2))))
 </code></pre>
 <h3 id="simple-items-beside-filters"><a class="header" href="#simple-items-beside-filters">Simple items beside filters</a></h3>
 <p>A plain pattern beside filters takes one child, and every choice of child is a
@@ -984,8 +984,8 @@ each is a separate match.</p>
 (rewrite (And (Not x) (..fs (F y)) ..rest) (Pick x (N (count fs))))
 (let e (And (Not (a)) (Not (b)) (F (c))))
 (run 1)
-(check (= e (Pick (a) (N 1))))
-(check (= e (Pick (b) (N 1))))
+(prove (= e (Pick (a) (N 1))))
+(prove (= e (Pick (b) (N 1))))
 </code></pre>
 <h3 id="comprehensions"><a class="header" href="#comprehensions">Comprehensions</a></h3>
 <p>A comprehension’s binders name the columns of its source. An element
@@ -1026,9 +1026,9 @@ there is rejected, since whether the count is dropped would be implicit.</p>
 (run 1)
 (rewrite (Cat (..fs (F x)) (..gs (G y))) (Plus ..{ z for z in (concat x y) }))
 (run 1)
-(check (= pairs (Cat (K (a) (b)) (K (b) (a)))))
-(check (= twice (Plus (G (a)) (G (a)) (G (a)) (G (a)) (b))))
-(check (= both (Plus (a) (b))))
+(prove (= pairs (Cat (K (a) (b)) (K (b) (a)))))
+(prove (= twice (Plus (G (a)) (G (a)) (G (a)) (G (a)) (b))))
+(prove (= both (Plus (a) (b))))
 </code></pre>
 <h3 id="narrowing"><a class="header" href="#narrowing">Narrowing</a></h3>
 <p><code>(narrow c d r a b q)</code> reads one eventually-window <code>[c, d]</code> over <code>r</code> per row of
@@ -1057,7 +1057,7 @@ changed, so a guard on its count keeps the rule from rewriting a node to itself.
 (let r (Var "r"))
 (let e (And (Global (Interval 0 3) (Not r)) (Future (Interval 2 6) r)))
 (run 1)
-(check (= e (And (Global (Interval 0 3) (Not r)) (Future (Interval 4 6) r))))
+(prove (= e (And (Global (Interval 0 3) (Not r)) (Future (Interval 4 6) r))))
 </code></pre>
 <h3 id="splicing-across-operator-kinds"><a class="header" href="#splicing-across-operator-kinds">Splicing across operator kinds</a></h3>
 <p>A sequence matched under one kind can be spliced under another. From AC to ACI
@@ -1083,8 +1083,8 @@ of the e-graph’s contents, and the checker warns.</p>
 (let p (Src))
 (rewrite (Src) (Plus (F (a)):3 (b)))
 (run 2)
-(check (= e (Cat (F (a)))))
-(check (= p (F (a))))
+(prove (= e (Cat (F (a)))))
+(prove (= p (F (a))))
 </code></pre>
 <h3 id="rejected-forms"><a class="header" href="#rejected-forms">Rejected forms</a></h3>
 <p>The checker rejects the five shapes below, each with a reason. It also
@@ -1205,8 +1205,8 @@ clamp, and cancels inverse pairs, so all of them agree.</p>
 
 (let flat (Flat (Flat a b) (Flat c d)))
 (run 1)
-(check (= flat (Flat a b c d)))
-(check (= flat (Spans b c)))
+(prove (= flat (Flat a b c d)))
+(prove (= flat (Spans b c)))
 </code></pre>
 <p><strong>Nesting can still appear.</strong> A merge after construction can make a child class
 hold a node of the same operator, and the parent is not rebuilt as flat: with AC
@@ -1254,7 +1254,7 @@ operator, <code>:flatten</code> has no effect, and installing the rule prints th
   :when ((&gt;= (count gs) 2) (&gt; K1 0) (== (count (union-by p l u)) (count gs)))
   :flatten)
 (run 1)
-(check (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
+(prove (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
 </code></pre>
 <p>Without the tag, the same rule reads the stored children <code>{g1, cc}</code>, which hold
 one <code>Global</code>, and the factoring does not fire:</p>
@@ -1287,7 +1287,7 @@ one <code>Global</code>, and the factoring does not fire:</p>
   :when ((&gt;= (count gs) 2) (&gt; K1 0) (== (count (union-by p l u)) (count gs)))
 )
 (run 1)
-(check (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
+(prove (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
 </code></pre>
 <p><strong>Commutative pairs match in both orders.</strong> A <code>:comm</code> operator has exactly two
 children; a pattern over it matches both argument orders, and <code>:flatten</code> leaves
@@ -1350,12 +1350,12 @@ children.</p>
 (run 1)
 
 ;; The binary-shaped pattern cannot split a:2 between x and y.
-(check (!= repeated (PairFound)))
-(check (= repeated (Repeated a)))
+(prove (!= repeated (PairFound)))
+(prove (= repeated (Repeated a)))
 
 ;; Without a rest variable, two scalar elements cannot absorb a third child or
 ;; bind an implicit sub-sum such as Add(a,b).
-(check (!= triple (PairFound)))
+(prove (!= triple (PairFound)))
 </code></pre>
 <p>The exact pattern <code>(Add x:1 y:1)</code> does not match <code>Add{a:2}</code>. The subject has
 one distinct child with multiplicity two, not two children for <code>x</code> and <code>y</code>.
