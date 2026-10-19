@@ -150,8 +150,10 @@ cargo run --features bin
 - pinned `vstd` admitted specifications remain in the trust boundary
 - `IBig` (`num-bigint` wrapper): 7 `external_body` functions and 1 axiom, listed in the
   [trust ledger](doc/domain-traits.md#7-trust); machine-word domains do not use it
-- 32 Rust mirror tests and 3 exhaustive reference-domain tests, all passing
-- 4 enabled bit-widths: u8, u16, u32, u64
+- Runtime suites cover mirror domains, generic reference domains, Congruence
+  semantics, reduction, and shared arithmetic (including the exhaustive CRT oracle)
+- Generic `Word` and shared arithmetic support u8 through u128; legacy macro
+  domains remain enabled at u8, u16, u32, and u64
 
 ## Design documents
 

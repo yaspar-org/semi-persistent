@@ -1,7 +1,8 @@
 # Domain traits: the shared interface for abstract domains
 
 This document fixes the interface that every abstract domain in this crate
-implements. New domains and ports of existing ones follow it. The code is in
+implements when its lattice operations are available. New domains and ports
+of existing ones follow it. The code is in
 `src/lattice.rs`, `src/word.rs`, `src/semantics.rs` and `src/transfer.rs`. The
 two reference domains are `src/interval.rs` (machine words) and
 `src/interval_z.rs` (unbounded integers).
@@ -177,6 +178,16 @@ lift. It implements:
 
 `tests/domain_traits.rs` checks both domains at runtime against brute-force
 concretization.
+
+**`Congruence<W>`** (`congruence.rs`, PR #106) currently supplies the semantic
+core only: private canonical fields, `wf`, unsigned `gamma`/`has`, executable
+membership, normalized constructors, and inherent `lemma_nonempty` and
+`lemma_canonical` with the same obligations as `Canonical`. A progression must
+have at least two representable members; otherwise it normalizes to a
+singleton. `tests/congruence.rs` exhaustively checks the real u8 implementation.
+Its full `impl Domain` is deferred to #114 because this trait requires
+`leq`, `join`, `meet`, and `widen`; no placeholder lattice operations or
+arithmetic transfers are supplied by the semantic core.
 
 ## 7. Trust
 
