@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
+            window.path_to_searchindex_js = "searchindex-0b590e15.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -242,12 +242,12 @@ domain.</li>
 (extract s2)
 (extract s3)
 (extract s4)
-(prove (= s1 s2))
-(prove (!= s1 s3))
-(prove (!= s1 s4))
-(prove (!= s2 s3))
-(prove (!= s2 s4))
-(prove (!= s3 s4))
+(check-eq s1 s2)
+(check-neq s1 s3)
+(check-neq s1 s4)
+(check-neq s2 s3)
+(check-neq s2 s4)
+(check-neq s3 s4)
 
 ;; This deployment defines the named predicate by two concrete regions.
 (rewrite
@@ -260,12 +260,12 @@ domain.</li>
 (extract s2)
 (extract s3)
 (extract s4)
-(prove (= s1 s2))
-(prove (= s1 s3))
-(prove (!= s1 s4))
-(prove (= s2 s3))
-(prove (!= s2 s4))
-(prove (!= s3 s4))
+(check-eq s1 s2)
+(check-eq s1 s3)
+(check-neq s1 s4)
+(check-eq s2 s3)
+(check-neq s2 s4)
+(check-neq s3 s4)
 </code></pre>
 <p>All samples enter one e-graph. <code>s1</code> and <code>s2</code> canonize to the same node, so no
 later proof is needed to join them. A rewrite can merge other sample classes

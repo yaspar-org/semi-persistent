@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
+            window.path_to_searchindex_js = "searchindex-0b590e15.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -419,7 +419,7 @@ We write any options after that path:</p>
 ;; Structural identity is free: the same term built twice is the same e-class,
 ;; because every term is hash-consed on insertion.
 (let sum_again (add (f (x)) (f (y))))
-(prove (= sum sum_again))
+(check-eq sum sum_again)
 
 ;; `union` asserts an equality the program did not derive.
 (union fx fy)
@@ -428,23 +428,20 @@ We write any options after that path:</p>
 ;; arguments make equal applications. Nothing declared `add` to be commutative or
 ;; anything else, yet `add(fx, fy) = add(fy, fx)` now holds, because `fx` and
 ;; `fy` are the same class and so both terms are the same node.
-(prove (= (add fx fy) (add fy fx)))
+(check-eq (add fx fy) (add fy fx))
 ;; It propagates upward through any number of layers.
-(prove (= (neg (add fx fx)) (neg (add fy fy))))
+(check-eq (neg (add fx fx)) (neg (add fy fy)))
 
 ;; What congruence does NOT give you: it never equates terms with different
 ;; operators or different arity at the root.
-(prove (!= (add fx fx) (neg fx)))
+(check-neq (add fx fx) (neg fx))
 
-;; `(prove t)` is the third form, and it is worth being precise about what it does,
-;; because the name invites a wrong reading. It is NOT a presence test. It builds
-;; the term, so it asserts that the term sort-checks and it inserts the term if the
-;; term was not already there. A `(prove t)` that names something the program never
-;; derived succeeds, and leaves it in the graph.
-;;
-;; The two forms that assert something about the equality relation are `(= a b)`
-;; and `(!= a b)`. Use those to state what a program should have derived.
-(prove (add fx fy))
+;; `check-eq` and `check-neq` build their terms before comparing them, so a term
+;; the program never derived does not make them fail: they add it. A presence test
+;; is `check`, egglog's check, which builds nothing and succeeds only if the graph
+;; already holds a match. `(add fx fx)` was built above, so this check passes;
+;; `(check (add fx fy))` would fail, because no command built that term.
+(check (add fx fx))
 </code></pre>
 <p>Run it from the repository root:</p>
 <pre><code class="language-bash">./target/release/semi-persistent doc/book/examples/03-terms.egg
@@ -494,7 +491,7 @@ Syntax, sort-checking, failed-check, and other run-time errors exit with status<
 </thead>
 <tbody>
 <tr><td>0</td><td>The program ran and every check passed.</td><td><code>ok — N nodes</code></td></tr>
-<tr><td>1</td><td>A <code>check</code>, <code>prove</code>, or <code>checkau</code> assertion failed.</td><td><code>error: check failed: ...</code></td></tr>
+<tr><td>1</td><td>A <code>check</code>, <code>check-eq</code>, <code>check-neq</code>, or <code>checkau</code> assertion failed.</td><td><code>error: check failed: ...</code></td></tr>
 <tr><td>1</td><td>Another command failed while running, for example a <code>(pop)</code> without a <code>(push)</code>.</td><td><code>error: ...</code></td></tr>
 <tr><td>1</td><td>The parser rejected the program.</td><td><code>parse error: ...</code></td></tr>
 <tr><td>1</td><td>A declaration or term failed sort-checking.</td><td><code>sort error: ...</code> or <code>sort error at line L column C: ...</code></td></tr>
@@ -668,7 +665,7 @@ their e-classes.</p>
 (union named (h (f (x))))
 (print-size)
 
-(prove (= named (h (f (x)))))
+(check-eq named (h (f (x))))
 </code></pre>
 <p>The three <code>print-size</code> commands report:</p>
 <pre><code class="language-text">x: 1
@@ -746,12 +743,12 @@ literal models so it can use machine and arbitrary-precision sorts together.</p>
 (let real (Real 3.5))
 (let text (Text "Semper"))
 
-(prove (= truth (Lit true)))
-(prove (= big (Big 42)))
-(prove (= machine (Machine 42)))
-(prove (= real (Real 3.5)))
-(prove (= text (Text "Semper")))
-(prove (!= big machine))
+(check-eq truth (Lit true))
+(check-eq big (Big 42))
+(check-eq machine (Machine 42))
+(check-eq real (Real 3.5))
+(check-eq text (Text "Semper"))
+(check-neq big machine)
 </code></pre>
 <p>The two occurrences of <code>42</code> have the same spelling, but <code>Big</code> requires an
 <code>IBig</code> while <code>Machine</code> requires an <code>i64</code>. Similarly, <code>true</code> is parsed as
@@ -781,7 +778,7 @@ rules. The most familiar example is associativity and commutativity:</p>
 (function Add (Math) Math :assoc-comm)
 
 (let nested (Add a (Add b c)))
-(prove (= nested (Add c a b)))
+(check-eq nested (Add c a b))
 </code></pre>
 <p>Applications of <code>Add</code> are flattened and stored as sorted multisets.
 Reassociation and permutation therefore disappear from the representation: a
@@ -825,8 +822,8 @@ there is no separate empty <code>Xor</code> node connected to the identity by a 
 (function A () E)
 (function Xor (E) E :assoc :comm :nilpotent 2 :identity (Zero))
 
-(prove (= (Xor) (Zero)))
-(prove (= (Xor (A) (A)) (Zero)))
+(check-eq (Xor) (Zero))
+(check-eq (Xor (A) (A)) (Zero))
 </code></pre>
 <p>Semper rejects both a <code>:nilpotent</code> declaration without an identity and an
 empty variadic application whose operator has no identity. A nullary operator
@@ -869,7 +866,7 @@ not general group reasoning.</p>
   :identity (Zero)
   :inverse Neg)
 
-(prove (= (Add A A (Neg A)) A))
+(check-eq (Add A A (Neg A)) A)
 </code></pre>
 <p><code>Neg</code> must have signature <code>E -&gt; E</code>, and <code>Add</code> must declare an identity. This
 declaration asserts that <code>Add(x, Neg(x)) = Zero</code>. Semper cancels such explicit
@@ -1030,8 +1027,8 @@ class, even when the complete nested term was never inserted.</p>
 (union a inner)
 (run 1)
 
-(prove (= outer (seen b)))
-(prove (= pair_term (same_args a)))
+(check-eq outer (seen b))
+(check-eq pair_term (same_args a))
 </code></pre>
 <p>The program never inserts <code>(f (g b))</code>. It inserts <code>(f a)</code> and <code>(g b)</code>, then
 places <code>a</code> and <code>(g b)</code> in the same e-class. The pattern <code>(f (g x))</code> can match
@@ -1066,10 +1063,10 @@ built.</p>
 (let reverse (h c))
 (run 3)
 
-(prove (= forward (g a)))
-(prove (= forward (h a)))
-(prove (!= rhs_only (f b)))
-(prove (= reverse (f c)))
+(check-eq forward (g a))
+(check-eq forward (h a))
+(check-neq rhs_only (f b))
+(check-eq reverse (f c))
 </code></pre>
 <p>The first rule uses <code>(f a)</code> to build <code>(g a)</code>. It does not use <code>(g b)</code> to build
 <code>(f b)</code>. A <code>birewrite</code> installs two rewrites, one in each direction. Thus
@@ -1109,8 +1106,8 @@ merge.</p>
 (edge b c)
 (run 3)
 
-(prove (= (path a c) (witnessed a c)))
-(prove (= (group a) (group c)))
+(check-eq (path a c) (witnessed a c))
+(check-eq (group a) (group c))
 </code></pre>
 <p>The shared <code>y</code> requires the destination of the first edge and the source of the
 second to be in the same e-class. The bare <code>(path x z)</code> action inserts a term.
@@ -1157,13 +1154,13 @@ query rows and apply the same actions more than once.</p>
 (num 7)
 (run 2)
 
-(prove (!= waiting (result item)))
-(prove (= (small (num 3)) (num 3)))
-(prove (!= (small (num 7)) (num 7)))
+(check-neq waiting (result item))
+(check-eq (small (num 3)) (num 3))
+(check-neq (small (num 7)) (num 7))
 
 (assumption)
 (run 2)
-(prove (= waiting (result item)))
+(check-eq waiting (result item))
 </code></pre>
 <p>Before <code>(assumption)</code> is inserted, the first rewrite cannot fire. Once that
 unrelated fact exists, it enables the rewrite for <code>waiting</code>. A fact inserted
@@ -1195,12 +1192,12 @@ Untagged rules belong to the default ruleset.</p>
 (let value (old item))
 
 (run simplify 2)
-(prove (= value (reduced item)))
-(prove (!= value (final item)))
+(check-eq value (reduced item))
+(check-neq value (final item))
 
 (run 2)
-(prove (= value (final item)))
-(prove (!= value (stale item)))
+(check-eq value (final item))
+(check-neq value (stale item))
 </code></pre>
 <p>The first run selects <code>simplify</code>, so only the tagged rewrite fires. It merges
 <code>value</code> with <code>(reduced item)</code> and subsumes the matched <code>(old item)</code> node. The
@@ -1240,10 +1237,10 @@ prefix and suffix around a sliding window.</p>
 (let back (Back a b c))
 (run 1)
 
-(prove (= front (First a)))
-(prove (= back (Last c)))
-(prove (!= front (First b)))
-(prove (!= back (Last a)))
+(check-eq front (First a))
+(check-eq back (Last c))
+(check-neq front (First b))
+(check-neq back (Last a))
 </code></pre>
 <p>The front rule binds the first child, while the back rule binds the last.
 Changing source order changes both matches.</p>
@@ -1254,10 +1251,10 @@ Changing source order changes both matches.</p>
 (let window (Window a b c d))
 (run 1)
 
-(prove (= window (Adjacent a b)))
-(prove (= window (Adjacent b c)))
-(prove (= window (Adjacent c d)))
-(prove (!= window (Adjacent a c)))
+(check-eq window (Adjacent a b))
+(check-eq window (Adjacent b c))
+(check-eq window (Adjacent c d))
+(check-neq window (Adjacent a c))
 </code></pre>
 <p>The two fixed variables slide across three adjacent pairs in a four-child
 sequence. They never match the nonadjacent pair <code>a,c</code>. Without either rest
@@ -1280,8 +1277,8 @@ The rest receives all unbound children with their complete multiplicities.</p>
 (let sum (Add a a a b b))
 (run 1)
 
-(prove (= sum (Selected a (Add b b))))
-(prove (= sum (Selected b (Add a a a))))
+(check-eq sum (Selected a (Add b b)))
+(check-eq sum (Selected b (Add a a a)))
 </code></pre>
 <p>The one node has two matches. Binding <code>x</code> to <code>a</code> also binds <code>k</code> to <code>3</code> and
 gives <code>b:2</code> to <code>rest</code>. Binding <code>x</code> to <code>b</code> binds <code>k</code> to <code>2</code> and gives <code>a:3</code> to
@@ -1327,8 +1324,8 @@ it non-linear: all occurrences must bind the same count.</p>
 
 (let exact (Mul a a b))
 (run 1)
-(prove (= exact (Twice a)))
-(prove (!= exact (Twice b)))
+(check-eq exact (Twice a))
+(check-neq exact (Twice b))
 
 (function Sum (E) E :assoc-comm)
 (function Balanced () E)
@@ -1337,8 +1334,8 @@ it non-linear: all occurrences must bind the same count.</p>
 (let balanced (Sum c c g g))
 (let unbalanced (Sum c c c g g))
 (run 1)
-(prove (= balanced (Balanced)))
-(prove (!= unbalanced (Balanced)))
+(check-eq balanced (Balanced))
+(check-neq unbalanced (Balanced))
 </code></pre>
 <p>The exact rule accepts <code>a:2</code> but not <code>b:1</code>. The non-linear rule accepts the
 node where two distinct children both have count two and rejects the node
@@ -1355,8 +1352,8 @@ unbound member.</p>
 (let ordered (Conj a b c))
 (let permuted (Conj b a c))
 (run 1)
-(prove (= ordered permuted))
-(prove (= ordered (Absorbed (Conj d c))))
+(check-eq ordered permuted)
+(check-eq ordered (Absorbed (Conj d c)))
 
 (function Pick (E) E :assoc-comm-idem)
 (function Pair (E E) E)
@@ -1366,9 +1363,9 @@ unbound member.</p>
 
 (let pair_source (Pick a c))
 (run 1)
-(prove (= pair_source (Pair a c)))
-(prove (= pair_source (Pair c a)))
-(prove (!= pair_source (RepeatedSet)))
+(check-eq pair_source (Pair a c))
+(check-eq pair_source (Pair c a))
+(check-neq pair_source (RepeatedSet))
 
 (function ExactSet (E) E :assoc-comm-idem)
 (function Exactly () E)
@@ -1377,8 +1374,8 @@ unbound member.</p>
 (let exact_pair (ExactSet a b))
 (let exact_triple (ExactSet a b c))
 (run 1)
-(prove (= exact_pair (Exactly)))
-(prove (!= exact_triple (Exactly)))
+(check-eq exact_pair (Exactly))
+(check-neq exact_triple (Exactly))
 </code></pre>
 <p>The first rule finds <code>a</code> and <code>b</code> in either source order and reconstructs the
 remainder with <code>d</code>. The second rule’s two variables bind distinct set members.
@@ -1410,7 +1407,7 @@ literal term on the right-hand side:</p>
 (let measured
   (MeasureBox (Num 10) (MeasureBag a a a)))
 (run 1)
-(prove (= measured (CountPair (Count 3) (Count 13))))
+(check-eq measured (CountPair (Count 3) (Count 13)))
 </code></pre>
 <p>The query binds <code>count</code> to three. <code>(Count count)</code> constructs the literal term
 <code>Count(3)</code>, while the primitive expression constructs <code>Count(13)</code>.
@@ -1477,9 +1474,9 @@ its elements while splicing the results into the surrounding application:</p>
 (let bag (Bag a b b c c c))
 (run 1)
 
-(prove (= sequence (Seq (F a) (F b) (F c))))
-(prove (= set (Set (F a) (F b) (F c))))
-(prove (= bag (Bag (F a) (F b) (F b) (F c) (F c) (F c))))
+(check-eq sequence (Seq (F a) (F b) (F c)))
+(check-eq set (Set (F a) (F b) (F c)))
+(check-eq bag (Bag (F a) (F b) (F b) (F c) (F c) (F c)))
 </code></pre>
 <p>A sequence comprehension uses <code>..[...]</code> and visits its source in order. A set
 comprehension uses <code>..{...}</code> and visits each member once. A multiset
@@ -1515,8 +1512,8 @@ truthy.</p>
   (FilterBox (Num 1)
              (FilterBag marker a b b c c c)))
 (run 1)
-(prove (= filtered
-          (FilterBag (F b) (F b) (F c) (F c) (F c))))
+(check-eq filtered
+          (FilterBag (F b) (F b) (F c) (F c) (F c)))
 </code></pre>
 <p>The filter combines the LHS-bound <code>threshold</code> with the current source
 <code>count</code>. It keeps children whose multiplicity is greater than one.</p>
@@ -1557,7 +1554,7 @@ disappear after the comprehension. Outer query bindings remain unchanged.</p>
 
 (let scoped (ScopeBox a (ScopeSeq b c marker)))
 (run 1)
-(prove (= scoped (ScopeSeq (F c) (F marker) (Keep a))))
+(check-eq scoped (ScopeSeq (F c) (F marker) (Keep a)))
 </code></pre>
 <p>The local <code>element</code> maps <code>c</code> and <code>marker</code>. After the comprehension, the final
 <code>(Keep element)</code> refers to the unchanged outer binding <code>a</code>. Sibling and nested
@@ -1580,7 +1577,7 @@ comprehensions may reuse binder names because each introduces a new scope.</p>
 
 (let reduced (ReducedBag marker a b b b))
 (run 1)
-(prove (= reduced (ReducedBag (F b) (F b))))
+(check-eq reduced (ReducedBag (F b) (F b)))
 </code></pre>
 <p>Each local source count is at least one, so subtracting one is statically safe.
 The count-one child maps to zero and is omitted without constructing <code>(F a)</code>.
@@ -1639,8 +1636,8 @@ always-operators of a conjunction one outer window.</p>
 (let m (And (Global (Interval 0 3) a) (Global (Interval 4 6) a) x))
 (let f (And (Global (Interval 2 5) a) (Global (Interval 4 9) b) x))
 (run 2)
-(prove (= m (And (Global (Interval 0 6) a) x)))
-(prove (= f (And x (Global (Interval 2 5) (And a (Global (Interval 2 4) b))))))
+(check-eq m (And (Global (Interval 0 6) a) x))
+(check-eq f (And x (Global (Interval 2 5) (And a (Global (Interval 2 4) b)))))
 </code></pre>
 <p>The first rule merges <code>G[0,3] a</code> and <code>G[4,6] a</code> into <code>G[0,6] a</code>. The second gives
 the two windows of <code>f</code> the common outer window <code>[2,5]</code> over one inner
@@ -1681,7 +1678,7 @@ gaps is allowed. A run next to a gap is maximal toward it.</p>
 (run 1)
 ; The run is maximal toward its gaps: both F children before `b` are taken.
 ; The lone (F a) at the end is a run of length 1, which the guard rejects.
-(prove (= e (Cat a (H (Cat (F a) (F b))) b (F a))))
+(check-eq e (Cat a (H (Cat (F a) (F b))) b (F a)))
 </code></pre>
 <h3 id="multiplicities-under-ac"><a class="header" href="#multiplicities-under-ac">Multiplicities under AC</a></h3>
 <p>Under <code>:assoc-comm</code> each child carries a multiplicity. A filter takes the
@@ -1707,7 +1704,7 @@ an unannotated AC element does. Outside the filter, <code>k</code> is a sequence
   :when ((&gt;= (count fs) 1)))
 (let e (Plus (F a) (F a) (F b)))
 (run 1)
-(prove (= e (Plus (N 2) (F b))))
+(check-eq e (Plus (N 2) (F b)))
 
 ; An unannotated filter takes only children of multiplicity 1, as an
 ; unannotated AC element does. `:k` with no bound takes any multiplicity.
@@ -1717,8 +1714,8 @@ an unannotated AC element does. Outside the filter, <code>k</code> is a sequence
 (rewrite (Plus (..fs (F y)) ..rest) (Only (Plus ..fs)))
 (rewrite (Plus (..ks:k (F y)) ..rest) (All (Plus ..ks)))
 (run 1)
-(prove (= src (Only (F b))))
-(prove (= src (All (Plus (F a) (F a) (F a) (F b)))))
+(check-eq src (Only (F b)))
+(check-eq src (All (Plus (F a) (F a) (F a) (F b))))
 </code></pre>
 <h3 id="several-filters-and-except"><a class="header" href="#several-filters-and-except">Several filters, and <code>:except</code></a></h3>
 <p>Filters are matched independently. A child that two filters match is given to
@@ -1754,10 +1751,10 @@ order already separates runs, and it must name a sibling filter.</p>
 (rewrite (Conj (..ns (Gl (Not q))) (..gs (Gl p) :except ns) ..rest)
          (Kept (N (count ns)) (N (count gs))))
 (run 1)
-(prove (= both (Split (N 1) (N 1))))
-(prove (= both (Split (N 0) (N 2))))
-(prove (= one (Kept (N 1) (N 1))))
-(prove (!= one (Kept (N 0) (N 2))))
+(check-eq both (Split (N 1) (N 1)))
+(check-eq both (Split (N 0) (N 2)))
+(check-eq one (Kept (N 1) (N 1)))
+(check-neq one (Kept (N 0) (N 2)))
 </code></pre>
 <h3 id="simple-items-beside-filters"><a class="header" href="#simple-items-beside-filters">Simple items beside filters</a></h3>
 <p>A plain pattern beside filters takes one child, and every choice of child is a
@@ -1779,8 +1776,8 @@ each is a separate match.</p>
 (rewrite (And (Not x) (..fs (F y)) ..rest) (Pick x (N (count fs))))
 (let e (And (Not (a)) (Not (b)) (F (c))))
 (run 1)
-(prove (= e (Pick (a) (N 1))))
-(prove (= e (Pick (b) (N 1))))
+(check-eq e (Pick (a) (N 1)))
+(check-eq e (Pick (b) (N 1)))
 </code></pre>
 <h3 id="comprehensions"><a class="header" href="#comprehensions">Comprehensions</a></h3>
 <p>A comprehension’s binders name the columns of its source. An element
@@ -1821,9 +1818,9 @@ there is rejected, since whether the count is dropped would be implicit.</p>
 (run 1)
 (rewrite (Cat (..fs (F x)) (..gs (G y))) (Plus ..{ z for z in (concat x y) }))
 (run 1)
-(prove (= pairs (Cat (K (a) (b)) (K (b) (a)))))
-(prove (= twice (Plus (G (a)) (G (a)) (G (a)) (G (a)) (b))))
-(prove (= both (Plus (a) (b))))
+(check-eq pairs (Cat (K (a) (b)) (K (b) (a))))
+(check-eq twice (Plus (G (a)) (G (a)) (G (a)) (G (a)) (b)))
+(check-eq both (Plus (a) (b)))
 </code></pre>
 <h3 id="narrowing"><a class="header" href="#narrowing">Narrowing</a></h3>
 <p><code>(narrow c d r a b q)</code> reads one eventually-window <code>[c, d]</code> over <code>r</code> per row of
@@ -1852,7 +1849,7 @@ changed, so a guard on its count keeps the rule from rewriting a node to itself.
 (let r (Var "r"))
 (let e (And (Global (Interval 0 3) (Not r)) (Future (Interval 2 6) r)))
 (run 1)
-(prove (= e (And (Global (Interval 0 3) (Not r)) (Future (Interval 4 6) r))))
+(check-eq e (And (Global (Interval 0 3) (Not r)) (Future (Interval 4 6) r)))
 </code></pre>
 <h3 id="splicing-across-operator-kinds"><a class="header" href="#splicing-across-operator-kinds">Splicing across operator kinds</a></h3>
 <p>A sequence matched under one kind can be spliced under another. From AC to ACI
@@ -1878,8 +1875,8 @@ of the e-graph’s contents, and the checker warns.</p>
 (let p (Src))
 (rewrite (Src) (Plus (F (a)):3 (b)))
 (run 2)
-(prove (= e (Cat (F (a)))))
-(prove (= p (F (a))))
+(check-eq e (Cat (F (a))))
+(check-eq p (F (a)))
 </code></pre>
 <h3 id="rejected-forms"><a class="header" href="#rejected-forms">Rejected forms</a></h3>
 <p>The checker rejects the five shapes below, each with a reason. It also
@@ -2000,8 +1997,8 @@ clamp, and cancels inverse pairs, so all of them agree.</p>
 
 (let flat (Flat (Flat a b) (Flat c d)))
 (run 1)
-(prove (= flat (Flat a b c d)))
-(prove (= flat (Spans b c)))
+(check-eq flat (Flat a b c d))
+(check-eq flat (Spans b c))
 </code></pre>
 <p><strong>Nesting can still appear.</strong> A merge after construction can make a child class
 hold a node of the same operator, and the parent is not rebuilt as flat: with AC
@@ -2049,7 +2046,7 @@ operator, <code>:flatten</code> has no effect, and installing the rule prints th
   :when ((&gt;= (count gs) 2) (&gt; K1 0) (== (count (union-by p l u)) (count gs)))
   :flatten)
 (run 1)
-(prove (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
+(check-eq e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc))))
 </code></pre>
 <p>Without the tag, the same rule reads the stored children <code>{g1, cc}</code>, which hold
 one <code>Global</code>, and the factoring does not fire:</p>
@@ -2082,7 +2079,7 @@ one <code>Global</code>, and the factoring does not fire:</p>
   :when ((&gt;= (count gs) 2) (&gt; K1 0) (== (count (union-by p l u)) (count gs)))
 )
 (run 1)
-(prove (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
+(check-eq e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc))))
 </code></pre>
 <p><strong>Commutative pairs match in both orders.</strong> A <code>:comm</code> operator has exactly two
 children; a pattern over it matches both argument orders, and <code>:flatten</code> leaves
@@ -2145,12 +2142,12 @@ children.</p>
 (run 1)
 
 ;; The binary-shaped pattern cannot split a:2 between x and y.
-(prove (!= repeated (PairFound)))
-(prove (= repeated (Repeated a)))
+(check-neq repeated (PairFound))
+(check-eq repeated (Repeated a))
 
 ;; Without a rest variable, two scalar elements cannot absorb a third child or
 ;; bind an implicit sub-sum such as Add(a,b).
-(prove (!= triple (PairFound)))
+(check-neq triple (PairFound))
 </code></pre>
 <p>The exact pattern <code>(Add x:1 y:1)</code> does not match <code>Add{a:2}</code>. The subject has
 one distinct child with multiplicity two, not two children for <code>x</code> and <code>y</code>.
@@ -2243,16 +2240,16 @@ arguments are equal. The example first creates a second parent and confirms
 that it is distinct from <code>left</code>. It then merges only the leaf classes:</p>
 <pre><code class="language-lisp">;; This parent is distinct until its two argument classes are merged.
 (let right (f (b) (b)))
-(prove (!= left right))
+(check-neq left right)
 
 ;; No rewrite runs. Congruence alone merges the parent classes.
 (union (a) (b))
-(prove (= left right))
+(check-eq left right)
 (print-size)
 </code></pre>
 <p>After <code>(union (a) (b))</code>, both parent nodes have the canonical key
 <code>f(Cab, Cab)</code>. Rebuild detects that collision and merges the parent classes, so
-<code>(prove (= left right))</code> passes without a rewrite rule.</p>
+<code>(check-eq left right)</code> passes without a rewrite rule.</p>
 <p>The final <code>print-size</code> reports:</p>
 <pre><code class="language-text">a: 1
 b: 1
@@ -2287,7 +2284,7 @@ construction and parent recanonization. The
 <a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/04-egraph.md">e-graph design chapter</a>
 specifies the rebuild worklist and use-list algorithm.</p>
 <h2 id="what-an-equality-check-asks"><a class="header" href="#what-an-equality-check-asks">What an equality check asks</a></h2>
-<p><code>(prove (= t1 t2))</code> builds both ground terms, rebuilds the e-graph, and asks
+<p><code>(check-eq t1 t2)</code> builds both ground terms, rebuilds the e-graph, and asks
 whether their e-nodes have the same union-find representative. It does not
 compare two extracted syntax trees.</p>
 <p>A passing check means the asserted unions, fired rules, declared algebraic
@@ -2295,18 +2292,18 @@ canonization, and active congruence procedure derived the equality. A failing
 check means the terms remain in different classes in the graph as currently
 computed. It is not a proof that the terms are unequal in every model of the
 declared laws.</p>
-<p>Likewise, <code>(prove (!= t1 t2))</code> accepts when the two current representatives are
+<p>Likewise, <code>(check-neq t1 t2)</code> accepts when the two current representatives are
 different. Chapter 11 explains how plain, eager, and lazy congruence modes
 change the work performed before that decision.</p>
 <p><code>(check fact ...)</code> asks a different question, egglog’s: does the e-graph already
 contain a match for these facts? A check builds nothing. <code>(check (= t1 t2))</code>
 succeeds only if both terms exist and share a class, so it fails on a term that
-no command built, where <code>prove</code> would build it and possibly join it by
+no command built, where <code>check-eq</code> would build it and possibly join it by
 congruence. Names that are not globals are variables of the one check:
 <code>(check (= e (f x)))</code> asks whether some class contains an <code>f</code> node, and
 <code>(check (= e (f x)) (= x (a)))</code> whether one has the class of <code>(a)</code> as its child.
 <code>(!= p q)</code> requires different classes, and <code>:count k</code>, <code>:min k</code> and <code>:none</code>
-count the matches. Equivalence is proved with <code>prove</code>; <code>check</code> tests what the
+count the matches. Equivalence is decided with <code>check-eq</code>; <code>check</code> tests what the
 graph holds.</p>
 <p>The storage structures are specified in the design chapters for
 <a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/01-node-storage.md">nodes</a>,
@@ -2335,7 +2332,7 @@ scope.</p>
 
 (push)
 (union (a) (b))
-(prove (= left right))
+(check-eq left right)
 
 (push)
 (let nested (g left))
@@ -2343,10 +2340,10 @@ scope.</p>
 (pop)
 
 ;; The inner pop keeps the equality from the outer scope.
-(prove (= left right))
+(check-eq left right)
 (pop)
 
-(prove (!= left right))
+(check-neq left right)
 (print-size)
 </code></pre>
 <p>Before the first push, <code>a</code>, <code>b</code>, <code>f(a)</code>, and <code>f(b)</code> account for four e-nodes.
@@ -2404,7 +2401,7 @@ the request. Shrinking can move live storage and add work to <code>push</code>; 
 does not perform another shrink. The option does not promise that every
 allocation is returned.</p>
 <pre><code class="language-lisp">(push :shrink)
-(prove (!= left right))
+(check-neq left right)
 (pop)
 </code></pre>
 <h2 id="nesting-and-lifetime"><a class="header" href="#nesting-and-lifetime">Nesting and lifetime</a></h2>
@@ -2422,7 +2419,7 @@ scope is unavailable after its matching pop:</p>
 (push)
 (let scoped (a))
 (pop)
-(prove (= scoped (a)))
+(check-eq scoped (a))
 </code></pre>
 <p>This program is rejected during whole-program sortchecking because <code>scoped</code>
 is no longer in the global-name environment at the final check. If an inner
@@ -2430,9 +2427,9 @@ is no longer in the global-name environment at the final check. If an inner
 <pre><code class="language-lisp">(let chosen (a))
 (push)
 (let chosen (b))
-(prove (= chosen (b)))
+(check-eq chosen (b))
 (pop)
-(prove (= chosen (a)))
+(check-eq chosen (a))
 </code></pre>
 <p>Sort and operator declarations are different. Semper sortchecks the complete
 program before interpretation and registers declarations in source order, so
@@ -2483,15 +2480,15 @@ next <code>dbl</code> application that can match.</p>
 (let d2 (dbl two))</p>
 <p>;; The first iteration exposes another recursive dbl application.
 (run 1)
-(prove (!= d2 four))</p>
+(check-neq d2 four)</p>
 <p>;; Two more iterations finish this input.
 (run 2)
-(prove (= d2 four))</p>
+(check-eq d2 four)</p>
 <p>;; This run reaches an action-counter fixpoint before its bound.
 (let d4 (dbl four))
 (let eight (s (s (s (s (s (s (s (s z)))))))))
 (run 10)
-(prove (= d4 eight))
+(check-eq d4 eight)
 (print-stats)</p>
 <p>The first one-round run cannot finish <code>d2</code>. Two more rounds derive <code>d2 = four</code>.
 The final run requests ten iterations but reaches its operational fixpoint after
@@ -2508,7 +2505,7 @@ the graph.</p>
 <p>This is an operational fixpoint of the selected declared rules and the current
 driver. It is not a completeness result for an unstated theory. A law that was
 neither declared as an algebraic property nor encoded by a rule is absent.
-Likewise, a successful <code>(prove (!= a b))</code> says only that <code>a</code> and <code>b</code> currently
+Likewise, a successful <code>(check-neq a b)</code> says only that <code>a</code> and <code>b</code> currently
 belong to different classes.</p>
 <p>If the iteration bound is reached first, the run stops with <code>saturated: false</code>.
 The e-graph retains everything derived so far, and subsequent checks inspect that
@@ -2542,17 +2539,17 @@ ruleset. It does not combine the named ruleset with untagged rules.</p>
 <p>(let term (f (c)))</p>
 <p>;; A named run selects only rules tagged with that ruleset.
 (run selected 2)
-(prove (= term (b)))
-(prove (!= term (a)))</p>
+(check-eq term (b))
+(check-neq term (a))</p>
 <p>;; A bare run selects only untagged rules.
 (run 2)
-(prove (= term (a)))</p>
+(check-eq term (a))</p>
 <p>;; Distinct classes satisfy an inequality goal before the first iteration.
 (run 10 :goal (!= (a) (c)))
-(prove (!= (a) (c)))</p>
+(check-neq (a) (c))</p>
 <p>;; Equal classes cannot become distinct during saturation.
 (run 1 :goal (!= term (a)))
-(prove (= term (a)))</p>
+(check-eq term (a))</p>
 <p>The goal is tested after rebuild and before matching in the first and every
 later iteration. It is rebuilt and tested once more after the final permitted
 round. A goal that already holds still costs zero iterations. An equality goal
@@ -2569,7 +2566,7 @@ joined the starting term.</p>
 <p>;; The rewrite can keep producing larger terms. The equality goal stops this
 ;; run before the iteration bound.
 (run 100 :goal (= (up z) (up (s (s (s z))))))
-(prove (= (up z) (up (s (s (s z))))))
+(check-eq (up z) (up (s (s (s z)))))
 (print-stats)</p>
 <p>The practical control is always a finite iteration bound, optionally combined
 with an equality goal, followed by checks for the facts the program requires.
@@ -2589,7 +2586,7 @@ occurrence represented by a multiplicity.</p>
 (union (expensive) (hidden))</p>
 <p>;; Prints (wrap (unit)), whose cost is 2.
 (extract (expensive))
-(prove (= (expensive) (wrap (unit))))</p>
+(check-eq (expensive) (wrap (unit)))</p>
 <p>The class in this example contains <code>(expensive)</code>, <code>(hidden)</code>, and
 <code>(wrap (unit))</code>. Extraction prints <code>(wrap (unit))</code>: its cost is 2,
 <code>(expensive)</code> costs 5, and <code>(hidden)</code> is not a candidate.</p>
@@ -2608,7 +2605,6 @@ marked <code>:unextractable</code>.</p>
 <p>(sort E)
 (constructor hidden () E :unextractable)
 (let value (hidden))
-(prove value)
 (extract value)</p>
 <p>A cost that is not additive, or that depends on how an AC operator’s operands are
 grouped, is a cost model: <a href="#extraction-under-cost-models">Chapter 24</a>.</p>
@@ -2784,7 +2780,7 @@ transforms belong to Chapter 4.</p>
 (print-size)
 (let eq_ba (eq b a))
 (print-size)
-(prove (= eq_ab eq_ba))
+(check-eq eq_ab eq_ba)
 </code></pre>
 <p>Both <code>print-size</code> commands report <code>total: 3</code>. The second spelling replaces its
 children by the same representatives, sorts them to the same pair, and finds
@@ -2842,11 +2838,11 @@ not one of those direct children.</p>
 
 ;; Ordinary congruence follows a direct class reference.
 (function f (E) E)
-(prove (= (f (add a b)) (f c)))
+(check-eq (f (add a b)) (f c))
 
 ;; Plain rebuild does not substitute the known sub-sum into the larger sum.
 (print-size)
-(prove (= n (add c d)))
+(check-eq n (add c d))
 </code></pre>
 <p>The first check demonstrates ordinary congruence through a direct child-class
 reference. The final check fails because plain mode performs no sub-sum
@@ -2894,7 +2890,7 @@ building an unrelated term earlier can change how a later term is spelled:</p>
 <pre><code class="language-lisp">(let t0 (Add (Mul D D) A))    ; delete this line, or move it below, and
 (let t1 (Mul D D A D))        ; the following check passes instead of failing
 (let t2 (Mul A D (Mul D D)))
-(prove (= t1 t2))
+(check-eq t1 t2)
 </code></pre>
 <p>Both readings are sound. A reordering never makes a <em>false</em> equality
 provable, only a true one unprovable. Within a single term the order is
@@ -3587,12 +3583,12 @@ domain.</li>
 (extract s2)
 (extract s3)
 (extract s4)
-(prove (= s1 s2))
-(prove (!= s1 s3))
-(prove (!= s1 s4))
-(prove (!= s2 s3))
-(prove (!= s2 s4))
-(prove (!= s3 s4))
+(check-eq s1 s2)
+(check-neq s1 s3)
+(check-neq s1 s4)
+(check-neq s2 s3)
+(check-neq s2 s4)
+(check-neq s3 s4)
 
 ;; This deployment defines the named predicate by two concrete regions.
 (rewrite
@@ -3605,12 +3601,12 @@ domain.</li>
 (extract s2)
 (extract s3)
 (extract s4)
-(prove (= s1 s2))
-(prove (= s1 s3))
-(prove (!= s1 s4))
-(prove (= s2 s3))
-(prove (!= s2 s4))
-(prove (!= s3 s4))
+(check-eq s1 s2)
+(check-eq s1 s3)
+(check-neq s1 s4)
+(check-eq s2 s3)
+(check-neq s2 s4)
+(check-neq s3 s4)
 </code></pre>
 <p>All samples enter one e-graph. <code>s1</code> and <code>s2</code> canonize to the same node, so no
 later proof is needed to join them. A rewrite can merge other sample classes
@@ -3721,15 +3717,15 @@ not part of the AU objective from Chapter 12.</p>
 <p>A suspected domain equality can be tested without retaining it:</p>
 <pre><code class="language-lisp">(push)
 (union (euWest (destination)) (apSouth (destination)))
-(prove (= s1 s4))
-(prove (= s2 s4))
-(prove (= s3 s4))
+(check-eq s1 s4)
+(check-eq s2 s4)
+(check-eq s3 s4)
 (pop)
 
 ;; Pop restores the two-cluster partition.
-(prove (= s1 s3))
-(prove (!= s1 s4))
-(prove (!= s3 s4))
+(check-eq s1 s3)
+(check-neq s1 s4)
+(check-neq s3 s4)
 </code></pre>
 <p>Inside the scope, equating the two region predicates merges <code>s4</code> with all three
 members of the other cluster. <code>pop</code> restores the two-cluster partition. The
@@ -4021,15 +4017,15 @@ main correspondences are:</p>
 (rewrite (secsTimes x y) (secs (IBig::* x y)))
 (birewrite (tLte a b) (tGte b a))
 (run 4)
-(prove (= (mins 15) (secs 900)))
+(check-eq (mins 15) (secs 900))
 ;; ANCHOR_END: dogwood-identity
 
-(prove (!= candA candB))
-(prove (!= repaired candA))
-(prove (!= repaired candB))
-(prove (!= pickWorst candA))
-(prove (!= pickWorst candB))
-(prove (!= repaired pickWorst))
+(check-neq candA candB)
+(check-neq repaired candA)
+(check-neq repaired candB)
+(check-neq pickWorst candA)
+(check-neq pickWorst candB)
+(check-neq repaired pickWorst)
 
 ;; ANCHOR: dogwood-main-query
 (antiunify candA candB :algorithm exact)
@@ -4051,7 +4047,7 @@ main correspondences are:</p>
 (rewrite (secsTimes x y) (secs (IBig::* x y)))
 (birewrite (tLte a b) (tGte b a))
 (run 4)
-(prove (= (mins 15) (secs 900)))
+(check-eq (mins 15) (secs 900))
 </code></pre>
 <p>The first rule builds <code>(secsTimes 15 60)</code>. The second rule binds both operands
 as <code>IBig</code> literal values and evaluates the eager <code>IBig::*</code> primitive, reducing
@@ -4186,16 +4182,16 @@ structure but creates no disagreement.</p>
 <h2 id="three-clusters"><a class="header" href="#three-clusters">Three clusters</a></h2>
 <p>The complete pair grid records the partition:</p>
 <pre><code class="language-lisp">;; Partition: {sampleA1, sampleA2}, {sampleB}, {sampleC1, sampleC2}.
-(prove (= sampleA1 sampleA2))
-(prove (!= sampleA1 sampleB))
-(prove (!= sampleA1 sampleC1))
-(prove (!= sampleA1 sampleC2))
-(prove (!= sampleA2 sampleB))
-(prove (!= sampleA2 sampleC1))
-(prove (!= sampleA2 sampleC2))
-(prove (!= sampleB sampleC1))
-(prove (!= sampleB sampleC2))
-(prove (= sampleC1 sampleC2))
+(check-eq sampleA1 sampleA2)
+(check-neq sampleA1 sampleB)
+(check-neq sampleA1 sampleC1)
+(check-neq sampleA1 sampleC2)
+(check-neq sampleA2 sampleB)
+(check-neq sampleA2 sampleC1)
+(check-neq sampleA2 sampleC2)
+(check-neq sampleB sampleC1)
+(check-neq sampleB sampleC2)
+(check-eq sampleC1 sampleC2)
 </code></pre>
 <p>Its result is</p>
 <pre><code class="language-text">{sampleA1, sampleA2}  {sampleB}  {sampleC1, sampleC2}
@@ -6998,9 +6994,8 @@ defines scope lifetime and <code>:shrink</code>.</p>
 <tr><td><code>(check fact ...)</code></td><td>Rebuild and require the conjunctive query to have a match. The facts are those of a rule body: a pattern, <code>(= p q)</code>, <code>(!= p q)</code> (the classes differ), or a guard. Literal values are compared by the typed guard, such as <code>(IBig::!= n m)</code>, where egglog writes <code>(!= n m)</code>. The check builds nothing: a term that was never built has no match. A name that is a global refers to it; any other name is a variable of this one check.</td></tr>
 <tr><td><code>(check fact ... :count k)</code>, <code>:min k</code>, <code>:none</code></td><td>Require exactly <code>k</code> matches, at least <code>k</code>, or none. Matches are counted as distinct assignments of the check’s named variables. In lazy AC mode, <code>:count</code> and <code>:none</code> are decided at the completion fixpoint.</td></tr>
 <tr><td><code>(query fact ... [:limit n])</code></td><td>Print the matches of the facts, up to <code>n</code> (default 10): each named variable as a term extracted from its class. Matches are ordered by content colour, so the output does not depend on class ids. Nothing is built or required.</td></tr>
-<tr><td><code>(prove term)</code></td><td>Build <code>term</code>. This form has no additional truth or equality test.</td></tr>
-<tr><td><code>(prove (= a b))</code></td><td>Build both terms, rebuild, and require them to belong to the same e-class.</td></tr>
-<tr><td><code>(prove (!= a b))</code></td><td>Build both terms, rebuild, and require them to belong to different e-classes under the selected completion mode.</td></tr>
+<tr><td><code>(check-eq a b ...)</code></td><td>Build every term, rebuild, and require them all to belong to one e-class.</td></tr>
+<tr><td><code>(check-neq a b)</code></td><td>Build both terms, rebuild, and require them to belong to different e-classes under the selected completion mode.</td></tr>
 <tr><td><code>(extract term)</code></td><td>Rebuild and print a lowest-cost extractable representative.</td></tr>
 <tr><td><code>(cost-model name :script "file.roto")</code></td><td>Compile a cost script when the program is checked (<a href="#extraction-under-cost-models">Part V</a>).</td></tr>
 <tr><td><code>(cost-model name :rust "id")</code></td><td>Name a cost registered in Rust (<a href="#extraction-under-cost-models">Part V</a>).</td></tr>

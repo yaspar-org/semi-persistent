@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
+            window.path_to_searchindex_js = "searchindex-0b590e15.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -206,11 +206,11 @@ not one of those direct children.</p>
 
 ;; Ordinary congruence follows a direct class reference.
 (function f (E) E)
-(prove (= (f (add a b)) (f c)))
+(check-eq (f (add a b)) (f c))
 
 ;; Plain rebuild does not substitute the known sub-sum into the larger sum.
 (print-size)
-(prove (= n (add c d)))
+(check-eq n (add c d))
 </code></pre>
 <p>The first check demonstrates ordinary congruence through a direct child-class
 reference. The final check fails because plain mode performs no sub-sum
@@ -258,7 +258,7 @@ building an unrelated term earlier can change how a later term is spelled:</p>
 <pre><code class="language-lisp">(let t0 (Add (Mul D D) A))    ; delete this line, or move it below, and
 (let t1 (Mul D D A D))        ; the following check passes instead of failing
 (let t2 (Mul A D (Mul D D)))
-(prove (= t1 t2))
+(check-eq t1 t2)
 </code></pre>
 <p>Both readings are sound. A reordering never makes a <em>false</em> equality
 provable, only a true one unprovable. Within a single term the order is

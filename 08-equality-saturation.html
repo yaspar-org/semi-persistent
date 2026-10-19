@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
+            window.path_to_searchindex_js = "searchindex-0b590e15.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -214,15 +214,15 @@ next <code>dbl</code> application that can match.</p>
 (let d2 (dbl two))</p>
 <p>;; The first iteration exposes another recursive dbl application.
 (run 1)
-(prove (!= d2 four))</p>
+(check-neq d2 four)</p>
 <p>;; Two more iterations finish this input.
 (run 2)
-(prove (= d2 four))</p>
+(check-eq d2 four)</p>
 <p>;; This run reaches an action-counter fixpoint before its bound.
 (let d4 (dbl four))
 (let eight (s (s (s (s (s (s (s (s z)))))))))
 (run 10)
-(prove (= d4 eight))
+(check-eq d4 eight)
 (print-stats)</p>
 <p>The first one-round run cannot finish <code>d2</code>. Two more rounds derive <code>d2 = four</code>.
 The final run requests ten iterations but reaches its operational fixpoint after
@@ -239,7 +239,7 @@ the graph.</p>
 <p>This is an operational fixpoint of the selected declared rules and the current
 driver. It is not a completeness result for an unstated theory. A law that was
 neither declared as an algebraic property nor encoded by a rule is absent.
-Likewise, a successful <code>(prove (!= a b))</code> says only that <code>a</code> and <code>b</code> currently
+Likewise, a successful <code>(check-neq a b)</code> says only that <code>a</code> and <code>b</code> currently
 belong to different classes.</p>
 <p>If the iteration bound is reached first, the run stops with <code>saturated: false</code>.
 The e-graph retains everything derived so far, and subsequent checks inspect that
@@ -273,17 +273,17 @@ ruleset. It does not combine the named ruleset with untagged rules.</p>
 <p>(let term (f (c)))</p>
 <p>;; A named run selects only rules tagged with that ruleset.
 (run selected 2)
-(prove (= term (b)))
-(prove (!= term (a)))</p>
+(check-eq term (b))
+(check-neq term (a))</p>
 <p>;; A bare run selects only untagged rules.
 (run 2)
-(prove (= term (a)))</p>
+(check-eq term (a))</p>
 <p>;; Distinct classes satisfy an inequality goal before the first iteration.
 (run 10 :goal (!= (a) (c)))
-(prove (!= (a) (c)))</p>
+(check-neq (a) (c))</p>
 <p>;; Equal classes cannot become distinct during saturation.
 (run 1 :goal (!= term (a)))
-(prove (= term (a)))</p>
+(check-eq term (a))</p>
 <p>The goal is tested after rebuild and before matching in the first and every
 later iteration. It is rebuilt and tested once more after the final permitted
 round. A goal that already holds still costs zero iterations. An equality goal
@@ -300,7 +300,7 @@ joined the starting term.</p>
 <p>;; The rewrite can keep producing larger terms. The equality goal stops this
 ;; run before the iteration bound.
 (run 100 :goal (= (up z) (up (s (s (s z))))))
-(prove (= (up z) (up (s (s (s z))))))
+(check-eq (up z) (up (s (s (s z)))))
 (print-stats)</p>
 <p>The practical control is always a finite iteration bound, optionally combined
 with an equality goal, followed by checks for the facts the program requires.
@@ -320,7 +320,7 @@ occurrence represented by a multiplicity.</p>
 (union (expensive) (hidden))</p>
 <p>;; Prints (wrap (unit)), whose cost is 2.
 (extract (expensive))
-(prove (= (expensive) (wrap (unit))))</p>
+(check-eq (expensive) (wrap (unit)))</p>
 <p>The class in this example contains <code>(expensive)</code>, <code>(hidden)</code>, and
 <code>(wrap (unit))</code>. Extraction prints <code>(wrap (unit))</code>: its cost is 2,
 <code>(expensive)</code> costs 5, and <code>(hidden)</code> is not a candidate.</p>
@@ -339,7 +339,6 @@ marked <code>:unextractable</code>.</p>
 <p>(sort E)
 (constructor hidden () E :unextractable)
 (let value (hidden))
-(prove value)
 (extract value)</p>
 <p>A cost that is not additive, or that depends on how an AC operator’s operands are
 grouped, is a cost model: <a href="24-extraction-under-cost-models.html">Chapter 24</a>.</p>

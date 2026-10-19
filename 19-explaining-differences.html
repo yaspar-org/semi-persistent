@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d65af6c7.js";
+            window.path_to_searchindex_js = "searchindex-0b590e15.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -232,15 +232,15 @@ not part of the AU objective from Chapter 12.</p>
 <p>A suspected domain equality can be tested without retaining it:</p>
 <pre><code class="language-lisp">(push)
 (union (euWest (destination)) (apSouth (destination)))
-(prove (= s1 s4))
-(prove (= s2 s4))
-(prove (= s3 s4))
+(check-eq s1 s4)
+(check-eq s2 s4)
+(check-eq s3 s4)
 (pop)
 
 ;; Pop restores the two-cluster partition.
-(prove (= s1 s3))
-(prove (!= s1 s4))
-(prove (!= s3 s4))
+(check-eq s1 s3)
+(check-neq s1 s4)
+(check-neq s3 s4)
 </code></pre>
 <p>Inside the scope, equating the two region predicates merges <code>s4</code> with all three
 members of the other cluster. <code>pop</code> restores the two-cluster partition. The
