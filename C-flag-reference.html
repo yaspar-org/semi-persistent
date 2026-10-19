@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0b590e15.js";
+            window.path_to_searchindex_js = "searchindex-35b9c9c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -213,8 +213,8 @@ the bignum group provides <code>IBig</code>, <code>UBig</code>, <code>RBig</code
 <tbody>
 <tr><td><code>--use-naive</code></td><td>selected</td><td>Explicitly select full re-matching each round. Conflicts with <code>--use-semi-naive</code>.</td></tr>
 <tr><td><code>--use-semi-naive</code></td><td>off</td><td>Select delta-driven saturation. Conflicts with <code>--use-naive</code>.</td></tr>
-<tr><td><code>--derive-ac-eqs</code></td><td>off</td><td>Run eager AC completion during rebuild. Conflicts with <code>--lazy-ac-eqs</code>.</td></tr>
-<tr><td><code>--lazy-ac-eqs</code></td><td>off</td><td>Run goal-directed AC completion for equality and disequality checks. Conflicts with <code>--derive-ac-eqs</code>.</td></tr>
+<tr><td><code>--derive-ac-eqs</code></td><td>off</td><td>Start with eager AC completion during rebuild, as <code>(set-option :completion eager)</code> does. A <code>set-option</code> in the program overrides it. Conflicts with <code>--lazy-ac-eqs</code>.</td></tr>
+<tr><td><code>--lazy-ac-eqs</code></td><td>off</td><td>Start with check completion, as <code>(set-option :check-completion on)</code> does: checks run goal-directed AC completion temporarily. A <code>set-option</code> in the program overrides it. Conflicts with <code>--derive-ac-eqs</code>.</td></tr>
 <tr><td><code>--check-ac-basis</code></td><td>off</td><td>Print expensive reduced-basis invariant checks during eager completion. It has no effect without <code>--derive-ac-eqs</code>.</td></tr>
 <tr><td><code>--count-match-steps</code></td><td>off</td><td>Count matching work and report <code>match steps: N</code> on standard error after the closing status.</td></tr>
 <tr><td><code>--flatten-rhs</code></td><td>off</td><td>Give an AC node a rewrite builds a flat alternative for each same-operator child kept nested because its class is used elsewhere; not for operators with <code>:inverse</code>.</td></tr>
@@ -272,8 +272,6 @@ running the file by hand.</p>
 <tr><td><code>;; WARNING:</code></td><td>text, or <code>none</code></td><td>none</td><td>none; some warning must contain the text, one directive per warning, or no warning may be raised</td></tr>
 <tr><td><code>;; TYPES:</code></td><td>as <code>--types</code></td><td><code>bignum</code></td><td><code>--types</code></td></tr>
 <tr><td><code>;; EVAL:</code></td><td><code>naive</code>, <code>semi</code>, <code>both</code></td><td><code>both</code></td><td><code>--use-naive</code> or <code>--use-semi-naive</code></td></tr>
-<tr><td><code>;; DERIVE_AC_EQS:</code></td><td><code>on</code></td><td>off</td><td><code>--derive-ac-eqs</code></td></tr>
-<tr><td><code>;; LAZY_AC_EQS:</code></td><td><code>on</code></td><td>off</td><td><code>--lazy-ac-eqs</code></td></tr>
 <tr><td><code>;; CHECK_AC_BASIS:</code></td><td><code>on</code></td><td>off</td><td><code>--check-ac-basis</code>; the harness also asserts the invariants after a successful run</td></tr>
 <tr><td><code>;; UNION_BY:</code></td><td><code>rank</code>, <code>size</code>, <code>uses</code>, <code>sum</code></td><td><code>rank</code></td><td><code>--union-by</code></td></tr>
 </tbody>

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0b590e15.js";
+            window.path_to_searchindex_js = "searchindex-35b9c9c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -216,8 +216,8 @@ disagreement disappears.</p>
 <p>The lazy result has size 5, the same as plain, rather than the eager result’s
 size 2. As Chapter 11 explains, lazy completion is scoped to equality and
 disequality checks. Anti-unification reads the restored graph.</p>
-<p>When an AU query must observe consequences of asserted AC equations, run Semper
-with <code>--derive-ac-eqs</code>. Lazy completion is suitable for isolated equality
+<p>When an AU query must observe consequences of asserted AC equations, turn on
+eager completion with <code>(set-option :completion eager)</code> or <code>--derive-ac-eqs</code>. Lazy completion is suitable for isolated equality
 questions, not for preparing an anti-unification snapshot.</p>
 <h2 id="optimal-within-the-cycle-policy"><a class="header" href="#optimal-within-the-cycle-policy">Optimal within the cycle policy</a></h2>
 <p>Chapter 14’s cyclic fixture measures size 9 under the default <code>sides</code> policy and

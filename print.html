@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0b590e15.js";
+            window.path_to_searchindex_js = "searchindex-35b9c9c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -518,7 +518,7 @@ source are identical.</p>
 </code></pre>
 <p>The <code>book_examples</code> test scans every <code>.egg</code> file at the top level of the
 directory. The first eight lines of a file, the two header lines and six more,
-may contain directives such as <code>;; EXPECT: ok</code> or <code>;; DERIVE_AC_EQS: on</code>.
+may contain directives such as <code>;; EXPECT: ok</code> or <code>;; TYPES: machine</code>.
 These lines are comments to the engine binary; the test
 harness reads them to select settings and the expected outcome.</p>
 <p><a href="#test-directives">Annex C</a> lists every directive and its
@@ -873,8 +873,7 @@ declaration asserts that <code>Add(x, Neg(x)) = Zero</code>. Semper cancels such
 pairs while constructing terms, even in plain mode. For example,
 <code>Add(a, a, Neg(a))</code> canonizes to <code>a</code>.</p>
 <p>In plain mode, <code>:cancellative</code> performs no inference because AC completion does
-not run. It participates both in eager completion with <code>--derive-ac-eqs</code> and in
-checks using <code>--lazy-ac-eqs</code>. Given an asserted equality
+not run. It participates both in eager completion (<code>(set-option :completion eager)</code>) and in checks with check completion (<code>(set-option :check-completion on)</code>). Given an asserted equality
 <code>Add(a,c) = Add(b,c)</code>, completion may therefore derive <code>a = b</code>.</p>
 <p>These transformations are sound relative to the laws declared by the user:
 each removed inverse pair equals the declared identity, and common summands are
@@ -2858,15 +2857,24 @@ inside a transaction that is later restored.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>mode</th><th>flag</th><th>additional work</th><th>retained graph</th><th>meaning of a passing <code>!=</code></th></tr>
+<tr><th>mode</th><th>in the program</th><th>starting flag</th><th>additional work</th><th>retained graph</th><th>meaning of a passing <code>!=</code></th></tr>
 </thead>
 <tbody>
-<tr><td>plain</td><td>none</td><td>no completion</td><td>local canonization and generic congruence</td><td>the retained classes are distinct</td></tr>
-<tr><td>eager</td><td><code>--derive-ac-eqs</code></td><td>completion during every rebuild</td><td>generated nodes remain</td><td>the latest eager rebuild left the classes distinct</td></tr>
-<tr><td>lazy</td><td><code>--lazy-ac-eqs</code></td><td>goal-directed completion for checks</td><td>generated nodes are restored away</td><td>the operational search reached a fixpoint without joining them</td></tr>
+<tr><td>plain</td><td>(default)</td><td>none</td><td>no completion</td><td>local canonization and generic congruence</td><td>the retained classes are distinct</td></tr>
+<tr><td>eager</td><td><code>(set-option :completion eager)</code></td><td><code>--derive-ac-eqs</code></td><td>completion during every rebuild</td><td>generated nodes remain</td><td>the latest eager rebuild left the classes distinct</td></tr>
+<tr><td>lazy</td><td><code>(set-option :check-completion on)</code></td><td><code>--lazy-ac-eqs</code></td><td>goal-directed completion for checks</td><td>generated nodes are restored away</td><td>the operational search reached a fixpoint without joining them</td></tr>
 </tbody>
 </table>
 </div>
+<p>The modes are two settings. <code>:completion</code> decides whether rebuild completes,
+which is what rules, extraction and anti-unification see. <code>:check-completion</code>
+decides whether a check completes temporarily to answer, and matters only while
+<code>:completion</code> is <code>off</code>: lazy mode is graph completion off with check completion
+on. A <code>set-option</code> takes effect from its command on, and overrides the
+starting flag, so a program states its own mode. Turning <code>:completion eager</code>
+on rebuilds at once; turning it off keeps what eager completion derived. A
+single check can override the setting with <code>:complete</code> or <code>:no-complete</code>,
+for example <code>(check-eq a b :complete)</code> in a plain program.</p>
 <p>The eager and lazy fixtures use the same declarations, equations, and decisive
 check as the displayed program. Immediately before that check, the measured
 node counts are 8 in plain mode, 9 in eager mode, and 8 in lazy mode. Plain
@@ -2895,8 +2903,8 @@ building an unrelated term earlier can change how a later term is spelled:</p>
 <p>Both readings are sound. A reordering never makes a <em>false</em> equality
 provable, only a true one unprovable. Within a single term the order is
 fixed, so the effect appears only across statements. If a program depends on
-equalities like this one, that is the signal to enable <code>--derive-ac-eqs</code> or
-<code>--lazy-ac-eqs</code>, which prove it in either order. Operators declared
+equalities like this one, that is the signal to turn on eager completion or
+check completion, which decide it in either order. Operators declared
 associative-only (<code>:assoc</code>) are not affected: their flattening is decided
 from the written form of the application, so it does not depend on what else
 the program has built.</p>
@@ -3389,8 +3397,8 @@ disagreement disappears.</p>
 <p>The lazy result has size 5, the same as plain, rather than the eager result’s
 size 2. As Chapter 11 explains, lazy completion is scoped to equality and
 disequality checks. Anti-unification reads the restored graph.</p>
-<p>When an AU query must observe consequences of asserted AC equations, run Semper
-with <code>--derive-ac-eqs</code>. Lazy completion is suitable for isolated equality
+<p>When an AU query must observe consequences of asserted AC equations, turn on
+eager completion with <code>(set-option :completion eager)</code> or <code>--derive-ac-eqs</code>. Lazy completion is suitable for isolated equality
 questions, not for preparing an anti-unification snapshot.</p>
 <h2 id="optimal-within-the-cycle-policy"><a class="header" href="#optimal-within-the-cycle-policy">Optimal within the cycle policy</a></h2>
 <p>Chapter 14’s cyclic fixture measures size 9 under the default <code>sides</code> policy and
@@ -3656,7 +3664,7 @@ and run. The samples themselves did not change.</p>
 <p>First inspect the unresolved syntax. If it is order or repetition, check the
 Chapter 4 declaration. If it is a domain equation, check that Chapter 8 ran
 the relevant ruleset to saturation. If it is an equality hidden by flattened
-AC structure, Chapter 11 explains when <code>--derive-ac-eqs</code> is required.</p>
+AC structure, Chapter 11 explains when eager completion is required.</p>
 <h2 id="when-a-cluster-is-too-coarse"><a class="header" href="#when-a-cluster-is-too-coarse">When a cluster is too coarse</a></h2>
 <p>A rule or union may have asserted more than the domain permits. With
 <code>--proofs --dump-proofs FILE</code>, the proof dump records one path from each node
@@ -6994,6 +7002,9 @@ defines scope lifetime and <code>:shrink</code>.</p>
 <tr><td><code>(check fact ...)</code></td><td>Rebuild and require the conjunctive query to have a match. The facts are those of a rule body: a pattern, <code>(= p q)</code>, <code>(!= p q)</code> (the classes differ), or a guard. Literal values are compared by the typed guard, such as <code>(IBig::!= n m)</code>, where egglog writes <code>(!= n m)</code>. The check builds nothing: a term that was never built has no match. A name that is a global refers to it; any other name is a variable of this one check.</td></tr>
 <tr><td><code>(check fact ... :count k)</code>, <code>:min k</code>, <code>:none</code></td><td>Require exactly <code>k</code> matches, at least <code>k</code>, or none. Matches are counted as distinct assignments of the check’s named variables. In lazy AC mode, <code>:count</code> and <code>:none</code> are decided at the completion fixpoint.</td></tr>
 <tr><td><code>(query fact ... [:limit n])</code></td><td>Print the matches of the facts, up to <code>n</code> (default 10): each named variable as a term extracted from its class. Matches are ordered by content colour, so the output does not depend on class ids. Nothing is built or required.</td></tr>
+<tr><td><code>(set-option :completion off|eager)</code></td><td>From this command on, rebuild does (<code>eager</code>) or does not run AC completion; turning it on rebuilds at once. Overrides <code>--derive-ac-eqs</code> (<a href="#three-congruence-closures">Chapter 11</a>).</td></tr>
+<tr><td><code>(set-option :check-completion on|off)</code></td><td>From this command on, checks complete temporarily to answer while <code>:completion</code> is <code>off</code> (lazy mode). Overrides <code>--lazy-ac-eqs</code>.</td></tr>
+<tr><td><code>... :complete</code>, <code>... :no-complete</code></td><td>After the arguments of <code>check</code>, <code>query</code>, <code>check-eq</code> or <code>check-neq</code>: turn check completion on or off for that one command.</td></tr>
 <tr><td><code>(check-eq a b ...)</code></td><td>Build every term, rebuild, and require them all to belong to one e-class.</td></tr>
 <tr><td><code>(check-neq a b)</code></td><td>Build both terms, rebuild, and require them to belong to different e-classes under the selected completion mode.</td></tr>
 <tr><td><code>(extract term)</code></td><td>Rebuild and print a lowest-cost extractable representative.</td></tr>
@@ -7075,8 +7086,8 @@ the bignum group provides <code>IBig</code>, <code>UBig</code>, <code>RBig</code
 <tbody>
 <tr><td><code>--use-naive</code></td><td>selected</td><td>Explicitly select full re-matching each round. Conflicts with <code>--use-semi-naive</code>.</td></tr>
 <tr><td><code>--use-semi-naive</code></td><td>off</td><td>Select delta-driven saturation. Conflicts with <code>--use-naive</code>.</td></tr>
-<tr><td><code>--derive-ac-eqs</code></td><td>off</td><td>Run eager AC completion during rebuild. Conflicts with <code>--lazy-ac-eqs</code>.</td></tr>
-<tr><td><code>--lazy-ac-eqs</code></td><td>off</td><td>Run goal-directed AC completion for equality and disequality checks. Conflicts with <code>--derive-ac-eqs</code>.</td></tr>
+<tr><td><code>--derive-ac-eqs</code></td><td>off</td><td>Start with eager AC completion during rebuild, as <code>(set-option :completion eager)</code> does. A <code>set-option</code> in the program overrides it. Conflicts with <code>--lazy-ac-eqs</code>.</td></tr>
+<tr><td><code>--lazy-ac-eqs</code></td><td>off</td><td>Start with check completion, as <code>(set-option :check-completion on)</code> does: checks run goal-directed AC completion temporarily. A <code>set-option</code> in the program overrides it. Conflicts with <code>--derive-ac-eqs</code>.</td></tr>
 <tr><td><code>--check-ac-basis</code></td><td>off</td><td>Print expensive reduced-basis invariant checks during eager completion. It has no effect without <code>--derive-ac-eqs</code>.</td></tr>
 <tr><td><code>--count-match-steps</code></td><td>off</td><td>Count matching work and report <code>match steps: N</code> on standard error after the closing status.</td></tr>
 <tr><td><code>--flatten-rhs</code></td><td>off</td><td>Give an AC node a rewrite builds a flat alternative for each same-operator child kept nested because its class is used elsewhere; not for operators with <code>:inverse</code>.</td></tr>
@@ -7134,8 +7145,6 @@ running the file by hand.</p>
 <tr><td><code>;; WARNING:</code></td><td>text, or <code>none</code></td><td>none</td><td>none; some warning must contain the text, one directive per warning, or no warning may be raised</td></tr>
 <tr><td><code>;; TYPES:</code></td><td>as <code>--types</code></td><td><code>bignum</code></td><td><code>--types</code></td></tr>
 <tr><td><code>;; EVAL:</code></td><td><code>naive</code>, <code>semi</code>, <code>both</code></td><td><code>both</code></td><td><code>--use-naive</code> or <code>--use-semi-naive</code></td></tr>
-<tr><td><code>;; DERIVE_AC_EQS:</code></td><td><code>on</code></td><td>off</td><td><code>--derive-ac-eqs</code></td></tr>
-<tr><td><code>;; LAZY_AC_EQS:</code></td><td><code>on</code></td><td>off</td><td><code>--lazy-ac-eqs</code></td></tr>
 <tr><td><code>;; CHECK_AC_BASIS:</code></td><td><code>on</code></td><td>off</td><td><code>--check-ac-basis</code>; the harness also asserts the invariants after a successful run</td></tr>
 <tr><td><code>;; UNION_BY:</code></td><td><code>rank</code>, <code>size</code>, <code>uses</code>, <code>sum</code></td><td><code>rank</code></td><td><code>--union-by</code></td></tr>
 </tbody>

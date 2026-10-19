@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0b590e15.js";
+            window.path_to_searchindex_js = "searchindex-35b9c9c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -226,15 +226,24 @@ inside a transaction that is later restored.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>mode</th><th>flag</th><th>additional work</th><th>retained graph</th><th>meaning of a passing <code>!=</code></th></tr>
+<tr><th>mode</th><th>in the program</th><th>starting flag</th><th>additional work</th><th>retained graph</th><th>meaning of a passing <code>!=</code></th></tr>
 </thead>
 <tbody>
-<tr><td>plain</td><td>none</td><td>no completion</td><td>local canonization and generic congruence</td><td>the retained classes are distinct</td></tr>
-<tr><td>eager</td><td><code>--derive-ac-eqs</code></td><td>completion during every rebuild</td><td>generated nodes remain</td><td>the latest eager rebuild left the classes distinct</td></tr>
-<tr><td>lazy</td><td><code>--lazy-ac-eqs</code></td><td>goal-directed completion for checks</td><td>generated nodes are restored away</td><td>the operational search reached a fixpoint without joining them</td></tr>
+<tr><td>plain</td><td>(default)</td><td>none</td><td>no completion</td><td>local canonization and generic congruence</td><td>the retained classes are distinct</td></tr>
+<tr><td>eager</td><td><code>(set-option :completion eager)</code></td><td><code>--derive-ac-eqs</code></td><td>completion during every rebuild</td><td>generated nodes remain</td><td>the latest eager rebuild left the classes distinct</td></tr>
+<tr><td>lazy</td><td><code>(set-option :check-completion on)</code></td><td><code>--lazy-ac-eqs</code></td><td>goal-directed completion for checks</td><td>generated nodes are restored away</td><td>the operational search reached a fixpoint without joining them</td></tr>
 </tbody>
 </table>
 </div>
+<p>The modes are two settings. <code>:completion</code> decides whether rebuild completes,
+which is what rules, extraction and anti-unification see. <code>:check-completion</code>
+decides whether a check completes temporarily to answer, and matters only while
+<code>:completion</code> is <code>off</code>: lazy mode is graph completion off with check completion
+on. A <code>set-option</code> takes effect from its command on, and overrides the
+starting flag, so a program states its own mode. Turning <code>:completion eager</code>
+on rebuilds at once; turning it off keeps what eager completion derived. A
+single check can override the setting with <code>:complete</code> or <code>:no-complete</code>,
+for example <code>(check-eq a b :complete)</code> in a plain program.</p>
 <p>The eager and lazy fixtures use the same declarations, equations, and decisive
 check as the displayed program. Immediately before that check, the measured
 node counts are 8 in plain mode, 9 in eager mode, and 8 in lazy mode. Plain
@@ -263,8 +272,8 @@ building an unrelated term earlier can change how a later term is spelled:</p>
 <p>Both readings are sound. A reordering never makes a <em>false</em> equality
 provable, only a true one unprovable. Within a single term the order is
 fixed, so the effect appears only across statements. If a program depends on
-equalities like this one, that is the signal to enable <code>--derive-ac-eqs</code> or
-<code>--lazy-ac-eqs</code>, which prove it in either order. Operators declared
+equalities like this one, that is the signal to turn on eager completion or
+check completion, which decide it in either order. Operators declared
 associative-only (<code>:assoc</code>) are not affected: their flattening is decided
 from the written form of the application, so it does not depend on what else
 the program has built.</p>

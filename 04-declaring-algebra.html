@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0b590e15.js";
+            window.path_to_searchindex_js = "searchindex-35b9c9c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d6b8dbf7.js"></script>
@@ -290,8 +290,7 @@ declaration asserts that <code>Add(x, Neg(x)) = Zero</code>. Semper cancels such
 pairs while constructing terms, even in plain mode. For example,
 <code>Add(a, a, Neg(a))</code> canonizes to <code>a</code>.</p>
 <p>In plain mode, <code>:cancellative</code> performs no inference because AC completion does
-not run. It participates both in eager completion with <code>--derive-ac-eqs</code> and in
-checks using <code>--lazy-ac-eqs</code>. Given an asserted equality
+not run. It participates both in eager completion (<code>(set-option :completion eager)</code>) and in checks with check completion (<code>(set-option :check-completion on)</code>). Given an asserted equality
 <code>Add(a,c) = Add(b,c)</code>, completion may therefore derive <code>a = b</code>.</p>
 <p>These transformations are sound relative to the laws declared by the user:
 each removed inverse pair equals the declared identity, and common summands are
