@@ -382,6 +382,26 @@ negation, boundary, and all-canonical-upper-bound tests remain in place.
 The oracle is exhaustive within its stated input model, not over every pair
 or triple of all 16,640 canonical u8 classes.
 
+### Grid rounding
+
+`src/grid.rs` rounds a word onto the grid of a congruence `(r, m)`:
+`{x | x % m == r}`, or `{r}` when `m == 0`. These helpers are the
+interval/congruence grid step that `Facts::normalize` will use once the
+congruence field lands (`doc/reduced-product.md`). `round_up(x, r, m)`
+returns the smallest grid point `>= x` and `round_down(x, r, m)` the
+largest grid point `<= x`. Both contracts state optimality, not only
+membership: no grid point lies strictly between `x` and the result.
+`None` means no grid point exists on that side within `W`, so both
+functions return `None` where the arithmetic would wrap. They are generic
+over `W: Word` and compute only with `urem`, `checked_add` and
+`checked_sub`. The tests check them against brute force on every
+well-formed `(x, r, m)` at `u8`, and on hand-computed boundary cases at
+`u128`:
+
+```text
+cargo test -p semi-persistent-abstract-domains --test grid
+```
+
 ## Wrapped widening and shared-facts refinement
 
 The moving-bound widening proves containment and the termination condition:
