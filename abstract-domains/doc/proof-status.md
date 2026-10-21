@@ -23,8 +23,9 @@ Enabled executable widths:
 - `d64` (`u64`)
 
 The `d128` macro invocation remains disabled because its bitvector obligations
-exceed the current solver capacity. Do not describe `u128` as an enabled or
-verified executable instance.
+exceed the current solver capacity. Only the generic `Interval<W>` and
+`Wrapped<W>` domains cover `u128`; do not describe `ExecTnum`, `ExecAnum`, or
+`ExecUnum` as verified executable `u128` instances.
 
 The separate Rust mirror suite contains 32 tests:
 
@@ -43,7 +44,7 @@ implementation corresponds to the verified definitions.
 | L1 | bit primitives and infinite-bitstring natural operations | proved |
 | L2 | Tnum, Anum, Unum, and division theory | proved |
 | L3 | chopped bounded-width domains | every stated contract verifies; containment covers the explicit operation inventory in `design.md`, not every defined operation |
-| L4 | `ExecTnum`, `ExecAnum`, `ExecUnum`, `Interval` at four enabled widths | every method verifies its stated contract; containment scope is listed below |
+| L4 | `ExecTnum`, `ExecAnum`, `ExecUnum`, `Interval` at the enabled machine widths | every method verifies its stated contract; containment scope is listed below |
 
 All enabled L4 results are proved well formed where their contracts say so.
 The current **universal containment** contracts are:
@@ -66,3 +67,15 @@ and Unum conversions/arithmetic helpers.
 Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
 L4 soundness work.
+
+## Wrapped widening and shared-facts refinement
+
+The moving-bound widening proves containment and the termination condition:
+the result is unchanged, Top, or has at least twice the previous cardinality.
+Public size bounds and `lemma_size_monotone` support use of that measure by
+callers. Endpoint advance/retreat lemmas and the constructor's exact size
+contract connect native wrapping operations to the cardinality proof.
+`Refine` proves preservation of the intersection with `Facts<W>` and no growth
+outside the input. Split intersections fall back to the original arc when their
+single-arc cover would grow outside it. `wrapped_refine` checks fact export,
+refinement stability, and product reduction against concrete u8 membership.
