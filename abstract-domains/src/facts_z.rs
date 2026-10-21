@@ -28,7 +28,6 @@ impl FactsZ {
     pub closed spec fn itv(&self) -> IntervalZ {
         self.itv
     }
-
     /// The fields agree. Trivially true with one field; the planned fields extend it.
     pub open spec fn reduced(&self) -> bool {
         true
@@ -56,6 +55,7 @@ impl FactsZ {
     {
         self.itv.dup()
     }
+
 }
 
 impl Domain for FactsZ {
