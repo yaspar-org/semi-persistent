@@ -21,7 +21,7 @@ use crate::tnum::*;
 /// The ABSTRACT remainder may exceed `d` (due to over-approximation in sub_const),
 /// but every CONCRETE value tracked by the abstract state satisfies `rv < dv`.
 ///
-/// Also provides general Tnum/Tnum division via `neg_tn` (two's complement negation)
+/// Also provides general Tnum/Tnum division via `neg` (two's complement negation)
 /// and `sub_tn` (abstract subtraction). Negation soundness proved via `xor_ones_complement`.
 /// and building the quotient bit by bit via conditional subtraction.
 use vstd::prelude::*;
@@ -175,12 +175,14 @@ impl Tnum {
         }
     }
 
-    /// Soundness of div_const.
+    /// Soundness of div_const against the spec long division div1: both the
+    /// quotient and the remainder. div_const_sound_div restates it for / and %.
     pub proof fn div_const_sound(self, d: nat, w: nat)
         requires self.inv(), d > 0, d <= exp(w)
         ensures forall|n: nat| #![auto]
             self.has(n) ==>
             self.div_const(d, w).0.has(div1(n, d, 0, 0, w).0)
+            && self.div_const(d, w).1.has(div1(n, d, 0, 0, w).1)
     {
         let z = Tnum::zero();
         disj_zero(0 as nat);
@@ -190,7 +192,8 @@ impl Tnum {
         };
         Self::div_const_loop_sound(self, d, w, w, z, z);
         assert forall|n: nat| #![auto] self.has(n)
-            implies self.div_const(d, w).0.has(div1(n, d, 0, 0, w).0) by {
+            implies self.div_const(d, w).0.has(div1(n, d, 0, 0, w).0)
+            && self.div_const(d, w).1.has(div1(n, d, 0, 0, w).1) by {
             assert(z.has(0 as nat));
             assert((0 as nat) < d);
         };
@@ -345,22 +348,18 @@ impl Tnum {
     // General division: Tnum / Tnum via iterated subtraction
     // ================================================================
 
-    /// Two's complement negation of a Tnum (w-bit).
-    pub open spec fn neg_tn(self, w: nat) -> Tnum {
-        self.bw_xor(Tnum::unit(all_ones(w))).add_bitwise(Tnum::unit(1)).chop_tn(w)
-    }
-
     /// Abstract subtraction of Tnum from Tnum (w-bit).
     pub open spec fn sub(self, t: Tnum, w: nat) -> Tnum {
-        self.add_bitwise(t.neg_tn(w)).chop_tn(w)
+        self.add_bitwise(t.neg(w)).chop_tn(w)
     }
 
-    /// Soundness of neg_tn.
-    pub proof fn neg_tn_sound(self, w: nat)
+    /// Soundness of neg for nonzero members, in two's-complement form;
+    /// neg_sound below covers every member.
+    pub proof fn neg_twos_comp_sound(self, w: nat)
         requires self.inv(), w > 0
         ensures forall|y: nat| #![auto]
             self.has(y) && y > 0 && y < exp(w) ==>
-            self.neg_tn(w).has(twos_comp(y, w))
+            self.neg(w).has(twos_comp(y, w))
     {
         let ones_tn = Tnum::unit(all_ones(w));
         // ones_tn.inv(): disj(all_ones(w), 0)
@@ -392,7 +391,7 @@ impl Tnum {
         eq_from_bits(bw_and_not(1, 0), 1);
         assert forall|y: nat| #![auto]
             self.has(y) && y > 0 && y < exp(w)
-            implies self.neg_tn(w).has(twos_comp(y, w)) by {
+            implies self.neg(w).has(twos_comp(y, w)) by {
             assert(flipped.has(bw_xor(y, all_ones(w)))) by {
                 ones_tn.has_equiv(all_ones(w));
                 assert forall|i: nat| #![auto] bit(bw_and_not(all_ones(w), 0 as nat), i) == bit(all_ones(w), i) by {
@@ -408,8 +407,8 @@ impl Tnum {
                 eq_from_bits(bw_and_not(1, 0), 1);
             };
             nat_add_carry_correct(bw_xor(y, all_ones(w)), 1, Bit::f());
-            // neg_tn(w) == sum.chop_tn(w)
-            assert(self.neg_tn(w) == sum.chop_tn(w));
+            // neg(w) == sum.chop_tn(w)
+            assert(self.neg(w) == sum.chop_tn(w));
             // twos_comp(y, w) = exp(w) - y = bw_xor(y, all_ones(w)) + 1
             xor_ones_complement(y, w);
             exp_pos(w);
@@ -430,9 +429,9 @@ impl Tnum {
             self.has(x) && t.has(y) && x >= y && y > 0 && x < exp(w) && y < exp(w) ==>
             self.sub(t, w).has(chop((x - y) as nat, w))
     {
-        t.neg_tn_sound(w);
-        let neg_t = t.neg_tn(w);
-        // neg_t.inv(): neg_tn = chop_tn(add_bitwise(flipped, unit(1)), w)
+        t.neg_twos_comp_sound(w);
+        let neg_t = t.neg(w);
+        // neg_t.inv(): neg = chop_tn(add_bitwise(flipped, unit(1)), w)
         // flipped.inv() (from xor with unit(all_ones(w)))
         let ones_tn = Tnum::unit(all_ones(w));
         assert forall|j: nat| #![auto] !(bit(all_ones(w), j).b() && bit(0 as nat, j).b()) by { bit_zero(j); };
@@ -484,10 +483,111 @@ impl Tnum {
         disj_bits(1 as nat, 0);
         Self::add_bitwise_inv(flipped, Tnum::unit(1));
         flipped.add_bitwise(Tnum::unit(1)).chop_sound(w);
-        let neg_t = t.neg_tn(w);
+        let neg_t = t.neg(w);
         assert(neg_t.inv());
         Self::add_bitwise_inv(self, neg_t);
         self.add_bitwise(neg_t).chop_sound(w);
+    }
+
+    /// Soundness of neg for every member, 0 included: the member's negation
+    /// mod 2^w is chop(2^w - y, w).
+    pub proof fn neg_sound(self, w: nat)
+        requires self.inv(), w > 0
+        ensures
+            self.neg(w).inv(),
+            forall|y: nat| #![auto]
+                self.has(y) && y < exp(w) ==> self.neg(w).has(chop((exp(w) - y) as nat, w)),
+    {
+        let ones_tn = Tnum::unit(all_ones(w));
+        assert forall|j: nat| #![auto] !(bit(all_ones(w), j).b() && bit(0 as nat, j).b()) by { bit_zero(j); };
+        disj_bits(all_ones(w), 0);
+        self.xor_sound(ones_tn);
+        let flipped = self.bw_xor(ones_tn);
+        assert forall|i: nat| #![auto] !(bit(flipped.val, i).b() && bit(flipped.mask, i).b()) by {
+            or_bit(self.mask, 0 as nat, i);
+            bit_zero(i);
+            and_not_bit(bw_xor(self.val, all_ones(w)), bw_or(self.mask, 0), i);
+        };
+        disj_bits(flipped.val, flipped.mask);
+        assert forall|j: nat| #![auto] !(bit(1 as nat, j).b() && bit(0 as nat, j).b()) by { bit_zero(j); };
+        disj_bits(1 as nat, 0);
+        flipped.add_sound(Tnum::unit(1));
+        flipped.add_bitwise_eq(Tnum::unit(1));
+        let sum = flipped.add_bitwise(Tnum::unit(1));
+        Self::add_bitwise_inv(flipped, Tnum::unit(1));
+        sum.chop_sound(w);
+        assert(self.neg(w) == sum.chop_tn(w));
+        Tnum::unit_has(all_ones(w));
+        Tnum::unit_has(1);
+        assert forall|y: nat| #![auto]
+            self.has(y) && y < exp(w)
+            implies self.neg(w).has(chop((exp(w) - y) as nat, w)) by {
+            assert(flipped.has(bw_xor(y, all_ones(w))));
+            nat_add_carry_correct(bw_xor(y, all_ones(w)), 1, Bit::f());
+            xor_ones_complement(y, w);
+            exp_pos(w);
+            assert(nat_add(bw_xor(y, all_ones(w)), 1) == (exp(w) - y) as nat);
+            assert(sum.has((exp(w) - y) as nat));
+        };
+    }
+
+    /// Soundness of sub for every pair of members: the difference mod 2^w is
+    /// chop(x + (2^w - y), w).
+    pub proof fn sub_sound_all(self, t: Tnum, w: nat)
+        requires self.inv(), t.inv(), w > 0
+        ensures forall|x: nat, y: nat| #![auto]
+            self.has(x) && t.has(y) && x < exp(w) && y < exp(w) ==>
+            self.sub(t, w).has(chop(nat_add(x, (exp(w) - y) as nat), w))
+    {
+        t.neg_sound(w);
+        let neg_t = t.neg(w);
+        self.add_bitwise_eq(neg_t);
+        self.add_sound(neg_t);
+        let sum = self.add_bitwise(neg_t);
+        Self::add_bitwise_inv(self, neg_t);
+        sum.chop_sound(w);
+        assert forall|x: nat, y: nat| #![auto]
+            self.has(x) && t.has(y) && x < exp(w) && y < exp(w)
+            implies self.sub(t, w).has(chop(nat_add(x, (exp(w) - y) as nat), w)) by {
+            let ny = chop((exp(w) - y) as nat, w);
+            assert(neg_t.has(ny));
+            assert(sum.has(nat_add(x, ny)));
+            chop_nat_add(x, ny, w);
+            chop_nat_add(x, (exp(w) - y) as nat, w);
+            chop_idem((exp(w) - y) as nat, w);
+            chop_id(x, w);
+        };
+    }
+
+    /// div_const contains the quotient n / d and the remainder n % d of every
+    /// member below 2^w.
+    pub proof fn div_const_sound_div(self, d: nat, w: nat)
+        requires self.inv(), d > 0, d <= exp(w)
+        ensures forall|n: nat| #![auto]
+            self.has(n) && n < exp(w) ==>
+            self.div_const(d, w).0.has(n / d) && self.div_const(d, w).1.has(n % d)
+    {
+        self.div_const_sound(d, w);
+        assert forall|n: nat| #![auto] self.has(n) && n < exp(w) implies
+            self.div_const(d, w).0.has(n / d) && self.div_const(d, w).1.has(n % d) by {
+            div1_div_mod(n, d, w);
+        };
+    }
+
+    /// div contains the quotient x / y and the remainder x % y of every pair of
+    /// members with x below 2^w.
+    pub proof fn div_sound_div(self, t: Tnum, w: nat)
+        requires self.inv(), t.inv(), t.min() > 0, t.max() < exp(w)
+        ensures forall|x: nat, y: nat| #![auto]
+            self.has(x) && t.has(y) && x < exp(w) ==>
+            self.div(t, w).0.has(x / y) && self.div(t, w).1.has(x % y)
+    {
+        self.div_sound(t, w);
+        assert forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) && x < exp(w) implies
+            self.div(t, w).0.has(x / y) && self.div(t, w).1.has(x % y) by {
+            t.has_bounds(y);
+            div1_div_mod(x, y, w);
+        };
     }
 
     /// General division: Tnum / Tnum using w-bit long division.
@@ -519,11 +619,14 @@ impl Tnum {
     }
 
     /// Soundness of general Tnum division.
+    /// Soundness of div against the spec long division div1: both the quotient
+    /// and the remainder. div_sound_div restates it for / and %.
     pub proof fn div_sound(self, t: Tnum, w: nat)
         requires self.inv(), t.inv(), t.min() > 0, t.max() < exp(w)
         ensures forall|x: nat, y: nat| #![auto]
             self.has(x) && t.has(y) ==>
             self.div(t, w).0.has(div1(x, y, 0, 0, w).0)
+            && self.div(t, w).1.has(div1(x, y, 0, 0, w).1)
     {
         let z = Tnum::zero();
         disj_zero(0 as nat);
@@ -533,7 +636,8 @@ impl Tnum {
         Self::div_loop_sound(self, t, w, w, z, z);
         assert forall|x: nat, y: nat| #![auto]
             self.has(x) && t.has(y)
-            implies self.div(t, w).0.has(div1(x, y, 0, 0, w).0) by {
+            implies self.div(t, w).0.has(div1(x, y, 0, 0, w).0)
+            && self.div(t, w).1.has(div1(x, y, 0, 0, w).1) by {
             assert(z.has(0 as nat));
             assert((0 as nat) < y) by { t.has_bounds(y); };
         };

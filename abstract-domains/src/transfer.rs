@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Forward transfer functions, indexed by a concrete semantics.
 //!
-//! `Arith<S>`, `Mul<S>` and `DivRem<S>` state soundness against `S`'s operators: every
-//! concrete result of operands drawn from the arguments' concretizations is in
-//! the concretization of the abstract result. A domain implements a transfer
+//! `Arith<S>`, `Mul<S>`, `DivRem<S>`, `Bitwise<W>` and `Shift<S>` state
+//! soundness against `S`'s operators (`W`'s for `Bitwise`): every concrete
+//! result of operands drawn from the arguments' concretizations is in the
+//! concretization of the abstract result. A domain implements a transfer
 //! trait once per semantics it supports (for example both `DivRem<Unsigned<W>>`
 //! and `DivRem<Signed<W>>` on one `Interval<W>`).
 //!
@@ -14,6 +15,7 @@
 use crate::bool4::*;
 use crate::lattice::*;
 use crate::semantics::*;
+use crate::word::*;
 use vstd::prelude::*;
 
 verus! {
@@ -187,6 +189,72 @@ pub trait Compare<S: Semantics>: Domain<C = S::V> {
                 self.gamma(x) && o.gamma(y) && (x == y) == t ==> r.0.gamma(x) && r.1.gamma(y),
             forall|x: S::V| #[trigger] r.0.gamma(x) ==> self.gamma(x),
             forall|y: S::V| #[trigger] r.1.gamma(y) ==> o.gamma(y),
+    ;
+}
+
+/// Bitwise operators. They act on bit patterns, which signedness does not
+/// change, so one implementation serves both semantics of a word.
+pub trait Bitwise<W: Word>: Domain<C = W> {
+    fn and(&self, o: &Self) -> (r: Self)
+        requires
+            self.wf(),
+            o.wf(),
+        ensures
+            r.wf(),
+            forall|x: W, y: W| self.gamma(x) && o.gamma(y) ==> #[trigger] r.gamma(x.and(y)),
+    ;
+
+    fn or(&self, o: &Self) -> (r: Self)
+        requires
+            self.wf(),
+            o.wf(),
+        ensures
+            r.wf(),
+            forall|x: W, y: W| self.gamma(x) && o.gamma(y) ==> #[trigger] r.gamma(x.or(y)),
+    ;
+
+    fn xor(&self, o: &Self) -> (r: Self)
+        requires
+            self.wf(),
+            o.wf(),
+        ensures
+            r.wf(),
+            forall|x: W, y: W| self.gamma(x) && o.gamma(y) ==> #[trigger] r.gamma(x.xor(y)),
+    ;
+
+    fn not(&self) -> (r: Self)
+        requires
+            self.wf(),
+        ensures
+            r.wf(),
+            forall|x: W| self.gamma(x) ==> #[trigger] r.gamma(x.not()),
+    ;
+}
+
+/// Shifts by an abstract amount. The result covers every amount satisfying
+/// `S::shift_ok`; it is `Bot` only when no amount does. An analyzer reports an
+/// alarm when the amount is not contained in the valid range.
+pub trait Shift<S: Semantics>: Domain<C = S::V> {
+    fn shl(&self, k: &Self) -> (r: BotOr<Self>)
+        requires
+            self.wf(),
+            k.wf(),
+        ensures
+            r.wf(),
+            forall|x: S::V, s: S::V|
+                self.gamma(x) && k.gamma(s) && S::shift_ok(s) ==> #[trigger] r.gamma(S::shl(x, s)),
+            r is Bot ==> forall|s: S::V| #[trigger] k.gamma(s) ==> !S::shift_ok(s),
+    ;
+
+    fn shr(&self, k: &Self) -> (r: BotOr<Self>)
+        requires
+            self.wf(),
+            k.wf(),
+        ensures
+            r.wf(),
+            forall|x: S::V, s: S::V|
+                self.gamma(x) && k.gamma(s) && S::shift_ok(s) ==> #[trigger] r.gamma(S::shr(x, s)),
+            r is Bot ==> forall|s: S::V| #[trigger] k.gamma(s) ==> !S::shift_ok(s),
     ;
 }
 

@@ -95,6 +95,72 @@ impl ChoppedTnum {
     }
 
     // ================================================================
+    // Bitwise soundness at width w: the L2 theorems, and w-bit operands
+    // give a w-bit result
+    // ================================================================
+
+    pub proof fn or_sound(self, t: ChoppedTnum)
+        requires self.inv(), t.inv(), self.w == t.w
+        ensures forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) ==> self.bw_or(t).has(bw_or(x, y))
+    {
+        self.tnum.or_sound(t.tnum);
+        assert forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) implies self.bw_or(t).has(bw_or(x, y)) by {
+            Self::fits_mapd(x, y, |a: Bit, b: Bit| a.or(b), self.w);
+        };
+    }
+
+    pub proof fn and_sound(self, t: ChoppedTnum)
+        requires self.inv(), t.inv(), self.w == t.w
+        ensures forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) ==> self.bw_and(t).has(bw_and(x, y))
+    {
+        self.tnum.and_sound(t.tnum);
+        assert forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) implies self.bw_and(t).has(bw_and(x, y)) by {
+            Self::fits_mapd(x, y, |a: Bit, b: Bit| a.and(b), self.w);
+        };
+    }
+
+    pub proof fn xor_sound(self, t: ChoppedTnum)
+        requires self.inv(), t.inv(), self.w == t.w
+        ensures forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) ==> self.bw_xor(t).has(bw_xor(x, y))
+    {
+        self.tnum.xor_sound(t.tnum);
+        assert forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) implies self.bw_xor(t).has(bw_xor(x, y)) by {
+            Self::fits_mapd(x, y, |a: Bit, b: Bit| a.xor(b), self.w);
+        };
+    }
+
+    pub open spec fn bw_and_not(self, t: ChoppedTnum) -> ChoppedTnum { Self::mk(self.tnum.bw_and_not(t.tnum), self.w) }
+
+    pub proof fn and_not_sound(self, t: ChoppedTnum)
+        requires self.inv(), t.inv(), self.w == t.w
+        ensures forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) ==> self.bw_and_not(t).has(bw_and_not(x, y))
+    {
+        self.tnum.and_not_sound(t.tnum);
+        assert forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) implies self.bw_and_not(t).has(bw_and_not(x, y)) by {
+            Self::fits_mapd(x, y, |a: Bit, b: Bit| a.and_not(b), self.w);
+        };
+    }
+
+    /// Bounded NOT: XOR with the w-bit all-ones constant.
+    pub open spec fn bw_not(self) -> ChoppedTnum {
+        Self::mk(self.tnum.bw_xor(Tnum::unit(all_ones(self.w))), self.w)
+    }
+
+    pub proof fn not_sound(self)
+        requires self.inv()
+        ensures forall|n: nat| #![auto] self.has(n) ==> self.bw_not().has(bw_xor(n, all_ones(self.w)))
+    {
+        let ones = all_ones(self.w);
+        exp_pos(self.w);
+        chop_id(ones, self.w);
+        Tnum::unit_has(ones);
+        self.tnum.xor_sound(Tnum::unit(ones));
+        assert forall|n: nat| #![auto] self.has(n) implies self.bw_not().has(bw_xor(n, ones)) by {
+            Self::fits_mapd(n, ones, |a: Bit, b: Bit| a.xor(b), self.w);
+        };
+    }
+
+    // ================================================================
     // Bounded arithmetic: chop(op(a, b), w)
     // ================================================================
 
@@ -213,6 +279,90 @@ impl ChoppedTnum {
         };
     }
 
+    /// Bounded right shift by i bits.
+    pub open spec fn rshi(self, i: nat) -> ChoppedTnum {
+        ChoppedTnum { tnum: self.tnum.rshi(i), w: self.w }
+    }
+
+    proof fn fits_rshi(n: nat, w: nat, i: nat)
+        requires fits(n, w)
+        ensures fits(rshi(n, i), w)
+        decreases i
+    {
+        if i > 0 {
+            Self::fits_rsh(n, w);
+            Self::fits_rshi(rsh(n), w, (i - 1) as nat);
+        }
+    }
+
+    pub proof fn rshi_sound(self, i: nat)
+        requires self.inv()
+        ensures forall|n: nat| #![auto] self.has(n) ==> self.rshi(i).has(rshi(n, i))
+    {
+        self.tnum.rshi_sound(i);
+        assert forall|n: nat| #![auto] self.has(n) implies self.rshi(i).has(rshi(n, i)) by {
+            Self::fits_rshi(n, self.w, i);
+        };
+    }
+
+    /// Bounded left shift by i bits (with chop).
+    pub open spec fn lshi(self, i: nat) -> ChoppedTnum {
+        ChoppedTnum { tnum: self.tnum.lshi(i).chop_tn(self.w), w: self.w }
+    }
+
+    pub proof fn lshi_sound(self, i: nat)
+        requires self.inv()
+        ensures forall|n: nat| #![auto] self.has(n) ==> self.lshi(i).has(chop(lshi(n, i), self.w))
+    {
+        self.tnum.lshi_sound(i);
+        self.tnum.lshi_inv(i);
+        assert forall|n: nat| #![auto] self.has(n)
+            implies self.lshi(i).has(chop(lshi(n, i), self.w)) by {
+            self.tnum.lshi(i).chop_sound(self.w);
+            chop_idem(lshi(n, i), self.w);
+        };
+    }
+
+    /// A w-bit value is below 2^w.
+    proof fn fits_lt(n: nat, w: nat)
+        requires fits(n, w)
+        ensures n < exp(w)
+    {
+        chop_is_mod(n, w);
+        exp_pos(w);
+        vstd::arithmetic::div_mod::lemma_mod_bound(n as int, exp(w) as int);
+    }
+
+    pub proof fn neg_sound(self)
+        requires self.inv(), self.w > 0
+        ensures forall|n: nat| #![auto] self.has(n) ==> self.neg().has(chop((exp(self.w) - n) as nat, self.w))
+    {
+        self.tnum.neg_sound(self.w);
+        assert forall|n: nat| #![auto] self.has(n) implies self.neg().has(chop((exp(self.w) - n) as nat, self.w)) by {
+            Self::fits_lt(n, self.w);
+            chop_idem((exp(self.w) - n) as nat, self.w);
+        };
+    }
+
+    /// Bounded subtraction: add the bounded negation.
+    pub open spec fn sub(self, t: ChoppedTnum) -> ChoppedTnum {
+        ChoppedTnum { tnum: self.tnum.sub(t.tnum, self.w), w: self.w }
+    }
+
+    pub proof fn sub_sound(self, t: ChoppedTnum)
+        requires self.inv(), t.inv(), self.w == t.w, self.w > 0
+        ensures forall|x: nat, y: nat| #![auto]
+            self.has(x) && t.has(y) ==> self.sub(t).has(chop(nat_add(x, (exp(self.w) - y) as nat), self.w))
+    {
+        self.tnum.sub_sound_all(t.tnum, self.w);
+        assert forall|x: nat, y: nat| #![auto]
+            self.has(x) && t.has(y) implies self.sub(t).has(chop(nat_add(x, (exp(self.w) - y) as nat), self.w)) by {
+            Self::fits_lt(x, self.w);
+            Self::fits_lt(y, self.w);
+            chop_idem(nat_add(x, (exp(self.w) - y) as nat), self.w);
+        };
+    }
+
     /// Bounded join.
     pub open spec fn join(self, t: ChoppedTnum) -> ChoppedTnum {
         ChoppedTnum { tnum: self.tnum.join(t.tnum), w: self.w }
@@ -264,6 +414,74 @@ impl ChoppedAnum {
         self.anum.add_sound(t.anum);
     }
 
+
+    /// A w-bit Tnum read as an Anum: base is the known bits, span the unknown ones.
+    pub open spec fn from_tnum(t: ChoppedTnum) -> ChoppedAnum {
+        ChoppedAnum { anum: Anum::from_tnum(t.tnum), w: t.w }
+    }
+
+    pub proof fn from_tnum_sound(t: ChoppedTnum)
+        requires t.inv()
+        ensures forall|n: nat| #![auto] t.has(n) ==> Self::from_tnum(t).has(n)
+    {
+        Anum::from_tnum_sound(t.tnum);
+    }
+
+    /// A w-bit Anum read as a Tnum: Tn(0, span) + Tn(base, 0), chopped to w bits.
+    pub open spec fn to_tnum(self) -> ChoppedTnum {
+        ChoppedTnum { tnum: self.anum.to_tnum().chop_tn(self.w), w: self.w }
+    }
+
+    pub proof fn to_tnum_sound(self)
+        requires self.inv()
+        ensures forall|n: nat| #![auto] self.has(n) ==> self.to_tnum().has(n)
+    {
+        self.anum.to_tnum_inv();
+        self.anum.to_tnum().chop_sound(self.w);
+        assert forall|n: nat| #![auto] self.has(n) implies self.to_tnum().has(n) by {
+            Anum::tnum_has_from_anum(self.anum, n);
+            chop_idem(n, self.w);
+        };
+    }
+
+    /// Bounded subtraction: the L2 sub with its span chopped to w bits.
+    pub open spec fn sub(self, t: ChoppedAnum) -> ChoppedAnum {
+        ChoppedAnum {
+            anum: Anum {
+                base: self.anum.sub(t.anum).base,
+                span: chop(self.anum.sub(t.anum).span, self.w),
+            },
+            w: self.w,
+        }
+    }
+
+    /// sub_sound: when self's base is at least t's maximum, no difference of
+    /// members wraps, and every difference is a member of the bounded sub.
+    pub proof fn sub_sound(self, t: ChoppedAnum)
+        requires self.inv(), t.inv(), self.w == t.w, self.anum.base >= nat_add(t.anum.base, t.anum.span)
+        ensures forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) ==> self.sub(t).has((x - y) as nat)
+    {
+        self.anum.sub_sound(t.anum);
+        let s = self.anum.sub(t.anum);
+        assert forall|x: nat, y: nat| #![auto] self.has(x) && t.has(y) implies self.sub(t).has((x - y) as nat) by {
+            ChoppedTnum::fits_lt(x, self.w);
+            // y <= t's maximum <= self's base <= x
+            t.anum.has_le_max(y);
+            nat_add_correct(t.anum.base, t.anum.span);
+            assert(y <= x);
+            assert(s.has((x - y) as nat));
+            let off = ((x - y) - s.base) as nat;
+            // The offset is a bit subset of the span and below 2^w, so it is a
+            // bit subset of the chopped span too.
+            s.mask_tnum().has_equiv(off);
+            chop_bw_and_not(off, s.span, self.w);
+            exp_pos(self.w);
+            chop_id(off, self.w);
+            chop_id(0, self.w);
+            Tnum::ctor(0, chop(s.span, self.w)).has_equiv(off);
+            chop_id((x - y) as nat, self.w);
+        };
+    }
 
     /// div_const_sound: delegates to Anum::div_const_sound.
     pub proof fn div_const_sound(self, d: nat)

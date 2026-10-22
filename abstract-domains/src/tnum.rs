@@ -209,6 +209,18 @@ impl Tnum {
         Tnum { val: bw_and_not(bw_and_not(self.val, t.val), t.mask), mask: bw_or(self.mask, t.mask) }
     }
 
+    /// A constant Tnum contains its value.
+    pub proof fn unit_has(n: nat)
+        ensures Tnum::unit(n).has(n)
+    {
+        Tnum::unit(n).has_equiv(n);
+        assert forall|i: nat| #![auto] bit(bw_and_not(n, 0), i) == bit(n, i) by {
+            and_not_bit(n, 0, i);
+            bit_zero(i);
+        };
+        eq_from_bits(bw_and_not(n, 0), n);
+    }
+
     pub proof fn and_not_sound(self, t: Tnum)
         ensures forall|c: nat, tc: nat| #![auto] self.has(c) && t.has(tc) ==> self.bw_and_not(t).has(bw_and_not(c, tc))
     {
@@ -992,6 +1004,18 @@ impl Tnum {
         }
     }
 
+    /// lshi preserves inv: shifting both fields keeps them disjoint.
+    pub proof fn lshi_inv(self, i: nat)
+        requires self.inv()
+        ensures self.lshi(i).inv()
+        decreases i
+    {
+        if i > 0 {
+            self.lshi_inv((i - 1) as nat);
+            disj_cons(lshi(self.val, (i - 1) as nat), Bit::f(), lshi(self.mask, (i - 1) as nat), Bit::f());
+        }
+    }
+
     /// Right shift by i bits.
     pub open spec fn rshi(self, i: nat) -> Tnum {
         Tnum { val: rshi(self.val, i), mask: rshi(self.mask, i) }
@@ -1022,7 +1046,7 @@ impl Tnum {
 
     /// Two's complement negation of a Tnum (w-bit).
     /// We prove this via xor_sound + add_sound + chop_sound.
-    /// Note: neg_tn is also defined in div.rs with full soundness proof.
+    /// Its soundness theorems (neg_sound, neg_twos_comp_sound) are in div.rs.
     pub open spec fn neg(self, w: nat) -> Tnum {
         self.bw_xor(Tnum::unit(all_ones(w))).add_bitwise(Tnum::unit(1)).chop_tn(w)
     }
@@ -1101,6 +1125,50 @@ impl Tnum {
 
     pub open spec fn chop_tn(self, i: nat) -> Tnum {
         Tnum { val: chop(self.val, i), mask: chop(self.mask, i) }
+    }
+
+    /// Chop distributes through add_bitwise: only the low w bits of the
+    /// operands reach the low w bits of the sum.
+    pub proof fn chop_add_bitwise(a: Tnum, b: Tnum, w: nat)
+        ensures a.add_bitwise(b).chop_tn(w) == a.chop_tn(w).add_bitwise(b.chop_tn(w)).chop_tn(w)
+    {
+        let (av, am, bv, bm) = (a.val, a.mask, b.val, b.mask);
+        let (cav, cam, cbv, cbm) = (chop(av, w), chop(am, w), chop(bv, w), chop(bm, w));
+        // Left: the full sum, chopped.
+        let lbv = nat_add(av, bv);
+        let lbm = nat_add(am, bm);
+        let ub = nat_add(lbv, lbm);
+        let mask = bw_or(bw_or(bw_xor(ub, lbv), am), bm);
+        // Right: the sum of the chopped operands, chopped.
+        let lbv2 = nat_add(cav, cbv);
+        let lbm2 = nat_add(cam, cbm);
+        let ub2 = nat_add(lbv2, lbm2);
+        let mask2 = bw_or(bw_or(bw_xor(ub2, lbv2), cam), cbm);
+        chop_nat_add(av, bv, w);
+        chop_nat_add(am, bm, w);
+        chop_nat_add(lbv, lbm, w);
+        chop_nat_add(lbv2, lbm2, w);
+        chop_nat_add(cav, cbv, w);
+        chop_nat_add(cam, cbm, w);
+        chop_idem(av, w); chop_idem(am, w); chop_idem(bv, w); chop_idem(bm, w);
+        chop_idem(lbv, w); chop_idem(lbm, w);
+        assert(chop(lbv2, w) == chop(lbv, w));
+        assert(chop(lbm2, w) == chop(lbm, w));
+        assert(chop(ub2, w) == chop(ub, w));
+        chop_bw_xor(ub, lbv, w); chop_bw_xor(ub2, lbv2, w);
+        chop_bw_or(bw_xor(ub, lbv), am, w); chop_bw_or(bw_or(bw_xor(ub, lbv), am), bm, w);
+        chop_bw_or(bw_xor(ub2, lbv2), cam, w); chop_bw_or(bw_or(bw_xor(ub2, lbv2), cam), cbm, w);
+        assert(chop(mask2, w) == chop(mask, w));
+        chop_bw_and_not(lbv, mask, w);
+        chop_bw_and_not(lbv2, mask2, w);
+    }
+
+    /// Chop distributes through lsh.
+    pub proof fn chop_lsh_tn(a: Tnum, w: nat)
+        ensures a.lsh().chop_tn(w) == a.chop_tn(w).lsh().chop_tn(w)
+    {
+        chop_lsh(a.val, w);
+        chop_lsh(a.mask, w);
     }
 
     pub proof fn chop_sound(self, i: nat)

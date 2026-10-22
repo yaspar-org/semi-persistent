@@ -22,7 +22,7 @@ definitions rather than constituting a second formal verification.
 ## Architecture
 
 ```
-Layer 4: exec_tnum.rs / domains.rs  -- Executable u8/u16/u32/u64 implementations
+Layer 4: domains.rs                -- Executable u8/u16/u32/u64 implementations
 Layer 3: chopped.rs                 -- Bounded-width simulation
 Layer 2: tnum.rs / anum.rs / unum.rs / div.rs -- Unbounded theory with soundness proofs
 Layer 1: nats.rs / bools.rs         -- Natural numbers as infinite bitstrings
@@ -55,18 +55,23 @@ bit fields.
 - Key formula: `cout = (x1 & x2) | ((x1 | x2) & ~(x1 + x2))`
 
 **Division**: long division by iterated subtraction, dual of multiplication.
-Both constant-divisor and general Tnum/Tnum division are proved sound.
+The spec long division `div1` computes `n / d` and `n % d` for every `n`
+below `2^w` (`div1_div_mod`), so the constant-divisor and general Tnum/Tnum
+theorems (`div_const_sound_div`, `div_sound_div`) state that the quotient and
+the remainder Tnums contain `/` and `%` of every such member. There is no
+executable Tnum division yet.
 
 ### Layer 3: Bounded simulation (`chopped.rs`)
 
 `ChoppedTnum`, `ChoppedAnum`, and `ChoppedUnum` pair an unbounded domain with
 a bit width. Explicit bounded containment theorems cover ChoppedTnum
-add/mul/shifts/join/meet, ChoppedAnum add/division by constant, and
-ChoppedUnum add/mul, subject to their stated fit and no-overflow preconditions.
-The ChoppedTnum bitwise helpers currently expose invariant/width preservation,
-while its `div` and `neg` spec functions have no Layer-3 containment theorem.
+add/sub/neg/mul/bitwise (or, and, xor, and-not, not)/shifts
+(rsh, lsh, rshi, lshi)/join/meet, ChoppedAnum add/sub/division by constant and
+the conversions to and from Tnum, and ChoppedUnum add/mul, subject to their stated
+fit and no-overflow preconditions. ChoppedTnum `div` has no Layer-3
+containment theorem.
 
-### Layer 4: Executable domains (exec_tnum.rs, domains.rs)
+### Layer 4: Executable domains (domains.rs)
 
 Native Rust implementations on u8/u16/u32/u64 (`u128` is disabled because its
 bitvector obligations exceed current solver capacity):
@@ -82,9 +87,11 @@ These domains combine through `reduce::Product` and the fact records (see
 `Domain` with a `BotOr` bottom and `Refine`.
 
 Every executable method verifies its stated contract. Universal containment
-theorems currently cover `ExecTnum` bitwise/add/join/meet,
-`ExecAnum` add/division by constant, `ExecUnum` top/add/from-interval/multiply,
-`Interval` add/meet/join/division by constant. Other Layer 4 methods
+theorems, each derived from the Layer-3 theorem through `to_chopped()`, cover
+every `ExecTnum` operation (constant, bitwise, add, sub, neg, mul, shifts,
+join, meet) and `ExecAnum` constant/top/add/sub/division by constant/conversions;
+they also cover `ExecUnum` top/add/from-interval/multiply and `Interval`
+add/meet/join/division by constant. Other Layer 4 methods (most Unum helpers)
 currently prove well-formedness only; see
 [the proof-status inventory](doc/proof-status.md).
 

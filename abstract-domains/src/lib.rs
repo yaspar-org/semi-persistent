@@ -10,7 +10,7 @@
 //! - Layer 1: bools (Bit) + nats — infinite bitstrings on nat
 //! - Layer 2: tbit (TBit) + tnum (Tnum) + anum (Anum) + unum (Unum) + div — abstract domains with soundness proofs
 //! - Layer 3: chopped (ChoppedTnum, ChoppedAnum, ChoppedUnum) — bounded-width simulation
-//! - Layer 4: exec_tnum + domains (ExecTnum, ExecAnum, ExecUnum, Interval):
+//! - Layer 4: domains (ExecTnum, ExecAnum, ExecUnum, Interval):
 //!   executable u8/u16/u32/u64 implementations. The u128
 //!   instantiation is disabled because its bitvector proofs exceed current
 //!   solver capacity.
@@ -28,7 +28,6 @@ pub mod bools;
 pub mod chopped;
 pub mod div;
 pub mod domains;
-pub mod exec_tnum;
 pub mod facts;
 pub mod facts_ops;
 pub mod facts_z;

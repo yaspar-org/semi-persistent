@@ -30,6 +30,62 @@ impl Anum {
 
     pub open spec fn from_tnum(t: Tnum) -> Anum { Anum { base: t.val, span: t.mask } }
 
+    /// Subtraction of a smaller Anum: the base subtracts the other's maximum and
+    /// the span is the same as for add, since y's offset d2 turns into the
+    /// offset span - d2, again a bit subset of span.
+    pub open spec fn sub(self, a: Anum) -> Anum {
+        Anum {
+            base: (self.base - nat_add(a.base, a.span)) as nat,
+            span: self.mask_tnum().add(a.mask_tnum()).mask,
+        }
+    }
+
+    pub proof fn sub_sound(self, a: Anum)
+        requires self.base >= nat_add(a.base, a.span)
+        ensures forall|x: nat, y: nat| #![auto] self.has(x) && a.has(y) ==> self.sub(a).has((x - y) as nat)
+    {
+        nat_add_correct(a.base, a.span);
+        let ms = self.mask_tnum();
+        let ma = a.mask_tnum();
+        let sum = ms.add(ma);
+        ms.add_sound(ma);
+        ms.add_carry_val_zero(ma, TBit { val: Bit::f(), mask: Bit::f() });
+        assert(sum == Tnum::ctor(0, sum.mask));
+        assert forall|x: nat, y: nat| #![auto] self.has(x) && a.has(y) implies self.sub(a).has((x - y) as nat) by {
+            a.has_le_max(y);
+            let d1 = (x - self.base) as nat;
+            let d2 = (y - a.base) as nat;
+            // d2 is a bit subset of a.span, so a.span - d2 is one too.
+            ma.has_equiv(d2);
+            sub_submask(a.span, d2);
+            let e2 = (a.span - d2) as nat;
+            ma.has_equiv(e2);
+            assert(ms.has(d1) && ma.has(e2));
+            assert(sum.has(nat_add(d1, e2)));
+            nat_add_correct(d1, e2);
+            assert((x - y) - self.sub(a).base == d1 + e2);
+        };
+    }
+
+    /// Every member is at most base + span.
+    pub proof fn has_le_max(self, x: nat)
+        requires self.has(x)
+        ensures x <= self.base + self.span
+    {
+        let d = nat_sub(x, self.base);
+        self.mask_tnum().has_equiv(d);
+        and_not_zero_le(d, self.span);
+    }
+
+    /// to_tnum is well formed for every Anum.
+    pub proof fn to_tnum_inv(self)
+        ensures self.to_tnum().inv()
+    {
+        disj_zero(self.span);
+        disj_zero_r(self.base);
+        self.mask_tnum().add_inv(self.val_tnum());
+    }
+
     /// Key lemma: hasMinus — if Tn(v,m).has(n) then Tn(0,m).has(n - v)
     pub proof fn from_tnum_sound(t: Tnum)
         requires t.inv()
