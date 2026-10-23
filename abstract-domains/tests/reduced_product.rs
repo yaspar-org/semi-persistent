@@ -302,6 +302,7 @@ fn bool4_connectives_are_exact() {
     // Every operand pair: 3 x 3 for the binary connectives.
     let vals = [Bool4::False, Bool4::True, Bool4::Top];
     let has = |b: &Bool4, x: bool| match b {
+        Bool4::Bottom => false,
         Bool4::False => !x,
         Bool4::True => x,
         Bool4::Top => true,
@@ -313,8 +314,8 @@ fn bool4_connectives_are_exact() {
         assert_eq!(set(&n), want);
         for b in &vals {
             for (r, op) in [
-                (a.and(b), (|x, y| x && y) as fn(bool, bool) -> bool),
-                (a.or(b), |x, y| x || y),
+                ((*a).and(*b), (|x, y| x && y) as fn(bool, bool) -> bool),
+                ((*a).or(*b), |x, y| x || y),
                 (a.eq(b), |x, y| x == y),
             ] {
                 let mut want = [false; 2];

@@ -106,6 +106,7 @@ pub fn check_binop_u8<D>(
 /// Membership of a truth value in a `Bool4`.
 pub fn bool4_has(b: &Bool4, x: bool) -> bool {
     match b {
+        Bool4::Bottom => false,
         Bool4::False => !x,
         Bool4::True => x,
         Bool4::Top => true,

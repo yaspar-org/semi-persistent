@@ -66,3 +66,22 @@ and Unum conversions/arithmetic helpers.
 Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
 L4 soundness work.
+
+## Bool4 lattice
+
+`abstract-domains/src/bool4.rs` is the four-point lattice
+`Bottom | False | True | Top`. `Bottom` is the one empty value. `wf` rejects
+it, so every well-formed value is nonempty and the `Canonical` lemmas apply to
+those values. `Domain::meet` returns `BotOr::Bot` for an empty intersection.
+The lattice `meet` still returns `Bottom`.
+
+`not`, `and`, and `or` are exact in both directions. Quantifiers name `has`
+as their trigger. The module command does not pass `--rlimit`. This base has
+no `ReducedProduct`, so the forward comparisons that were written on that type
+are not in this branch. Main's interface `IntervalZ` is unchanged.
+
+The lattice module verifies at the default resource limit:
+
+```text
+cargo verus focus -p semi-persistent-abstract-domains -- --verify-only-module bool4
+```

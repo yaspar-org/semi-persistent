@@ -501,7 +501,7 @@ fn meet_answer(ra: Bool4, rb: Bool4) -> (r: Bool4)
     ensures
         forall|z: bool| ra.gamma(z) && rb.gamma(z) ==> #[trigger] r.gamma(z),
 {
-    match ra.meet(&rb) {
+    match <Bool4 as Domain>::meet(&ra, &rb) {
         BotOr::Val(m) => {
             proof {
                 assert forall|z: bool| ra.gamma(z) && rb.gamma(z) implies #[trigger] m.gamma(z) by {
