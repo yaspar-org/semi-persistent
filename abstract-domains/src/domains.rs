@@ -1312,7 +1312,8 @@ macro_rules! abstract_domain {
                 /// ChoppedAnum::to_tnum. The addition carries the base into the
                 /// span, so a base whose bits overlap the span is covered.
                 pub fn to_etn(&self) -> (r: ExecTnum)
-                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c)
+                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c),
+                        r.to_tn() == (ChoppedAnum { anum: self.to_an(), w: $bits as nat }).to_tnum().tnum
                 {
                     proof {
                         assert((0 as $uint) & self.span == (0 as $uint)) by(bit_vector);
@@ -1342,7 +1343,8 @@ macro_rules! abstract_domain {
                 /// A Tnum read as an Anum: the spec ChoppedAnum::from_tnum.
                 #[inline] pub fn from_etn(t: &ExecTnum) -> (r: ExecAnum)
                     requires t.wf()
-                    ensures forall|c: $uint| #![auto] t.has(c) ==> r.has(c)
+                    ensures forall|c: $uint| #![auto] t.has(c) ==> r.has(c),
+                        r.to_an() == ChoppedAnum::from_tnum(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).anum
                 {
                     let r = ExecAnum { base: t.val, span: t.mask };
                     proof {

@@ -336,7 +336,8 @@ currently proved for:
 - `ExecUnum::{top,add,from_interval,mul}`;
 - `Interval::{add,meet,join,div_const}`.
 
-Most `ExecTnum` operations also ensure, as a clause separate from containment,
+Most `ExecTnum` operations, and the conversions `ExecAnum::to_etn` and
+`from_etn`, also ensure, as a clause separate from containment,
 that their result equals the Layer-3 spec (`r.to_tn() == ct.op().tnum`). This
 lets composite operations chain them (`neg` and `sub` through `bw_not` and
 `add`; the `mul` loop invariant through `add`, `rsh` and `lsh`), and it pins
