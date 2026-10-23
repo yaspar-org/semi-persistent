@@ -86,6 +86,55 @@ impl IBig {
     {
         IBig { inner: -&self.inner }
     }
+
+    #[verifier::external_body]
+    pub fn sub(&self, o: &IBig) -> (r: IBig)
+        ensures
+            r.view() == self.view() - o.view(),
+    {
+        IBig { inner: &self.inner - &o.inner }
+    }
+
+    #[verifier::external_body]
+    pub fn mul(&self, o: &IBig) -> (r: IBig)
+        ensures
+            r.view() == self.view() * o.view(),
+    {
+        IBig { inner: &self.inner * &o.inner }
+    }
+
+    /// Euclidean quotient: Verus `int` `/`, remainder in `0 <= r < |d|`.
+    #[verifier::external_body]
+    pub fn div_euclid(&self, o: &IBig) -> (r: IBig)
+        requires
+            o.view() != 0,
+        ensures
+            r.view() == self.view() / o.view(),
+    {
+        let q = &self.inner / &o.inner;
+        let rem = &self.inner % &o.inner;
+        let q = if rem.sign() == num_bigint::Sign::Minus {
+            if o.inner.sign() == num_bigint::Sign::Minus {
+                q + 1
+            } else {
+                q - 1
+            }
+        } else {
+            q
+        };
+        IBig { inner: q }
+    }
+
+    /// Truncated quotient, toward zero. This is `BigInt`'s `/`.
+    #[verifier::external_body]
+    pub fn div_trunc(&self, o: &IBig) -> (r: IBig)
+        requires
+            o.view() != 0,
+        ensures
+            r.view() == crate::semantics::tdiv(self.view(), o.view()),
+    {
+        IBig { inner: &self.inner / &o.inner }
+    }
 }
 
 } // verus!

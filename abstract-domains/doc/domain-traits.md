@@ -172,8 +172,17 @@ lift. It implements:
 
 - `Domain` and `Canonical`, with Cousot widening and an exact `meet_exact`;
 - `Arith<Euclid>` and `Arith<Trunc>`, both exact;
-- `DivRem<Euclid>` and `DivRem<Trunc>` as sound placeholders (top plus the
-  exact zero flag).
+- `Mul<Euclid>` and `Mul<Trunc>`: endpoint products, with `0 * ±∞ = 0`;
+- `DivRem<Euclid>`: precise division. A divisor containing 0 is split into
+  `(-∞, -1]` and `[1, +∞)`; each side takes Euclidean endpoint quotients.
+  A finite negative divided by `+∞` is `-1`. The flag is `DivZero`, exact in
+  both directions. A singleton quotient yields the corner remainder
+  `x - q * y`; otherwise the remainder is `0 <= r < |y|`, and a nonnegative
+  dividend also keeps `r <= x`.
+- `DivRem<Trunc>`: the same split, with division toward zero (`-7 / 2 = -3`).
+  A finite negative divided by `+∞` is `0`. Truncated remainder keeps the
+  sign of the dividend, and `|r| <= |x|`. When every `|y| <= |x|`,
+  `|r| <= (|x| - 1) / 2`.
 
 `tests/domain_traits.rs` checks both domains at runtime against brute-force
 concretization.
@@ -186,7 +195,8 @@ thin wrapper over `num_bigint::BigInt`. Its trusted items are:
 | item | kind | justification |
 |------|------|---------------|
 | `IBig` | `external_body` struct | opaque; `view()` is its only spec observer |
-| `from_i64`, `to_i64`, `dup`, `le`, `is_zero`, `add`, `neg` | `external_body` fns | one-line calls to `num-bigint` / `num-traits` whose contract is the integer operation |
+| `from_i64`, `to_i64`, `dup`, `le`, `is_zero`, `add`, `neg`, `sub`, `mul`, `div_trunc` | `external_body` fns | calls to `num-bigint` / `num-traits` whose contract is the integer operation |
+| `div_euclid` | `external_body` fn | truncating `BigInt` quotient, adjusted so the remainder is nonnegative; contract is Verus `int` `/` |
 | `axiom_view_injective` | axiom | `BigInt` is normalized sign-magnitude, and `view` is the only observer |
 
 Every new `IBig` operation must be added to this table. A rational
