@@ -223,6 +223,32 @@ impl ChoppedTnum {
         };
     }
 
+    /// Bounded pair-join multiplication: `Tnum::pair_mul` chopped to w bits.
+    pub open spec fn pair_mul(self, t: ChoppedTnum) -> ChoppedTnum {
+        ChoppedTnum { tnum: Tnum::pair_mul(self.tnum, t.tnum).chop_tn(self.w), w: self.w }
+    }
+
+    pub proof fn pair_mul_sound(self, t: ChoppedTnum)
+        requires self.inv(), t.inv(), self.w == t.w
+        ensures
+            self.pair_mul(t).inv(),
+            forall|x: nat, y: nat| #![auto]
+                self.has(x) && t.has(y) ==>
+                self.pair_mul(t).has(chop(nat_mul_acc(x, y, 0), self.w))
+    {
+        let prod = Tnum::pair_mul(self.tnum, t.tnum);
+        Tnum::pair_mul_sound(self.tnum, t.tnum);
+        prod.chop_sound(self.w);
+        chop_idem(prod.val, self.w);
+        chop_idem(prod.mask, self.w);
+        assert forall|x: nat, y: nat| #![auto]
+            self.has(x) && t.has(y)
+            implies self.pair_mul(t).has(chop(nat_mul_acc(x, y, 0), self.w)) by {
+            assert(prod.has(nat_mul_acc(x, y, 0)));
+            chop_idem(nat_mul_acc(x, y, 0), self.w);
+        };
+    }
+
     /// Bounded division.
     pub open spec fn div(self, t: ChoppedTnum) -> ChoppedTnum {
         ChoppedTnum { tnum: self.tnum.div(t.tnum, self.w).0, w: self.w }

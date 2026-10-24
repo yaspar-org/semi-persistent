@@ -36,6 +36,7 @@ pub mod interval;
 pub mod interval_z;
 pub mod lattice;
 pub mod nats;
+pub mod pair_mul;
 pub mod reduce;
 pub mod semantics;
 pub mod tbit;
