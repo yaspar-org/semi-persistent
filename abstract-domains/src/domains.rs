@@ -17,7 +17,7 @@ macro_rules! abstract_domain {
             use crate::anum::Anum;
             use crate::unum::Unum;
             use crate::chopped::{ChoppedAnum, ChoppedTnum, ChoppedUnum};
-            use crate::div::{chop_and_ones, chop_lt, len_le, nmin};
+            use crate::div::*;
             use crate::tbit::TBit;
             verus! {
 
@@ -395,8 +395,8 @@ macro_rules! abstract_domain {
                         native_rsh(y);
                         assert(y >> (1 as $uint) < y) by(bit_vector) requires y != (0 as $uint);
                     }
-                    y = y >> 1;
-                    n = n + 1;
+                    y >>= 1;
+                    n += 1;
                 }
                 n
             }
@@ -1147,8 +1147,8 @@ macro_rules! abstract_domain {
                             ss = lsh(ss0);
                         }
                         proof { assert(ym >> (1 as $uint) < ym) by(bit_vector) requires ym != (0 as $uint); }
-                        s = s << 1;
-                        ym = ym >> 1;
+                        s <<= 1;
+                        ym >>= 1;
                     }
                     let mut y = *t;
                     let mut xm: $uint = self.mask;
@@ -1191,7 +1191,7 @@ macro_rules! abstract_domain {
                             native_rsh(xm);
                             assert(xm >> (1 as $uint) < xm) by(bit_vector) requires xm != (0 as $uint);
                         }
-                        xm = xm >> 1;
+                        xm >>= 1;
                     }
                     let r = acc;
                     proof {
@@ -1361,7 +1361,7 @@ macro_rules! abstract_domain {
                             q = ExecTnum { val: q.val, mask: q.mask | p2 };
                             let rk = ExecTnum::range_tn(0, dmax - 1);
                             let keep = r1.meet_m(&rk);
-                            let hi = if r1max - dmin <= dmax - 1 { r1max - dmin } else { dmax - 1 };
+                            let hi = if r1max - dmin < dmax { r1max - dmin } else { dmax - 1 };
                             let rh = ExecTnum::range_tn(0, hi);
                             let sb = r1.sub(t);
                             let s = sb.meet_m(&rh);
@@ -1386,7 +1386,7 @@ macro_rules! abstract_domain {
                     let nhi = self.val | self.mask;
                     let rq = ExecTnum::range_tn(nlo / dmax, nhi / dmin);
                     let qf = q.meet_m(&rq);
-                    let rhi = if nhi <= dmax - 1 { nhi } else { dmax - 1 };
+                    let rhi = if nhi < dmax { nhi } else { dmax - 1 };
                     let rr = ExecTnum::range_tn(0, rhi);
                     let rf = r.meet_m(&rr);
                     proof {

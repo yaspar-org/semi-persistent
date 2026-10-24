@@ -5,7 +5,9 @@
 //!
 //! Split the product by the unknown bits of each operand:
 //!
-//!     a * b = x.v * y.v + sum_l v_l * (x.v << l) + sum_k u_k * (b << k)
+//! ```text
+//! x * y = x.v * y.v + sum_l v_l * (x.v << l) + sum_k u_k * (y << k)
+//! ```
 //!
 //! where `v_l` ranges over the unknown bits of `y` and `u_k` over those of `x`.
 //! Start from the exact product of the known parts; for each unknown bit, the
