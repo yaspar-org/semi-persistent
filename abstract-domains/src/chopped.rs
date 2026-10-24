@@ -228,6 +228,47 @@ impl ChoppedTnum {
         ChoppedTnum { tnum: self.tnum.div(t.tnum, self.w).0, w: self.w }
     }
 
+    /// Bounded guarded division: Tnum::div_g with w iterations and the remainder
+    /// width k = len(t.max()), the bit length of the largest divisor; quotient and
+    /// remainder are chopped to w bits.
+    pub open spec fn div_g(self, t: ChoppedTnum) -> (ChoppedTnum, ChoppedTnum) {
+        let (q, r) = self.tnum.div_g(t.tnum, self.w, len(t.tnum.max()));
+        (ChoppedTnum { tnum: q.chop_tn(self.w), w: self.w }, ChoppedTnum { tnum: r.chop_tn(self.w), w: self.w })
+    }
+
+    /// div_g is well formed and contains x / y and x % y for all members x, y.
+    pub proof fn div_g_sound(self, t: ChoppedTnum)
+        requires self.inv(), t.inv(), self.w == t.w, t.tnum.min() > 0
+        ensures
+            self.div_g(t).0.inv(),
+            self.div_g(t).1.inv(),
+            forall|x: nat, y: nat| #![auto]
+                self.has(x) && t.has(y) ==> self.div_g(t).0.has(x / y) && self.div_g(t).1.has(x % y),
+    {
+        let w = self.w;
+        let k = len(t.tnum.max());
+        Self::fits_mapd(t.tnum.val, t.tnum.mask, |x: Bit, y: Bit| x.or(y), w);
+        Self::fits_lt(t.tnum.max(), w);
+        len_bound(t.tnum.max());
+        self.tnum.div_g_sound(t.tnum, w, k);
+        let (q, r) = self.tnum.div_g(t.tnum, w, k);
+        q.chop_sound(w);
+        r.chop_sound(w);
+        chop_idem(q.val, w); chop_idem(q.mask, w);
+        chop_idem(r.val, w); chop_idem(r.mask, w);
+        assert forall|x: nat, y: nat| #![auto]
+            self.has(x) && t.has(y) implies self.div_g(t).0.has(x / y) && self.div_g(t).1.has(x % y) by {
+            Self::fits_lt(x, w);
+            t.tnum.has_bounds(y);
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, y as int);
+            vstd::arithmetic::div_mod::lemma_mod_pos_bound(x as int, y as int);
+            assert(x / y <= x && x % y <= x) by(nonlinear_arith)
+                requires x == y * (x / y) + x % y, y > 0, x / y >= 0, x % y >= 0;
+            chop_id(x / y, w);
+            chop_id(x % y, w);
+        };
+    }
+
     /// Bounded negation.
     pub open spec fn neg(self) -> ChoppedTnum {
         ChoppedTnum { tnum: self.tnum.neg(self.w), w: self.w }
