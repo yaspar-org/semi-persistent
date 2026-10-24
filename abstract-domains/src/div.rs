@@ -798,4 +798,111 @@ impl Tnum {
     }
 }
 
+// ================================================================
+// Tnum of a range
+// ================================================================
+
+/// all_ones(p) is the recursive all-ones value of length p.
+proof fn all_ones_eq_r(p: nat)
+    ensures all_ones(p) == all_ones_r(p)
+    decreases p
+{
+    exp_pos(p);
+    if p == 0 {
+        assert(exp(0) == 1) by { assert(lshi(1, 0) == 1); }
+    } else {
+        all_ones_eq_r((p - 1) as nat);
+        exp_succ((p - 1) as nat);
+        exp_pos((p - 1) as nat);
+    }
+}
+
+/// Bit j of all_ones(p) is set exactly below p.
+pub proof fn all_ones_bit(p: nat, j: nat)
+    ensures bit(all_ones(p), j).b() <==> j < p
+{
+    all_ones_eq_r(p);
+    all_ones_r_bit(p, j);
+}
+
+/// The bits of n from position p up are the bits of n >> p.
+pub proof fn bit_rshi_add(n: nat, p: nat, j: nat)
+    ensures bit(n, p + j) == bit(rshi(n, p), j)
+    decreases p
+{
+    if p > 0 {
+        bit_rshi_add(tl(n), (p - 1) as nat, j);
+        assert(bit(n, p + j) == bit(tl(n), (p + j - 1) as nat));
+        assert((p + j - 1) as nat == (p - 1) as nat + j);
+    }
+}
+
+/// A value below 2^p has no bit at or above p.
+pub proof fn bit_above(n: nat, p: nat, j: nat)
+    requires n < exp(p), p <= j
+    ensures bit(n, j) == Bit::f()
+{
+    chop_id(n, p);
+    chop_bit(n, p, j);
+}
+
+/// The smaller of two nats.
+pub open spec fn nmin(a: nat, b: nat) -> nat { if a <= b { a } else { b } }
+
+impl Tnum {
+    /// The Tnum of the range [lo, hi]: the common prefix of lo and hi, unknown below
+    /// the highest bit where they differ (tnum_algos.range_tn). p = len(lo ^ hi).
+    pub open spec fn range_tn(lo: nat, hi: nat) -> Tnum {
+        let m = all_ones(len(bw_xor(lo, hi)));
+        Tnum { val: bw_and_not(lo, m), mask: m }
+    }
+
+    pub proof fn range_tn_inv(lo: nat, hi: nat)
+        ensures Tnum::range_tn(lo, hi).inv()
+    {
+        let m = all_ones(len(bw_xor(lo, hi)));
+        assert forall|i: nat| #![auto] !(bit(bw_and_not(lo, m), i).b() && bit(m, i).b()) by {
+            and_not_bit(lo, m, i);
+        };
+        disj_bits(bw_and_not(lo, m), m);
+    }
+
+    /// Every value of [lo, hi] is a member of range_tn(lo, hi).
+    pub proof fn range_tn_has(lo: nat, hi: nat, x: nat)
+        requires lo <= x, x <= hi
+        ensures Tnum::range_tn(lo, hi).has(x)
+    {
+        let p = len(bw_xor(lo, hi));
+        let m = all_ones(p);
+        let e = exp(p);
+        exp_pos(p);
+        len_bound(bw_xor(lo, hi));
+        // Above p, lo and hi agree, so lo / 2^p == hi / 2^p.
+        assert forall|j: nat| #![auto] bit(rshi(lo, p), j) == bit(rshi(hi, p), j) by {
+            bit_rshi_add(lo, p, j);
+            bit_rshi_add(hi, p, j);
+            xor_bit(lo, hi, p + j);
+            bit_above(bw_xor(lo, hi), p, p + j);
+        };
+        eq_from_bits(rshi(lo, p), rshi(hi, p));
+        rsh_div(lo, p);
+        rsh_div(hi, p);
+        rsh_div(x, p);
+        vstd::arithmetic::div_mod::lemma_div_is_ordered(lo as int, x as int, e as int);
+        vstd::arithmetic::div_mod::lemma_div_is_ordered(x as int, hi as int, e as int);
+        assert(rshi(x, p) == rshi(lo, p));
+        Tnum::range_tn(lo, hi).has_equiv(x);
+        assert forall|j: nat| #![auto] bit(bw_and_not(x, m), j) == bit(bw_and_not(lo, m), j) by {
+            and_not_bit(x, m, j);
+            and_not_bit(lo, m, j);
+            all_ones_bit(p, j);
+            if j >= p {
+                bit_rshi_add(x, p, (j - p) as nat);
+                bit_rshi_add(lo, p, (j - p) as nat);
+            }
+        };
+        eq_from_bits(bw_and_not(x, m), bw_and_not(lo, m));
+    }
+}
+
 } // verus!
