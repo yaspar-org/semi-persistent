@@ -846,6 +846,54 @@ pub proof fn bit_above(n: nat, p: nat, j: nat)
     chop_bit(n, p, j);
 }
 
+/// One more bit of the prefix: n >> i1 == 2 (n >> (i1 + 1)) + bit(n, i1).
+pub proof fn rshi_step(n: nat, i1: nat)
+    ensures rshi(n, i1) == 2 * rshi(n, i1 + 1) + bit(n, i1).n()
+{
+    let e1 = exp(i1);
+    exp_succ(i1);
+    exp_pos(i1);
+    rsh_div(n, i1);
+    rsh_div(n, i1 + 1);
+    vstd::arithmetic::div_mod::lemma_div_denominator(n as int, e1 as int, 2);
+    bit_rshi(n, i1);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod((n / e1) as int, 2);
+}
+
+/// exp(a + b) == exp(a) * exp(b).
+pub proof fn exp_add(a: nat, b: nat)
+    ensures exp(a + b) == exp(a) * exp(b)
+    decreases b
+{
+    if b == 0 {
+        assert(exp(0) == 1) by { assert(lshi(1, 0) == 1); }
+    } else {
+        let b1 = (b - 1) as nat;
+        exp_add(a, b1);
+        exp_succ(a + b1);
+        exp_succ(b1);
+        assert(a + b1 + 1 == a + b);
+        assert(b1 + 1 == b);
+        assert(exp(a) * (2 * exp(b1)) == 2 * (exp(a) * exp(b1))) by(nonlinear_arith);
+    }
+}
+
+/// A w-bit value shifted right by i has at most w - i bits.
+pub proof fn rshi_bound(n: nat, w: nat, i: nat)
+    requires n < exp(w), i <= w
+    ensures rshi(n, i) < exp((w - i) as nat)
+{
+    let e = exp(i);
+    let f = exp((w - i) as nat);
+    exp_pos(i);
+    exp_add(i, (w - i) as nat);
+    rsh_div(n, i);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(n as int, e as int);
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(n as int, e as int);
+    assert(n / e < f) by(nonlinear_arith)
+        requires n == e * (n / e) + n % e, n % e >= 0, n < e * f, e > 0;
+}
+
 /// The smaller of two nats.
 pub open spec fn nmin(a: nat, b: nat) -> nat { if a <= b { a } else { b } }
 
@@ -951,7 +999,9 @@ impl Tnum {
         keep.join(s)
     }
 
-    /// Guarded long division: div_loop with div_guard in the uncertain branch.
+    /// Guarded long division: div_loop with div_guard in the uncertain branch, and the
+    /// remainder after step j = w - i1 chopped to min(j, k) bits: every concrete
+    /// remainder is below the divisor and at most the j-bit prefix of the dividend.
     pub open spec fn div_loop_g(n: Tnum, d: Tnum, w: nat, k: nat, i: nat, q: Tnum, r: Tnum) -> (Tnum, Tnum)
         decreases i
     {
@@ -963,13 +1013,13 @@ impl Tnum {
             if r1.min() >= d.max() {
                 let q1 = Tnum { val: bw_or(q.val, exp(i1)), mask: q.mask };
                 let r2 = r1.sub(d, w + 1);
-                Self::div_loop_g(n, d, w, k, i1, q1, r2.chop_tn(k))
+                Self::div_loop_g(n, d, w, k, i1, q1, r2.chop_tn(nmin((w - i1) as nat, k)))
             } else if r1.max() < d.min() {
-                Self::div_loop_g(n, d, w, k, i1, q, r1.chop_tn(k))
+                Self::div_loop_g(n, d, w, k, i1, q, r1.chop_tn(nmin((w - i1) as nat, k)))
             } else {
                 let q1 = Tnum { val: q.val, mask: bw_or(q.mask, exp(i1)) };
                 let r2 = Self::div_guard(r1, d, w);
-                Self::div_loop_g(n, d, w, k, i1, q1, r2.chop_tn(k))
+                Self::div_loop_g(n, d, w, k, i1, q1, r2.chop_tn(nmin((w - i1) as nat, k)))
             }
         }
     }
@@ -1018,14 +1068,14 @@ impl Tnum {
     }
 
     /// Soundness of the guarded loop against div1, as div_loop_sound.
-    /// Measured 27.5M rlimit (2.9s) bare, about 2x div_loop_sound in the same run; it
+    /// Measured 21.7M rlimit (2.8s) bare, about 1.6x div_loop_sound in the same run; it
     /// passes without the attribute, which keeps the margin of div_loop_sound.
     #[verifier::rlimit(30)]
     proof fn div_loop_g_sound(n: Tnum, d: Tnum, w: nat, k: nat, i: nat, q: Tnum, r: Tnum)
-        requires n.inv(), d.inv(), d.min() > 0, d.max() < exp(w), d.max() < exp(k), q.inv(), r.inv(),
+        requires n.inv(), d.inv(), d.min() > 0, d.max() < exp(w), d.max() < exp(k), q.inv(), r.inv(), i <= w,
                  forall|j: nat| #![auto] j < i ==> bit(q.val, j) == Bit::f() && bit(q.mask, j) == Bit::f()
         ensures forall|nv: nat, dv: nat, qv: nat, rv: nat| #![auto]
-            n.has(nv) && d.has(dv) && q.has(qv) && r.has(rv) && rv < dv ==>
+            n.has(nv) && d.has(dv) && q.has(qv) && r.has(rv) && rv < dv && nv < exp(w) && rv <= rshi(nv, i) ==>
             ({
                 let (fq, fr) = div1(nv, dv, qv, rv, i);
                 let (aq, ar) = Self::div_loop_g(n, d, w, k, i, q, r);
@@ -1053,12 +1103,12 @@ impl Tnum {
                     or_bit(q.val, exp(i1), j); bit_exp(i1, j);
                 };
                 r1.sub_inv(d, w + 1);
-                r2.chop_sound(k);
-                Self::div_loop_g_sound(n, d, w, k, i1, q1, r2.chop_tn(k));
+                r2.chop_sound(nmin((w - i1) as nat, k));
+                Self::div_loop_g_sound(n, d, w, k, i1, q1, r2.chop_tn(nmin((w - i1) as nat, k)));
             } else if r1.max() < d.min() {
                 assert forall|j: nat| #![auto] j < i1 ==> bit(q.val, j) == Bit::f() && bit(q.mask, j) == Bit::f() by {};
-                r1.chop_sound(k);
-                Self::div_loop_g_sound(n, d, w, k, i1, q, r1.chop_tn(k));
+                r1.chop_sound(nmin((w - i1) as nat, k));
+                Self::div_loop_g_sound(n, d, w, k, i1, q, r1.chop_tn(nmin((w - i1) as nat, k)));
             } else {
                 let q1 = Tnum { val: q.val, mask: bw_or(q.mask, exp(i1)) };
                 let r2 = Self::div_guard(r1, d, w);
@@ -1071,12 +1121,12 @@ impl Tnum {
                 assert forall|j: nat| #![auto] j < i1 ==> bit(q1.val, j) == Bit::f() && bit(q1.mask, j) == Bit::f() by {
                     or_bit(q.mask, exp(i1), j); bit_exp(i1, j);
                 };
-                r2.chop_sound(k);
-                Self::div_loop_g_sound(n, d, w, k, i1, q1, r2.chop_tn(k));
+                r2.chop_sound(nmin((w - i1) as nat, k));
+                Self::div_loop_g_sound(n, d, w, k, i1, q1, r2.chop_tn(nmin((w - i1) as nat, k)));
             }
 
             assert forall|nv: nat, dv: nat, qv: nat, rv: nat| #![auto]
-                n.has(nv) && d.has(dv) && q.has(qv) && r.has(rv) && rv < dv
+                n.has(nv) && d.has(dv) && q.has(qv) && r.has(rv) && rv < dv && nv < exp(w) && rv <= rshi(nv, i)
                 implies ({
                     let (fq, fr) = div1(nv, dv, qv, rv, i);
                     let (aq, ar) = Self::div_loop_g(n, d, w, k, i, q, r);
@@ -1090,6 +1140,13 @@ impl Tnum {
                 assert(r1.has(r1_c));
                 hd_cons(rv, bv);
                 nat_add_carry_correct(lsh(rv), bv.n(), Bit::f());
+                // The prefix bound: r1_c <= nv >> i1 < 2^(w - i1), and every next
+                // remainder is at most r1_c.
+                rshi_step(nv, i1);
+                rshi_bound(nv, w, i1);
+                assert(r1_c <= rshi(nv, i1));
+                assert(r1_c < exp((w - i1) as nat));
+                d.has_bounds(dv);
 
                 if r1.min() >= d.max() {
                     r1.has_bounds(r1_c); d.has_bounds(dv);
@@ -1110,12 +1167,12 @@ impl Tnum {
                     r1.sub_sound(d, w + 1);
                     chop_id(((r1_c - dv) as nat), w + 1);
                     r1.sub_inv(d, w + 1);
-                    r2.chop_sound(k);
-                    chop_id(((r1_c - dv) as nat), k);
+                    r2.chop_sound(nmin((w - i1) as nat, k));
+                    chop_id(((r1_c - dv) as nat), nmin((w - i1) as nat, k));
                 } else if r1.max() < d.min() {
                     r1.has_bounds(r1_c); d.has_bounds(dv);
-                    r1.chop_sound(k);
-                    chop_id(r1_c, k);
+                    r1.chop_sound(nmin((w - i1) as nat, k));
+                    chop_id(r1_c, nmin((w - i1) as nat, k));
                 } else {
                     let q1 = Tnum { val: q.val, mask: bw_or(q.mask, exp(i1)) };
                     let r2 = Self::div_guard(r1, d, w);
@@ -1123,7 +1180,7 @@ impl Tnum {
                     q.has_equiv(qv);
                     d.has_bounds(dv);
                     assert(r2.has(if r1_c >= dv { (r1_c - dv) as nat } else { r1_c }));
-                    r2.chop_sound(k);
+                    r2.chop_sound(nmin((w - i1) as nat, k));
                     if r1_c >= dv {
                         q1.has_equiv(bw_or(qv, exp(i1)));
                         assert forall|j: nat| #![auto] bit(bw_and_not(bw_or(qv, exp(i1)), bw_or(q.mask, exp(i1))), j) == bit(q.val, j) by {
@@ -1132,7 +1189,7 @@ impl Tnum {
                             bit_exp(i1, j); and_not_bit(qv, q.mask, j);
                         };
                         eq_from_bits(bw_and_not(bw_or(qv, exp(i1)), bw_or(q.mask, exp(i1))), q.val);
-                        chop_id(((r1_c - dv) as nat), k);
+                        chop_id(((r1_c - dv) as nat), nmin((w - i1) as nat, k));
                     } else {
                         q1.has_equiv(qv);
                         assert forall|j: nat| #![auto] bit(bw_and_not(qv, bw_or(q.mask, exp(i1))), j) == bit(q.val, j) by {
@@ -1141,7 +1198,7 @@ impl Tnum {
                             and_not_bit(qv, q.mask, j);
                         };
                         eq_from_bits(bw_and_not(qv, bw_or(q.mask, exp(i1))), q.val);
-                        chop_id(r1_c, k);
+                        chop_id(r1_c, nmin((w - i1) as nat, k));
                     }
                 }
             };
@@ -1152,7 +1209,7 @@ impl Tnum {
     pub proof fn div_loop_g_sound0(self, t: Tnum, w: nat, k: nat)
         requires self.inv(), t.inv(), t.min() > 0, t.max() < exp(w), t.max() < exp(k)
         ensures forall|x: nat, y: nat| #![auto]
-            self.has(x) && t.has(y) ==>
+            self.has(x) && t.has(y) && x < exp(w) ==>
             Self::div_loop_g(self, t, w, k, w, Tnum::zero(), Tnum::zero()).0.has(div1(x, y, 0, 0, w).0)
             && Self::div_loop_g(self, t, w, k, w, Tnum::zero(), Tnum::zero()).1.has(div1(x, y, 0, 0, w).1)
     {
@@ -1163,7 +1220,7 @@ impl Tnum {
         };
         Self::div_loop_g_sound(self, t, w, k, w, z, z);
         assert forall|x: nat, y: nat| #![auto]
-            self.has(x) && t.has(y)
+            self.has(x) && t.has(y) && x < exp(w)
             implies Self::div_loop_g(self, t, w, k, w, z, z).0.has(div1(x, y, 0, 0, w).0)
             && Self::div_loop_g(self, t, w, k, w, z, z).1.has(div1(x, y, 0, 0, w).1) by {
             assert(z.has(0 as nat));
@@ -1175,8 +1232,8 @@ impl Tnum {
 impl Tnum {
     /// Guarded long division with final range meets: the guarded loop, the quotient met
     /// with the Tnum of [n.min() / d.max(), n.max() / d.min()] and the remainder with
-    /// that of [0, min(n.max(), d.max() - 1)]. w is the iteration count, k the remainder
-    /// width (sound for any k with t.max() < 2^k).
+    /// that of [0, min(n.max(), d.max() - 1)]. w is the iteration count; the remainder
+    /// after step j is chopped to min(j, k) bits, sound for any k with t.max() < 2^k.
     pub open spec fn div_g(self, t: Tnum, w: nat, k: nat) -> (Tnum, Tnum) {
         let (q, r) = Self::div_loop_g(self, t, w, k, w, Tnum::zero(), Tnum::zero());
         (q.meet_m(Tnum::range_tn(self.min() / t.max(), self.max() / t.min())),
