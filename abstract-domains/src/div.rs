@@ -1278,4 +1278,128 @@ impl Tnum {
     }
 }
 
+// ================================================================
+// Width lemmas for the exec division (W-bit registers)
+// ================================================================
+
+/// Chopping to a width and then to a smaller one is chopping to the smaller one.
+pub proof fn chop_chop(n: nat, a: nat, b: nat)
+    requires b <= a
+    ensures chop(chop(n, a), b) == chop(n, b)
+{
+    assert forall|j: nat| #![auto] bit(chop(chop(n, a), b), j) == bit(chop(n, b), j) by {
+        chop_bit(chop(n, a), b, j);
+        chop_bit(n, a, j);
+        chop_bit(n, b, j);
+    };
+    eq_from_bits(chop(chop(n, a), b), chop(n, b));
+}
+
+/// Chopping to m bits is masking with all_ones(m).
+pub proof fn chop_and_ones(n: nat, m: nat)
+    ensures chop(n, m) == bw_and(n, all_ones(m))
+{
+    assert forall|j: nat| #![auto] bit(chop(n, m), j) == bit(bw_and(n, all_ones(m)), j) by {
+        chop_bit(n, m, j);
+        and_bit(n, all_ones(m), j);
+        all_ones_bit(m, j);
+    };
+    eq_from_bits(chop(n, m), bw_and(n, all_ones(m)));
+}
+
+/// A chopped value is below 2^m.
+pub proof fn chop_lt(n: nat, m: nat)
+    ensures chop(n, m) < exp(m)
+{
+    chop_is_mod(n, m);
+    exp_pos(m);
+    vstd::arithmetic::div_mod::lemma_mod_bound(n as int, exp(m) as int);
+}
+
+/// A value below 2^w has at most w bits.
+pub proof fn len_le(n: nat, w: nat)
+    requires n < exp(w)
+    ensures len(n) <= w
+{
+    if n > 0 && len(n) > w {
+        len_lower(n);
+        exp_le(w, (len(n) - 1) as nat);
+    }
+}
+
+impl Tnum {
+    /// Chop distributes through meet_m.
+    pub proof fn chop_meet_m(a: Tnum, b: Tnum, m: nat)
+        ensures a.meet_m(b).chop_tn(m) == a.chop_tn(m).meet_m(b.chop_tn(m))
+    {
+        let mk = bw_and(a.mask, b.mask);
+        chop_mapd(a.mask, b.mask, |x: Bit, y: Bit| x.and(y), m);
+        chop_bw_or(a.val, b.val, m);
+        chop_bw_and_not(bw_or(a.val, b.val), mk, m);
+    }
+
+    /// The low m bits of a subtraction do not depend on its width, for m <= w <= w2:
+    /// the W-bit exec subtraction agrees with the (w+1)-bit spec one below bit w.
+    pub proof fn sub_chop_width(a: Tnum, d: Tnum, w: nat, w2: nat, m: nat)
+        requires m <= w, w <= w2
+        ensures a.sub(d, w).chop_tn(m) == a.sub(d, w2).chop_tn(m)
+    {
+        let x1 = d.bw_xor(Tnum::unit(all_ones(w)));
+        let x2 = d.bw_xor(Tnum::unit(all_ones(w2)));
+        // The low m bits of the complemented divisor agree.
+        assert forall|j: nat| #![auto] bit(chop(x1.val, m), j) == bit(chop(x2.val, m), j) by {
+            chop_bit(x1.val, m, j);
+            chop_bit(x2.val, m, j);
+            and_not_bit(bw_xor(d.val, all_ones(w)), bw_or(d.mask, 0), j);
+            and_not_bit(bw_xor(d.val, all_ones(w2)), bw_or(d.mask, 0), j);
+            xor_bit(d.val, all_ones(w), j);
+            xor_bit(d.val, all_ones(w2), j);
+            all_ones_bit(w, j);
+            all_ones_bit(w2, j);
+        };
+        eq_from_bits(chop(x1.val, m), chop(x2.val, m));
+        assert(x1.chop_tn(m) == x2.chop_tn(m));
+        let u1 = Tnum::unit(1);
+        // The negations agree below m.
+        let n1 = d.neg(w);
+        let n2 = d.neg(w2);
+        chop_chop(x1.add_bitwise(u1).val, w, m);
+        chop_chop(x1.add_bitwise(u1).mask, w, m);
+        chop_chop(x2.add_bitwise(u1).val, w2, m);
+        chop_chop(x2.add_bitwise(u1).mask, w2, m);
+        Tnum::chop_add_bitwise(x1, u1, m);
+        Tnum::chop_add_bitwise(x2, u1, m);
+        assert(n1.chop_tn(m) == n2.chop_tn(m));
+        // The differences agree below m.
+        chop_chop(a.add_bitwise(n1).val, w, m);
+        chop_chop(a.add_bitwise(n1).mask, w, m);
+        chop_chop(a.add_bitwise(n2).val, w2, m);
+        chop_chop(a.add_bitwise(n2).mask, w2, m);
+        Tnum::chop_add_bitwise(a, n1, m);
+        Tnum::chop_add_bitwise(a, n2, m);
+    }
+
+    /// div_guard chopped to m <= w is the same with the subtraction at w bits.
+    pub proof fn div_guard_chop_width(r1: Tnum, d: Tnum, w: nat, m: nat)
+        requires m <= w
+        ensures ({
+            let keep = r1.meet_m(Tnum::range_tn(0, (d.max() - 1) as nat));
+            let hi = nmin((r1.max() - d.min()) as nat, (d.max() - 1) as nat);
+            let s = r1.sub(d, w).meet_m(Tnum::range_tn(0, hi));
+            Tnum::div_guard(r1, d, w).chop_tn(m) == keep.join(s).chop_tn(m)
+        })
+    {
+        let keep = r1.meet_m(Tnum::range_tn(0, (d.max() - 1) as nat));
+        let hi = nmin((r1.max() - d.min()) as nat, (d.max() - 1) as nat);
+        let rh = Tnum::range_tn(0, hi);
+        let s1 = r1.sub(d, w).meet_m(rh);
+        let s2 = r1.sub(d, w + 1).meet_m(rh);
+        Tnum::sub_chop_width(r1, d, w, w + 1, m);
+        Tnum::chop_meet_m(r1.sub(d, w), rh, m);
+        Tnum::chop_meet_m(r1.sub(d, w + 1), rh, m);
+        Tnum::chop_join(keep, s1, m);
+        Tnum::chop_join(keep, s2, m);
+    }
+}
+
 } // verus!

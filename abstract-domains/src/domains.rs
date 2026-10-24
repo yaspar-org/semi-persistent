@@ -17,6 +17,8 @@ macro_rules! abstract_domain {
             use crate::anum::Anum;
             use crate::unum::Unum;
             use crate::chopped::{ChoppedAnum, ChoppedTnum, ChoppedUnum};
+            use crate::div::{chop_and_ones, chop_lt, len_le, nmin};
+            use crate::tbit::TBit;
             verus! {
 
             // ============================================================
@@ -370,6 +372,98 @@ macro_rules! abstract_domain {
                     assert(a << ku == b << (1 as $uint)) by(bit_vector)
                         requires ku < ($bits as $uint), ku > (0 as $uint), b == a << ((ku - (1 as $uint)) as $uint);
                 }
+            }
+
+            // ============================================================
+            // Bit length, all-ones masks and the shifted-in dividend bit
+            // ============================================================
+
+            /// Bit length of x, len(x). A shift loop rather than leading_zeros:
+            /// vstd specifies leading_zeros per type (u64's returns int), and
+            /// this macro is generic over the width.
+            pub fn bit_len(x: $uint) -> (r: u32)
+                ensures r as nat == len(x as nat), r <= $bits
+            {
+                let mut y = x;
+                let mut n: u32 = 0;
+                proof { exp_concrete($bits as nat); len_le(x as nat, $bits as nat); }
+                while y != 0
+                    invariant len(x as nat) == n as nat + len(y as nat), len(x as nat) <= $bits as nat
+                    decreases y
+                {
+                    proof {
+                        native_rsh(y);
+                        assert(y >> (1 as $uint) < y) by(bit_vector) requires y != (0 as $uint);
+                    }
+                    y = y >> 1;
+                    n = n + 1;
+                }
+                n
+            }
+
+            /// all_ones(p) as a register, for p <= W.
+            pub fn ones(p: u32) -> (r: $uint)
+                requires p <= $bits
+                ensures r as nat == all_ones(p as nat)
+            {
+                proof { exp_concrete($bits as nat); }
+                if p >= $bits {
+                    proof { assert(!(0 as $uint) == $max_val) by(bit_vector); }
+                    !(0 as $uint)
+                } else {
+                    proof {
+                        native_lshi(1, p as nat);
+                        exp_succ(p as nat);
+                        exp_le(p as nat + 1, $bits as nat);
+                        exp_pos(p as nat);
+                        chop_id(exp(p as nat), $bits as nat);
+                    }
+                    ((1 as $uint) << (p as $uint)) - 1
+                }
+            }
+
+            /// Shifting a remainder of fewer than W bits left by one and bringing
+            /// in bit i of the dividend is lsh_or_tb on the spec side.
+            proof fn bridge_shift_in(rv: $uint, sv: $uint, i1: u32, e: nat)
+                requires i1 < $bits, (rv as nat) < exp(e), e + 1 <= $bits as nat
+                ensures
+                    ((rv << 1) | ((sv >> (i1 as $uint)) & (1 as $uint))) as nat
+                        == cons(rv as nat, bit(sv as nat, i1 as nat)),
+            {
+                let w: nat = $bits as nat;
+                let b = (sv >> (i1 as $uint)) & (1 as $uint);
+                let bb = bit(sv as nat, i1 as nat);
+                bit_is_native_bit(sv, i1 as nat);
+                assert(b == (0 as $uint) || b == (1 as $uint)) by(bit_vector)
+                    requires b == (sv >> (i1 as $uint)) & (1 as $uint);
+                assert(b as nat == cons(0, bb));
+                native_lsh(rv);
+                lsh_is_times2(rv as nat);
+                exp_succ(e);
+                exp_le(e + 1, w);
+                chop_id(lsh(rv as nat), w);
+                native_or(rv << 1, b);
+                assert forall|j: nat| #![auto] bit(bw_or(lsh(rv as nat), cons(0, bb)), j) == bit(cons(rv as nat, bb), j) by {
+                    or_bit(lsh(rv as nat), cons(0, bb), j);
+                    bit_cons(rv as nat, Bit::f(), j);
+                    bit_cons(0, bb, j);
+                    bit_cons(rv as nat, bb, j);
+                    if j > 0 { bit_zero((j - 1) as nat); }
+                };
+                eq_from_bits(bw_or(lsh(rv as nat), cons(0, bb)), cons(rv as nat, bb));
+            }
+
+            /// A single register bit: 1 << i is exp(i).
+            proof fn bridge_pow2(i1: u32)
+                requires i1 < $bits
+                ensures ((1 as $uint) << (i1 as $uint)) as nat == exp(i1 as nat)
+            {
+                exp_concrete($bits as nat);
+                native_lshi(1, i1 as nat);
+                exp_succ(i1 as nat);
+                exp_le(i1 as nat + 1, $bits as nat);
+                exp_pos(i1 as nat);
+                chop_id(exp(i1 as nat), $bits as nat);
             }
 
             // ============================================================
@@ -1114,6 +1208,206 @@ macro_rules! abstract_domain {
                         };
                     }
                     r
+                }
+                /// Meet by masks (Tnum::meet_m): unknown where both are unknown,
+                /// the known bits of either elsewhere. Unlike meet, no
+                /// normalization; well formed even for disjoint operands.
+                #[inline] pub fn meet_m(&self, t: &ExecTnum) -> (r: ExecTnum)
+                    ensures r.wf(), r.to_tn() == self.to_tn().meet_m(t.to_tn())
+                {
+                    let m = self.mask & t.mask;
+                    let o = self.val | t.val;
+                    let v = o & !m;
+                    proof {
+                        native_and(self.mask, t.mask);
+                        native_or(self.val, t.val);
+                        native_and_not(o, m);
+                        assert(v & m == (0 as $uint)) by(bit_vector) requires v == o & !m;
+                    }
+                    ExecTnum { val: v, mask: m }
+                }
+                /// The Tnum of the range [lo, hi] (Tnum::range_tn): the common
+                /// prefix of lo and hi, unknown from the highest differing bit down.
+                pub fn range_tn(lo: $uint, hi: $uint) -> (r: ExecTnum)
+                    ensures r.wf(), r.to_tn() == Tnum::range_tn(lo as nat, hi as nat)
+                {
+                    let p = bit_len(lo ^ hi);
+                    let m = ones(p);
+                    proof {
+                        native_xor(lo, hi);
+                        native_and_not(lo, m);
+                        assert((lo & !m) & m == (0 as $uint)) by(bit_vector);
+                    }
+                    ExecTnum { val: lo & !m, mask: m }
+                }
+                /// Chop to the low p bits (Tnum::chop_tn), p <= W.
+                #[inline] pub fn chop_to(&self, p: u32) -> (r: ExecTnum)
+                    requires self.wf(), p <= $bits
+                    ensures r.wf(), r.to_tn() == self.to_tn().chop_tn(p as nat),
+                        (r.val as nat) < exp(p as nat), (r.mask as nat) < exp(p as nat)
+                {
+                    let o = ones(p);
+                    let v = self.val; let m = self.mask;
+                    proof {
+                        native_and(v, o); native_and(m, o);
+                        chop_and_ones(v as nat, p as nat);
+                        chop_and_ones(m as nat, p as nat);
+                        chop_lt(v as nat, p as nat);
+                        chop_lt(m as nat, p as nat);
+                        assert((v & o) & (m & o) == (0 as $uint)) by(bit_vector) requires v & m == (0 as $uint);
+                    }
+                    ExecTnum { val: v & o, mask: m & o }
+                }
+                /// Guarded long division (Tnum::div_g on W-bit registers, after
+                /// tnum_algos.div_bounded with regs = W): scan the dividend from
+                /// the top bit; subtract when the shifted remainder is surely at
+                /// least the divisor, keep it when surely below, and otherwise
+                /// join the kept side (below d.max()) with the subtracted side
+                /// (at most r1.max() - d.min() and below d.max()). After step j
+                /// the remainder is chopped to min(j, k) bits, k = len(d.max());
+                /// quotient and remainder are finally met with their range
+                /// bounds. The subtraction runs at W bits where the spec uses
+                /// w + 1; the chop to min(j, k) <= W bits makes them agree
+                /// (Tnum::sub_chop_width, Tnum::div_guard_chop_width).
+                ///
+                /// Requires t.val > 0, i.e. no member of t is zero. A divisor
+                /// that may be zero is left to the caller.
+                pub fn divrem_g(&self, t: &ExecTnum) -> (res: (ExecTnum, ExecTnum))
+                    requires self.wf(), t.wf(), t.val > 0
+                    ensures
+                        res.0.wf(), res.1.wf(),
+                        forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> res.0.has(c1 / c2) && res.1.has(c1 % c2),
+                        res.0.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).div_g(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).0.tnum,
+                        res.1.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).div_g(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).1.tnum,
+                {
+                    let ghost w: nat = $bits as nat;
+                    let ghost n0 = self.to_tn();
+                    let ghost d0 = t.to_tn();
+                    let dmin = t.val;
+                    let dmax = t.val | t.mask;
+                    let k = bit_len(dmax);
+                    proof {
+                        native_or(t.val, t.mask);
+                        let tm = t.mask;
+                        assert(dmax >= dmin) by(bit_vector) requires dmax == dmin | tm;
+                    }
+                    let ghost whole = Tnum::div_loop_g(n0, d0, w, k as nat, w, Tnum::zero(), Tnum::zero());
+                    proof { assert((0 as $uint) & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                    let mut q = ExecTnum { val: 0, mask: 0 };
+                    let mut r = ExecTnum { val: 0, mask: 0 };
+                    let ghost mut qs = Tnum::zero();
+                    let ghost mut rs = Tnum::zero();
+                    let mut i: u32 = $bits;
+                    proof {
+                        exp_concrete(w);
+                        assert(exp(0) == 1) by { assert(lshi(1, 0) == 1); }
+                    }
+                    while i > 0
+                        invariant
+                            w == $bits as nat, i <= $bits,
+                            k as nat == len(d0.max()), k <= $bits,
+                            dmax as nat == d0.max(), dmin as nat == d0.min(), dmin > 0, dmax >= dmin,
+                            n0 == self.to_tn(), d0 == t.to_tn(), self.wf(), t.wf(),
+                            r.wf(), r.to_tn() == rs, q.to_tn() == qs,
+                            (r.val as nat) < exp((w - i) as nat), (r.mask as nat) < exp((w - i) as nat),
+                            Tnum::div_loop_g(n0, d0, w, k as nat, i as nat, qs, rs) == whole,
+                        decreases i
+                    {
+                        let i1 = i - 1;
+                        let ghost i1n = i1 as nat;
+                        let ghost nbit = TBit { val: bit(n0.val, i1n), mask: bit(n0.mask, i1n) };
+                        let ghost rs0 = rs;
+                        let ghost qs0 = qs;
+                        let ghost r1s = rs0.lsh_or_tb(nbit);
+                        let bv = (self.val >> (i1 as $uint)) & (1 as $uint);
+                        let bm = (self.mask >> (i1 as $uint)) & (1 as $uint);
+                        let r1v = (r.val << 1) | bv;
+                        let r1m = (r.mask << 1) | bm;
+                        let r1 = ExecTnum { val: r1v, mask: r1m };
+                        proof {
+                            bridge_shift_in(r.val, self.val, i1, (w - i) as nat);
+                            bridge_shift_in(r.mask, self.mask, i1, (w - i) as nat);
+                            let (rv, rm, sv, sm) = (r.val, r.mask, self.val, self.mask);
+                            let s = i1 as $uint;
+                            assert(((rv << 1) | ((sv >> s) & (1 as $uint))) & ((rm << 1) | ((sm >> s) & (1 as $uint))) == (0 as $uint)) by(bit_vector)
+                                requires rv & rm == (0 as $uint), sv & sm == (0 as $uint);
+                            assert(r1.to_tn() == r1s);
+                        }
+                        let j = $bits - i1;
+                        let m = if j <= k { j } else { k };
+                        let r1max = r1v | r1m;
+                        proof {
+                            native_or(r1v, r1m);
+                            assert(m as nat == nmin((w - i1n) as nat, k as nat));
+                        }
+                        let q0 = q;
+                        if r1v >= dmax {
+                            let p2 = (1 as $uint) << (i1 as $uint);
+                            q = ExecTnum { val: q.val | p2, mask: q.mask };
+                            let r2 = r1.sub(t);
+                            r = r2.chop_to(m);
+                            proof {
+                                bridge_pow2(i1);
+                                native_or(q0.val, p2);
+                                qs = Tnum { val: bw_or(qs0.val, exp(i1n)), mask: qs0.mask };
+                                Tnum::sub_chop_width(r1s, d0, w, w + 1, m as nat);
+                                rs = r1s.sub(d0, w + 1).chop_tn(m as nat);
+                            }
+                        } else if r1max < dmin {
+                            r = r1.chop_to(m);
+                            proof { rs = r1s.chop_tn(m as nat); }
+                        } else {
+                            let p2 = (1 as $uint) << (i1 as $uint);
+                            q = ExecTnum { val: q.val, mask: q.mask | p2 };
+                            let rk = ExecTnum::range_tn(0, dmax - 1);
+                            let keep = r1.meet_m(&rk);
+                            let hi = if r1max - dmin <= dmax - 1 { r1max - dmin } else { dmax - 1 };
+                            let rh = ExecTnum::range_tn(0, hi);
+                            let sb = r1.sub(t);
+                            let s = sb.meet_m(&rh);
+                            let r2 = keep.join(&s);
+                            r = r2.chop_to(m);
+                            proof {
+                                bridge_pow2(i1);
+                                native_or(q0.mask, p2);
+                                qs = Tnum { val: qs0.val, mask: bw_or(qs0.mask, exp(i1n)) };
+                                Tnum::div_guard_chop_width(r1s, d0, w, m as nat);
+                                rs = Tnum::div_guard(r1s, d0, w).chop_tn(m as nat);
+                            }
+                        }
+                        proof {
+                            assert(r.to_tn() == rs);
+                            assert(q.to_tn() == qs);
+                            exp_le(m as nat, (w - i1n) as nat);
+                        }
+                        i = i1;
+                    }
+                    let nlo = self.val;
+                    let nhi = self.val | self.mask;
+                    let rq = ExecTnum::range_tn(nlo / dmax, nhi / dmin);
+                    let qf = q.meet_m(&rq);
+                    let rhi = if nhi <= dmax - 1 { nhi } else { dmax - 1 };
+                    let rr = ExecTnum::range_tn(0, rhi);
+                    let rf = r.meet_m(&rr);
+                    proof {
+                        native_or(self.val, self.mask);
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: n0, w };
+                        let ct_t = ChoppedTnum { tnum: d0, w };
+                        let sp = n0.div_g(d0, w, k as nat);
+                        assert(qf.to_tn() == sp.0);
+                        assert(rf.to_tn() == sp.1);
+                        native_fits(qf.val); native_fits(qf.mask);
+                        native_fits(rf.val); native_fits(rf.mask);
+                        assert(qf.to_tn() == ct_s.div_g(ct_t).0.tnum);
+                        assert(rf.to_tn() == ct_s.div_g(ct_t).1.tnum);
+                        ct_s.div_g_sound(ct_t);
+                        assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies qf.has(c1 / c2) && rf.has(c1 % c2) by {
+                            native_fits(c1); native_fits(c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
+                        };
+                    }
+                    (qf, rf)
                 }
                 #[inline] pub fn min_val(&self) -> (r: $uint) ensures r == self.val { self.val }
                 #[inline] pub fn max_val(&self) -> (r: $uint) ensures r == (self.val | self.mask) { self.val | self.mask }
