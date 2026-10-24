@@ -977,6 +977,144 @@ macro_rules! abstract_domain {
                     }
                     r
                 }
+                /// Pair-join multiplication (Tnum::pair_mul on W-bit registers).
+                /// Start from the exact product of the known parts; for each
+                /// unknown bit l of t, join the accumulator with itself plus the
+                /// constant self.val << l; then for each unknown bit k of self,
+                /// join it with itself plus t << k. The two loops shift the
+                /// registers as the L2 recursions pj_const and pj_tnum do, and
+                /// each step is the chopped L2 step (chop_add_bitwise, chop_join,
+                /// chop_lsh_tn).
+                pub fn mul_pj(&self, t: &ExecTnum) -> (r: ExecTnum)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_mul(c2)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).pair_mul(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
+                {
+                    let ghost w: nat = $bits as nat;
+                    let ghost t0 = self.to_tn();
+                    let ghost t1 = t.to_tn();
+                    let ghost acc0 = Tnum::unit(prod(t0.val, t1.val));
+                    let ghost cst = Tnum::pj_const(t0.val, t1.mask, acc0);
+                    let ghost whole = Tnum::pj_tnum(t1, t0.mask, cst);
+                    let pv = self.val.wrapping_mul(t.val);
+                    proof { assert(pv & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                    let mut acc = ExecTnum { val: pv, mask: 0 };
+                    let mut s: $uint = self.val;
+                    let mut ym: $uint = t.mask;
+                    let ghost mut ss: nat = t0.val;
+                    let ghost mut acc_s: Tnum = acc0;
+                    proof {
+                        bridge_mul(self.val, t.val);
+                        exp_pos(w);
+                        chop_id(0, w);
+                        native_fits(self.val);
+                        disj_zero_r(prod(t0.val, t1.val));
+                    }
+                    // Phase 1: the unknown bits of t, with the shifted known part of self.
+                    while ym != 0
+                        invariant
+                            w == $bits as nat,
+                            acc.wf(),
+                            acc.to_tn() == acc_s.chop_tn(w),
+                            acc_s.inv(),
+                            s as nat == chop(ss, w),
+                            Tnum::pj_const(ss, ym as nat, acc_s) == cst,
+                        decreases ym
+                    {
+                        let ghost acc_s0 = acc_s;
+                        let ghost ss0 = ss;
+                        let ghost ym0 = ym;
+                        proof {
+                            native_low_bit(ym);
+                            exp_pos(w);
+                            chop_id(0, w);
+                        }
+                        if (ym & 1) == 1 {
+                            proof { assert(s & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                            let c = ExecTnum { val: s, mask: 0 };
+                            let sum = acc.add(&c);
+                            acc = acc.join(&sum);
+                            proof {
+                                let u = Tnum::unit(ss0);
+                                assert(c.to_tn() == u.chop_tn(w));
+                                disj_zero_r(ss0);
+                                Tnum::chop_add_bitwise(acc_s0, u, w);
+                                acc_s0.add_bitwise_eq(u);
+                                acc_s0.add_inv(u);
+                                Tnum::chop_join(acc_s0, acc_s0.add(u), w);
+                                Tnum::pj_step_inv(acc_s0, u);
+                                acc_s = acc_s0.join(acc_s0.add(u));
+                            }
+                        }
+                        proof {
+                            native_lsh(s);
+                            chop_lsh(ss0, w);
+                            native_rsh(ym);
+                            ss = lsh(ss0);
+                        }
+                        proof { assert(ym >> (1 as $uint) < ym) by(bit_vector) requires ym != (0 as $uint); }
+                        s = s << 1;
+                        ym = ym >> 1;
+                    }
+                    let mut y = *t;
+                    let mut xm: $uint = self.mask;
+                    let ghost mut ys: Tnum = t1;
+                    proof {
+                        native_fits(t.val); native_fits(t.mask);
+                        t.wf_inv();
+                    }
+                    // Phase 2: the unknown bits of self, with t shifted.
+                    while xm != 0
+                        invariant
+                            w == $bits as nat,
+                            acc.wf(), y.wf(),
+                            acc.to_tn() == acc_s.chop_tn(w),
+                            y.to_tn() == ys.chop_tn(w),
+                            acc_s.inv(), ys.inv(),
+                            Tnum::pj_tnum(ys, xm as nat, acc_s) == whole,
+                        decreases xm
+                    {
+                        let ghost acc_s0 = acc_s;
+                        let ghost ys0 = ys;
+                        proof { native_low_bit(xm); }
+                        if (xm & 1) == 1 {
+                            let sum = acc.add(&y);
+                            acc = acc.join(&sum);
+                            proof {
+                                Tnum::chop_add_bitwise(acc_s0, ys0, w);
+                                acc_s0.add_bitwise_eq(ys0);
+                                acc_s0.add_inv(ys0);
+                                Tnum::chop_join(acc_s0, acc_s0.add(ys0), w);
+                                Tnum::pj_step_inv(acc_s0, ys0);
+                                acc_s = acc_s0.join(acc_s0.add(ys0));
+                            }
+                        }
+                        y = y.lsh();
+                        proof {
+                            Tnum::chop_lsh_tn(ys0, w);
+                            disj_cons(ys0.val, Bit::f(), ys0.mask, Bit::f());
+                            ys = ys0.lsh();
+                            native_rsh(xm);
+                            assert(xm >> (1 as $uint) < xm) by(bit_vector) requires xm != (0 as $uint);
+                        }
+                        xm = xm >> 1;
+                    }
+                    let r = acc;
+                    proof {
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: t0, w };
+                        let ct_t = ChoppedTnum { tnum: t1, w };
+                        assert(r.to_tn() == ct_s.pair_mul(ct_t).tnum);
+                        ct_s.pair_mul_sound(ct_t);
+                        assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_mul(c2)) by {
+                            native_fits(c1); native_fits(c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
+                            nat_mul_acc_correct(c1 as nat, c2 as nat, 0);
+                            bridge_mul(c1, c2);
+                        };
+                    }
+                    r
+                }
                 #[inline] pub fn min_val(&self) -> (r: $uint) ensures r == self.val { self.val }
                 #[inline] pub fn max_val(&self) -> (r: $uint) ensures r == (self.val | self.mask) { self.val | self.mask }
                 proof fn has_bounds(&self, c: $uint)
