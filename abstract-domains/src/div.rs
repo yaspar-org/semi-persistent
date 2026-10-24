@@ -592,10 +592,17 @@ impl Tnum {
 
     /// General division: Tnum / Tnum using w-bit long division.
     pub open spec fn div(self, t: Tnum, w: nat) -> (Tnum, Tnum) {
-        Self::div_loop(self, t, w, w, Tnum::zero(), Tnum::zero())
+        self.div_k(t, w, w)
     }
 
-    pub open spec fn div_loop(n: Tnum, d: Tnum, w: nat, i: nat, q: Tnum, r: Tnum) -> (Tnum, Tnum)
+    /// Long division whose remainder is chopped to k bits after every step. Sound for
+    /// any k with t.max() < 2^k, since every concrete remainder is below the divisor;
+    /// k = bit_width(t.max()) gives the tightest remainder, div uses k = w.
+    pub open spec fn div_k(self, t: Tnum, w: nat, k: nat) -> (Tnum, Tnum) {
+        Self::div_loop(self, t, w, k, w, Tnum::zero(), Tnum::zero())
+    }
+
+    pub open spec fn div_loop(n: Tnum, d: Tnum, w: nat, k: nat, i: nat, q: Tnum, r: Tnum) -> (Tnum, Tnum)
         decreases i
     {
         if i == 0 { (q, r) }
@@ -606,14 +613,14 @@ impl Tnum {
             if r1.min() >= d.max() {
                 let q1 = Tnum { val: bw_or(q.val, exp(i1)), mask: q.mask };
                 let r2 = r1.sub(d, w + 1);
-                Self::div_loop(n, d, w, i1, q1, r2)
+                Self::div_loop(n, d, w, k, i1, q1, r2.chop_tn(k))
             } else if r1.max() < d.min() {
-                Self::div_loop(n, d, w, i1, q, r1)
+                Self::div_loop(n, d, w, k, i1, q, r1.chop_tn(k))
             } else {
                 let q1 = Tnum { val: q.val, mask: bw_or(q.mask, exp(i1)) };
                 let r_sub = r1.sub(d, w + 1);
                 let r2 = r1.join(r_sub);
-                Self::div_loop(n, d, w, i1, q1, r2)
+                Self::div_loop(n, d, w, k, i1, q1, r2.chop_tn(k))
             }
         }
     }
@@ -628,16 +635,26 @@ impl Tnum {
             self.div(t, w).0.has(div1(x, y, 0, 0, w).0)
             && self.div(t, w).1.has(div1(x, y, 0, 0, w).1)
     {
+        self.div_k_sound(t, w, w);
+    }
+
+    pub proof fn div_k_sound(self, t: Tnum, w: nat, k: nat)
+        requires self.inv(), t.inv(), t.min() > 0, t.max() < exp(w), t.max() < exp(k)
+        ensures forall|x: nat, y: nat| #![auto]
+            self.has(x) && t.has(y) ==>
+            self.div_k(t, w, k).0.has(div1(x, y, 0, 0, w).0)
+            && self.div_k(t, w, k).1.has(div1(x, y, 0, 0, w).1)
+    {
         let z = Tnum::zero();
         disj_zero(0 as nat);
         assert forall|j: nat| #![auto] j < w ==> bit(z.val, j) == Bit::f() && bit(z.mask, j) == Bit::f() by {
             bit_zero(j);
         };
-        Self::div_loop_sound(self, t, w, w, z, z);
+        Self::div_loop_sound(self, t, w, k, w, z, z);
         assert forall|x: nat, y: nat| #![auto]
             self.has(x) && t.has(y)
-            implies self.div(t, w).0.has(div1(x, y, 0, 0, w).0)
-            && self.div(t, w).1.has(div1(x, y, 0, 0, w).1) by {
+            implies self.div_k(t, w, k).0.has(div1(x, y, 0, 0, w).0)
+            && self.div_k(t, w, k).1.has(div1(x, y, 0, 0, w).1) by {
             assert(z.has(0 as nat));
             assert((0 as nat) < y) by { t.has_bounds(y); };
         };
@@ -647,14 +664,14 @@ impl Tnum {
     /// Measured ~10.4M rlimit (0.9s), i.e. ~1.04x the default budget of 10, so this
     /// still does not pass bare. 30 is ~3x measured need. It was 5000.
     #[verifier::rlimit(30)]
-    proof fn div_loop_sound(n: Tnum, d: Tnum, w: nat, i: nat, q: Tnum, r: Tnum)
-        requires n.inv(), d.inv(), d.min() > 0, d.max() < exp(w), q.inv(), r.inv(),
+    proof fn div_loop_sound(n: Tnum, d: Tnum, w: nat, k: nat, i: nat, q: Tnum, r: Tnum)
+        requires n.inv(), d.inv(), d.min() > 0, d.max() < exp(w), d.max() < exp(k), q.inv(), r.inv(),
                  forall|j: nat| #![auto] j < i ==> bit(q.val, j) == Bit::f() && bit(q.mask, j) == Bit::f()
         ensures forall|nv: nat, dv: nat, qv: nat, rv: nat| #![auto]
             n.has(nv) && d.has(dv) && q.has(qv) && r.has(rv) && rv < dv ==>
             ({
                 let (fq, fr) = div1(nv, dv, qv, rv, i);
-                let (aq, ar) = Self::div_loop(n, d, w, i, q, r);
+                let (aq, ar) = Self::div_loop(n, d, w, k, i, q, r);
                 aq.has(fq) && ar.has(fr)
             })
         decreases i
@@ -679,10 +696,12 @@ impl Tnum {
                     or_bit(q.val, exp(i1), j); bit_exp(i1, j);
                 };
                 r1.sub_inv(d, w + 1);
-                Self::div_loop_sound(n, d, w, i1, q1, r2);
+                r2.chop_sound(k);
+                Self::div_loop_sound(n, d, w, k, i1, q1, r2.chop_tn(k));
             } else if r1.max() < d.min() {
                 assert forall|j: nat| #![auto] j < i1 ==> bit(q.val, j) == Bit::f() && bit(q.mask, j) == Bit::f() by {};
-                Self::div_loop_sound(n, d, w, i1, q, r1);
+                r1.chop_sound(k);
+                Self::div_loop_sound(n, d, w, k, i1, q, r1.chop_tn(k));
             } else {
                 let q1 = Tnum { val: q.val, mask: bw_or(q.mask, exp(i1)) };
                 let r_sub = r1.sub(d, w + 1);
@@ -697,14 +716,15 @@ impl Tnum {
                 assert forall|j: nat| #![auto] j < i1 ==> bit(q1.val, j) == Bit::f() && bit(q1.mask, j) == Bit::f() by {
                     or_bit(q.mask, exp(i1), j); bit_exp(i1, j);
                 };
-                Self::div_loop_sound(n, d, w, i1, q1, r2);
+                r2.chop_sound(k);
+                Self::div_loop_sound(n, d, w, k, i1, q1, r2.chop_tn(k));
             }
 
             assert forall|nv: nat, dv: nat, qv: nat, rv: nat| #![auto]
                 n.has(nv) && d.has(dv) && q.has(qv) && r.has(rv) && rv < dv
                 implies ({
                     let (fq, fr) = div1(nv, dv, qv, rv, i);
-                    let (aq, ar) = Self::div_loop(n, d, w, i, q, r);
+                    let (aq, ar) = Self::div_loop(n, d, w, k, i, q, r);
                     aq.has(fq) && ar.has(fr)
                 }) by {
                 let bv = bit(nv, i1);
@@ -734,8 +754,13 @@ impl Tnum {
                     d.has_bounds(dv); assert(dv < exp(w)); assert(r1_c < exp(w + 1));
                     r1.sub_sound(d, w + 1);
                     chop_id(((r1_c - dv) as nat), w + 1);
+                    r1.sub_inv(d, w + 1);
+                    r2.chop_sound(k);
+                    chop_id(((r1_c - dv) as nat), k);
                 } else if r1.max() < d.min() {
                     r1.has_bounds(r1_c); d.has_bounds(dv);
+                    r1.chop_sound(k);
+                    chop_id(r1_c, k);
                 } else {
                     let q1 = Tnum { val: q.val, mask: bw_or(q.mask, exp(i1)) };
                     let r_sub = r1.sub(d, w + 1);
@@ -754,6 +779,8 @@ impl Tnum {
                         };
                         eq_from_bits(bw_and_not(bw_or(qv, exp(i1)), bw_or(q.mask, exp(i1))), q.val);
                         chop_id(((r1_c - dv) as nat), w + 1);
+                        r1.sub_inv(d, w + 1); r1.join_inv(r_sub); r2.chop_sound(k);
+                        chop_id(((r1_c - dv) as nat), k);
                     } else {
                         q1.has_equiv(qv);
                         assert forall|j: nat| #![auto] bit(bw_and_not(qv, bw_or(q.mask, exp(i1))), j) == bit(q.val, j) by {
@@ -762,6 +789,8 @@ impl Tnum {
                             and_not_bit(qv, q.mask, j);
                         };
                         eq_from_bits(bw_and_not(qv, bw_or(q.mask, exp(i1))), q.val);
+                        r1.sub_inv(d, w + 1); r1.join_inv(r_sub); r2.chop_sound(k);
+                        chop_id(r1_c, k);
                     }
                 }
             };
