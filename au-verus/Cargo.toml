@@ -10,7 +10,7 @@ name = "semi_persistent_au_verus"
 path = "src/lib.rs"
 
 [dependencies]
-vstd = "=0.0.0-2026-09-20-0158"
+vstd = "=0.0.0-2026-10-11-0230"
 
 [package.metadata.verus]
 verify = true
