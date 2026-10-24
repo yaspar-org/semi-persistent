@@ -204,6 +204,19 @@ impl Tnum {
         eq_from_bits(bw_and_not(bw_and(n, self.mask), self.mask), 0);
     }
 
+    /// Chop distributes through join (needed by the exec simulation).
+    pub proof fn chop_join(a: Tnum, b: Tnum, w: nat)
+        ensures a.join(b).chop_tn(w) == a.chop_tn(w).join(b.chop_tn(w))
+    {
+        let jv = bw_and(a.val, b.val);
+        let ju = bw_or(a.u(), b.u());
+        chop_mapd(a.val, b.val, |x: Bit, y: Bit| x.and(y), w);
+        chop_bw_xor(a.val, a.mask, w);
+        chop_bw_xor(b.val, b.mask, w);
+        chop_bw_or(a.u(), b.u(), w);
+        chop_bw_xor(jv, ju, w);
+    }
+
     /// Soundness of pair-join multiplication, stated as `Anum::tnum_mul_sound`.
     pub proof fn pair_mul_sound(x: Tnum, y: Tnum)
         requires x.inv(), y.inv()
