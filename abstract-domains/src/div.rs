@@ -1172,4 +1172,53 @@ impl Tnum {
     }
 }
 
+impl Tnum {
+    /// Guarded long division with final range meets: the guarded loop, the quotient met
+    /// with the Tnum of [n.min() / d.max(), n.max() / d.min()] and the remainder with
+    /// that of [0, min(n.max(), d.max() - 1)]. w is the iteration count, k the remainder
+    /// width (sound for any k with t.max() < 2^k).
+    pub open spec fn div_g(self, t: Tnum, w: nat, k: nat) -> (Tnum, Tnum) {
+        let (q, r) = Self::div_loop_g(self, t, w, k, w, Tnum::zero(), Tnum::zero());
+        (q.meet_m(Tnum::range_tn(self.min() / t.max(), self.max() / t.min())),
+         r.meet_m(Tnum::range_tn(0, nmin(self.max(), (t.max() - 1) as nat))))
+    }
+
+    /// div_g is well formed and contains the quotient x / y and the remainder x % y of
+    /// every pair of members with x below 2^w.
+    pub proof fn div_g_sound(self, t: Tnum, w: nat, k: nat)
+        requires self.inv(), t.inv(), t.min() > 0, t.max() < exp(w), t.max() < exp(k)
+        ensures
+            self.div_g(t, w, k).0.inv(),
+            self.div_g(t, w, k).1.inv(),
+            forall|x: nat, y: nat| #![auto]
+                self.has(x) && t.has(y) && x < exp(w) ==>
+                self.div_g(t, w, k).0.has(x / y) && self.div_g(t, w, k).1.has(x % y),
+    {
+        self.div_loop_g_sound0(t, w, k);
+        let (q, r) = Self::div_loop_g(self, t, w, k, w, Tnum::zero(), Tnum::zero());
+        let rq = Tnum::range_tn(self.min() / t.max(), self.max() / t.min());
+        let rr = Tnum::range_tn(0, nmin(self.max(), (t.max() - 1) as nat));
+        q.meet_m_sound(rq);
+        r.meet_m_sound(rr);
+        assert forall|x: nat, y: nat| #![auto]
+            self.has(x) && t.has(y) && x < exp(w) implies
+            self.div_g(t, w, k).0.has(x / y) && self.div_g(t, w, k).1.has(x % y) by {
+            self.has_bounds(x);
+            t.has_bounds(y);
+            div1_div_mod(x, y, w);
+            assert(q.has(x / y) && r.has(x % y));
+            vstd::arithmetic::div_mod::lemma_div_is_ordered_by_denominator(x as int, y as int, t.max() as int);
+            vstd::arithmetic::div_mod::lemma_div_is_ordered(self.min() as int, x as int, t.max() as int);
+            vstd::arithmetic::div_mod::lemma_div_is_ordered_by_denominator(x as int, t.min() as int, y as int);
+            vstd::arithmetic::div_mod::lemma_div_is_ordered(x as int, self.max() as int, t.min() as int);
+            Tnum::range_tn_has(self.min() / t.max(), self.max() / t.min(), x / y);
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, y as int);
+            vstd::arithmetic::div_mod::lemma_mod_pos_bound(x as int, y as int);
+            assert(x % y <= x) by(nonlinear_arith)
+                requires x == y * (x / y) + x % y, y > 0, x / y >= 0;
+            Tnum::range_tn_has(0, nmin(self.max(), (t.max() - 1) as nat), x % y);
+        };
+    }
+}
+
 } // verus!
