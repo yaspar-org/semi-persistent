@@ -29,4 +29,9 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 ] }
 
 [dev-dependencies]
+criterion.workspace = true
 rand = "0.10.1"
+
+[[bench]]
+name = "wrapped"
+harness = false

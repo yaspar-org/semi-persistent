@@ -626,7 +626,7 @@ impl<W:Word> Wrapped<W> {
             }
         }
 
-        // FALLBACK: Verified loop for complex wrapping or cross-quadrant intervals
+// FALLBACK: Verified loop for complex wrapping or cross-quadrant intervals
         
         // 1. Build each operand's pieces EXACTLY ONCE before the loops
         let a_pieces = (self.piece(0), self.piece(1), self.piece(2), self.piece(3));
@@ -636,6 +636,16 @@ impl<W:Word> Wrapped<W> {
         let mut i = 0usize;
         while i < 4
             invariant i <= 4, self.wf(), d.wf(), result.wf(),
+                a_pieces.0.wf(), a_pieces.1.wf(), a_pieces.2.wf(), a_pieces.3.wf(),
+                b_pieces.0.wf(), b_pieces.1.wf(), b_pieces.2.wf(), b_pieces.3.wf(),
+                forall|x: W| #[trigger] a_pieces.0.gamma(x) == self.piece_has(0, x),
+                forall|x: W| #[trigger] a_pieces.1.gamma(x) == self.piece_has(1, x),
+                forall|x: W| #[trigger] a_pieces.2.gamma(x) == self.piece_has(2, x),
+                forall|x: W| #[trigger] a_pieces.3.gamma(x) == self.piece_has(3, x),
+                forall|y: W| #[trigger] b_pieces.0.gamma(y) == d.piece_has(0, y),
+                forall|y: W| #[trigger] b_pieces.1.gamma(y) == d.piece_has(1, y),
+                forall|y: W| #[trigger] b_pieces.2.gamma(y) == d.piece_has(2, y),
+                forall|y: W| #[trigger] b_pieces.3.gamma(y) == d.piece_has(3, y),
                 forall|p: int, q: int, x: W, y: W| #![trigger self.piece_has(p, x), d.piece_has(q, y)]
                     0 <= p < i && 0 <= q < 4 && self.piece_has(p, x) && d.piece_has(q, y) && !Unsigned::<W>::is_zero(y)
                     ==> result.gamma(quotrem(signed, rem, x, y)),
@@ -647,7 +657,13 @@ impl<W:Word> Wrapped<W> {
             let mut j = 0usize;
             while j < 4
                 invariant j <= 4, i < 4, self.wf(), d.wf(), result.wf(), a.wf(),
+                    a_pieces.0.wf(), a_pieces.1.wf(), a_pieces.2.wf(), a_pieces.3.wf(),
+                    b_pieces.0.wf(), b_pieces.1.wf(), b_pieces.2.wf(), b_pieces.3.wf(),
                     forall|x: W| #[trigger] a.gamma(x) == self.piece_has(i as int, x),
+                    forall|y: W| #[trigger] b_pieces.0.gamma(y) == d.piece_has(0, y),
+                    forall|y: W| #[trigger] b_pieces.1.gamma(y) == d.piece_has(1, y),
+                    forall|y: W| #[trigger] b_pieces.2.gamma(y) == d.piece_has(2, y),
+                    forall|y: W| #[trigger] b_pieces.3.gamma(y) == d.piece_has(3, y),
                     forall|p: int, q: int, x: W, y: W| #![trigger self.piece_has(p, x), d.piece_has(q, y)]
                         0 <= p <= i && 0 <= q < 4 && (p < i || q < j) && self.piece_has(p, x) && d.piece_has(q, y) && !Unsigned::<W>::is_zero(y)
                         ==> result.gamma(quotrem(signed, rem, x, y)),
@@ -655,6 +671,11 @@ impl<W:Word> Wrapped<W> {
             {
                 let b = if j == 0 { &b_pieces.0 } else if j == 1 { &b_pieces.1 } else if j == 2 { &b_pieces.2 } else { &b_pieces.3 };
                 
+                proof {
+                    // Tell Verus that this specific `b` reference maps exactly to the j-th piece
+                    assert forall|y: W| #[trigger] b.gamma(y) == d.piece_has(j as int, y) by {}
+                }
+
                 // 2. Skip evaluating the pair if either piece is Bot
                 let next = match (a, b) {
                     (BotOr::Bot, _) | (_, BotOr::Bot) => BotOr::Bot,
