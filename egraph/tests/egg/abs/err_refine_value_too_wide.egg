@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: value 256 does not fit (bitvec 8)
+;; A bit-vector value lies in 0..2^N.
+(sort BV8 :interp (bitvec 8))
+(constructor w () BV8)
+(refine (w) (interval 0 256))

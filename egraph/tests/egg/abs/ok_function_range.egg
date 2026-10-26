@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; WARNING: the analysis is not active
+;; `:range (lo hi)` states a guard-free fact on a function's result. It needs a bounds
+;; domain on the result sort (interval on int, ubounds on a bit-vector).
+(sort Int  :interp int)
+(sort BV32 :interp (bitvec 32))
+(sort Expr)
+(function hash (BV32) BV32 :range (0 1023))
+(function clampi (Int) Int :range (-10 10))
+(function digit (Expr) Int :range (0 9) :cost 3)
+(constructor w () BV32)
+(constructor x () Int)
+(constructor e () Expr)
+(let h (hash (w)))
+(let k (clampi (x)))
+(let d (digit (e)))
+(check-eq h (hash (w)))

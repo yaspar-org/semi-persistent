@@ -876,6 +876,7 @@ where
 
     fn exec_checked(&mut self, cmd: &CCommand<Cfg::O, Cfg::S, L>) -> Result<(), InterpError> {
         match cmd {
+            // TODO(abs-surface-syntax): on the first sort declaration that enables a domain, raise the not-active warning once per program through `self.warn`; add a `CCommand::Refine` arm that builds the term and changes nothing else, see egraph/doc/future/abstract-syntax-task.md §5
             CCommand::Decl(_) => {
                 // Already registered into egraph during sortcheck. No-op.
             }

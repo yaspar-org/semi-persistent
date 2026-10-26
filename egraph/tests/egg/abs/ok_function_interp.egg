@@ -1,0 +1,26 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; WARNING: the analysis is not active
+;; Propagators on functions and constructors. Matching and congruence are unchanged:
+;; the ordinary rewrite below fires as it would without :interp.
+(sort Int  :interp int)
+(sort BV32 :interp (bitvec 32))
+(sort Bool :interp bool)
+(function bvadd (BV32 BV32) BV32 :interp bvadd)
+(function lt (Int Int) Bool :interp <)
+(function ite (Bool Int Int) Int :interp ite)
+(constructor add (Int Int) Int :interp + :cost 2)
+(constructor mul (Int Int) Int :interp * :comm)
+(constructor x () Int)
+(constructor y () Int)
+(constructor c () Bool)
+(constructor w () BV32)
+(let t (ite (c) (x) (x)))
+(let u (lt (x) (y)))
+(let v (bvadd (w) (w)))
+(let m (mul (x) (add (x) (y))))
+(rewrite (ite k a a) a)
+(run 2)
+(check-eq t (x))
+(check-eq (mul (add (x) (y)) (x)) m)

@@ -1,0 +1,9 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: nonzero: domain 'nonzero' is not enabled on sort 'Bool'
+;; The same check applies to an abstract guard in :when.
+(sort Bool :interp bool)
+(constructor N (Bool) Bool)
+(constructor M (Bool) Bool)
+(rewrite (N v) (M v) :when ((nonzero v)))

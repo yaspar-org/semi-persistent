@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: refine: domain 'nonzero' is not enabled on sort 'BV8'
+;; The rule-action refine follows the top-level rule; nonzero is an int domain.
+(sort BV8 :interp (bitvec 8))
+(constructor F (BV8) BV8)
+(rule ((= r (F y))) ((refine r (nonzero))))

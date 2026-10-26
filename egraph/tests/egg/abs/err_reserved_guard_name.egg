@@ -1,0 +1,7 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: operator name 'within' is reserved by the abstract-domain syntax
+;; The guard and refine forms are recognised by name, so no operator may take one.
+(sort Int :interp int)
+(function within (Int Int Int) Int)

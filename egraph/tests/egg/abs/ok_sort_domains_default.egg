@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; WARNING: the analysis is not active
+;; A sort with :interp and no :domains gets its carrier's default domain set.
+(sort Int  :interp int)
+(sort BV8  :interp (bitvec 8))
+(sort BV1  :interp (bitvec 1))
+(sort B128 :interp (bitvec 128))
+(sort Bool :interp bool)
+(constructor a () Int)
+(constructor b () BV8)
+(constructor p () Bool)
+(let x (a))
+(check-eq x (a))

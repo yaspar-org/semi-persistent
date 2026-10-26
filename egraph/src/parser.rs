@@ -843,6 +843,7 @@ fn parse_action(input: &mut &str, base: usize) -> ModalResult<Action> {
             let value = parse_rhs(input, base)?;
             Action::Set { func, args, value }
         }
+        // TODO(abs-surface-syntax): add a `"refine"` arm: `(refine RHS VALUE)` with VALUE parsed by a shared abstract-value parser, producing `Action::Refine`, see egraph/doc/future/abstract-syntax-task.md §2
         _ => {
             let mut children = Vec::new();
             loop {
@@ -919,6 +920,7 @@ fn parse_rule_tags(input: &mut &str, base: usize) -> ModalResult<RuleTags> {
                 if input.starts_with(')') {
                     break;
                 }
+                // TODO(abs-surface-syntax): abstract guards in `:when` parse as patterns here, as in a rule body; sortcheck recognises them, see egraph/doc/future/abstract-syntax-task.md §2
                 t.when.push(parse_pattern(input, base)?);
             }
             cut_char(input, ')')?;
@@ -1310,6 +1312,7 @@ fn parse_command(
             }
         }
         "rule" => {
+            // TODO(abs-surface-syntax): no parser change for guards: `(within x lo hi)`, `(nonzero x)`, `(known-bits x V M)` parse here as `SurfacePattern::App`; check that negative and multi-word integers parse as literals, see egraph/doc/future/abstract-syntax-task.md §2
             cut_char(input, '(')?;
             let mut body = Vec::new();
             loop {
@@ -1353,6 +1356,7 @@ fn parse_command(
             }
         }
         "sort" => {
+            // TODO(abs-surface-syntax): parse the optional `:interp CARRIER` (`int`, `bool`, `(bitvec N)`) and `:domains (D*)` options after the name, in either order, see egraph/doc/future/abstract-syntax-task.md §2
             let name = ident(input)?.to_owned();
             SurfaceCommand::Pass(Command::Sort(name))
         }
@@ -1372,6 +1376,7 @@ fn parse_command(
             }
             cut_char(input, ')')?;
             let ret_sort = ident(input)?.to_owned();
+            // TODO(abs-surface-syntax): carry the `:interp OP` and `:range (lo hi)` options read by `parse_decl_tags` into `Command::Function`, see egraph/doc/future/abstract-syntax-task.md §4
             let (tags, mut meta) = parse_decl_tags(input, base)?;
             meta.is_constructor = kw == "constructor";
             SurfaceCommand::Pass(Command::Function {
@@ -1864,6 +1869,7 @@ fn parse_command(
                 cycle_mode,
             })
         }
+        // TODO(abs-surface-syntax): add a top-level `"refine"` arm, `(refine TERM VALUE)` to `Command::Refine`; without it the fallback below reads `refine` as an operator, see egraph/doc/future/abstract-syntax-task.md §2
         _ => {
             // Ground term insertion: (op args...)
             let children = parse_term_children(input, base)?;
@@ -1892,6 +1898,7 @@ fn parse_command(
 fn parse_decl_tags(input: &mut &str, base: usize) -> ModalResult<(Vec<AlgTag>, OpMeta)> {
     let mut tags = Vec::new();
     let mut meta = OpMeta::default();
+    // TODO(abs-surface-syntax): accept `:interp OP` (OP is an `op_token`, so `<` and `+` parse) and `:range (lo hi)` (decimal integers, optional `-`) in this loop; they are not `AlgTag`s and not `OpMeta` fields (`OpMeta` is `Copy`), see egraph/doc/future/abstract-syntax-task.md §2
     loop {
         ws_inner(input);
         // Extraction tags first: neither prefixes nor is prefixed by an algebra tag.

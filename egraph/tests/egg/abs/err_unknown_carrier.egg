@@ -1,0 +1,6 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: sort 'F': unknown carrier 'float'
+;; The carrier names one the registry lists: int, (bitvec N), bool.
+(sort F :interp float)

@@ -1117,6 +1117,7 @@ pub(crate) fn lower_eager<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
             // node variable of a `LitBind` atom is bound by the enclosing pattern's
             // `ExtractChild`, one step before the `ExtractLitVal` that fills the
             // value slot the guard reads.
+            // TODO(abs-surface-syntax): schedule an `RAtom::AbsGuard` once its variable is bound, as a step that tests the class's abstract value; until abs-saturation-engine lands the value is top and the step always fails, see egraph/doc/future/abstract-syntax-task.md §5
             if let RAtom::Pred { guard, deps } = &atoms[ai] {
                 if deps.iter().all(|d| used[*d]) {
                     steps.push(Step::CheckPred {

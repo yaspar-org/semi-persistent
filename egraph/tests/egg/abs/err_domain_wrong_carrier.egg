@@ -1,0 +1,6 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: sort 'Int': domain 'bits' is not available for carrier int
+;; A known domain that the registry does not list for this carrier is rejected.
+(sort Int :interp int :domains (interval bits))

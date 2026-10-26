@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: (congruence r m) needs m >= 1 and 0 <= r < m
+;; The residue lies in 0..m.
+(sort Int :interp int)
+(constructor x () Int)
+(refine (x) (congruence 2 2))

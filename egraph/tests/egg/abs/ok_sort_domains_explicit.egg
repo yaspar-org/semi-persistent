@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; WARNING: the analysis is not active
+;; Each carrier with an explicit domain set: any subset the registry lists for it.
+(sort Int   :interp int         :domains (interval congruence nonzero))
+(sort BV32  :interp (bitvec 32) :domains (ubounds sbounds congruence bits))
+(sort Bool  :interp bool        :domains (bool))
+(sort Small :interp int         :domains (interval))
+(sort Word  :interp (bitvec 8)  :domains (bits))
+(sort Expr)
+(constructor a () Int)
+(constructor b () BV32)
+(constructor p () Bool)
+(constructor s () Small)
+(constructor w () Word)
+(constructor e () Expr)
+(let x (a))
+(check-eq x (a))
