@@ -16,7 +16,9 @@ macro_rules! abstract_domain {
             use crate::tnum::Tnum;
             use crate::anum::Anum;
             use crate::unum::Unum;
-            use crate::chopped::{ChoppedTnum, ChoppedUnum};
+            use crate::chopped::{ChoppedAnum, ChoppedTnum, ChoppedUnum};
+            use crate::div::*;
+            use crate::tbit::TBit;
             verus! {
 
             // ============================================================
@@ -224,6 +226,80 @@ macro_rules! abstract_domain {
                 eq_from_bits((a & !b) as nat, bw_and_not(a as nat, b as nat));
             }
 
+            /// The executable join's value equals the spec join's value: for
+            /// well-formed operands `sv & tv` has no bit in the join mask.
+            pub proof fn native_join_val(sv: $uint, sm: $uint, tv: $uint, tm: $uint)
+                requires sv & sm == (0 as $uint), tv & tm == (0 as $uint)
+                ensures ((sv & tv) & !((sv & tv) ^ ((sv ^ sm) | (tv ^ tm)))) == sv & tv
+            {
+                assert(((sv & tv) & !((sv & tv) ^ ((sv ^ sm) | (tv ^ tm)))) == sv & tv) by(bit_vector)
+                    requires sv & sm == (0 as $uint), tv & tm == (0 as $uint);
+            }
+
+            /// A value that is some word with the mask bits cleared has no bit in
+            /// the mask: normalizing it again changes nothing.
+            pub proof fn native_and_not_idem(c: $uint, m: $uint, v: $uint)
+                requires (c & !m) == v
+                ensures (v & !m) == v
+            {
+                assert((v & !m) == v) by(bit_vector)
+                    requires (c & !m) == v;
+            }
+
+            /// XOR with all ones is bitwise NOT.
+            pub proof fn native_xor_ones(c: $uint)
+                ensures c ^ !(0 as $uint) == !c
+            {
+                assert(c ^ !(0 as $uint) == !c) by(bit_vector);
+            }
+
+            /// Native wrapping negation == chop(2^W - c, W).
+            pub proof fn native_neg(c: $uint)
+                ensures ((0 as $uint).wrapping_sub(c)) as nat == chop((exp($bits as nat) - c as nat) as nat, $bits as nat)
+            {
+                let w: nat = $bits as nat;
+                exp_concrete(w);
+                if c == 0 {
+                    nat_add_correct(0, exp(w));
+                    chop_nat_add_pow2(0, w);
+                    chop_id(0, w);
+                } else {
+                    chop_id((exp(w) - c as nat) as nat, w);
+                }
+            }
+
+            /// Native wrapping subtraction == chop(a + (2^W - b), W).
+            pub proof fn native_sub(a: $uint, b: $uint)
+                ensures (a.wrapping_sub(b)) as nat == chop(nat_add(a as nat, (exp($bits as nat) - b as nat) as nat), $bits as nat)
+            {
+                let w: nat = $bits as nat;
+                exp_concrete(w);
+                nat_add_correct(a as nat, (exp(w) - b as nat) as nat);
+                if a >= b {
+                    let d = (a - b) as nat;
+                    nat_add_correct(d, exp(w));
+                    chop_nat_add_pow2(d, w);
+                    chop_id(d, w);
+                } else {
+                    chop_id(nat_add(a as nat, (exp(w) - b as nat) as nat), w);
+                }
+            }
+
+            /// The native low bit is the spec head bit.
+            pub proof fn native_low_bit(x: $uint)
+                ensures ((x & (1 as $uint)) == (1 as $uint)) == hd(x as nat).b()
+            {
+                bit_is_native_bit(x, 0);
+                assert(x >> (0 as $uint) == x) by(bit_vector);
+            }
+
+            /// Native right shift by one == spec rsh on nat.
+            pub proof fn native_rsh(a: $uint)
+                ensures (a >> (1 as $uint)) as nat == rsh(a as nat)
+            {
+                assert((a >> (1 as $uint)) as nat == a as nat / 2) by(bit_vector);
+            }
+
             /// Native fixed-width left shift is infinite-bitstring left shift,
             /// truncated back to the native width.
             #[verifier::spinoff_prover]
@@ -260,6 +336,136 @@ macro_rules! abstract_domain {
                 );
             }
 
+            /// Native right shift by k == spec rshi on nat.
+            pub proof fn native_rshi(a: $uint, k: nat)
+                requires k < ($bits as nat)
+                ensures (a >> (k as $uint)) as nat == rshi(a as nat, k)
+                decreases k
+            {
+                if k == 0 {
+                    assert(a >> (0 as $uint) == a) by(bit_vector);
+                } else {
+                    let ku = k as $uint;
+                    native_rsh(a);
+                    native_rshi(a >> (1 as $uint), (k - 1) as nat);
+                    assert(a >> ku == (a >> (1 as $uint)) >> ((ku - (1 as $uint)) as $uint)) by(bit_vector)
+                        requires ku < ($bits as $uint), ku > (0 as $uint);
+                }
+            }
+
+            /// Native left shift by k == spec lshi on nat, truncated to the width.
+            pub proof fn native_lshi(a: $uint, k: nat)
+                requires k < ($bits as nat)
+                ensures (a << (k as $uint)) as nat == chop(lshi(a as nat, k), $bits as nat)
+                decreases k
+            {
+                let w: nat = $bits as nat;
+                if k == 0 {
+                    assert(a << (0 as $uint) == a) by(bit_vector);
+                    native_fits(a);
+                } else {
+                    let ku = k as $uint;
+                    let b = a << ((ku - (1 as $uint)) as $uint);
+                    native_lshi(a, (k - 1) as nat);
+                    native_lsh(b);
+                    chop_lsh(lshi(a as nat, (k - 1) as nat), w);
+                    assert(a << ku == b << (1 as $uint)) by(bit_vector)
+                        requires ku < ($bits as $uint), ku > (0 as $uint), b == a << ((ku - (1 as $uint)) as $uint);
+                }
+            }
+
+            // ============================================================
+            // Bit length, all-ones masks and the shifted-in dividend bit
+            // ============================================================
+
+            /// Bit length of x, len(x). A shift loop rather than leading_zeros:
+            /// vstd specifies leading_zeros per type (u64's returns int), and
+            /// this macro is generic over the width.
+            pub fn bit_len(x: $uint) -> (r: u32)
+                ensures r as nat == len(x as nat), r <= $bits
+            {
+                let mut y = x;
+                let mut n: u32 = 0;
+                proof { exp_concrete($bits as nat); len_le(x as nat, $bits as nat); }
+                while y != 0
+                    invariant len(x as nat) == n as nat + len(y as nat), len(x as nat) <= $bits as nat
+                    decreases y
+                {
+                    proof {
+                        native_rsh(y);
+                        assert(y >> (1 as $uint) < y) by(bit_vector) requires y != (0 as $uint);
+                    }
+                    y >>= 1;
+                    n += 1;
+                }
+                n
+            }
+
+            /// all_ones(p) as a register, for p <= W.
+            pub fn ones(p: u32) -> (r: $uint)
+                requires p <= $bits
+                ensures r as nat == all_ones(p as nat)
+            {
+                proof { exp_concrete($bits as nat); }
+                if p >= $bits {
+                    proof { assert(!(0 as $uint) == $max_val) by(bit_vector); }
+                    !(0 as $uint)
+                } else {
+                    proof {
+                        native_lshi(1, p as nat);
+                        exp_succ(p as nat);
+                        exp_le(p as nat + 1, $bits as nat);
+                        exp_pos(p as nat);
+                        chop_id(exp(p as nat), $bits as nat);
+                    }
+                    ((1 as $uint) << (p as $uint)) - 1
+                }
+            }
+
+            /// Shifting a remainder of fewer than W bits left by one and bringing
+            /// in bit i of the dividend is lsh_or_tb on the spec side.
+            proof fn bridge_shift_in(rv: $uint, sv: $uint, i1: u32, e: nat)
+                requires i1 < $bits, (rv as nat) < exp(e), e + 1 <= $bits as nat
+                ensures
+                    ((rv << 1) | ((sv >> (i1 as $uint)) & (1 as $uint))) as nat
+                        == cons(rv as nat, bit(sv as nat, i1 as nat)),
+            {
+                let w: nat = $bits as nat;
+                let b = (sv >> (i1 as $uint)) & (1 as $uint);
+                let bb = bit(sv as nat, i1 as nat);
+                bit_is_native_bit(sv, i1 as nat);
+                assert(b == (0 as $uint) || b == (1 as $uint)) by(bit_vector)
+                    requires b == (sv >> (i1 as $uint)) & (1 as $uint);
+                assert(b as nat == cons(0, bb));
+                native_lsh(rv);
+                lsh_is_times2(rv as nat);
+                exp_succ(e);
+                exp_le(e + 1, w);
+                chop_id(lsh(rv as nat), w);
+                native_or(rv << 1, b);
+                assert forall|j: nat| #![auto] bit(bw_or(lsh(rv as nat), cons(0, bb)), j) == bit(cons(rv as nat, bb), j) by {
+                    or_bit(lsh(rv as nat), cons(0, bb), j);
+                    bit_cons(rv as nat, Bit::f(), j);
+                    bit_cons(0, bb, j);
+                    bit_cons(rv as nat, bb, j);
+                    if j > 0 { bit_zero((j - 1) as nat); }
+                };
+                eq_from_bits(bw_or(lsh(rv as nat), cons(0, bb)), cons(rv as nat, bb));
+            }
+
+            /// A single register bit: 1 << i is exp(i).
+            proof fn bridge_pow2(i1: u32)
+                requires i1 < $bits
+                ensures ((1 as $uint) << (i1 as $uint)) as nat == exp(i1 as nat)
+            {
+                exp_concrete($bits as nat);
+                native_lshi(1, i1 as nat);
+                exp_succ(i1 as nat);
+                exp_le(i1 as nat + 1, $bits as nat);
+                exp_pos(i1 as nat);
+                chop_id(exp(i1 as nat), $bits as nat);
+            }
+
             // ============================================================
             // ExecTnum: Executable Tnum
             // ============================================================
@@ -282,8 +488,13 @@ macro_rules! abstract_domain {
                     chop_id(self.val as nat, $bits as nat);
                     chop_id(self.mask as nat, $bits as nat);
                 }
-                #[inline] pub fn constant(n: $uint) -> (r: ExecTnum) ensures r.wf() {
-                    proof { assert(n & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                #[inline] pub fn constant(n: $uint) -> (r: ExecTnum) ensures r.wf(), r.has(n) {
+                    proof {
+                        assert(n & (0 as $uint) == (0 as $uint)) by(bit_vector);
+                        assert(n & !(0 as $uint) == n) by(bit_vector);
+                        native_and_not(n, 0);
+                        Tnum { val: n as nat, mask: 0 }.has_equiv(n as nat);
+                    }
                     ExecTnum { val: n, mask: 0 }
                 }
                 #[inline] pub fn top() -> (r: ExecTnum) ensures r.wf() {
@@ -300,7 +511,8 @@ macro_rules! abstract_domain {
                 }
                 #[inline] pub fn bw_or(&self, t: &ExecTnum) -> (r: ExecTnum)
                     requires self.wf(), t.wf()
-                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1 | c2)
+                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1 | c2),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).bw_or(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
                 {
                     let sv = self.val; let sm = self.mask; let tv = t.val; let tm = t.mask;
                     let v = sv | tv; let m = (sm | tm) & !v;
@@ -310,17 +522,24 @@ macro_rules! abstract_domain {
                         native_or(sv, tv);
                         native_or(sm, tm);
                         native_and_not(sm | tm, v);
-                        self.wf_inv(); t.wf_inv();
-                        self.to_tn().or_sound(t.to_tn());
+                        let w: nat = $bits as nat;
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: self.to_tn(), w };
+                        let ct_t = ChoppedTnum { tnum: t.to_tn(), w };
+                        ct_s.or_sound(ct_t);
+                        assert(r.to_tn() == ct_s.bw_or(ct_t).tnum);
                         assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1 | c2) by {
+                            native_fits(c1); native_fits(c2);
                             native_or(c1, c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
                         };
                     }
                     r
                 }
                 #[inline] pub fn bw_and(&self, t: &ExecTnum) -> (r: ExecTnum)
                     requires self.wf(), t.wf()
-                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1 & c2)
+                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1 & c2),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).bw_and(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
                 {
                     let sv = self.val; let sm = self.mask; let tv = t.val; let tm = t.mask;
                     let r = ExecTnum { val: sv & tv, mask: sm | tm };
@@ -328,17 +547,24 @@ macro_rules! abstract_domain {
                         assert(sv & sm == (0 as $uint) && tv & tm == (0 as $uint) ==> ((sv&tv) & (sm|tm) == (0 as $uint))) by(bit_vector);
                         native_and(sv, tv);
                         native_or(sm, tm);
-                        self.wf_inv(); t.wf_inv();
-                        self.to_tn().and_sound(t.to_tn());
+                        let w: nat = $bits as nat;
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: self.to_tn(), w };
+                        let ct_t = ChoppedTnum { tnum: t.to_tn(), w };
+                        ct_s.and_sound(ct_t);
+                        assert(r.to_tn() == ct_s.bw_and(ct_t).tnum);
                         assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1 & c2) by {
+                            native_fits(c1); native_fits(c2);
                             native_and(c1, c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
                         };
                     }
                     r
                 }
                 #[inline] pub fn bw_xor(&self, t: &ExecTnum) -> (r: ExecTnum)
                     requires self.wf(), t.wf()
-                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1 ^ c2)
+                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1 ^ c2),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).bw_xor(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
                 {
                     let v = self.val ^ t.val; let m = self.mask | t.mask;
                     let r = ExecTnum { val: v & !m, mask: m };
@@ -347,24 +573,143 @@ macro_rules! abstract_domain {
                         native_xor(self.val, t.val);
                         native_or(self.mask, t.mask);
                         native_and_not(v, m);
-                        self.wf_inv(); t.wf_inv();
-                        self.to_tn().xor_sound(t.to_tn());
+                        let w: nat = $bits as nat;
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: self.to_tn(), w };
+                        let ct_t = ChoppedTnum { tnum: t.to_tn(), w };
+                        ct_s.xor_sound(ct_t);
+                        assert(r.to_tn() == ct_s.bw_xor(ct_t).tnum);
                         assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1 ^ c2) by {
+                            native_fits(c1); native_fits(c2);
                             native_xor(c1, c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
                         };
                     }
                     r
                 }
-                #[inline] pub fn bw_not(&self) -> (r: ExecTnum) requires self.wf() ensures r.wf() {
-                    proof { assert((!(0 as $uint)) & (0 as $uint) == (0 as $uint)) by(bit_vector); }
-                    self.bw_xor(&ExecTnum { val: !(0 as $uint), mask: 0 })
+                /// Logical shift right by k bits.
+                #[inline] pub fn rshi(&self, k: u32) -> (r: ExecTnum)
+                    requires self.wf(), k < $bits
+                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c >> (k as $uint)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).rshi(k as nat).tnum
+                {
+                    let v = self.val; let m = self.mask; let ku = k as $uint;
+                    proof { assert(v & m == (0 as $uint) ==> (v >> ku) & (m >> ku) == (0 as $uint)) by(bit_vector); }
+                    let r = ExecTnum { val: v >> ku, mask: m >> ku };
+                    proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped();
+                        let ct = ChoppedTnum { tnum: self.to_tn(), w };
+                        ct.rshi_sound(k as nat);
+                        // Bridge: native >> k == spec rshi
+                        native_rshi(v, k as nat);
+                        native_rshi(m, k as nat);
+                        assert(r.to_tn() == ct.rshi(k as nat).tnum);
+                        assert forall|c: $uint| #![auto] self.has(c) implies r.has(c >> ku) by {
+                            native_fits(c);
+                            native_rshi(c, k as nat);
+                            assert(ct.has(c as nat));
+                        };
+                    }
+                    r
                 }
-                #[inline] pub fn bw_and_not(&self, t: &ExecTnum) -> (r: ExecTnum) requires self.wf(), t.wf() ensures r.wf() {
-                    self.bw_and(&t.bw_not())
+                /// Shift left by k bits, truncated to the width.
+                #[inline] pub fn lshi(&self, k: u32) -> (r: ExecTnum)
+                    requires self.wf(), k < $bits
+                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c << (k as $uint)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).lshi(k as nat).tnum
+                {
+                    let v = self.val; let m = self.mask; let ku = k as $uint;
+                    proof { assert(v & m == (0 as $uint) ==> (v << ku) & (m << ku) == (0 as $uint)) by(bit_vector); }
+                    let r = ExecTnum { val: v << ku, mask: m << ku };
+                    proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped();
+                        let ct = ChoppedTnum { tnum: self.to_tn(), w };
+                        ct.lshi_sound(k as nat);
+                        // Bridge: native << k == chop(spec lshi, W)
+                        native_lshi(v, k as nat);
+                        native_lshi(m, k as nat);
+                        assert(r.to_tn() == ct.lshi(k as nat).tnum);
+                        assert forall|c: $uint| #![auto] self.has(c) implies r.has(c << ku) by {
+                            native_fits(c);
+                            native_lshi(c, k as nat);
+                            assert(ct.has(c as nat));
+                            assert(ct.lshi(k as nat).has(chop(lshi(c as nat, k as nat), w)));
+                        };
+                    }
+                    r
+                }
+                /// Bitwise NOT: flip the known bits, keep the unknown ones. This is
+                /// the spec XOR with the all-ones word.
+                #[inline] pub fn bw_not(&self) -> (r: ExecTnum)
+                    requires self.wf()
+                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(!c),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).bw_not().tnum
+                {
+                    let v = self.val; let m = self.mask;
+                    let ones: $uint = !(0 as $uint);
+                    let x = v ^ ones;
+                    let r = ExecTnum { val: x & !m, mask: m };
+                    proof {
+                        assert(((x & !m) & m) == (0 as $uint)) by(bit_vector);
+                        let w: nat = $bits as nat;
+                        self.to_chopped();
+                        let ct = ChoppedTnum { tnum: self.to_tn(), w };
+                        ct.not_sound();
+                        // Bridge: the native all-ones word is spec all_ones(W).
+                        exp_concrete(w);
+                        assert(ones == $max_val) by(bit_vector) requires ones == !(0 as $uint);
+                        assert(ones as nat == all_ones(w));
+                        native_xor(v, ones);
+                        native_or(m, 0);
+                        assert(m | (0 as $uint) == m) by(bit_vector);
+                        native_and_not(x, m);
+                        assert(r.to_tn() == ct.bw_not().tnum);
+                        assert forall|c: $uint| #![auto] self.has(c) implies r.has(!c) by {
+                            native_fits(c);
+                            native_xor(c, ones);
+                            native_xor_ones(c);
+                            assert(ct.has(c as nat));
+                        };
+                    }
+                    r
+                }
+                /// AND with the complement of the second operand: the spec
+                /// bw_and_not, computed directly.
+                #[inline] pub fn bw_and_not(&self, t: &ExecTnum) -> (r: ExecTnum)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1 & !c2),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).bw_and_not(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
+                {
+                    let sv = self.val; let sm = self.mask; let tv = t.val; let tm = t.mask;
+                    let v = (sv & !tv) & !tm;
+                    let m = sm | tm;
+                    let r = ExecTnum { val: v, mask: m };
+                    proof {
+                        assert(sv & sm == (0 as $uint) ==> (((sv & !tv) & !tm) & (sm | tm)) == (0 as $uint)) by(bit_vector);
+                        let w: nat = $bits as nat;
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: self.to_tn(), w };
+                        let ct_t = ChoppedTnum { tnum: t.to_tn(), w };
+                        ct_s.and_not_sound(ct_t);
+                        // Bridge: native bitwise == spec bitwise
+                        native_and_not(sv, tv);
+                        native_and_not(sv & !tv, tm);
+                        native_or(sm, tm);
+                        assert(r.to_tn() == ct_s.bw_and_not(ct_t).tnum);
+                        assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1 & !c2) by {
+                            native_fits(c1); native_fits(c2);
+                            native_and_not(c1, c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
+                        };
+                    }
+                    r
                 }
                 #[inline] pub fn add(&self, t: &ExecTnum) -> (r: ExecTnum)
                     requires self.wf(), t.wf()
-                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_add(c2))
+                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_add(c2)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).add(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
                 {
                     let lbv = self.val.wrapping_add(t.val);
                     let lbm = self.mask.wrapping_add(t.mask);
@@ -429,25 +774,110 @@ macro_rules! abstract_domain {
                     }
                     r
                 }
-                #[inline] pub fn neg(&self) -> (r: ExecTnum) requires self.wf() ensures r.wf() {
-                    self.bw_not().add(&ExecTnum::constant(1))
+                /// Two's complement negation, encoded as NOT then add one: the spec
+                /// neg is bw_not followed by add of the unit 1.
+                #[inline] pub fn neg(&self) -> (r: ExecTnum)
+                    requires self.wf()
+                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has((0 as $uint).wrapping_sub(c)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).neg().tnum
+                {
+                    let n = self.bw_not();
+                    proof { assert((1 as $uint) & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                    let one = ExecTnum { val: 1, mask: 0 };
+                    let r = n.add(&one);
+                    proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped();
+                        let ct = ChoppedTnum { tnum: self.to_tn(), w };
+                        ct.neg_sound();
+                        assert(one.to_tn() == Tnum::unit(1));
+                        assert(r.to_tn() == ct.neg().tnum);
+                        assert forall|c: $uint| #![auto] self.has(c) implies r.has((0 as $uint).wrapping_sub(c)) by {
+                            native_fits(c);
+                            native_neg(c);
+                            assert(ct.has(c as nat));
+                        };
+                    }
+                    r
                 }
-                #[inline] pub fn sub(&self, t: &ExecTnum) -> (r: ExecTnum) requires self.wf(), t.wf() ensures r.wf() {
-                    self.add(&t.neg())
+                /// Subtraction, encoded as adding the negation: the spec sub.
+                #[inline] pub fn sub(&self, t: &ExecTnum) -> (r: ExecTnum)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_sub(c2)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).sub(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
+                {
+                    let nt = t.neg();
+                    let r = self.add(&nt);
+                    proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: self.to_tn(), w };
+                        let ct_t = ChoppedTnum { tnum: t.to_tn(), w };
+                        ct_s.sub_sound(ct_t);
+                        assert(r.to_tn() == ct_s.sub(ct_t).tnum);
+                        assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_sub(c2)) by {
+                            native_fits(c1); native_fits(c2);
+                            native_sub(c1, c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
+                        };
+                    }
+                    r
                 }
-                #[inline] pub fn rsh(&self) -> (r: ExecTnum) requires self.wf() ensures r.wf() {
+                #[inline] pub fn rsh(&self) -> (r: ExecTnum)
+                    requires self.wf()
+                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c >> (1 as $uint)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).rsh().tnum
+                {
                     let v = self.val; let m = self.mask;
                     proof { assert(v & m == (0 as $uint) ==> (v >> (1 as $uint)) & (m >> (1 as $uint)) == (0 as $uint)) by(bit_vector); }
-                    ExecTnum { val: v >> 1, mask: m >> 1 }
+                    let r = ExecTnum { val: v >> 1, mask: m >> 1 };
+                    proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped();
+                        let ct = ChoppedTnum { tnum: self.to_tn(), w };
+                        ct.rsh_sound();
+                        // Bridge: native >> 1 == spec rsh
+                        native_rsh(v);
+                        native_rsh(m);
+                        assert(r.to_tn() == ct.rsh().tnum);
+                        assert forall|c: $uint| #![auto] self.has(c) implies r.has(c >> (1 as $uint)) by {
+                            native_fits(c);
+                            native_rsh(c);
+                        };
+                    }
+                    r
                 }
-                #[inline] pub fn lsh(&self) -> (r: ExecTnum) requires self.wf() ensures r.wf() {
+                #[inline] pub fn lsh(&self) -> (r: ExecTnum)
+                    requires self.wf()
+                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c << (1 as $uint)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).lsh().tnum
+                {
                     let v = self.val; let m = self.mask;
                     proof { assert(v & m == (0 as $uint) ==> (v << (1 as $uint)) & (m << (1 as $uint)) == (0 as $uint)) by(bit_vector); }
-                    ExecTnum { val: v << 1, mask: m << 1 }
+                    let r = ExecTnum { val: v << 1, mask: m << 1 };
+                    proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped();
+                        let ct = ChoppedTnum { tnum: self.to_tn(), w };
+                        ct.lsh_sound();
+                        // Bridge: native << 1 == chop(spec lsh, W)
+                        native_lsh(v);
+                        native_lsh(m);
+                        assert(r.to_tn() == ct.lsh().tnum);
+                        assert forall|c: $uint| #![auto] self.has(c) implies r.has(c << (1 as $uint)) by {
+                            native_fits(c);
+                            native_lsh(c);
+                            assert(ct.has(c as nat));
+                            assert(ct.lsh().has(chop(lsh(c as nat), w)));
+                            assert((c << (1 as $uint)) as nat == chop(lsh(c as nat), w));
+                        };
+                    }
+                    r
                 }
                 #[inline] pub fn join(&self, t: &ExecTnum) -> (r: ExecTnum)
                     requires self.wf(), t.wf()
-                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c), forall|c: $uint| #![auto] t.has(c) ==> r.has(c)
+                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c), forall|c: $uint| #![auto] t.has(c) ==> r.has(c),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).join(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
                 {
                     let sv = self.val; let sm = self.mask; let tv = t.val; let tm = t.mask;
                     let v = sv & tv;
@@ -456,30 +886,25 @@ macro_rules! abstract_domain {
                     let r = ExecTnum { val: v & !m, mask: m };
                     proof {
                         assert(sv & sm == (0 as $uint) && tv & tm == (0 as $uint) ==> ((v & !m) & m == (0 as $uint))) by(bit_vector);
+                        let w: nat = $bits as nat;
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: self.to_tn(), w };
+                        let ct_t = ChoppedTnum { tnum: t.to_tn(), w };
+                        ct_s.join_sound(ct_t);
+                        // Bridge: native bitwise == spec bitwise
                         native_and(sv, tv);
                         native_xor(sv, sm); native_xor(tv, tm);
                         native_or(sv ^ sm, tv ^ tm);
                         native_xor(v, u);
-                        native_and_not(v, m);
-                        self.wf_inv(); t.wf_inv();
-                        self.to_tn().join_sound(t.to_tn());
-                        // r.to_tn() and spec join have same mask; vals agree mod mask
-                        // so has_bw is identical: bw_and_not(x, m) == (v&!m) <==> bw_and_not(x, m) == v
+                        native_join_val(sv, sm, tv, tm);
+                        assert(r.to_tn() == ct_s.join(ct_t).tnum);
                         assert forall|c: $uint| #![auto] self.has(c) implies r.has(c) by {
-                            self.to_tn().join_sound(t.to_tn());
-                            self.to_tn().join(t.to_tn()).has_equiv(c as nat);
-                            r.to_tn().has_equiv(c as nat);
-                            assert((c & !m) == v ==> (c & !m) == (v & !m))
-                                by(bit_vector);
-                            native_and_not(c, m);
+                            native_fits(c);
+                            assert(ct_s.has(c as nat));
                         };
                         assert forall|c: $uint| #![auto] t.has(c) implies r.has(c) by {
-                            self.to_tn().join_sound(t.to_tn());
-                            self.to_tn().join(t.to_tn()).has_equiv(c as nat);
-                            r.to_tn().has_equiv(c as nat);
-                            assert((c & !m) == v ==> (c & !m) == (v & !m))
-                                by(bit_vector);
-                            native_and_not(c, m);
+                            native_fits(c);
+                            assert(ct_t.has(c as nat));
                         };
                     }
                     r
@@ -495,52 +920,494 @@ macro_rules! abstract_domain {
                     let r = ExecTnum { val: v & !m, mask: m };
                     proof {
                         assert(((v & !m) & m) == (0 as $uint)) by(bit_vector);
+                        let w: nat = $bits as nat;
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: self.to_tn(), w };
+                        let ct_t = ChoppedTnum { tnum: t.to_tn(), w };
+                        ct_s.meet_sound(ct_t);
+                        // Bridge: native bitwise == spec bitwise
                         native_or(sv, tv);
                         native_xor(sv, sm); native_xor(tv, tm);
                         native_and(sv ^ sm, tv ^ tm);
                         native_xor(v, u);
-                        native_and_not(v, m);
-                        self.wf_inv(); t.wf_inv();
-                        self.to_tn().meet_sound(t.to_tn());
+                        let spec = ct_s.meet(ct_t).tnum;
+                        assert(spec.val == v as nat && spec.mask == m as nat);
+                        // A common member makes the spec meet's value disjoint from
+                        // its mask, so the executable normalization is the identity.
                         assert forall|c: $uint| #![auto] self.has(c) && t.has(c) implies r.has(c) by {
-                            self.to_tn().meet_sound(t.to_tn());
-                            self.to_tn().meet(t.to_tn()).has_equiv(c as nat);
-                            r.to_tn().has_equiv(c as nat);
-                            assert((c & !m) == v ==> (c & !m) == (v & !m))
-                                by(bit_vector);
+                            native_fits(c);
+                            assert(ct_s.has(c as nat) && ct_t.has(c as nat));
+                            assert(spec.has(c as nat));
+                            spec.has_equiv(c as nat);
                             native_and_not(c, m);
+                            native_and_not_idem(c, m, v);
+                            native_and_not(v, m);
+                            assert(r.to_tn() == spec);
                         };
                     }
                     r
                 }
-                pub fn mul_bit(&self, bv: bool, bm: bool) -> (r: ExecTnum)
-                    requires self.wf(), !(bv && bm) ensures r.wf()
+                /// Multiplication following Anum::mul_step_rc: the exact product of the
+                /// known bits is computed once, and an accumulator Tnum with val 0
+                /// collects only the uncertainty masks of the shifted multiplicand.
+                /// The loop simulates mul_step_rc through to_chopped(), and
+                /// Anum::mul_step_r equates mul_step_rc with tnum_mul, which is the
+                /// L3 ChoppedTnum::mul.
+                pub fn mul(&self, t: &ExecTnum) -> (r: ExecTnum)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_mul(c2)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).mul(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
                 {
-                    if bv { *self }
-                    else if bm {
-                        proof { assert((0 as $uint) & (self.val | self.mask) == (0 as $uint)) by(bit_vector); }
-                        ExecTnum { val: 0, mask: self.val | self.mask }
+                    let ghost w: nat = $bits as nat;
+                    let ghost t0 = self.to_tn();
+                    let ghost t1 = t.to_tn();
+                    let ghost avs = Tnum::ctor(mul(t0.val, t1.val), 0);
+                    // The exact product of the known bits.
+                    let pv = self.val.wrapping_mul(t.val);
+                    proof { assert(pv & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                    let acc_v = ExecTnum { val: pv, mask: 0 };
+                    proof { assert((0 as $uint) & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                    let mut acc_m = ExecTnum { val: 0, mask: 0 };
+                    let mut p = *self;
+                    let mut q = *t;
+                    let ghost mut ps = t0;
+                    let ghost mut qs = t1;
+                    let ghost mut ams = Tnum::ctor(0, 0);
+                    let ghost mut a_s = Anum::zero();
+                    proof {
+                        // From the initial state, mul_step_rc is tnum_mul.
+                        nat_mul_acc_correct(t0.val, t1.val, 0);
+                        Anum::mul_step_r(t0, t1, t0, t1, avs, ams, a_s);
+                        // The executable state is the chopped spec state.
+                        native_fits(t.val); native_fits(t.mask);
+                        exp_pos(w);
+                        chop_id(0, w);
+                        disj_zero(0);
                     }
-                    else { ExecTnum::constant(0) }
-                }
-                pub fn mul(&self, t: &ExecTnum) -> (r: ExecTnum) requires self.wf(), t.wf() ensures r.wf() {
-                    let mut acc = ExecTnum::constant(0);
-                    let mut md = *self;
-                    let mut mr = t.val;
-                    let mut mm = t.mask;
-                    let mut i: u32 = 0;
-                    while i < $bits
-                        invariant acc.wf(), md.wf(), i <= $bits, mr & mm == (0 as $uint)
-                        decreases $bits - i
+                    while !(p.val == 0 && p.mask == 0)
+                        invariant
+                            w == $bits as nat,
+                            p.wf(), q.wf(), acc_m.wf(),
+                            p.to_tn() == ps,
+                            q.to_tn() == qs.chop_tn(w),
+                            acc_m.to_tn() == ams.chop_tn(w),
+                            ams.inv(),
+                            Anum::mul_step_rc(t0, t1, ps, qs, avs, ams, a_s) == Anum::tnum_mul(t0, t1),
+                        decreases p.val as nat + p.mask as nat
                     {
-                        if (mr & 1) == 1 { acc = acc.add(&md); }
-                        else if (mm & 1) == 1 { acc = acc.add(&md.mul_bit(false, true)); }
-                        md = md.lsh();
-                        proof { assert(mr & mm == (0 as $uint) ==> (mr >> (1 as $uint)) & (mm >> (1 as $uint)) == (0 as $uint)) by(bit_vector); }
-                        mr >>= 1; mm >>= 1;
-                        i += 1;
+                        let ghost ps0 = ps;
+                        let ghost qs0 = qs;
+                        let ghost ams0 = ams;
+                        let ghost a0 = a_s;
+                        proof {
+                            // The branch tests are the spec head bit of p.
+                            native_low_bit(p.val);
+                            native_low_bit(p.mask);
+                            exp_pos(w);
+                            chop_id(0, w);
+                        }
+                        if (p.val & 1) == 1 {
+                            proof { assert((0 as $uint) & q.mask == (0 as $uint)) by(bit_vector); }
+                            let add_t = ExecTnum { val: 0, mask: q.mask };
+                            acc_m = acc_m.add(&add_t);
+                            proof {
+                                let c = Tnum::ctor(0, qs0.mask);
+                                assert(add_t.to_tn() == c.chop_tn(w));
+                                Tnum::chop_add_bitwise(ams0, c, w);
+                                disj_zero(qs0.mask);
+                                ams0.add_bitwise_eq(c);
+                                ams0.add_inv(c);
+                                ams = ams0.add(c);
+                            }
+                        } else if (p.mask & 1) == 1 {
+                            proof { assert((0 as $uint) & (q.val | q.mask) == (0 as $uint)) by(bit_vector); }
+                            let add_t = ExecTnum { val: 0, mask: q.val | q.mask };
+                            acc_m = acc_m.add(&add_t);
+                            proof {
+                                let c = Tnum::ctor(0, qs0.max());
+                                native_or(q.val, q.mask);
+                                chop_bw_or(qs0.val, qs0.mask, w);
+                                assert(add_t.to_tn() == c.chop_tn(w));
+                                Tnum::chop_add_bitwise(ams0, c, w);
+                                disj_zero(qs0.max());
+                                ams0.add_bitwise_eq(c);
+                                ams0.add_inv(c);
+                                ams = ams0.add(c);
+                            }
+                        }
+                        proof { a_s = a0.add(Anum::from_tnum(qs0.mul_bit(ps0.head()))); }
+                        p = p.rsh();
+                        q = q.lsh();
+                        proof {
+                            ps = ps0.rsh();
+                            qs = qs0.lsh();
+                            Tnum::chop_lsh_tn(qs0, w);
+                        }
                     }
-                    acc
+                    let r = acc_m.add(&acc_v);
+                    proof {
+                        // p is zero, so mul_step_rc has returned ams + avs.
+                        assert(ps.is_zero());
+                        assert(ams.add(avs) == Anum::tnum_mul(t0, t1));
+                        // Bridge: the native product is the chopped spec product.
+                        bridge_mul(self.val, t.val);
+                        exp_pos(w);
+                        chop_id(0, w);
+                        assert(acc_v.to_tn() == avs.chop_tn(w));
+                        Tnum::chop_add_bitwise(ams, avs, w);
+                        disj_zero_r(mul(t0.val, t1.val));
+                        ams.add_bitwise_eq(avs);
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: t0, w };
+                        let ct_t = ChoppedTnum { tnum: t1, w };
+                        assert(r.to_tn() == ct_s.mul(ct_t).tnum);
+                        ct_s.mul_sound(ct_t);
+                        assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_mul(c2)) by {
+                            native_fits(c1); native_fits(c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
+                            nat_mul_acc_correct(c1 as nat, c2 as nat, 0);
+                            bridge_mul(c1, c2);
+                        };
+                    }
+                    r
+                }
+                /// Pair-join multiplication (Tnum::pair_mul on W-bit registers).
+                /// Start from the exact product of the known parts; for each
+                /// unknown bit l of t, join the accumulator with itself plus the
+                /// constant self.val << l; then for each unknown bit k of self,
+                /// join it with itself plus t << k. The two loops shift the
+                /// registers as the L2 recursions pj_const and pj_tnum do, and
+                /// each step is the chopped L2 step (chop_add_bitwise, chop_join,
+                /// chop_lsh_tn).
+                pub fn mul_pj(&self, t: &ExecTnum) -> (r: ExecTnum)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(), forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_mul(c2)),
+                        r.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).pair_mul(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).tnum
+                {
+                    let ghost w: nat = $bits as nat;
+                    let ghost t0 = self.to_tn();
+                    let ghost t1 = t.to_tn();
+                    let ghost acc0 = Tnum::unit(prod(t0.val, t1.val));
+                    let ghost cst = Tnum::pj_const(t0.val, t1.mask, acc0);
+                    let ghost whole = Tnum::pj_tnum(t1, t0.mask, cst);
+                    let pv = self.val.wrapping_mul(t.val);
+                    proof { assert(pv & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                    let mut acc = ExecTnum { val: pv, mask: 0 };
+                    let mut s: $uint = self.val;
+                    let mut ym: $uint = t.mask;
+                    let ghost mut ss: nat = t0.val;
+                    let ghost mut acc_s: Tnum = acc0;
+                    proof {
+                        bridge_mul(self.val, t.val);
+                        exp_pos(w);
+                        chop_id(0, w);
+                        native_fits(self.val);
+                        disj_zero_r(prod(t0.val, t1.val));
+                    }
+                    // Phase 1: the unknown bits of t, with the shifted known part of self.
+                    while ym != 0
+                        invariant
+                            w == $bits as nat,
+                            acc.wf(),
+                            acc.to_tn() == acc_s.chop_tn(w),
+                            acc_s.inv(),
+                            s as nat == chop(ss, w),
+                            Tnum::pj_const(ss, ym as nat, acc_s) == cst,
+                        decreases ym
+                    {
+                        let ghost acc_s0 = acc_s;
+                        let ghost ss0 = ss;
+                        let ghost ym0 = ym;
+                        proof {
+                            native_low_bit(ym);
+                            exp_pos(w);
+                            chop_id(0, w);
+                        }
+                        if (ym & 1) == 1 {
+                            proof { assert(s & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                            let c = ExecTnum { val: s, mask: 0 };
+                            let sum = acc.add(&c);
+                            acc = acc.join(&sum);
+                            proof {
+                                let u = Tnum::unit(ss0);
+                                assert(c.to_tn() == u.chop_tn(w));
+                                disj_zero_r(ss0);
+                                Tnum::chop_add_bitwise(acc_s0, u, w);
+                                acc_s0.add_bitwise_eq(u);
+                                acc_s0.add_inv(u);
+                                Tnum::chop_join(acc_s0, acc_s0.add(u), w);
+                                Tnum::pj_step_inv(acc_s0, u);
+                                acc_s = acc_s0.join(acc_s0.add(u));
+                            }
+                        }
+                        proof {
+                            native_lsh(s);
+                            chop_lsh(ss0, w);
+                            native_rsh(ym);
+                            ss = lsh(ss0);
+                        }
+                        proof { assert(ym >> (1 as $uint) < ym) by(bit_vector) requires ym != (0 as $uint); }
+                        s <<= 1;
+                        ym >>= 1;
+                    }
+                    let mut y = *t;
+                    let mut xm: $uint = self.mask;
+                    let ghost mut ys: Tnum = t1;
+                    proof {
+                        native_fits(t.val); native_fits(t.mask);
+                        t.wf_inv();
+                    }
+                    // Phase 2: the unknown bits of self, with t shifted.
+                    while xm != 0
+                        invariant
+                            w == $bits as nat,
+                            acc.wf(), y.wf(),
+                            acc.to_tn() == acc_s.chop_tn(w),
+                            y.to_tn() == ys.chop_tn(w),
+                            acc_s.inv(), ys.inv(),
+                            Tnum::pj_tnum(ys, xm as nat, acc_s) == whole,
+                        decreases xm
+                    {
+                        let ghost acc_s0 = acc_s;
+                        let ghost ys0 = ys;
+                        proof { native_low_bit(xm); }
+                        if (xm & 1) == 1 {
+                            let sum = acc.add(&y);
+                            acc = acc.join(&sum);
+                            proof {
+                                Tnum::chop_add_bitwise(acc_s0, ys0, w);
+                                acc_s0.add_bitwise_eq(ys0);
+                                acc_s0.add_inv(ys0);
+                                Tnum::chop_join(acc_s0, acc_s0.add(ys0), w);
+                                Tnum::pj_step_inv(acc_s0, ys0);
+                                acc_s = acc_s0.join(acc_s0.add(ys0));
+                            }
+                        }
+                        y = y.lsh();
+                        proof {
+                            Tnum::chop_lsh_tn(ys0, w);
+                            disj_cons(ys0.val, Bit::f(), ys0.mask, Bit::f());
+                            ys = ys0.lsh();
+                            native_rsh(xm);
+                            assert(xm >> (1 as $uint) < xm) by(bit_vector) requires xm != (0 as $uint);
+                        }
+                        xm >>= 1;
+                    }
+                    let r = acc;
+                    proof {
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: t0, w };
+                        let ct_t = ChoppedTnum { tnum: t1, w };
+                        assert(r.to_tn() == ct_s.pair_mul(ct_t).tnum);
+                        ct_s.pair_mul_sound(ct_t);
+                        assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_mul(c2)) by {
+                            native_fits(c1); native_fits(c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
+                            nat_mul_acc_correct(c1 as nat, c2 as nat, 0);
+                            bridge_mul(c1, c2);
+                        };
+                    }
+                    r
+                }
+                /// Meet by masks (Tnum::meet_m): unknown where both are unknown,
+                /// the known bits of either elsewhere. Unlike meet, no
+                /// normalization; well formed even for disjoint operands.
+                #[inline] pub fn meet_m(&self, t: &ExecTnum) -> (r: ExecTnum)
+                    ensures r.wf(), r.to_tn() == self.to_tn().meet_m(t.to_tn())
+                {
+                    let m = self.mask & t.mask;
+                    let o = self.val | t.val;
+                    let v = o & !m;
+                    proof {
+                        native_and(self.mask, t.mask);
+                        native_or(self.val, t.val);
+                        native_and_not(o, m);
+                        assert(v & m == (0 as $uint)) by(bit_vector) requires v == o & !m;
+                    }
+                    ExecTnum { val: v, mask: m }
+                }
+                /// The Tnum of the range [lo, hi] (Tnum::range_tn): the common
+                /// prefix of lo and hi, unknown from the highest differing bit down.
+                pub fn range_tn(lo: $uint, hi: $uint) -> (r: ExecTnum)
+                    ensures r.wf(), r.to_tn() == Tnum::range_tn(lo as nat, hi as nat)
+                {
+                    let p = bit_len(lo ^ hi);
+                    let m = ones(p);
+                    proof {
+                        native_xor(lo, hi);
+                        native_and_not(lo, m);
+                        assert((lo & !m) & m == (0 as $uint)) by(bit_vector);
+                    }
+                    ExecTnum { val: lo & !m, mask: m }
+                }
+                /// Chop to the low p bits (Tnum::chop_tn), p <= W.
+                #[inline] pub fn chop_to(&self, p: u32) -> (r: ExecTnum)
+                    requires self.wf(), p <= $bits
+                    ensures r.wf(), r.to_tn() == self.to_tn().chop_tn(p as nat),
+                        (r.val as nat) < exp(p as nat), (r.mask as nat) < exp(p as nat)
+                {
+                    let o = ones(p);
+                    let v = self.val; let m = self.mask;
+                    proof {
+                        native_and(v, o); native_and(m, o);
+                        chop_and_ones(v as nat, p as nat);
+                        chop_and_ones(m as nat, p as nat);
+                        chop_lt(v as nat, p as nat);
+                        chop_lt(m as nat, p as nat);
+                        assert((v & o) & (m & o) == (0 as $uint)) by(bit_vector) requires v & m == (0 as $uint);
+                    }
+                    ExecTnum { val: v & o, mask: m & o }
+                }
+                /// Guarded long division (Tnum::div_g on W-bit registers, after
+                /// tnum_algos.div_bounded with regs = W): scan the dividend from
+                /// the top bit; subtract when the shifted remainder is surely at
+                /// least the divisor, keep it when surely below, and otherwise
+                /// join the kept side (below d.max()) with the subtracted side
+                /// (at most r1.max() - d.min() and below d.max()). After step j
+                /// the remainder is chopped to min(j, k) bits, k = len(d.max());
+                /// quotient and remainder are finally met with their range
+                /// bounds. The subtraction runs at W bits where the spec uses
+                /// w + 1; the chop to min(j, k) <= W bits makes them agree
+                /// (Tnum::sub_chop_width, Tnum::div_guard_chop_width).
+                ///
+                /// Requires t.val > 0, i.e. no member of t is zero. A divisor
+                /// that may be zero is left to the caller.
+                pub fn divrem_g(&self, t: &ExecTnum) -> (res: (ExecTnum, ExecTnum))
+                    requires self.wf(), t.wf(), t.val > 0
+                    ensures
+                        res.0.wf(), res.1.wf(),
+                        forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> res.0.has(c1 / c2) && res.1.has(c1 % c2),
+                        res.0.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).div_g(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).0.tnum,
+                        res.1.to_tn() == (ChoppedTnum { tnum: self.to_tn(), w: $bits as nat }).div_g(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).1.tnum,
+                {
+                    let ghost w: nat = $bits as nat;
+                    let ghost n0 = self.to_tn();
+                    let ghost d0 = t.to_tn();
+                    let dmin = t.val;
+                    let dmax = t.val | t.mask;
+                    let k = bit_len(dmax);
+                    proof {
+                        native_or(t.val, t.mask);
+                        let tm = t.mask;
+                        assert(dmax >= dmin) by(bit_vector) requires dmax == dmin | tm;
+                    }
+                    let ghost whole = Tnum::div_loop_g(n0, d0, w, k as nat, w, Tnum::zero(), Tnum::zero());
+                    proof { assert((0 as $uint) & (0 as $uint) == (0 as $uint)) by(bit_vector); }
+                    let mut q = ExecTnum { val: 0, mask: 0 };
+                    let mut r = ExecTnum { val: 0, mask: 0 };
+                    let ghost mut qs = Tnum::zero();
+                    let ghost mut rs = Tnum::zero();
+                    let mut i: u32 = $bits;
+                    proof {
+                        exp_concrete(w);
+                        assert(exp(0) == 1) by { assert(lshi(1, 0) == 1); }
+                    }
+                    while i > 0
+                        invariant
+                            w == $bits as nat, i <= $bits,
+                            k as nat == len(d0.max()), k <= $bits,
+                            dmax as nat == d0.max(), dmin as nat == d0.min(), dmin > 0, dmax >= dmin,
+                            n0 == self.to_tn(), d0 == t.to_tn(), self.wf(), t.wf(),
+                            r.wf(), r.to_tn() == rs, q.to_tn() == qs,
+                            (r.val as nat) < exp((w - i) as nat), (r.mask as nat) < exp((w - i) as nat),
+                            Tnum::div_loop_g(n0, d0, w, k as nat, i as nat, qs, rs) == whole,
+                        decreases i
+                    {
+                        let i1 = i - 1;
+                        let ghost i1n = i1 as nat;
+                        let ghost nbit = TBit { val: bit(n0.val, i1n), mask: bit(n0.mask, i1n) };
+                        let ghost rs0 = rs;
+                        let ghost qs0 = qs;
+                        let ghost r1s = rs0.lsh_or_tb(nbit);
+                        let bv = (self.val >> (i1 as $uint)) & (1 as $uint);
+                        let bm = (self.mask >> (i1 as $uint)) & (1 as $uint);
+                        let r1v = (r.val << 1) | bv;
+                        let r1m = (r.mask << 1) | bm;
+                        let r1 = ExecTnum { val: r1v, mask: r1m };
+                        proof {
+                            bridge_shift_in(r.val, self.val, i1, (w - i) as nat);
+                            bridge_shift_in(r.mask, self.mask, i1, (w - i) as nat);
+                            let (rv, rm, sv, sm) = (r.val, r.mask, self.val, self.mask);
+                            let s = i1 as $uint;
+                            assert(((rv << 1) | ((sv >> s) & (1 as $uint))) & ((rm << 1) | ((sm >> s) & (1 as $uint))) == (0 as $uint)) by(bit_vector)
+                                requires rv & rm == (0 as $uint), sv & sm == (0 as $uint);
+                            assert(r1.to_tn() == r1s);
+                        }
+                        let j = $bits - i1;
+                        let m = if j <= k { j } else { k };
+                        let r1max = r1v | r1m;
+                        proof {
+                            native_or(r1v, r1m);
+                            assert(m as nat == nmin((w - i1n) as nat, k as nat));
+                        }
+                        let q0 = q;
+                        if r1v >= dmax {
+                            let p2 = (1 as $uint) << (i1 as $uint);
+                            q = ExecTnum { val: q.val | p2, mask: q.mask };
+                            let r2 = r1.sub(t);
+                            r = r2.chop_to(m);
+                            proof {
+                                bridge_pow2(i1);
+                                native_or(q0.val, p2);
+                                qs = Tnum { val: bw_or(qs0.val, exp(i1n)), mask: qs0.mask };
+                                Tnum::sub_chop_width(r1s, d0, w, w + 1, m as nat);
+                                rs = r1s.sub(d0, w + 1).chop_tn(m as nat);
+                            }
+                        } else if r1max < dmin {
+                            r = r1.chop_to(m);
+                            proof { rs = r1s.chop_tn(m as nat); }
+                        } else {
+                            let p2 = (1 as $uint) << (i1 as $uint);
+                            q = ExecTnum { val: q.val, mask: q.mask | p2 };
+                            let rk = ExecTnum::range_tn(0, dmax - 1);
+                            let keep = r1.meet_m(&rk);
+                            let hi = if r1max - dmin < dmax { r1max - dmin } else { dmax - 1 };
+                            let rh = ExecTnum::range_tn(0, hi);
+                            let sb = r1.sub(t);
+                            let s = sb.meet_m(&rh);
+                            let r2 = keep.join(&s);
+                            r = r2.chop_to(m);
+                            proof {
+                                bridge_pow2(i1);
+                                native_or(q0.mask, p2);
+                                qs = Tnum { val: qs0.val, mask: bw_or(qs0.mask, exp(i1n)) };
+                                Tnum::div_guard_chop_width(r1s, d0, w, m as nat);
+                                rs = Tnum::div_guard(r1s, d0, w).chop_tn(m as nat);
+                            }
+                        }
+                        proof {
+                            assert(r.to_tn() == rs);
+                            assert(q.to_tn() == qs);
+                            exp_le(m as nat, (w - i1n) as nat);
+                        }
+                        i = i1;
+                    }
+                    let nlo = self.val;
+                    let nhi = self.val | self.mask;
+                    let rq = ExecTnum::range_tn(nlo / dmax, nhi / dmin);
+                    let qf = q.meet_m(&rq);
+                    let rhi = if nhi < dmax { nhi } else { dmax - 1 };
+                    let rr = ExecTnum::range_tn(0, rhi);
+                    let rf = r.meet_m(&rr);
+                    proof {
+                        native_or(self.val, self.mask);
+                        self.to_chopped(); t.to_chopped();
+                        let ct_s = ChoppedTnum { tnum: n0, w };
+                        let ct_t = ChoppedTnum { tnum: d0, w };
+                        let sp = n0.div_g(d0, w, k as nat);
+                        assert(qf.to_tn() == sp.0);
+                        assert(rf.to_tn() == sp.1);
+                        native_fits(qf.val); native_fits(qf.mask);
+                        native_fits(rf.val); native_fits(rf.mask);
+                        assert(qf.to_tn() == ct_s.div_g(ct_t).0.tnum);
+                        assert(rf.to_tn() == ct_s.div_g(ct_t).1.tnum);
+                        ct_s.div_g_sound(ct_t);
+                        assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies qf.has(c1 / c2) && rf.has(c1 % c2) by {
+                            native_fits(c1); native_fits(c2);
+                            assert(ct_s.has(c1 as nat) && ct_t.has(c2 as nat));
+                        };
+                    }
+                    (qf, rf)
                 }
                 #[inline] pub fn min_val(&self) -> (r: $uint) ensures r == self.val { self.val }
                 #[inline] pub fn max_val(&self) -> (r: $uint) ensures r == (self.val | self.mask) { self.val | self.mask }
@@ -590,6 +1457,13 @@ macro_rules! abstract_domain {
             impl ExecAnum {
                 pub open spec fn to_an(self) -> Anum { Anum { base: self.base as nat, span: self.span as nat } }
                 pub open spec fn has(self, x: $uint) -> bool { self.to_an().has(x as nat) }
+                proof fn to_chopped(self)
+                    ensures (ChoppedAnum { anum: self.to_an(), w: $bits as nat }).inv()
+                {
+                    self.to_an().to_tnum_inv();
+                    native_fits(self.base);
+                    native_fits(self.span);
+                }
                 /// has in terms of $uint ops (for by(bit_vector) proofs)
                 proof fn has_eq_uint(self, x: $uint)
                     ensures self.has(x) <==> (x >= self.base && ((x - self.base) as $uint) & !self.span == (0 as $uint))
@@ -623,16 +1497,28 @@ macro_rules! abstract_domain {
                     eq_from_bits(bw_and_not(n as nat, max_nat), 0);
                     Tnum::ctor(0, max_nat).has_equiv(n as nat);
                 }
-                #[inline] pub fn constant(n: $uint) -> ExecAnum { ExecAnum { base: n, span: 0 } }
-                #[inline] pub fn top() -> ExecAnum { ExecAnum { base: 0, span: !(0 as $uint) } }
-                // No `rlimit` here, deliberately. This carried `rlimit(2000)` while
-                // the soundness fact below was one 11-variable bit-vector query;
-                // splitting it into the four single-purpose queries brought the
-                // whole function under the *default* limit at every width, so the
-                // annotation became a stale ceiling rather than a live requirement.
-                // Measured at d64: 0.7s, and it still verifies with `--rlimit 1`.
-                // Keeping it would have hidden a future regression -- an annotated
-                // limit only reports the budget it was given, never the headroom.
+                #[inline] pub fn constant(n: $uint) -> (r: ExecAnum) ensures r.has(n) {
+                    let r = ExecAnum { base: n, span: 0 };
+                    proof {
+                        r.has_eq_uint(n);
+                        assert((0 as $uint) & !(0 as $uint) == (0 as $uint)) by(bit_vector);
+                    }
+                    r
+                }
+                #[inline] pub fn top() -> (r: ExecAnum)
+                    ensures forall|n: $uint| #![auto] r.has(n)
+                {
+                    let r = ExecAnum { base: 0, span: !(0 as $uint) };
+                    proof {
+                        assert forall|n: $uint| #![auto] r.has(n) by {
+                            ExecAnum::top_has(n);
+                        };
+                    }
+                    r
+                }
+                /// Sound fixed-width addition, through ChoppedAnum::add_sound: top when
+                /// a represented bound or the span sum would wrap, otherwise the spec
+                /// add, whose members cannot wrap because each is at most base + span.
                 #[inline] pub fn add(&self, t: &ExecAnum) -> (r: ExecAnum)
                     ensures forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_add(c2))
                 {
@@ -644,7 +1530,7 @@ macro_rules! abstract_domain {
                     let max1 = b1.wrapping_add(s1);
                     let max2 = b2.wrapping_add(s2);
                     let max_sum = max1.wrapping_add(max2);
-                    if max1 < b1 || max2 < b2 || max_sum < max1 || max_sum < max2 || v < b1 || sm < s1 {
+                    if max1 < b1 || max2 < b2 || max_sum < max1 || max_sum < max2 || v < b1 {
                         let r = ExecAnum { base: 0, span: !(0 as $uint) };
                         proof {
                             assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_add(c2)) by {
@@ -655,80 +1541,110 @@ macro_rules! abstract_domain {
                     }
                     let r = ExecAnum { base: v, span: sm };
                     proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped(); t.to_chopped();
+                        let ca_s = ChoppedAnum { anum: self.to_an(), w };
+                        let ca_t = ChoppedAnum { anum: t.to_an(), w };
+                        ca_s.add_sound(ca_t);
+                        // On this path no sum wraps: each max is above its base and
+                        // the max sum is above both maxes.
+                        let s12 = s1.wrapping_add(s2);
+                        assert(v >= b2 && max1 >= s1 && max2 >= s2 && s12 >= s1 && s12 >= s2) by(bit_vector)
+                            requires v == b1.wrapping_add(b2), v >= b1,
+                                     max1 == b1.wrapping_add(s1), max1 >= b1,
+                                     max2 == b2.wrapping_add(s2), max2 >= b2,
+                                     max_sum == max1.wrapping_add(max2), max_sum >= max1, max_sum >= max2,
+                                     s12 == s1.wrapping_add(s2);
+                        add_no_overflow(b1, b2, v);
+                        add_no_overflow(b1, s1, max1);
+                        add_no_overflow(b2, s2, max2);
+                        add_no_overflow(max1, max2, max_sum);
+                        add_no_overflow(s1, s2, s12);
+                        // Bridge: the executable span is the spec span, which adds
+                        // the two span Tnums (0, s1) + (0, s2).
+                        let mt_s = self.to_an().mask_tnum();
+                        let mt_t = t.to_an().mask_tnum();
+                        disj_zero(s1 as nat); disj_zero(s2 as nat);
+                        mt_s.add_bitwise_eq(mt_t);
+                        nat_add_correct(0, 0);
+                        nat_add_correct(0, nat_add(s1 as nat, s2 as nat));
+                        native_xor(s12, 0);
+                        assert(s12 ^ (0 as $uint) == s12) by(bit_vector);
+                        native_or(s12, s1);
+                        native_or(s12 | s1, s2);
+                        assert(r.to_an() == self.to_an().add(t.to_an()));
                         assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_add(c2)) by {
-                            self.has_eq_uint(c1);
-                            t.has_eq_uint(c2);
-                            r.has_eq_uint(c1.wrapping_add(c2));
-                            // The soundness fact is decomposed into four
-                            // single-purpose bit-vector queries. As one query
-                            // (11 variables, 13 hypotheses, conjunction goal)
-                            // it diverges on the z3 4.16 bundled with Verus
-                            // 0.2026.08.02 — z3 4.12 proved it in ~20s — and a
-                            // by(bit_vector) assert sends the solver exactly
-                            // the requires written on it, so the split is also
-                            // what keeps every query's hypothesis set minimal.
-                            let dd1 = (c1 - b1) as $uint;
-                            let dd2 = (c2 - b2) as $uint;
-                            // (1) Interval lower bound, mask-free: on the
-                            // guarded no-overflow path, c1+c2 does not wrap
-                            // and lands at or above v.
-                            assert(
-                                max_sum >= max1 && max1 >= b1 && max2 >= b2 && v >= b1 &&
-                                c1 >= b1 && c1 <= max1 && c2 >= b2 && c2 <= max2
-                                ==> c1.wrapping_add(c2) >= v
-                            ) by(bit_vector)
-                                requires v == b1.wrapping_add(b2),
-                                         max_sum == max1.wrapping_add(max2);
-                            // (2) Offset identity, a ring fact over Z/2^N:
-                            // (c1+c2) - (b1+b2) == (c1-b1) + (c2-b2).
-                            assert(
-                                ((c1.wrapping_add(c2) - v) as $uint) == ((dd1 + dd2) as $uint)
-                            ) by(bit_vector)
-                                requires v == b1.wrapping_add(b2),
-                                         dd1 == (c1 - b1) as $uint,
-                                         dd2 == (c2 - b2) as $uint;
-                            // (3) The span sum does not wrap: each span fits
-                            // under its max, and the max sum fits.
-                            assert(
-                                max_sum >= max1 && max_sum >= max2 && max1 >= b1 && max2 >= b2
-                                ==> s1.wrapping_add(s2) >= s1
-                            ) by(bit_vector)
-                                requires max1 == b1.wrapping_add(s1),
-                                         max2 == b2.wrapping_add(s2),
-                                         max_sum == max1.wrapping_add(max2);
-                            // (4) The stride-closure core — the one hard fact,
-                            // over exactly four unconstrained variables: bits
-                            // of dd1 lie in s1 and bits of dd2 in s2, so bits
-                            // of dd1+dd2 lie in (s1+s2)|s1|s2.
-                            assert(
-                                dd1 & !s1 == (0 as $uint) && dd2 & !s2 == (0 as $uint) &&
-                                s1.wrapping_add(s2) >= s1
-                                ==>
-                                ((dd1 + dd2) as $uint) & !(s1.wrapping_add(s2) | s1 | s2) == (0 as $uint)
-                            ) by(bit_vector);
-                            // c1 <= max1: from has, c1 = b1 + d1 where d1 <= s1
-                            assert(c1 >= b1 && (((c1 - b1) as $uint) & !s1 == (0 as $uint)) && max1 >= b1
-                                ==> c1 <= max1) by(bit_vector)
-                                requires max1 == b1.wrapping_add(s1);
-                            assert(c2 >= b2 && (((c2 - b2) as $uint) & !s2 == (0 as $uint)) && max2 >= b2
-                                ==> c2 <= max2) by(bit_vector)
-                                requires max2 == b2.wrapping_add(s2);
+                            native_fits(c1); native_fits(c2);
+                            // Members are at most their max, so the sum does not wrap.
+                            self.to_an().has_le_max(c1 as nat);
+                            t.to_an().has_le_max(c2 as nat);
+                            let cs = c1.wrapping_add(c2);
+                            assert(cs as nat == c1 as nat + c2 as nat);
+                            nat_add_correct(c1 as nat, c2 as nat);
+                            native_fits(cs);
+                            assert(ca_s.has(c1 as nat) && ca_t.has(c2 as nat));
+                            assert(fits(nat_add(c1 as nat, c2 as nat), w));
                         };
                     }
                     r
                 }
-                #[inline] pub fn sub(&self, t: &ExecAnum) -> ExecAnum {
-                    // The one ExecAnum method here with no soundness ensures: the
-                    // guards below are the hand-checked analogue of add's, until
-                    // sub gets its own has-postcondition. Without them the result
-                    // window can be disjoint from the true difference set.
-                    let max2 = t.base.wrapping_add(t.span);
-                    let v = self.base.wrapping_sub(max2);
-                    let m = self.span.wrapping_add(t.span) | self.span | t.span;
-                    if max2 < t.base || v > self.base || m < self.span {
-                        return ExecAnum { base: 0, span: !(0 as $uint) };
+                /// Sound fixed-width subtraction, through ChoppedAnum::sub_sound: top
+                /// when t's maximum wraps or exceeds self's base, otherwise the spec
+                /// sub, whose differences cannot wrap because every member of t is at
+                /// most t's maximum.
+                #[inline] pub fn sub(&self, t: &ExecAnum) -> (r: ExecAnum)
+                    ensures forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_sub(c2))
+                {
+                    let b1 = self.base; let s1 = self.span;
+                    let b2 = t.base; let s2 = t.span;
+                    let max2 = b2.wrapping_add(s2);
+                    let v = b1.wrapping_sub(max2);
+                    let s12 = s1.wrapping_add(s2);
+                    let m = s12 | s1 | s2;
+                    if max2 < b2 || v > b1 {
+                        return Self::top();
                     }
-                    ExecAnum { base: v, span: m }
+                    let r = ExecAnum { base: v, span: m };
+                    proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped(); t.to_chopped();
+                        let ca_s = ChoppedAnum { anum: self.to_an(), w };
+                        let ca_t = ChoppedAnum { anum: t.to_an(), w };
+                        // On this path t's maximum does not wrap and is at most b1.
+                        assert(max2 >= s2 && b1 >= max2) by(bit_vector)
+                            requires max2 == b2.wrapping_add(s2), max2 >= b2,
+                                     v == b1.wrapping_sub(max2), v <= b1;
+                        add_no_overflow(b2, s2, max2);
+                        ca_s.sub_sound(ca_t);
+                        // Bridge: the executable span is the chopped spec span,
+                        // which adds the span Tnums (0, s1) + (0, s2).
+                        let mt_s = self.to_an().mask_tnum();
+                        let mt_t = t.to_an().mask_tnum();
+                        disj_zero(s1 as nat); disj_zero(s2 as nat);
+                        mt_s.add_bitwise_eq(mt_t);
+                        let sn = nat_add(s1 as nat, s2 as nat);
+                        nat_add_correct(0, 0);
+                        nat_add_correct(0, sn);
+                        bridge_add(s1, s2);
+                        native_xor(s12, 0);
+                        assert(s12 ^ (0 as $uint) == s12) by(bit_vector);
+                        native_or(s12, s1);
+                        native_or(s12 | s1, s2);
+                        exp_concrete(w);
+                        chop_id(0, w); chop_id(s1 as nat, w); chop_id(s2 as nat, w);
+                        chop_bw_xor(sn, 0, w);
+                        chop_bw_or(bw_xor(sn, 0), s1 as nat, w);
+                        chop_bw_or(bw_or(bw_xor(sn, 0), s1 as nat), s2 as nat, w);
+                        assert(r.to_an() == ca_s.sub(ca_t).anum);
+                        assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_sub(c2)) by {
+                            native_fits(c1); native_fits(c2);
+                            // Every member of t is at most max2 <= b1 <= c1, so no wrap.
+                            t.to_an().has_le_max(c2 as nat);
+                            assert(ca_s.has(c1 as nat) && ca_t.has(c2 as nat));
+                            assert(c1.wrapping_sub(c2) as nat == (c1 - c2) as nat);
+                        };
+                    }
+                    r
                 }
                 pub fn div_const(&self, d: $uint) -> (r: ExecAnum)
                     requires d > 0
@@ -750,66 +1666,132 @@ macro_rules! abstract_domain {
                     let mask = Self::ones_mask(range);
                     let r = ExecAnum { base: min_q, span: mask };
                     proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped();
+                        let ca = ChoppedAnum { anum: self.to_an(), w };
+                        ca.div_const_sound(d as nat);
+                        // On this path base + span does not wrap.
+                        let b = self.base; let sp = self.span;
+                        assert(max_v >= sp) by(bit_vector)
+                            requires max_v == b.wrapping_add(sp), max_v >= b;
+                        add_no_overflow(b, sp, max_v);
+                        assert(r.to_an() == self.to_an().div_const(d as nat));
                         assert forall|c: $uint| #![auto] self.has(c) implies r.has(c / d) by {
-                            self.has_eq_uint(c);
-                            r.has_eq_uint(c / d);
-                            // c >= base, (c-base) & !span == 0 ==> c <= base + span
-                            // ==> base/d <= c/d <= max_q
-                            // ==> (c/d - min_q) <= range <= mask
-                            // ==> (c/d - min_q) & !mask == 0
-                            let b = self.base; let s = self.span;
-                            assert(c >= b && (((c - b) as $uint) & !s == (0 as $uint))
-                                && max_v >= b
-                                ==> c <= max_v) by(bit_vector)
-                                requires max_v == b.wrapping_add(s);
-                            vstd::arithmetic::div_mod::lemma_div_is_ordered(self.base as int, c as int, d as int);
-                            vstd::arithmetic::div_mod::lemma_div_is_ordered(c as int, max_v as int, d as int);
-                            // c/d - min_q <= range <= mask
-                            let q = c / d;
-                            assert(q >= min_q && q <= max_q);
-                            let off: $uint = (q - min_q) as $uint;
-                            assert(off <= range) by { assert(q <= max_q); }
-                            // off <= mask (since range <= mask) and mask = 2^k-1
-                            // ==> off & !mask == 0
-                            assert(off <= mask && mask & mask.wrapping_add(1) == (0 as $uint)
-                                ==> off & !mask == (0 as $uint))
-                                by(bit_vector);
+                            native_fits(c);
+                            assert(ca.has(c as nat));
                         };
                     }
                     r
                 }
-                pub fn ones_mask(n: $uint) -> (r: $uint) ensures r >= n, r & r.wrapping_add(1) == 0 {
-                    if n == 0 { proof { assert((0 as $uint) & (0 as $uint).wrapping_add(1) == (0 as $uint)) by(bit_vector); } return 0; }
-                    let _max: $uint = !(0 as $uint);
+                /// The least 2^k - 1 at or above n, which is the spec all_ones(len(n)).
+                pub fn ones_mask(n: $uint) -> (r: $uint)
+                    ensures r >= n, r & r.wrapping_add(1) == 0, r as nat == all_ones(len(n as nat))
+                {
+                    if n == 0 {
+                        proof {
+                            assert((0 as $uint) & (0 as $uint).wrapping_add(1) == (0 as $uint)) by(bit_vector);
+                            assert(exp(0) == 1) by { assert(lshi(1, 0) == 1); }
+                        }
+                        return 0;
+                    }
                     // Build 2^k - 1 by repeated doubling + 1
                     let mut mask: $uint = 1;
-                    proof { assert((1 as $uint) & (1 as $uint).wrapping_add(1) == (0 as $uint)) by(bit_vector); }
-                    // At most BITS iterations since mask doubles each time
+                    proof {
+                        assert((1 as $uint) & (1 as $uint).wrapping_add(1) == (0 as $uint)) by(bit_vector);
+                        assert(exp(0) == 1) by { assert(lshi(1, 0) == 1); }
+                        exp_succ(0);
+                        exp_concrete($bits as nat);
+                    }
                     let mut i: u32 = 0;
                     while mask < n && i < $bits
-                        invariant i <= $bits, mask & mask.wrapping_add(1) == 0
+                        invariant
+                            n > 0,
+                            i < $bits,
+                            mask & mask.wrapping_add(1) == 0,
+                            mask as nat == all_ones((i + 1) as nat),
+                            all_ones(i as nat) < n as nat,
+                            exp($bits as nat) == ($max_val as nat) + 1,
                         decreases ($bits - i)
                     {
-                        proof { assert(mask & mask.wrapping_add(1) == (0 as $uint) ==>
-                            (mask.wrapping_add(mask).wrapping_add(1)) & (mask.wrapping_add(mask).wrapping_add(1)).wrapping_add(1) == (0 as $uint))
-                            by(bit_vector); }
+                        proof {
+                            assert(mask & mask.wrapping_add(1) == (0 as $uint) ==>
+                                (mask.wrapping_add(mask).wrapping_add(1)) & (mask.wrapping_add(mask).wrapping_add(1)).wrapping_add(1) == (0 as $uint))
+                                by(bit_vector);
+                            // mask < n <= MAX = all_ones(bits), so i + 1 < bits and doubling does not wrap.
+                            exp_succ((i + 1) as nat);
+                            exp_succ(i as nat);
+                            if (i + 1) as nat >= $bits as nat {
+                                exp_le($bits as nat, (i + 1) as nat);
+                            }
+                            assert((i + 2) as nat <= $bits as nat);
+                            exp_le((i + 2) as nat, $bits as nat);
+                            exp_pos((i + 1) as nat);
+                            assert(2 * (mask as nat) + 1 <= $max_val as nat);
+                        }
+                        let ghost old = mask;
                         mask = mask.wrapping_add(mask).wrapping_add(1);
                         i += 1;
-                    }
-                    if mask >= n { mask } else {
                         proof {
-                            assert(!(0 as $uint) >= n) by(bit_vector);
-                            assert(!(0 as $uint) & (!(0 as $uint)).wrapping_add(1) == (0 as $uint)) by(bit_vector);
+                            assert(mask as nat == 2 * (old as nat) + 1);
                         }
-                        !(0 as $uint)
                     }
+                    proof {
+                        all_ones_len_unique(n as nat, (i + 1) as nat);
+                    }
+                    mask
                 }
-                pub fn to_etn(&self) -> (r: ExecTnum) ensures r.wf() {
-                    let sv = self.base; let sm = self.span;
-                    proof { assert(((sv & !sm) & sm) == (0 as $uint)) by(bit_vector); }
-                    ExecTnum { val: sv & !sm, mask: sm }
+                /// An Anum read as a Tnum: Tn(0, span) + Tn(base, 0), the spec
+                /// ChoppedAnum::to_tnum. The addition carries the base into the
+                /// span, so a base whose bits overlap the span is covered.
+                pub fn to_etn(&self) -> (r: ExecTnum)
+                    ensures r.wf(), forall|c: $uint| #![auto] self.has(c) ==> r.has(c),
+                        r.to_tn() == (ChoppedAnum { anum: self.to_an(), w: $bits as nat }).to_tnum().tnum
+                {
+                    proof {
+                        assert((0 as $uint) & self.span == (0 as $uint)) by(bit_vector);
+                        assert(self.base & (0 as $uint) == (0 as $uint)) by(bit_vector);
+                    }
+                    let m = ExecTnum { val: 0, mask: self.span };
+                    let v = ExecTnum { val: self.base, mask: 0 };
+                    let r = m.add(&v);
+                    proof {
+                        let w: nat = $bits as nat;
+                        self.to_chopped();
+                        let ca = ChoppedAnum { anum: self.to_an(), w };
+                        ca.to_tnum_sound();
+                        let an = self.to_an();
+                        disj_zero(an.span);
+                        disj_zero_r(an.base);
+                        an.mask_tnum().add_bitwise_eq(an.val_tnum());
+                        assert(m.to_tn() == an.mask_tnum() && v.to_tn() == an.val_tnum());
+                        assert(r.to_tn() == ca.to_tnum().tnum);
+                        assert forall|c: $uint| #![auto] self.has(c) implies r.has(c) by {
+                            native_fits(c);
+                            assert(ca.has(c as nat));
+                        };
+                    }
+                    r
                 }
-                #[inline] pub fn from_etn(t: &ExecTnum) -> ExecAnum requires t.wf() { ExecAnum { base: t.val, span: t.mask } }
+                /// A Tnum read as an Anum: the spec ChoppedAnum::from_tnum.
+                #[inline] pub fn from_etn(t: &ExecTnum) -> (r: ExecAnum)
+                    requires t.wf()
+                    ensures forall|c: $uint| #![auto] t.has(c) ==> r.has(c),
+                        r.to_an() == ChoppedAnum::from_tnum(ChoppedTnum { tnum: t.to_tn(), w: $bits as nat }).anum
+                {
+                    let r = ExecAnum { base: t.val, span: t.mask };
+                    proof {
+                        let w: nat = $bits as nat;
+                        t.to_chopped();
+                        let ct = ChoppedTnum { tnum: t.to_tn(), w };
+                        ChoppedAnum::from_tnum_sound(ct);
+                        assert(r.to_an() == ChoppedAnum::from_tnum(ct).anum);
+                        assert forall|c: $uint| #![auto] t.has(c) implies r.has(c) by {
+                            native_fits(c);
+                            assert(ct.has(c as nat));
+                        };
+                    }
+                    r
+                }
                 #[inline] pub fn min_val(&self) -> (r: $uint) ensures r == self.base { self.base }
                 #[inline] pub fn max_val(&self) -> (r: $uint) ensures r == self.base.wrapping_add(self.span) { self.base.wrapping_add(self.span) }
                 proof fn has_bounds(&self, c: $uint)
@@ -888,7 +1870,8 @@ macro_rules! abstract_domain {
                     Unum::offset_from_bound((!(0 as $uint)) as nat, n as nat);
                 }
 
-                #[inline] pub fn constant(n: $uint) -> ExecUnum {
+                #[inline] pub fn constant(n: $uint) -> (r: ExecUnum) ensures r.has(n) {
+                    proof { Unum::zero_offset_admitted((!(0 as $uint)) as nat, true); }
                     ExecUnum { base: n, walls: !(0 as $uint), extent: 0 }
                 }
                 #[inline] pub fn top() -> (r: ExecUnum)
@@ -1053,7 +2036,9 @@ macro_rules! abstract_domain {
                 /// We need -d which ranges from -max to 0.
                 /// So result.base = -v - total_max, result uncertainty = same structure.
                 #[inline] pub fn neg(&self) -> ExecUnum {
-                    if self.base.wrapping_add(self.extent) < self.base {
+                    // The negated range wraps when the input range does, or when it
+                    // holds 0 and something else: -[0, e] = {0} u [-e, MAX].
+                    if self.base.wrapping_add(self.extent) < self.base || (self.base == 0 && self.extent != 0) {
                         return ExecUnum::top();
                     }
                     let new_v = (0 as $uint).wrapping_sub(self.base).wrapping_sub(self.extent);

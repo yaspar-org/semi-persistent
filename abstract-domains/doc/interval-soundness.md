@@ -48,8 +48,7 @@ reduce against it through `reduce::Product`; see
 
 The current generated interval API does not provide interval-by-interval
 division, alarms, abstract booleans, backward assumptions, wrapped intervals,
-or strided intervals. The standalone `exec_tnum.rs` experiment has a broader
-Rust surface, but it is not the contract inventory described here. No claim in
+or strided intervals. No claim in
 this document applies to the disabled `u128` instantiation.
 
 The maintained designs and proof obligations for those extensions are in

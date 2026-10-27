@@ -175,6 +175,100 @@ pub trait Word: Sized + Copy {
         ensures
             r.view() == (self.view() * o.view()) % m.view(),
     ;
+
+    /// Bitwise operators on the bit pattern.
+    spec fn and(self, o: Self) -> Self;
+
+    spec fn or(self, o: Self) -> Self;
+
+    spec fn xor(self, o: Self) -> Self;
+
+    spec fn not(self) -> Self;
+
+    /// The smallest `2^k - 1` at or above `self`.
+    spec fn ones_above(self) -> Self;
+
+    fn bit_and(self, o: Self) -> (r: Self)
+        ensures
+            r == self.and(o),
+    ;
+
+    fn bit_or(self, o: Self) -> (r: Self)
+        ensures
+            r == self.or(o),
+    ;
+
+    fn bit_xor(self, o: Self) -> (r: Self)
+        ensures
+            r == self.xor(o),
+    ;
+
+    fn bit_not(self) -> (r: Self)
+        ensures
+            r == self.not(),
+    ;
+
+    /// `ones_above`, by smearing the leading one downwards.
+    fn smear(self) -> (r: Self)
+        ensures
+            r == self.ones_above(),
+    ;
+
+    proof fn lemma_and_le(a: Self, b: Self)
+        ensures
+            a.and(b).view() <= a.view(),
+            a.and(b).view() <= b.view(),
+    ;
+
+    proof fn lemma_or_ge(a: Self, b: Self)
+        ensures
+            a.view() <= a.or(b).view(),
+            b.view() <= a.or(b).view(),
+    ;
+
+    /// Operands at most `m` have no bit above `m`'s leading one.
+    proof fn lemma_below_ones_above(a: Self, b: Self, m: Self)
+        requires
+            a.view() <= m.view(),
+            b.view() <= m.view(),
+        ensures
+            m.view() <= m.ones_above().view(),
+            a.or(b).view() <= m.ones_above().view(),
+            a.xor(b).view() <= m.ones_above().view(),
+    ;
+
+    proof fn lemma_not(a: Self)
+        ensures
+            a.not().view() == Self::modulus() - 1 - a.view(),
+    ;
+
+    /// The word as a shift amount, when it is below the width.
+    fn to_shift(self) -> (r: Option<u32>)
+        ensures
+            match r {
+                Some(k) => k as nat == self.view() && (k as nat) < Self::bits(),
+                None => self.view() >= Self::bits(),
+            },
+    ;
+
+    /// Logical right shift.
+    fn shr(self, k: u32) -> (r: Self)
+        requires
+            (k as nat) < Self::bits(),
+        ensures
+            r.view() == self.view() / pow2(k as nat),
+    ;
+
+    /// Left shift when it does not wrap.
+    fn checked_shl(self, k: u32) -> (r: Option<Self>)
+        requires
+            (k as nat) < Self::bits(),
+        ensures
+            match r {
+                Some(s) => s.view() == self.view() * pow2(k as nat),
+                None => self.view() * pow2(k as nat) >= Self::modulus(),
+            },
+    ;
 }
 
 /// `x = q * 2^t` with `q` odd.
@@ -447,6 +541,109 @@ fn mulmod_u128(a: u128, b: u128, m: u128) -> (r: u128)
     r
 }
 
+/// 2^k as a u128. vstd proves `shl` only up to u64, so the shifted value is
+/// pinned by two right shifts: `(1 << k) >> k == 1` and `((1 << k) - 1) >> k == 0`.
+fn pow2_u128(k: u32) -> (r: u128)
+    requires
+        k < 128,
+    ensures
+        r == pow2(k as nat),
+{
+    let s = k as u128;
+    let x = 1u128 << s;
+    proof {
+        assert(x >> s == 1 && ((x - 1) as u128) >> s == 0 && x >= 1) by (bit_vector)
+            requires
+                x == 1u128 << s,
+                s < 128,
+        ;
+        vstd::bits::lemma_u128_shr_is_div(x, s);
+        vstd::bits::lemma_u128_shr_is_div((x - 1) as u128, s);
+        let p = pow2(k as nat) as int;
+        lemma_pow2_pos(k as nat);
+        // x / p == 1 gives x >= p.
+        assert(x as int / p == 1);
+        lemma_fundamental_div_mod(x as int, p);
+        lemma_mod_pos_bound(x as int, p);
+        assert(x as int >= p);
+        // (x - 1) / p == 0 gives x - 1 < p.
+        assert((x - 1) as int / p == 0);
+        lemma_fundamental_div_mod((x - 1) as int, p);
+        lemma_mod_pos_bound((x - 1) as int, p);
+        assert(x as int <= p);
+    }
+    x
+}
+
+/// `x << k` for u128 when it does not wrap: vstd has no u128 shift lemma, so
+/// this multiplies by 2^k.
+fn checked_shl_u128(x: u128, k: u32) -> (r: Option<u128>)
+    requires
+        k < 128,
+    ensures
+        match r {
+            Some(s) => s as nat == x * pow2(k as nat),
+            None => x * pow2(k as nat) > u128::MAX,
+        },
+{
+    x.checked_mul(pow2_u128(k))
+}
+
+/// `x << k` when it does not wrap, by a native shift: `x * 2^k <= MAX`
+/// exactly when `x <= MAX >> k`.
+macro_rules! shl_native {
+    ($name:ident, $t:ty, $shl_is_mul:path, $le_iff:path) => {
+        verus! {
+            fn $name(x: $t, k: u32) -> (r: Option<$t>)
+                requires
+                    k < <$t>::BITS,
+                ensures
+                    match r {
+                        Some(s) => s as nat == x * pow2(k as nat),
+                        None => x * pow2(k as nat) > <$t>::MAX,
+                    },
+            {
+                proof {
+                    $le_iff(x, k as $t, <$t>::MAX);
+                }
+                if x <= (<$t>::MAX >> (k as $t)) {
+                    proof {
+                        $shl_is_mul(x, k as $t);
+                    }
+                    Some(x << (k as $t))
+                } else {
+                    None
+                }
+            }
+        }
+    };
+}
+
+shl_native!(
+    checked_shl_u8,
+    u8,
+    vstd::bits::lemma_u8_shl_is_mul,
+    vstd::bits::lemma_u8_mul_pow2_le_max_iff_max_shr
+);
+shl_native!(
+    checked_shl_u16,
+    u16,
+    vstd::bits::lemma_u16_shl_is_mul,
+    vstd::bits::lemma_u16_mul_pow2_le_max_iff_max_shr
+);
+shl_native!(
+    checked_shl_u32,
+    u32,
+    vstd::bits::lemma_u32_shl_is_mul,
+    vstd::bits::lemma_u32_mul_pow2_le_max_iff_max_shr
+);
+shl_native!(
+    checked_shl_u64,
+    u64,
+    vstd::bits::lemma_u64_shl_is_mul,
+    vstd::bits::lemma_u64_mul_pow2_le_max_iff_max_shr
+);
+
 /// Two's-complement reading of the bit pattern.
 pub open spec fn signed_view<W: Word>(w: W) -> int {
     if w.view() < W::modulus() / 2 {
@@ -548,7 +745,7 @@ tz_native!(
 );
 
 macro_rules! impl_word {
-    ($t:ty, $bits:expr, $modulus:expr, $tz_ty:ty, $tz:ident, $mm_ty:ty, $mulmod:ident) => {
+    ($t:ty, $bits:expr, $modulus:expr, $tz_ty:ty, $tz:ident, $mm_ty:ty, $mulmod:ident, $shr_is_div:path, $checked_shl:ident) => {
         verus! {
             impl Word for $t {
                 open spec fn bits() -> nat {
@@ -697,14 +894,155 @@ macro_rules! impl_word {
                 fn mulmod(self, o: Self, m: Self) -> (r: Self) {
                     $mulmod(self as $mm_ty, o as $mm_ty, m as $mm_ty) as $t
                 }
+
+                open spec fn and(self, o: Self) -> Self {
+                    self & o
+                }
+
+                open spec fn or(self, o: Self) -> Self {
+                    self | o
+                }
+
+                open spec fn xor(self, o: Self) -> Self {
+                    self ^ o
+                }
+
+                open spec fn not(self) -> Self {
+                    !self
+                }
+
+                // The shift amounts `$bits/2, ..., $bits/128` sum to every offset
+                // below `$bits`; the ones that are 0 at narrow widths are no-ops.
+                open spec fn ones_above(self) -> Self {
+                    let x1 = self | (self >> (($bits as $t) / 2));
+                    let x2 = x1 | (x1 >> (($bits as $t) / 4));
+                    let x3 = x2 | (x2 >> (($bits as $t) / 8));
+                    let x4 = x3 | (x3 >> (($bits as $t) / 16));
+                    let x5 = x4 | (x4 >> (($bits as $t) / 32));
+                    let x6 = x5 | (x5 >> (($bits as $t) / 64));
+                    x6 | (x6 >> (($bits as $t) / 128))
+                }
+
+                fn bit_and(self, o: Self) -> (r: Self) {
+                    self & o
+                }
+
+                fn bit_or(self, o: Self) -> (r: Self) {
+                    self | o
+                }
+
+                fn bit_xor(self, o: Self) -> (r: Self) {
+                    self ^ o
+                }
+
+                fn bit_not(self) -> (r: Self) {
+                    !self
+                }
+
+                fn smear(self) -> (r: Self) {
+                    let x1 = self | (self >> (($bits as $t) / 2));
+                    let x2 = x1 | (x1 >> (($bits as $t) / 4));
+                    let x3 = x2 | (x2 >> (($bits as $t) / 8));
+                    let x4 = x3 | (x3 >> (($bits as $t) / 16));
+                    let x5 = x4 | (x4 >> (($bits as $t) / 32));
+                    let x6 = x5 | (x5 >> (($bits as $t) / 64));
+                    x6 | (x6 >> (($bits as $t) / 128))
+                }
+
+                proof fn lemma_and_le(a: Self, b: Self) {
+                    assert(a & b <= a && a & b <= b) by (bit_vector);
+                }
+
+                proof fn lemma_or_ge(a: Self, b: Self) {
+                    assert(a <= (a | b) && b <= (a | b)) by (bit_vector);
+                }
+
+                proof fn lemma_below_ones_above(a: Self, b: Self, m: Self) {
+                    let x1 = m | (m >> (($bits as $t) / 2));
+                    let x2 = x1 | (x1 >> (($bits as $t) / 4));
+                    let x3 = x2 | (x2 >> (($bits as $t) / 8));
+                    let x4 = x3 | (x3 >> (($bits as $t) / 16));
+                    let x5 = x4 | (x4 >> (($bits as $t) / 32));
+                    let x6 = x5 | (x5 >> (($bits as $t) / 64));
+                    let x7 = x6 | (x6 >> (($bits as $t) / 128));
+                    assert(m <= x7 && x7 & x7.wrapping_add(1) == 0) by (bit_vector)
+                        requires
+                            x1 == m | (m >> (($bits as $t) / 2)),
+                            x2 == x1 | (x1 >> (($bits as $t) / 4)),
+                            x3 == x2 | (x2 >> (($bits as $t) / 8)),
+                            x4 == x3 | (x3 >> (($bits as $t) / 16)),
+                            x5 == x4 | (x4 >> (($bits as $t) / 32)),
+                            x6 == x5 | (x5 >> (($bits as $t) / 64)),
+                            x7 == x6 | (x6 >> (($bits as $t) / 128)),
+                    ;
+                    assert((a | b) <= x7 && (a ^ b) <= x7) by (bit_vector)
+                        requires
+                            a <= x7,
+                            b <= x7,
+                            x7 & x7.wrapping_add(1) == 0,
+                    ;
+                }
+
+                proof fn lemma_not(a: Self) {
+                    assert(!a == <$t>::MAX - a) by (bit_vector);
+                }
+
+                fn to_shift(self) -> (r: Option<u32>) {
+                    if self < $bits as $t {
+                        Some(self as u32)
+                    } else {
+                        None
+                    }
+                }
+
+                fn shr(self, k: u32) -> (r: Self) {
+                    proof {
+                        $shr_is_div(self, k as $t);
+                    }
+                    self >> (k as $t)
+                }
+
+                fn checked_shl(self, k: u32) -> (r: Option<Self>) {
+                    $checked_shl(self, k)
+                }
             }
         }
     };
 }
 
-impl_word!(u8, 8, 0x100, u8, tz_u8, u64, mulmod_via_u64);
-impl_word!(u16, 16, 0x1_0000, u16, tz_u16, u64, mulmod_via_u64);
-impl_word!(u32, 32, 0x1_0000_0000, u32, tz_u32, u64, mulmod_via_u64);
+impl_word!(
+    u8,
+    8,
+    0x100,
+    u8,
+    tz_u8,
+    u64,
+    mulmod_via_u64,
+    vstd::bits::lemma_u8_shr_is_div,
+    checked_shl_u8
+);
+impl_word!(
+    u16,
+    16,
+    0x1_0000,
+    u16,
+    tz_u16,
+    u64,
+    mulmod_via_u64,
+    vstd::bits::lemma_u16_shr_is_div,
+    checked_shl_u16
+);
+impl_word!(
+    u32,
+    32,
+    0x1_0000_0000,
+    u32,
+    tz_u32,
+    u64,
+    mulmod_via_u64,
+    vstd::bits::lemma_u32_shr_is_div,
+    checked_shl_u32
+);
 impl_word!(
     u64,
     64,
@@ -712,7 +1050,9 @@ impl_word!(
     u64,
     tz_u64,
     u64,
-    mulmod_u64
+    mulmod_u64,
+    vstd::bits::lemma_u64_shr_is_div,
+    checked_shl_u64
 );
 impl_word!(
     u128,
@@ -721,5 +1061,7 @@ impl_word!(
     u128,
     tz_u128,
     u128,
-    mulmod_u128
+    mulmod_u128,
+    vstd::bits::lemma_u128_shr_is_div,
+    checked_shl_u128
 );
