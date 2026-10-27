@@ -8,11 +8,13 @@ use semi_persistent_abstract_domains::interval::Interval;
 use semi_persistent_abstract_domains::interval_z::{Hi, IntervalZ, Lo};
 use semi_persistent_abstract_domains::lattice::{BotOr, Domain};
 use semi_persistent_abstract_domains::semantics::{Euclid, Unsigned};
+use semi_persistent_abstract_domains::strided::StridedInterval;
 use semi_persistent_abstract_domains::transfer::{Arith, DivRem, DivZero, Mul};
 use semi_persistent_abstract_domains::word::Word;
 
 type I8 = Interval<u8>;
 type U = Unsigned<u8>;
+type SI8 = StridedInterval<u8>;
 
 fn iv(lo: u8, hi: u8) -> I8 {
     Interval::new(lo, hi).expect("lo <= hi")
@@ -262,6 +264,277 @@ fn interval_z_lattice_and_arith() {
                     }
                 }
             }
+        }
+    }
+}
+
+fn si(stride: u8, lo: u8, hi: u8) -> SI8 {
+    SI8::new(stride, lo, hi).expect("lo <= hi")
+}
+
+fn has_si(s: &SI8, x: u8) -> bool {
+    s.contains(x)
+}
+
+fn bot_has_si(b: &BotOr<SI8>, x: u8) -> bool {
+    match b {
+        BotOr::Bot => false,
+        BotOr::Val(v) => has_si(v, x),
+    }
+}
+
+/// `lo`/`hi` on a coarse grid plus the extremes, crossed with a handful of
+/// strides -- including 0 and non-dividing strides, so `new` has to
+/// exercise its own canonicalization (e.g. `si(5, 7, 7)` collapsing to the
+/// same value as `si(0, 7, 7)`) rather than only ever seeing pre-canonical
+/// input.
+fn strided_samples() -> Vec<SI8> {
+    let pts: Vec<u8> = (0..=255u16)
+        .step_by(51)
+        .map(|v| v as u8)
+        .chain([1, 2, 254, 255])
+        .collect();
+    let strides = [0u8, 1, 2, 3, 5];
+    let mut out = Vec::new();
+    for &lo in &pts {
+        for &hi in &pts {
+            if lo <= hi {
+                for &s in &strides {
+                    out.push(si(s, lo, hi));
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn strided_interval_lattice_and_canonicity() {
+    let s = strided_samples();
+    for a in &s {
+        for b in &s {
+            let j = a.join(b);
+            let w = a.widen(b);
+            let m = a.meet(b);
+            for x in 0..=255u8 {
+                let in_a = has_si(a, x);
+                let in_b = has_si(b, x);
+                if in_a || in_b {
+                    assert!(has_si(&j, x) && has_si(&w, x));
+                }
+                if in_a && in_b {
+                    assert!(bot_has_si(&m, x));
+                }
+                if a.leq(b) && in_a {
+                    assert!(in_b);
+                }
+            }
+            if matches!(m, BotOr::Bot) {
+                assert!((0..=255u8).all(|x| !(has_si(a, x) && has_si(b, x))));
+            }
+            // Canonical: equal concretizations are equal (stride, lo, hi).
+            if (0..=255u8).all(|x| has_si(a, x) == has_si(b, x)) {
+                assert_eq!(a.bounds(), b.bounds());
+            }
+        }
+    }
+}
+
+/// The review's exact example: (0,7,7), (2,7,7) and (5,7,7) all denote
+/// {7}. Canonical wf means they are now literally the same value, not
+/// just equal under some separate normalize() step.
+#[test]
+fn strided_canonical_form_is_unique() {
+    let a = si(0, 7, 7);
+    let b = si(2, 7, 7);
+    let c = si(5, 7, 7);
+    assert_eq!(a.bounds(), b.bounds());
+    assert_eq!(b.bounds(), c.bounds());
+}
+
+/// Same stride, compatible residue: join widens the bounds to the least
+/// upper bound the domain can represent -- not necessarily the exact
+/// union. This example happens to be exact (11 = 8 + 3, no gap between the
+/// operands), but see `strided_join_same_residue_is_not_always_exact`
+/// below for one that isn't.
+#[test]
+fn strided_join_same_residue_is_the_least_upper_bound() {
+    let a = si(3, 2, 8); // {2, 5, 8}
+    let b = si(3, 11, 14); // {11, 14}, 11 == 2 (mod 3)
+    assert_eq!(a.join(&b).bounds(), (3, 2, 14));
+}
+
+#[test]
+fn strided_join_same_residue_is_not_always_exact() {
+    let a = si(3, 2, 8);
+    let b = si(3, 14, 17);
+    let j = a.join(&b);
+    assert!(j.contains(11));
+    assert!(!a.contains(11) && !b.contains(11));
+}
+
+/// Two distinct singletons: the two-point set is exactly representable as
+/// a stride equal to the gap between them.
+#[test]
+fn strided_join_two_singletons_is_exact() {
+    let a = si(0, 4, 4);
+    let b = si(0, 10, 10);
+    assert_eq!(a.join(&b).bounds(), (6, 4, 10));
+}
+
+/// When one stride divides the other and both `lo`s sit on its grid, join
+/// keeps that stride: `{4} ⊔ (2,0,10)` is `(2,0,10)`, not `(1,0,10)`.
+#[test]
+fn strided_join_keeps_a_dividing_stride() {
+    assert_eq!(si(0, 4, 4).join(&si(2, 0, 10)).bounds(), (2, 0, 10));
+    assert_eq!(si(2, 0, 10).join(&si(0, 4, 4)).bounds(), (2, 0, 10));
+    assert_eq!(si(6, 0, 12).join(&si(3, 3, 9)).bounds(), (3, 0, 12));
+}
+
+/// Neither stride divides the other: the tight stride is
+/// `gcd(3, 5, 0) = 1` here anyway, but in general it needs `gcd` from
+/// #112. Join falls back to stride 1 and keeps the bounds.
+#[test]
+fn strided_join_incompatible_strides_keeps_bounds() {
+    let a = si(3, 0, 9);
+    let b = si(5, 0, 20);
+    let j = a.join(&b);
+    let (stride, lo, hi) = j.bounds();
+    assert_eq!((stride, lo, hi), (1, 0, 20));
+}
+
+fn bot_bounds_si(b: &BotOr<SI8>) -> Option<(u8, u8, u8)> {
+    match b {
+        BotOr::Bot => None,
+        BotOr::Val(v) => Some(v.bounds()),
+    }
+}
+
+/// Top's stride 1 divides every stride, so meeting with Top clips `x` to
+/// its own bounds: the identity.
+#[test]
+fn strided_meet_with_top_is_identity() {
+    for x in &strided_samples() {
+        assert_eq!(bot_bounds_si(&SI8::top().meet(x)), Some(x.bounds()));
+        assert_eq!(bot_bounds_si(&x.meet(&SI8::top())), Some(x.bounds()));
+    }
+}
+
+#[test]
+fn strided_meet_is_commutative() {
+    let s = strided_samples();
+    for a in &s {
+        for b in &s {
+            assert_eq!(bot_bounds_si(&a.meet(b)), bot_bounds_si(&b.meet(a)));
+        }
+    }
+}
+
+/// When one stride divides the other (or either operand is a singleton),
+/// meet is the exact intersection, `Bot` exactly when it is empty.
+#[test]
+fn strided_meet_is_exact_when_one_stride_divides_the_other() {
+    let s = strided_samples();
+    for a in &s {
+        for b in &s {
+            let (sa, _, _) = a.bounds();
+            let (sb, _, _) = b.bounds();
+            let divides = sa == 0 || sb == 0 || sa % sb == 0 || sb % sa == 0;
+            if !divides {
+                continue;
+            }
+            let m = a.meet(b);
+            for x in 0..=255u8 {
+                assert_eq!(bot_has_si(&m, x), has_si(a, x) && has_si(b, x));
+            }
+        }
+    }
+}
+
+/// Neither of 4 and 6 divides the other, so the exact meet needs CRT
+/// (#112); until then meet keeps the larger-stride operand's grid clipped
+/// to the common bounds. Exact would be `(12, 8, 32)` = {8, 20, 32}.
+#[test]
+fn strided_meet_non_dividing_strides_clips_to_common_bounds() {
+    let a = si(4, 0, 40);
+    let b = si(6, 2, 32);
+    assert_eq!(bot_bounds_si(&a.meet(&b)), Some((6, 2, 32)));
+    let c = si(6, 3, 33);
+    // 4 and 6 share the factor 2, and 0 and 3 differ mod 2: disjoint, but
+    // still reported as a value.
+    assert_eq!(bot_bounds_si(&a.meet(&c)), Some((6, 3, 33)));
+}
+
+/// `i = 0; while i < 200 { i += 4 }`: widening keeps stride 4 by jumping
+/// the unstable upper bound to the last grid point (252), and one
+/// decreasing iteration through the exact guard meet gives `(4, 0, 200)`.
+/// Widening straight to Top would end at `(1, 0, 203)`.
+#[test]
+fn strided_widen_keeps_the_stride() {
+    let entry = si(0, 0, 0);
+    let guard = si(1, 0, 199);
+    let body = |x: &SI8| -> SI8 {
+        let BotOr::Val(v) = x.meet(&guard) else {
+            panic!("loop head meets the guard")
+        };
+        let (s, lo, hi) = v.bounds();
+        entry.join(&si(s, lo + 4, hi + 4))
+    };
+    let mut x = entry.join(&entry);
+    loop {
+        let next = body(&x);
+        if next.leq(&x) {
+            break;
+        }
+        x = x.widen(&next);
+    }
+    assert_eq!(x.bounds(), (4, 0, 252));
+    assert_eq!(body(&x).bounds(), (4, 0, 200));
+}
+
+#[test]
+fn strided_widen_jumps_to_last_grid_point() {
+    let a = si(3, 10, 16);
+    // lower bound unstable: 10 - 3k down to 1; upper bound stable.
+    assert_eq!(a.widen(&si(3, 4, 16)).bounds(), (3, 1, 16));
+    // upper bound unstable: last point of 10 + 3k below 255 is 253.
+    assert_eq!(a.widen(&si(3, 10, 19)).bounds(), (3, 10, 253));
+}
+
+/// `leq` is complete: it answers exactly the brute-force subset question.
+#[test]
+fn strided_leq_is_complete() {
+    let s = strided_samples();
+    for a in &s {
+        for b in &s {
+            let subset = (0..=255u8).all(|x| !has_si(a, x) || has_si(b, x));
+            assert_eq!(a.leq(b), subset);
+        }
+    }
+}
+
+#[test]
+fn strided_constant_and_new_contract() {
+    assert_eq!(SI8::constant(7).bounds(), (0, 7, 7));
+    // stride 0 denotes {lo}, whatever hi is.
+    assert_eq!(si(0, 7, 20).bounds(), (0, 7, 7));
+}
+
+/// `clip` and `widen` build some results directly instead of through `new`;
+/// rebuilding each result through `new` must give the same value.
+#[test]
+fn strided_meet_and_widen_results_are_canonical() {
+    let s = strided_samples();
+    let canon = |v: &SI8| {
+        let (st, lo, hi) = v.bounds();
+        assert_eq!(si(st, lo, hi).bounds(), v.bounds());
+    };
+    for a in &s {
+        for b in &s {
+            if let BotOr::Val(m) = a.meet(b) {
+                canon(&m);
+            }
+            canon(&a.widen(b));
         }
     }
 }
