@@ -77,6 +77,11 @@ pub enum Step<O, I, V> {
         local: VarId,
         global: GlobalVarId,
     },
+    /// `(!= p q)`: the two bound classes differ.
+    CheckNeq {
+        a: VarId,
+        b: VarId,
+    },
     /// Bind an as-yet unbound variable to a global's class. The dual of
     /// `CheckEqGlobal`: an `(= x g)` atom CHECKS when `x` already has a value
     /// and BINDS when it does not. Without this a rule whose only atom is such
@@ -643,7 +648,7 @@ fn record_emitters<O, S, V>(
                 }
             }
             // A guard binds nothing, so it emits nothing.
-            RAtom::EqGlobal(..) | RAtom::Pred { .. } => {}
+            RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. } => {}
         }
     }
 }
@@ -762,7 +767,7 @@ fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
                 base_card(op, atom_id, stats) as f64
             }
         }
-        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => 0.0,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. } => 0.0,
     }
 }
 
@@ -895,7 +900,7 @@ fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: Inde
             if used[ai]
                 || matches!(
                     &rq.atoms[ai],
-                    RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. }
+                    RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. }
                 )
             {
                 continue;
@@ -1005,6 +1010,7 @@ fn fmt_step<O: std::fmt::Debug, I: std::fmt::Debug, V>(st: &Step<O, I, V>) -> St
             parent.idx()
         ),
         Step::CheckEq { a, b } => format!("CheckEq v{} v{}", a.idx(), b.idx()),
+        Step::CheckNeq { a, b } => format!("CheckNeq v{} v{}", a.idx(), b.idx()),
         Step::CheckEqGlobal { local, global } => {
             format!("CheckEqGlobal v{} global={global:?}", local.idx())
         }
@@ -1235,7 +1241,7 @@ pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
         // Never selected by phase B: the equalities and the guards have no join to
         // cost, and `schedule_inner`/`choose_atom` skip them for that reason. The
         // eager pass owns them.
-        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => {}
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. } => {}
         RAtom::AExact { node, op, children } => {
             emit_variadic_join(node, *op, atom_id, children, flatten, bound, steps);
             let view = flat(node, *op, FlatKind::Assoc, steps);
@@ -1424,6 +1430,14 @@ pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLik
                     other: *b,
                 });
                 bound[(*a).idx()] = true;
+            } else {
+                return None;
+            }
+        }
+        // A disequality binds nothing: it waits until both sides are bound.
+        RAtom::Neq(a, b) => {
+            if bound[(*a).idx()] && bound[(*b).idx()] {
+                steps.push(Step::CheckNeq { a: *a, b: *b });
             } else {
                 return None;
             }

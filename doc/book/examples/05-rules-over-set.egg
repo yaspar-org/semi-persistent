@@ -20,8 +20,8 @@
 (let ordered (Conj a b c))
 (let permuted (Conj b a c))
 (run 1)
-(check (= ordered permuted))
-(check (= ordered (Absorbed (Conj d c))))
+(check-eq ordered permuted)
+(check-eq ordered (Absorbed (Conj d c)))
 
 (function Pick (E) E :assoc-comm-idem)
 (function Pair (E E) E)
@@ -31,9 +31,9 @@
 
 (let pair_source (Pick a c))
 (run 1)
-(check (= pair_source (Pair a c)))
-(check (= pair_source (Pair c a)))
-(check (!= pair_source (RepeatedSet)))
+(check-eq pair_source (Pair a c))
+(check-eq pair_source (Pair c a))
+(check-neq pair_source (RepeatedSet))
 
 (function ExactSet (E) E :assoc-comm-idem)
 (function Exactly () E)
@@ -42,9 +42,9 @@
 (let exact_pair (ExactSet a b))
 (let exact_triple (ExactSet a b c))
 (run 1)
-(check (= exact_pair (Exactly)))
-(check (!= exact_triple (Exactly)))
+(check-eq exact_pair (Exactly))
+(check-neq exact_triple (Exactly))
 ;; ANCHOR_END: set-patterns
 
-(check (= (Conj a top) a))
-(check (= (Conj top top) top))
+(check-eq (Conj a top) a)
+(check-eq (Conj top top) top)

@@ -97,8 +97,8 @@ pairs while constructing terms, even in plain mode. For example,
 `Add(a, a, Neg(a))` canonizes to `a`.
 
 In plain mode, `:cancellative` performs no inference because AC completion does
-not run. It participates both in eager completion with `--derive-ac-eqs` and in
-checks using `--lazy-ac-eqs`. Given an asserted equality
+not run. It participates both in eager completion (`(set-option :completion
+eager)`) and in checks with check completion (`(set-option :check-completion on)`). Given an asserted equality
 `Add(a,c) = Add(b,c)`, completion may therefore derive `a = b`.
 
 These transformations are sound relative to the laws declared by the user:

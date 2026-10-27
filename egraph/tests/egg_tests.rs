@@ -10,8 +10,6 @@
 //! `error`, and a panic is an engine bug, which is not something to pin with a test.
 //!   ;; TYPES: machine                                     type group (default: bignum)
 //!   ;; EVAL: naive|semi|both                              eval algorithm (default: both)
-//!   ;; DERIVE_AC_EQS: on                                  eager AC completion (default off)
-//!   ;; LAZY_AC_EQS: on                                    lazy AC completion at checks (default off)
 //!   ;; UNION_BY: rank|size|uses|sum                       merge survivor policy (default rank)
 //!   ;; MESSAGE: text                                      the outcome's message contains `text`
 //!   ;; WARNING: text|none                                 some warning contains `text` (one line
@@ -23,7 +21,8 @@
 //! CHECK_AC_BASIS turns on `set_basis_checks` and, after a successful run, asserts the active
 //! checks: `min_monomial` minimality and the implemented Kapur-reduced left-side conditions.
 //! The report also diagnoses reducible right sides, but this harness does not reject them.
-//! It needs DERIVE_AC_EQS to have anything to check.
+//! It needs `(set-option :completion eager)` in the program to have anything to check.
+//! Completion is set by the program itself (`set-option`), not by a directive.
 
 use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::*;
@@ -35,8 +34,6 @@ struct Directives {
     types: String,
     /// The eval strategies to run under (one each for naive/semi, both for `both`).
     evals: Vec<SaturationStrategy>,
-    derive_ac_eqs: bool,
-    lazy_ac_eqs: bool,
     check_ac_basis: bool,
     union_by: semi_persistent_egraph::UnionBy,
     /// `;; MESSAGE:`: text the outcome's message must contain.
@@ -51,8 +48,6 @@ fn parse_directives(src: &str) -> Directives {
         expect: "ok".to_string(),
         types: "bignum".to_string(),
         evals: vec![SaturationStrategy::Naive, SaturationStrategy::SemiNaive],
-        derive_ac_eqs: false,
-        lazy_ac_eqs: false,
         check_ac_basis: false,
         union_by: semi_persistent_egraph::UnionBy::Rank,
         message: None,
@@ -83,11 +78,11 @@ fn parse_directives(src: &str) -> Directives {
                 other => panic!("unknown EVAL directive: {other} (expected naive|semi|both)"),
             };
         }
-        if let Some(rest) = line.strip_prefix(";; DERIVE_AC_EQS:") {
-            d.derive_ac_eqs = rest.trim() == "on";
-        }
-        if let Some(rest) = line.strip_prefix(";; LAZY_AC_EQS:") {
-            d.lazy_ac_eqs = rest.trim() == "on";
+        if line.starts_with(";; DERIVE_AC_EQS:") || line.starts_with(";; LAZY_AC_EQS:") {
+            panic!(
+                "completion directives were replaced by (set-option :completion eager) and \
+                 (set-option :check-completion on): {line}"
+            );
         }
         if let Some(rest) = line.strip_prefix(";; CHECK_AC_BASIS:") {
             d.check_ac_basis = rest.trim() == "on";
@@ -143,10 +138,6 @@ fn run_with<
     let mut interp =
         Interpreter::<semi_persistent_egraph::nodes::DefaultConfig, L, M, true, false>::new(model);
     interp.set_strategy(strategy);
-    interp.set_cc(d.derive_ac_eqs);
-    if d.lazy_ac_eqs {
-        interp.set_ac_mode(semi_persistent_egraph::interpret::AcMode::Lazy);
-    }
     interp.set_union_by(d.union_by);
     interp.set_basis_checks(d.check_ac_basis);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
@@ -866,6 +857,16 @@ fn readme_au_policy_divergence() {
     check("examples/au_policy_divergence.egg");
 }
 
+#[test]
+fn blog_policy_translation_openshell() {
+    check("examples/au_openshell_policy.egg");
+}
+
+#[test]
+fn blog_policy_translation_cel() {
+    check("examples/au_cel_policy.egg");
+}
+
 /// Every program shown in the book is a file in `doc/book/examples/`, and the
 /// chapters `{{#include}}` those files rather than quoting them, so what a reader
 /// copies is what this test ran. Walking the directory instead of listing the
@@ -893,7 +894,7 @@ fn book_examples() {
 //
 // The same programs `scripts/egglog-compare/compare.py` times against egglog and
 // `benches/corpus.rs` times in process. Registered here because they carry
-// `(check ...)` commands: their correctness is a test, their timing is not.
+// `(check-eq ...)` commands: their correctness is a test, their timing is not.
 
 egg_test!(
     bench_acgen_native,

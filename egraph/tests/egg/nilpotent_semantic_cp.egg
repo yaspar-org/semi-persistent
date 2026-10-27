@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Kapur 4.2 nilpotent self-critical-pair: from xor(a,b)=c with x⊕x=e,
 ;; xor(a, xor(a,b)) = xor(a,b) i.e. xor(b) = xor(a,c), so b = xor(a,c) and a = xor(b,c).
@@ -16,5 +16,5 @@
 (let ac (xor (a) (c)))
 (let bc (xor (b) (c)))
 (run 6)
-(check (= (b) ac))
-(check (= (a) bc))
+(check-eq (b) ac)
+(check-eq (a) bc)

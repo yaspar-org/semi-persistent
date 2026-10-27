@@ -1,0 +1,2 @@
+# Preserve source/audit fixture bytes, including upstream trailing whitespace.
+fixtures/**/*.egg whitespace=-blank-at-eol

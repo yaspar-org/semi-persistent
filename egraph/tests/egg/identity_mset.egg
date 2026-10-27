@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Identity (unit drop) on an MSet op. The declared unit `zero`
 ;; drops from monomials: +(a, zero) → {a} = a (size-1 monomial collapses to its element), and a
@@ -26,5 +26,5 @@
 (let s_ad (add (a) (d)))
 
 (run 5)
-(check (= s_a0 (a)))
-(check (= (c) s_ad))
+(check-eq s_a0 (a))
+(check-eq (c) s_ad)

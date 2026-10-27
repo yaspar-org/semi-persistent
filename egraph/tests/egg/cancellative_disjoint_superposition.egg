@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Kapur LMCS 2023 Example 4 (SC3, §5.3): mul(a,b)=mul(c,d), mul(a,c)=mul(b,d'),
 ;; cancelative. The disjoint join mul(a,b,a,c)=mul(c,d,b,d') shares {b,c}; canceling
@@ -22,4 +22,4 @@
 (let q1 (mul (a) (a)))
 (let q2 (mul (d) (dp)))
 (run 8)
-(check (= q1 q2))
+(check-eq q1 q2)

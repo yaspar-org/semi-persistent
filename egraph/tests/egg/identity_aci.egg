@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Identity on an idempotent (Set/ACI) op: join(a, unit) = a.
 (sort E)
@@ -11,4 +11,4 @@
 (function join (E) E :assoc :comm :idempotent :identity (unit))
 (let s_au (join (a) (unit)))
 (run 3)
-(check (= s_au (a)))
+(check-eq s_au (a))

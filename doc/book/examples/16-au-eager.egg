@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; Book chapter 16: with eager AC completion the solver reaches the AC optimum.
 ;;
 ;; Byte-for-byte the program of `16-au-plain.egg`, run with `--derive-ac-eqs`. The

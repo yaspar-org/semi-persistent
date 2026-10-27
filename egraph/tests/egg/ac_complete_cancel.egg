@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; AC congruence completeness, §5b cancellation (matching reaches a virtual sub-sum).
 ;;
@@ -32,4 +32,4 @@
 (run 10)
 
 ;; Without completion the rule never fires; with it, the term reduces to 0.
-(check (= t (Zero)))
+(check-eq t (Zero))

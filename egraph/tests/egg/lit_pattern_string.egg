@@ -10,9 +10,9 @@
 
 (let t (Add (Var "x") (Const 3)))
 (run 5)
-(check (= t (Const 3)))
+(check-eq t (Const 3))
 
 ;; A different name in the same position does not match.
 (let u (Add (Var "y") (Const 4)))
 (run 5)
-(check (!= u (Const 4)))
+(check-neq u (Const 4))

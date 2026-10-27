@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: off
+(set-option :completion off)
 ;; Inverse-pair cancellation respects multiplicities at BUILD time (completion off —
 ;; it is a canonization-adjacent law in `add`): a + a + neg(a) = a, one pair cancels.
 (sort E)
@@ -11,4 +11,4 @@
 (function add (E) E :assoc :comm :identity (zero) :inverse neg)
 (let t (add (a) (a) (neg (a))))
 (run 5)
-(check (= t (a)))
+(check-eq t (a))

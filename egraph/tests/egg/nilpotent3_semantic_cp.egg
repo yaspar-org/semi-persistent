@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Nilpotent order-3 semantic self-critical-pair. From x3(a,b)=c and x+x+x=e,
 ;; adding two copies of a to both sides gives b = x3(a,a,c); symmetrically a = x3(b,b,c).
@@ -16,5 +16,5 @@
 (let aac (x3 (a) (a) (c)))
 (let bbc (x3 (b) (b) (c)))
 (run 6)
-(check (= (b) aac))
-(check (= (a) bbc))
+(check-eq (b) aac)
+(check-eq (a) bbc)

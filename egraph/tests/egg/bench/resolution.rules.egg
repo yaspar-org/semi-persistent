@@ -52,8 +52,8 @@
 (union (myor (negate p0) (myor p1 (myor p2 ff))) tt)
 (run 10)
 
-(check (!= tt ff))
-(check (= p0 ff))
-(check (= p2 ff))
+(check-neq tt ff)
+(check-eq p0 ff)
+(check-eq p2 ff)
 (print-size)
 (print-stats :file "resolution.rules.stats.json")

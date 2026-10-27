@@ -214,6 +214,9 @@ pub enum RAtom<O, S, L> {
     },
     Eq(VarId, VarId),
     EqGlobal(VarId, GlobalVarId),
+    /// `(!= p q)` over e-class sorts: the two classes differ. Checked once both sides
+    /// are bound; binds nothing.
+    Neq(VarId, VarId),
     /// A primitive predicate guard. Scans nothing and binds nothing: it is evaluated
     /// over already-bound literal values and keeps or drops the partial match.
     ///
@@ -1018,6 +1021,8 @@ fn check_nodes_bindable<O, S, L>(atoms: &[RAtom<O, S, L>], shape: &MatchShape) -
             RAtom::EqGlobal(local, _) => bound[local.idx()] = true,
             // Binds nothing on its own; propagated below.
             RAtom::Eq(..) | RAtom::Pred { .. } => {}
+            // Binds nothing.
+            RAtom::Neq(..) => {}
         }
     }
     // `Eq` copies a binding in either direction, so closing under it can bind a variable
@@ -1201,6 +1206,78 @@ where
                     Ok(vec![RAtom::Eq(va, vb)])
                 }
             }
+        }
+
+        Atom::Neq(a, b) => {
+            let span = Span::Dummy;
+            let mut side = |name: &String, extra: &mut Vec<RAtom<O, S, L>>| -> R<VarId> {
+                if let Some((gid, gsort, _)) = globals.get(name.as_str()) {
+                    // A global side: a variable of its own, bound to the global's class.
+                    let v = iv(&format!("?global:{name}"), span, shape, var_sorts)?;
+                    var_sorts[v.idx()] = Some(gsort);
+                    extra.push(RAtom::EqGlobal(v, gid));
+                    Ok(v)
+                } else {
+                    iv(name, span, shape, var_sorts)
+                }
+            };
+            let mut out = Vec::new();
+            let va = side(a, &mut out)?;
+            let vb = side(b, &mut out)?;
+            if let (Some(sa), Some(sb)) = (var_sorts[va.idx()], var_sorts[vb.idx()])
+                && sa != sb
+            {
+                return Err(err(
+                    format!(
+                        "'{a}' and '{b}' are compared by `!=` but have sorts '{}' and '{}'",
+                        sorts.name(sa),
+                        sorts.name(sb)
+                    ),
+                    span,
+                ));
+            }
+            out.push(RAtom::Neq(va, vb));
+            Ok(out)
+        }
+
+        // `(!= x y)` over two variables that patterns already bound as e-classes, or
+        // globals, is a class disequality; over literal values it stays a guard.
+        Atom::Pred {
+            expr: crate::compile::PredExpr::App { op, args, .. },
+            ..
+        } if op == "!="
+            && matches!(
+                args.as_slice(),
+                [
+                    crate::compile::PredExpr::Var(..),
+                    crate::compile::PredExpr::Var(..)
+                ]
+            )
+            && args.iter().all(|x| match x {
+                crate::compile::PredExpr::Var(n, _) => {
+                    shape.find_lit_val(n).is_none()
+                        && (shape.find_var(n).is_some() || globals.get(n.as_str()).is_some())
+                }
+                _ => false,
+            }) =>
+        {
+            let [
+                crate::compile::PredExpr::Var(a, _),
+                crate::compile::PredExpr::Var(b, _),
+            ] = args.as_slice()
+            else {
+                unreachable!("matched above")
+            };
+            resolve_atom(
+                &Atom::Neq(a.clone(), b.clone()),
+                ops,
+                sorts,
+                model,
+                var_sorts,
+                shape,
+                rest_sorts,
+                globals,
+            )
         }
 
         Atom::Pred { expr, span } => {

@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: off
+(set-option :completion off)
 ;; Union-direction counterpart of identity_late_merge_mset: the
 ;; became-a-unit sweep exists because recanonize only visits the absorbed side's parents,
 ;; and which side survives is a rank choice. Pin BOTH directions: here the unit is the
@@ -14,4 +14,4 @@
 (let s_ab (add (a) (b)))
 (union (zero) (b))
 (run 5)
-(check (= s_ab (a)))
+(check-eq s_ab (a))

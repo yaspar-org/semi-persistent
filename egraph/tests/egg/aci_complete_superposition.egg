@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; ACI (Set) congruence completion. Same §4b superposition as
 ;; the AC case, but under an idempotent :assoc-comm-idem op: the monomials are SETS (dedup),
@@ -25,7 +25,7 @@
 (run 5)
 
 ;; The entailed critical-pair equality.
-(check (= s_cd s_ae))
+(check-eq s_cd s_ae)
 ;; Asserted equalities still hold.
-(check (= s_ab (c)))
-(check (= s_bd (e)))
+(check-eq s_ab (c))
+(check-eq s_bd (e))

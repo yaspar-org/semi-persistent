@@ -1,0 +1,11 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(function f () i64 :no-merge)
+(set (f) 0)
+(let $x (f))
+
+(function g () i64 :no-merge)
+(fail (let $y (g)))
+(check (= $x 0))
+(fail (check (= (g) 0)))
+
+(let bad (g))

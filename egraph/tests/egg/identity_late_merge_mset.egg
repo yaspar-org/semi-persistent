@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: off
+(set-option :completion off)
 ;; Identity unit-drop on the RECANONIZE path (Kapur LMCS 2023, Lemma 4.3's standing
 ;; assumption f(x,e) → x): a summand whose class merges into the unit's class AFTER the
 ;; node is built must drop, with completion OFF — it is a canonization fact, like
@@ -21,8 +21,8 @@
 
 (run 5)
 ;; add(a,b) with b=0 collapses to a (unit-drop + size-1 degeneracy).
-(check (= s_ab (a)))
+(check-eq s_ab (a))
 ;; add(a,b,c) with b=0 stays a well-formed sum {a,c}.
-(check (= s_abc (add (a) (c))))
+(check-eq s_abc (add (a) (c)))
 ;; A unit summand with multiplicity > 1 drops wholesale: add(b,b,c) with b=0 is c.
-(check (= s_bbc (c)))
+(check-eq s_bbc (c))

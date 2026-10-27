@@ -1,0 +1,1131 @@
+{
+  "group": "primitives",
+  "upstream_revision": "593df10e1465904e8b7a3dc85d8ef3976842b509",
+  "examples": [
+    {
+      "id": "bitwise",
+      "source": {
+        "path": "tests/bitwise.egg",
+        "sha256": "b742598e87b3be10f9ba702a0dcd53012ec61b870bc07ae6e7bb8b2c33cff987",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/bitwise.egg",
+        "vendored_path": "fixtures/primitives/bitwise/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "All nine source checks computed; comments containing unused bitset sketches remain inactive.",
+        "64-bit two\u2019s-complement bit decomposition and sign reconstruction implement AND/OR/XOR; checked shift-count guards and iterative wrapping doubling/arithmetic halving implement shifts. Division/modulo remain checked primitives on rule RHS."
+      ],
+      "limitations": [
+        "Bounded 1000-round evaluation; forced undefined shifts reject via missing-result checkpoint, changing error timing. No general primitive/API equivalence proof.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/bitwise/upstream.egg",
+              "sha256": "b742598e87b3be10f9ba702a0dcd53012ec61b870bc07ae6e7bb8b2c33cff987",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bitwise/source/encoded.egglog.egg",
+              "sha256": "83e471d9b7bc98d86bd2149cb20aed1507afd914eced4594796cbf4d8623a439",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bitwise/source/encoded.ours.egg",
+              "sha256": "68237955580c9ef7bc4ed3f46d508e7000752b833dcd1500182665eff0b553e0",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/bitwise/controls/original.egglog.egg",
+              "sha256": "b0779129858f63ae94ec7ef3b88d91d30f52fa4f2fe953203e6b1cd389d643c8",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bitwise/controls/encoded.egglog.egg",
+              "sha256": "05be6e085082a04f018eb33f42eed56de3dc39a4b8a6154162665f36fe7f4158",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bitwise/controls/encoded.ours.egg",
+              "sha256": "ba2d6ee7b8c19ef254771c8e724e565f651c0d32b551c736330cff2ab7f5fb3b",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "undefined-shift-64",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/bitwise/undefined-shift-64/original.egglog.egg",
+              "sha256": "58e3187e8612b36aa5a6c5b46debc88c364fa0da42cd6b5888bd092328ff2d69",
+              "expected": "runtime_failure",
+              "stderr_contains": [
+                "call of primitive << failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bitwise/undefined-shift-64/encoded.egglog.egg",
+              "sha256": "7c7317cde3eee563a4990fb7b3869f0f619502f5d67b8dd76451634d9d6f553c",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bitwise/undefined-shift-64/encoded.ours.egg",
+              "sha256": "1f56577d5f64d8b274dd45ebb067eef5a322a4f7da872ffc9f62640cc6073879",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "bool",
+      "source": {
+        "path": "tests/bool.egg",
+        "sha256": "87a792a6c0a7d7334cb18a74765f6cf778a01a836ddbe8b8674f46f3e9232db7",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/bool.egg",
+        "vendored_path": "fixtures/primitives/bool/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "All 20 source scalar checks plus the R-to-F table rule and run 3 execute in the encoding.",
+        "Boolean/scalar comparisons run in expression thunks; R is a witnessed constructor and F has boxed bool output. Explicit consistency checking preserves tested no-merge conflicts."
+      ],
+      "limitations": [
+        "Native table/tag code path is replaced; rejection happens at the checkpoint. Present witnesses support only the private tuple-membership interface, not general row identity.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family.",
+        "The source performs its 20 scalar checks and table-producing run but does not observe F afterward; the validation case checks the produced value and absent key."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/bool/upstream.egg",
+              "sha256": "87a792a6c0a7d7334cb18a74765f6cf778a01a836ddbe8b8674f46f3e9232db7",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bool/source/encoded.egglog.egg",
+              "sha256": "4d1b73f495b4f24477c2d48e829b6464ef57e2722b64e80df2d6e313b49dd77f",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bool/source/encoded.ours.egg",
+              "sha256": "5fc8fcac295d95c5694dc19fd493c57a7fc2ccb86f59d9b8cf33a0a364f166f8",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/bool/controls/original.egglog.egg",
+              "sha256": "e0e7c293d2c7d897907a3e05e191a823ad3e259efd2727ebdb741e90a80e7057",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bool/controls/encoded.egglog.egg",
+              "sha256": "597c830c51db39337f3b86c5b5d193e45c423a2835f129aa373a0400800d1754",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bool/controls/encoded.ours.egg",
+              "sha256": "7a99f42fe4d77d3216c91037ad4a8f91176f686afa20de1a9b4a3fefa85f3a76",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "conflicting-table-output",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/bool/conflicting-table-output/original.egglog.egg",
+              "sha256": "018ea6f2f5b1c8a085b85c6a5f19690d70f7e8e59805d8e1e627de122aecc9ca",
+              "expected": "runtime_failure",
+              "stderr_contains": [
+                "Illegal merge attempted for function F"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bool/conflicting-table-output/encoded.egglog.egg",
+              "sha256": "c214ad888e5c8e6285bb5077e9f0ac0fecdffed712ab23094b51adf8aeba7e95",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Command should have failed."
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/bool/conflicting-table-output/encoded.ours.egg",
+              "sha256": "3dcf515710daf6ee1e058ce3dcb5a2f612e69da730585a5bd54e2cf907d0deb9",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "i64",
+      "source": {
+        "path": "tests/i64.egg",
+        "sha256": "3ec6256351031cc9f325dffb0226bd3c329ced41d0e2560c40c39e3bd323fb36",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/i64.egg",
+        "vendored_path": "fixtures/primitives/i64/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "The source to-string(20) check is retained as decimal computation, not a supplied answer.",
+        "Signed decimal digit decomposition and concatenation, including negative remainders; avoids negating i64::MIN. Ten digit symbols are base cases, not a lookup of complete outputs."
+      ],
+      "limitations": [
+        "Primitive formatting becomes a bounded rewrite algorithm (200 rounds); no timing equivalence to native formatting.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/i64/upstream.egg",
+              "sha256": "3ec6256351031cc9f325dffb0226bd3c329ced41d0e2560c40c39e3bd323fb36",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/i64/source/encoded.egglog.egg",
+              "sha256": "125d20d2b050014e7f4700b0f6b2934b9ed0ec4698d6b88670452142aea67165",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/i64/source/encoded.ours.egg",
+              "sha256": "8ebb30268dfbccabec511bebd4ca373cf4c8f61dc703a33ff38557c0950e3e0a",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/i64/controls/original.egglog.egg",
+              "sha256": "5f274f51fe94cbf3bc49f9f7baff76e4db60f378c913c1f96663ee0db426b823",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/i64/controls/encoded.egglog.egg",
+              "sha256": "d0102304c7ac46aed00f19ccfdc3ed738921f7cbad7d7ef71f440e03679a434c",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/i64/controls/encoded.ours.egg",
+              "sha256": "a8b8b084b9c309aba4cf52f38d9bb6ab856fb5614a314ab97009121d292176e2",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "reject",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/i64/reject/original.egglog.egg",
+              "sha256": "c89716c7843a20bf5176db9e026963180e5517ec1c08984beae0c1f8c1efafee",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/i64/reject/encoded.egglog.egg",
+              "sha256": "753d51faabbbe6a8b98f86cd4f2b733d47a39114792f04056e4ccf737d0a924f",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/i64/reject/encoded.ours.egg",
+              "sha256": "739e8093b5ef15bf9ed7d695c4641072643f069888e8b272a973e9a5cdf20daa",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pair",
+      "source": {
+        "path": "tests/pair.egg",
+        "sha256": "a1ec855c8ea84451e9638753197670687bbbe06d4cb3d4b9f2f125a5d98ac1f9",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/pair.egg",
+        "vendored_path": "fixtures/primitives/pair/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "All eleven source checks, integer/string pairs and the Math-key union/rebuild behavior execute.",
+        "Typed pair constructors and boxed primitive projections; explicit projection demands and bounded evaluation before observations."
+      ],
+      "limitations": [
+        "Changes primitive-container representation and introduces evaluation runs. Does not establish the complete Pair API or arbitrary externally merged pair values.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/pair/upstream.egg",
+              "sha256": "a1ec855c8ea84451e9638753197670687bbbe06d4cb3d4b9f2f125a5d98ac1f9",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/pair/source/encoded.egglog.egg",
+              "sha256": "d7a61cb074a94fe4a49bd3caeacc103f64f9a02868ddaa38ae7a2b1a76351784",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/pair/source/encoded.ours.egg",
+              "sha256": "ac353ad23fd4ab925aed098aa6271226ef9602df9a9876844ac6b7be05bf831f",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/pair/controls/original.egglog.egg",
+              "sha256": "a8358e50821e8628e099930b1002d2da7e47c1bb8055fc6d6925719ebdaf4b6c",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/pair/controls/encoded.egglog.egg",
+              "sha256": "7120460fa767a52de9773f5dc99c2e92c8de6dfba133cd97688f87c8848118fc",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/pair/controls/encoded.ours.egg",
+              "sha256": "a57718794d23ae1ed35391dc583039297152f89c064b8bae5d2b64364be6f30b",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "reject",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/pair/reject/original.egglog.egg",
+              "sha256": "773e1df723ebed57aa2b5ad38a66d57012b028a1486dea50a51004d080da98f5",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/pair/reject/encoded.egglog.egg",
+              "sha256": "05adc70f1a23a0a603724bcc57d28c0ef3f3f47e0bc8b0f594f87bdc0f387db3",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/pair/reject/encoded.ours.egg",
+              "sha256": "24fcb6e410b37ed639f96403fb4cfa2a7ff1182f5c52b9e9802b81a34dbd2949",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "string",
+      "source": {
+        "path": "tests/string.egg",
+        "sha256": "3825ea62db8eb33285cb34fc557c2652af282287f4f84f79dacf7774fea1aca7",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/string.egg",
+        "vendored_path": "fixtures/primitives/string/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "All three source checks retain concatenation, nonoverlapping match count and replacement of every occurrence.",
+        "Strings become immutable Unicode-scalar lists; prefix/drop/append rules compute count and global replacement. The empty-pattern case inserts at Unicode boundaries. A direct replace-primitive mapping was attempted and disproved."
+      ],
+      "limitations": [
+        "This is an explicit string algorithm with bounded runs, not native String primitive benchmarking. No arbitrary string API/interoperability claim.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/string/upstream.egg",
+              "sha256": "3825ea62db8eb33285cb34fc557c2652af282287f4f84f79dacf7774fea1aca7",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/string/source/encoded.egglog.egg",
+              "sha256": "96dc11c65991bac7ceaa4b64a490b6cdad8405094c8ab2137d27d90989740a8a",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/string/source/encoded.ours.egg",
+              "sha256": "430cadda642a9692526feb9060041a1981de7eeeae0da117129cf0a31768d172",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/string/controls/original.egglog.egg",
+              "sha256": "cc59fa9e0e47c6a86cf6e0b86674dab946821db43d9ffbe2757b0cdf5890d080",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/string/controls/encoded.egglog.egg",
+              "sha256": "c7a42c1de47ff9e5e2f64bc5f8188fbf18a938f0ef62556f2256df92fdb50481",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/string/controls/encoded.ours.egg",
+              "sha256": "b1e3001d32094d356ab2165ba1298155127b8a5f4a9dcec959717245c0d62bf5",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "reject",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/string/reject/original.egglog.egg",
+              "sha256": "9c6dbb8638c306bdaec2ebc297a40e92c743454e842cc3946b19f748f569fba9",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/string/reject/encoded.egglog.egg",
+              "sha256": "ce69726ac240e68bb8bcf43b8e9330c9c0112e41b3ec6435f20eaace380bdb95",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/string/reject/encoded.ours.egg",
+              "sha256": "fe9be341dc797b2f197e298b93b10ba269f3ca1b004e79e04775e2010b66be01",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "primitives",
+      "source": {
+        "path": "tests/primitives.egg",
+        "sha256": "27507a6c132275350ac61e58f01c034ad63714ca713c7d5237353779778df6ec",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/primitives.egg",
+        "vendored_path": "fixtures/primitives/primitives/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "All five arithmetic and predicate checks execute; predicates test truth rather than merely creating terms.",
+        "Ground expressions are lowered to named zero-argument evaluation thunks whose RHS performs the original qualified primitive operation; both engines use the same encoded evaluation phases."
+      ],
+      "limitations": [
+        "Simple ground qualification failed on our current CLI and was repaired by thunks. Added phases/boxes change the measured workload.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/primitives/upstream.egg",
+              "sha256": "27507a6c132275350ac61e58f01c034ad63714ca713c7d5237353779778df6ec",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/primitives/source/encoded.egglog.egg",
+              "sha256": "4530b8f5a440110f980d7f49ff0d3de34299a424f252e6c5ba4654591dbb1a46",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/primitives/source/encoded.ours.egg",
+              "sha256": "09206b9649dd26864ab36ec6a40f3deeb3b803f234afaa705950fdbf33a5c8bf",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/primitives/controls/original.egglog.egg",
+              "sha256": "d91119750036a3a4670dc0ec4583bfabebac885f2f2151008cc44442b0a78672",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/primitives/controls/encoded.egglog.egg",
+              "sha256": "8773a24138ae30d39cc95debf13d9a625849c79bdbb39687f8e339d321778e98",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/primitives/controls/encoded.ours.egg",
+              "sha256": "a9067a68525b9373d1cfe4a5d9b55ce0a1cdf066525c51e38f56832aee888c1d",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "reject-false-predicate",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/primitives/reject-false-predicate/original.egglog.egg",
+              "sha256": "e61ebee73ff1f79471d4f394a7d0e4cb14f6ea2d8129855d410ec031519ea979",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/primitives/reject-false-predicate/encoded.egglog.egg",
+              "sha256": "95c96e2bb759cf5c616f44cfbc1f39a23aa499c25cba57d2bd875b4c57a5890d",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/primitives/reject-false-predicate/encoded.ours.egg",
+              "sha256": "fa00b70503ca6f86e7d2b7ce2b9921d0fe8420aa8dfe4fcf98ddf3ad8ba6e9a9",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "looking_up_global",
+      "source": {
+        "path": "tests/looking_up_global.egg",
+        "sha256": "ab64ea1347d0ff2c55b64c7e457a16c734720943e00df5e6cbc80ab8ac7f9b56",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/looking_up_global.egg",
+        "vendored_path": "fixtures/primitives/looking_up_global/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "The initialized global lookup and expected failure of the uninitialized lookup are represented; no fabricated value is substituted.",
+        "F/G are boxed constructors. Known(x) is derived only from a decoded numeric result; the caught failing lookup becomes an explicit absent-result check, and successful x retains F\u2019s result."
+      ],
+      "limitations": [
+        "Exception handling is replaced by checked definedness; error timing and placeholder insertion differ. This closed no-merge interface does not establish mutable global-table support.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/looking_up_global/upstream.egg",
+              "sha256": "ab64ea1347d0ff2c55b64c7e457a16c734720943e00df5e6cbc80ab8ac7f9b56",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/looking_up_global/source/encoded.egglog.egg",
+              "sha256": "da5d170abb2f5d4c20b66d14b4e1b735d654042b2353eaf4c48d9ebff61d903b",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/looking_up_global/source/encoded.ours.egg",
+              "sha256": "0a8cfb4606266e08ed2341f44bba01158837be2a1948b0bb8d78f0a47f888df2",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/looking_up_global/controls/original.egglog.egg",
+              "sha256": "75af725f21456896cd9474b1cbd5e187c90a699ceb97024da5d7bb14dcb9d803",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/looking_up_global/controls/encoded.egglog.egg",
+              "sha256": "6f5e4652aebf8c16d3ff66cc4754201af86ae5c0bcfa328bdff521653d0a12a8",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/looking_up_global/controls/encoded.ours.egg",
+              "sha256": "ffb4dab5ec16411c4b1744019743ccb98ea45e5a24e021fce51f73615946c957",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "reject",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/looking_up_global/reject/original.egglog.egg",
+              "sha256": "ff325ae40936913c12f2033f2f413a5d281111336e9a593b61dd2a7ad2fe28ae",
+              "expected": "runtime_failure",
+              "stderr_contains": [
+                "lookup of function g failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/looking_up_global/reject/encoded.egglog.egg",
+              "sha256": "fc827a5d93520b1d9ff29926fcfa6a3c6afa97107544a6566e1ce4f9c013ed52",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/looking_up_global/reject/encoded.ours.egg",
+              "sha256": "81bf7e514bb4ca404ef6de459d0361599ff571f278f5b6504f5252733d0ad483",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "name-resolution",
+      "source": {
+        "path": "tests/name-resolution.egg",
+        "sha256": "b48190b94c4368b520498e34ad6f9d5ae0984be08d2aeb818392d4840d55f97a",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/name-resolution.egg",
+        "vendored_path": "fixtures/primitives/name-resolution/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Global-zero rewrite, source union, active Num-collision panic condition and run 10 are retained through a checked encoding.",
+        "Bind the shared Num root explicitly; qualify the unequal-i64 guard; replace panic with a conflict marker checked after the run."
+      ],
+      "limitations": [
+        "Rejection condition is tested, not native immediate panic timing. Globals remain constants, never wildcard variables.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family.",
+        "The source has no final equality check; the validation case adds positive and negative result checks while retaining the active collision condition."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/name-resolution/upstream.egg",
+              "sha256": "b48190b94c4368b520498e34ad6f9d5ae0984be08d2aeb818392d4840d55f97a",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/name-resolution/source/encoded.egglog.egg",
+              "sha256": "63cc922b86d53e271c3de5146114dc4d5aef9ce7bb1a4fe827c9ff9983433f82",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/name-resolution/source/encoded.ours.egg",
+              "sha256": "9f6583af71d8172aee31b082c0cec4cc7f7f03276941634f9cbef399264d8b2e",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/name-resolution/controls/original.egglog.egg",
+              "sha256": "39f2f110c5a0d62821a9fb8bd2bfb248916fc7e71598b8efa2d31b3680c215e7",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/name-resolution/controls/encoded.egglog.egg",
+              "sha256": "8885bf0e6f11aca7a71ec2fb67bc138f95e602cf5893bcb814788ff92d022a12",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/name-resolution/controls/encoded.ours.egg",
+              "sha256": "20efa9cdd2dd1458d0b2422af94547ccaed3f14b6b2b97e57f5e3ff16cf3955a",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "reject",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/name-resolution/reject/original.egglog.egg",
+              "sha256": "d5e49cb273c6846fbb658e31978a95b879c72d3b1b34adf96b27ce8d2e8095c2",
+              "expected": "runtime_failure",
+              "stderr_contains": [
+                "Panic: ahhh"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/name-resolution/reject/encoded.egglog.egg",
+              "sha256": "fc952b481a5ba75a4268a5dd6f13ae92a7c0d68cfa788e76cafeed5c53b87414",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Command should have failed."
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/name-resolution/reject/encoded.ours.egg",
+              "sha256": "3a721e455b0916be06d7f5cbd1ea225808510dcc47418025a23731179d4995f6",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "use-at-in-string",
+      "source": {
+        "path": "tests/use-at-in-string.egg",
+        "sha256": "1d5873e857ef05b7ce1c9cb5a753b889f94d4ece47d443ddeda7c3d6a9b23185",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/use-at-in-string.egg",
+        "vendored_path": "fixtures/primitives/use-at-in-string/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "The @hey relation assertion and @hello string extraction are retained; extraction output is verified modulo quoting.",
+        "Private witnessed relation constructor; every membership check requires Present. The @ character stays inside string data."
+      ],
+      "limitations": [
+        "Only tuple membership is observed. General relation row identity is not preserved by merging all asserted fact roots into Present.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family.",
+        "The source asserts a relation tuple but has no membership check. Its extraction oracle is @hello, accepting different string quoting; validation adds witnessed membership checks. The rejecting control can stop before extraction in egglog, so only observations reached before failure are required."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/use-at-in-string/upstream.egg",
+              "sha256": "1d5873e857ef05b7ce1c9cb5a753b889f94d4ece47d443ddeda7c3d6a9b23185",
+              "expected": "pass",
+              "stdout_contains": [
+                "@hello"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/use-at-in-string/source/encoded.egglog.egg",
+              "sha256": "ae3af0049e952180fe38c162a5e56e9544b0848dc47afc5ce46a36ba8336be3d",
+              "expected": "pass",
+              "stdout_contains": [
+                "@hello"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/use-at-in-string/source/encoded.egglog.egg",
+              "sha256": "ae3af0049e952180fe38c162a5e56e9544b0848dc47afc5ce46a36ba8336be3d",
+              "expected": "pass",
+              "stdout_contains": [
+                "@hello"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/use-at-in-string/controls/original.egglog.egg",
+              "sha256": "4f165a329082bb5825fa494d10484f4636bbda195e9d3e213ac9b0033c8611e4",
+              "expected": "pass",
+              "stdout_contains": [
+                "@hello"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/use-at-in-string/controls/encoded.egglog.egg",
+              "sha256": "2ffd51276f6df926d08e67a5515de05639cb937f5ec7c0869ab705ac047008ba",
+              "expected": "pass",
+              "stdout_contains": [
+                "@hello"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/use-at-in-string/controls/encoded.ours.egg",
+              "sha256": "b7603f0a71a10eb56d14b32fe59669f2efeed75a708aec38922c740fc7d49aea",
+              "expected": "pass",
+              "stdout_contains": [
+                "@hello"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "reject",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/use-at-in-string/reject/original.egglog.egg",
+              "sha256": "eb92e6854243f34f328e74dd141f08f1f8aee0bc6a226cf965625c5f4ef62fc6",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/use-at-in-string/reject/encoded.egglog.egg",
+              "sha256": "b99a073af352916a8ff15a64dd0ed838fc88cdab2012b6c680fa650577f9dfbb",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/use-at-in-string/reject/encoded.ours.egg",
+              "sha256": "27910054b923d4511955bcc7bf454cbe726f31249fded01c383421727114bbe4",
+              "expected": "check_failure",
+              "stdout_contains": [
+                "@hello"
+              ],
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "datatypes",
+      "source": {
+        "path": "tests/web-demo/datatypes.egg",
+        "sha256": "e907320927796daab1a8768548bcf5cbe3d4e6127a39bbf6c26314ea6c8d01a4",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/datatypes.egg",
+        "vendored_path": "fixtures/primitives/datatypes/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "All mutually recursive declarations and the constructed source expression execute. The original has no checks, run or extraction.",
+        "Explicit mutually referenced sorts/constructors; the immutable Vec literal becomes an ordered Cons/Nil value."
+      ],
+      "limitations": [
+        "Only the source construction workload is ported; no general Vec operation suite, mutation or datatype* frontend implementation is claimed.",
+        "Classification covers the finite source example and listed controls, not complete language equivalence or a new performance family.",
+        "The unchanged source has no check, run, or extraction oracle; successful construction alone is weak evidence. Separate validation checks expression structure, list order, and emptiness."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/datatypes/upstream.egg",
+              "sha256": "e907320927796daab1a8768548bcf5cbe3d4e6127a39bbf6c26314ea6c8d01a4",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/datatypes/source/encoded.egglog.egg",
+              "sha256": "9b2453176c425270db172c0757a51b6b01f4ac56e92df9e8871ce607c2195b6e",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/datatypes/source/encoded.egglog.egg",
+              "sha256": "9b2453176c425270db172c0757a51b6b01f4ac56e92df9e8871ce607c2195b6e",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "controls",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/datatypes/controls/original.egglog.egg",
+              "sha256": "bdb60b0dcef4c1a7c93005c169f9a615fd678380e51139e33ad53ccd717cc68d",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/datatypes/controls/encoded.egglog.egg",
+              "sha256": "2ac6c90131938d658b80dc48a9c0975456546665df9ed6edfcab4a2f9a4f7b32",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/datatypes/controls/encoded.ours.egg",
+              "sha256": "28ea35e9fee1ffd4a7b0f12afebfa7860c658dadcea764a282903e22443e61ee",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "reject",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/primitives/datatypes/reject/original.egglog.egg",
+              "sha256": "313b87054ee6f6e407b3d4750f3d6753dcfe279c9cdc7b80f438afeab151aa0c",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/primitives/datatypes/reject/encoded.egglog.egg",
+              "sha256": "9b5d441db3234e51f77ce9ee1d8c3bf8a70605afa7d2365bbbb9ebf789c97cf4",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/primitives/datatypes/reject/encoded.ours.egg",
+              "sha256": "cc01de165edc20dd2d0a19a70ffc881d34458a7b661e1c7929a13ba365a18bda",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

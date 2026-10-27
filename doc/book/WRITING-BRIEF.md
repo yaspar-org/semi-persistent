@@ -119,11 +119,12 @@ selects its own mode and needs no harness change:
 ;; EXPECT: ok|check-failed|parse-error|sort-error|error|panic     default ok
 ;; TYPES: machine|bignum                                          default bignum
 ;; EVAL: naive|semi|both                                          default both
-;; DERIVE_AC_EQS: on                                              default off
-;; LAZY_AC_EQS: on                                                default off
 ;; UNION_BY: rank|size|uses|sum                                   default rank
 ;; CHECK_AC_BASIS: on                                             default off
 ```
+
+Completion is set by the program, not by a directive:
+`(set-option :completion eager)` or `(set-option :check-completion on)`.
 
 A chapter that compares modes ships one file per mode with the same program body,
 differing only in the directive line, and says so in prose.

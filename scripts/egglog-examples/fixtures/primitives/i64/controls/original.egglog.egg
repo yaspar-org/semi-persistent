@@ -1,0 +1,10 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(check (= (to-string 20) "20"))
+(check (= (to-string 0) "0"))
+(check (= (to-string -1) "-1"))
+(check (= (to-string 7) "7"))
+(check (= (to-string -10) "-10"))
+(check (= (to-string 101) "101"))
+(check (= (to-string -1002) "-1002"))
+(check (= (to-string -9223372036854775808) "-9223372036854775808"))
+(check (= (to-string 9223372036854775807) "9223372036854775807"))

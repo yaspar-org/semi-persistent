@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Nilpotent (XOR) completion. `:nilpotent` (order 2) with unit
 ;; `e`: a summand's count reduces mod 2, so even copies cancel to the unit and odd copies leave
@@ -23,9 +23,9 @@
 (let x_aab (xor (a) (a) (b)))
 
 (run 5)
-(check (= x_aa (e)))
-(check (= x_aaa (a)))
-(check (= x_aaaa (e)))
-(check (= x_aab (b)))
+(check-eq x_aa (e))
+(check-eq x_aaa (a))
+(check-eq x_aaaa (e))
+(check-eq x_aab (b))
 ;; and the two even cases coincide
-(check (= x_aa x_aaaa))
+(check-eq x_aa x_aaaa)

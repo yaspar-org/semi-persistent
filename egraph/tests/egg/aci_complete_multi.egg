@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Multiple ACI (Set) symbols complete independently, coexisting with an MSet op — exercising
 ;; per-op pool columns across representations.
@@ -45,8 +45,8 @@
 
 (run 8)
 
-(check (= a_cd a_ae))
-(check (= o_cd o_ae))
-(check (= m_cd m_ae))
+(check-eq a_cd a_ae)
+(check-eq o_cd o_ae)
+(check-eq m_cd m_ae)
 ;; No cross-op contamination between the two Set ops.
-(check (!= a_ab o_ab))
+(check-neq a_ab o_ab)

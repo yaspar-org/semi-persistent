@@ -1,0 +1,15 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(datatype NVal (N i64))
+(datatype Flag (Present))
+(constructor F () NVal)
+(constructor G () NVal)
+(constructor Known (NVal) Flag)
+(rule ((= x (N n))) ((union (Known x) (Present))))
+(union (F) (N 0))
+(run 1)
+(check-eq (Known (F)) (Present))
+(let x (F))
+(check-neq (Known (G)) (Present))
+
+(check-eq x (N 0))
+(check-neq (G) (N 0))

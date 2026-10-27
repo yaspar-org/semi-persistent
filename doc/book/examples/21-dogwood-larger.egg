@@ -61,16 +61,16 @@
 
 ;; ANCHOR: larger-partition
 ;; Partition: {sampleA1, sampleA2}, {sampleB}, {sampleC1, sampleC2}.
-(check (= sampleA1 sampleA2))
-(check (!= sampleA1 sampleB))
-(check (!= sampleA1 sampleC1))
-(check (!= sampleA1 sampleC2))
-(check (!= sampleA2 sampleB))
-(check (!= sampleA2 sampleC1))
-(check (!= sampleA2 sampleC2))
-(check (!= sampleB sampleC1))
-(check (!= sampleB sampleC2))
-(check (= sampleC1 sampleC2))
+(check-eq sampleA1 sampleA2)
+(check-neq sampleA1 sampleB)
+(check-neq sampleA1 sampleC1)
+(check-neq sampleA1 sampleC2)
+(check-neq sampleA2 sampleB)
+(check-neq sampleA2 sampleC1)
+(check-neq sampleA2 sampleC2)
+(check-neq sampleB sampleC1)
+(check-neq sampleB sampleC2)
+(check-eq sampleC1 sampleC2)
 ;; ANCHOR_END: larger-partition
 
 ;; ANCHOR: larger-queries

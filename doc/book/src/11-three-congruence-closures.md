@@ -33,11 +33,21 @@ equalities hidden when construction flattened an intermediate sequence. Lazy
 completion runs the same work only to answer equality and disequality checks,
 inside a transaction that is later restored.
 
-| mode | flag | additional work | retained graph | meaning of a passing `!=` |
-| --- | --- | --- | --- | --- |
-| plain | none | no completion | local canonization and generic congruence | the retained classes are distinct |
-| eager | `--derive-ac-eqs` | completion during every rebuild | generated nodes remain | the latest eager rebuild left the classes distinct |
-| lazy | `--lazy-ac-eqs` | goal-directed completion for checks | generated nodes are restored away | the operational search reached a fixpoint without joining them |
+| mode | in the program | starting flag | additional work | retained graph | meaning of a passing `!=` |
+| --- | --- | --- | --- | --- | --- |
+| plain | (default) | none | no completion | local canonization and generic congruence | the retained classes are distinct |
+| eager | `(set-option :completion eager)` | `--derive-ac-eqs` | completion during every rebuild | generated nodes remain | the latest eager rebuild left the classes distinct |
+| lazy | `(set-option :check-completion on)` | `--lazy-ac-eqs` | goal-directed completion for checks | generated nodes are restored away | the operational search reached a fixpoint without joining them |
+
+The modes are two settings. `:completion` decides whether rebuild completes,
+which is what rules, extraction and anti-unification see. `:check-completion`
+decides whether a check completes temporarily to answer, and matters only while
+`:completion` is `off`: lazy mode is graph completion off with check completion
+on. A `set-option` takes effect from its command on, and overrides the
+starting flag, so a program states its own mode. Turning `:completion eager`
+on rebuilds at once; turning it off keeps what eager completion derived. A
+single check can override the setting with `:complete` or `:no-complete`,
+for example `(check-eq a b :complete)` in a plain program.
 
 The eager and lazy fixtures use the same declarations, equations, and decisive
 check as the displayed program. Immediately before that check, the measured
@@ -68,14 +78,14 @@ building an unrelated term earlier can change how a later term is spelled:
 (let t0 (Add (Mul D D) A))    ; delete this line, or move it below, and
 (let t1 (Mul D D A D))        ; the following check passes instead of failing
 (let t2 (Mul A D (Mul D D)))
-(check (= t1 t2))
+(check-eq t1 t2)
 ```
 
 Both readings are sound. A reordering never makes a *false* equality
 provable, only a true one unprovable. Within a single term the order is
 fixed, so the effect appears only across statements. If a program depends on
-equalities like this one, that is the signal to enable `--derive-ac-eqs` or
-`--lazy-ac-eqs`, which prove it in either order. Operators declared
+equalities like this one, that is the signal to turn on eager completion or
+check completion, which decide it in either order. Operators declared
 associative-only (`:assoc`) are not affected: their flattening is decided
 from the written form of the application, so it does not depend on what else
 the program has built.

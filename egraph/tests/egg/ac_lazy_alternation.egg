@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine
-;; LAZY_AC_EQS: on
+(set-option :check-completion on)
 ;; Lazy AC completion, phase 2 (alternation): the checked equality is not in
 ;; the AC closure of the saturated graph alone; it needs a completion-derived
 ;; merge to enable a rule to enable a merge. The lazy check alternates rule
@@ -41,4 +41,4 @@
 ;; Holds only through the rules-and-completion interaction: eager completion
 ;; reaches it, plain saturation does not, and the lazy transaction derives it
 ;; in one goal-directed alternation and then restores the 69-node graph.
-(check (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))
+(check-eq (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y"))))

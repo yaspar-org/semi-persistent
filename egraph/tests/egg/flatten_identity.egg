@@ -23,5 +23,5 @@
 (union s (Tru))
 (rewrite (And x y ..rest) (Pair x y) :flatten)
 (run 1)
-(check (= top (Pair (q) (r))))
-(check (!= top (Pair (Tru) (p))))
+(check-eq top (Pair (q) (r)))
+(check-neq top (Pair (Tru) (p)))

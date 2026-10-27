@@ -1,0 +1,11 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(sort Nat)
+(constructor Num (i64) Nat)
+(constructor OtherNum (i64) Nat)
+(rule ((= fvar5__ 2) (= fvar6__ fvar5__) (= y fvar5__))
+      ((union (OtherNum fvar5__) (Num fvar5__))))
+
+(Num 2)
+(run 100)
+(check-eq (OtherNum 2) (Num 2))
+(check-eq (OtherNum 3) (Num 3))

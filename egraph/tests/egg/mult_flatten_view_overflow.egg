@@ -19,5 +19,5 @@
 (union k three)
 (rewrite (Plus (b):m ..rest) (Hit (b)) :flatten)
 (run 1)
-(check (= three (Hit (b))))
-(check (!= one (Hit (b))))
+(check-eq three (Hit (b)))
+(check-neq one (Hit (b)))

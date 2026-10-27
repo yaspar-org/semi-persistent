@@ -27,7 +27,7 @@ seven-term sum to width n:
 
 The input is the right-nested sum 1+(2+(…+n)) and the goal is its full reversal
 n+((n-1)+(…+1)), the shape the original block uses at n = 7. Both engines take
-`:until`, so egglog and our rules encoding both run `(run … 50 :until (= res goal))`:
+`:until`, so egglog and our rules encoding both run `(run … 50 :goal (= res goal))`:
 the budget of 50 is never the binding constraint at any n measured here (the largest
 run reaching the goal uses 4 iterations), so the measurement is time-to-goal, not
 time-to-budget. The native configuration keeps `(run add_ac 1)` and the check, so its

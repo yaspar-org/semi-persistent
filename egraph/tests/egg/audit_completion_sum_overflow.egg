@@ -2,7 +2,7 @@
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: error
 ;; TYPES: machine
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; MESSAGE: multiplicity overflow:
 ;; Completion with the ground rule c+d -> b rewrites Plus(b:2^32-1, c, d) to b:2^32, past the
 ;; 32-bit width: completion stops (CompletionOutcome::AbortedOverflow) and the run reports

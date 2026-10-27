@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Kapur LMCS 2023 SC2 (§5.2): mul(a,a,a)=mul(b,b) and mul(b,b,b)=mul(a,a), cancelative,
 ;; NO identity. Plain superposition finds nothing (the two LHS are disjoint); the
@@ -22,5 +22,5 @@
 (let q1 (mul (a) (a) (b)))
 (let q2 (mul (a) (b) (b)))
 (run 8)
-(check (= q1 (a)))
-(check (= q2 (b)))
+(check-eq q1 (a))
+(check-eq q2 (b))

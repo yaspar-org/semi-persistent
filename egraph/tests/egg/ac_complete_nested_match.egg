@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; The two-same-op-atoms rule (f (add x ..r1) (add y ..r2)) under AC completion. This used
 ;; to panic (the leapfrog_join target-clear bug, see ac_two_same_op_atoms); completion
@@ -23,4 +23,4 @@
 (run 10)
 
 ;; The rule fired (x bound to a summand of the first add): g(a) exists.
-(check (= (g (a)) (g (a))))
+(check-eq (g (a)) (g (a)))

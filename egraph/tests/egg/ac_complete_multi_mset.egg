@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Multiple MSet (AC) symbols complete independently.
 ;; The §4b superposition fires separately under Add and under Mul, each using its own
@@ -36,8 +36,8 @@
 (run 8)
 
 ;; Each op derives its own critical-pair equality.
-(check (= s_cd s_ae))
-(check (= m_pd m_aq))
+(check-eq s_cd s_ae)
+(check-eq m_pd m_aq)
 
 ;; No cross-op contamination: the Add sum and the Mul product of the same pair differ.
-(check (!= s_ab m_ab))
+(check-neq s_ab m_ab)

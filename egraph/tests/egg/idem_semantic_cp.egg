@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Kapur 4.1 idempotent self-critical-pair: from join(a,b)=c with idempotent join,
 ;; join(a, join(a,b)) = join(a,b) forces join(a,c) = c and join(b,c) = c.
@@ -15,5 +15,5 @@
 (let ac (join (a) (c)))
 (let bc (join (b) (c)))
 (run 6)
-(check (= ac (c)))
-(check (= bc (c)))
+(check-eq ac (c))
+(check-eq bc (c))

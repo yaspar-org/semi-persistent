@@ -23,6 +23,6 @@
 (let n (F (A) (B)))
 ;; The union comes FIRST, which is the order that used to fail.
 (union n (Blob))
-(check (= (F (F (A) (B)) (C)) (F (A) (B) (C))))
+(check-eq (F (F (A) (B)) (C)) (F (A) (B) (C)))
 ;; ... and the nested spelling is still equal to the flat one through the union, too.
-(check (= (F (Blob) (C)) (F (Blob) (C))))
+(check-eq (F (Blob) (C)) (F (Blob) (C)))

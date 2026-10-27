@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: check-failed
-;; LAZY_AC_EQS: on
+(set-option :check-completion on)
 ;; Book chapter 16: lazy completion does NOT help anti-unification.
 ;;
 ;; The same program a third time, run with `--lazy-ac-eqs`. The result is identical
@@ -10,8 +10,8 @@
 ;; the point of the file.
 ;;
 ;; The reason is the trigger. Lazy completion opens its transaction when an equality
-;; check asks a question plain congruence cannot answer, and `(check (= a b))` and
-;; `(check (!= a b))` are the only two commands that count. `antiunify` and `checkau`
+;; check asks a question plain congruence cannot answer, and `(check-eq a b)` and
+;; `(check-neq a b)` are the only two commands that count. `antiunify` and `checkau`
 ;; are not equality checks. They close any open transaction, which restores the
 ;; graph and discards whatever completion had derived, and only then does the solver
 ;; take its snapshot. So the snapshot it searches is the plain graph.

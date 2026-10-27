@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; A rule whose LHS loses a summand to a late merge-into-unit keeps completing:
 ;; add(a,b,x)=c and add(b,d)=f, then x=0, turn into rules {a,b}→c and {b,d}→f, which
@@ -25,4 +25,4 @@
 (union (x) (zero))
 
 (run 5)
-(check (= t_cd t_af))
+(check-eq t_cd t_af)

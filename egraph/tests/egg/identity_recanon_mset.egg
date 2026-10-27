@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; MSet analogue: after b = zero (the declared unit), add(a,b) recanonicalizes to add(a,zero),
 ;; identity-drop gives {a} = a. Guards unit-drop on the recanonize path for MSet.
 (sort E)
@@ -12,4 +12,4 @@
 (let s_ab (add (a) (b)))
 (union (b) (zero))
 (run 3)
-(check (= s_ab (a)))
+(check-eq s_ab (a))

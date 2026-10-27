@@ -102,9 +102,10 @@ built; sortcheck accepts it only under an A or AC operator and refuses a count o
 (rewrite lhs rhs [:when (guard...)] [:subsume] [:flatten] [:ruleset name])
 (birewrite lhs rhs [:when (guard...)] [:flatten] [:ruleset name])
 (rule (pattern... guard...) (action...) [:flatten] [:ruleset name])
-(run [ruleset] N [:until (= a b) | :until (!= a b)])
+(run [ruleset] N [:until fact... | :goal (= a b) | :goal (!= a b)])
 (push) (push :shrink) (pop)
-(check term) (check (= a b)) (check (!= a b))
+(check fact... [:count k | :min k | :none]) (query fact... [:limit n])
+(check-eq a b ...) (check-neq a b)
 (extract term)
 (cost-model name :script "f.roto" | :rust "id" | :asp "f.lp" | :minizinc "f.mzn")
 (extract term :cost name [:rung selection|levels|splits|binary|orders] [:budget N]

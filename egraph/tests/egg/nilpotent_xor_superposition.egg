@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Nilpotent (XOR) superposition. Two rules whose RHS is the unit
 ;; (`a ⊕ b = e`, i.e. a = b) superpose on a shared child:
@@ -21,4 +21,4 @@
 (union x_bc (e))
 
 (run 5)
-(check (= (a) (c)))
+(check-eq (a) (c))

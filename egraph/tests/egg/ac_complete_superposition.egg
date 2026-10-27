@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; AC congruence completeness, §4b overlap (superposition / critical pairs).
 ;;
@@ -35,12 +35,12 @@
 (run 5)
 
 ;; The entailed equality from the critical pair.
-(check (= s_cd s_ae))
+(check-eq s_cd s_ae)
 
 ;; Sanity: the asserted equalities still hold.
-(check (= s_ab (c)))
-(check (= s_bd (e)))
+(check-eq s_ab (c))
+(check-eq s_bd (e))
 
 ;; Negative control: an unrelated sum is not dragged in.
 (let s_ac (Add (a) (c)))
-(check (!= s_ac s_cd))
+(check-neq s_ac s_cd)

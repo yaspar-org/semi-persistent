@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: off
+(set-option :completion off)
 ;; Build-side flattening for Set (ACI) ops (WF_flat), completion OFF: nested same-op
 ;; children splice at construction exactly as for MSet ops. This ensures
 ;; `(Or (Or x y) z)` and `(Or x y z)` land in the same class without completion.
@@ -16,5 +16,5 @@
 (let deep (Or (Or (Or (x) (y)) (z)) (w)))
 (let flat4 (Or (x) (y) (z) (w)))
 (run 3)
-(check (= nested flat))
-(check (= deep flat4))
+(check-eq nested flat)
+(check-eq deep flat4)

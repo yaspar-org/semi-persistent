@@ -554,6 +554,17 @@ pub enum SolverSpec {
     Asp(Vec<String>),
 }
 
+/// A completion setting of `set-option` (doc: the command reference, chapter 11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompletionOption {
+    /// `:completion eager` (`true`) or `off`: whether rebuild runs AC completion, so that
+    /// rules, extraction and anti-unification see the classes it derives.
+    Completion(bool),
+    /// `:check-completion on|off`: whether a check, with graph completion off, completes
+    /// temporarily inside the check transaction to answer.
+    CheckCompletion(bool),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Sort(String),
@@ -578,7 +589,7 @@ pub enum Command {
     Let(String, Term),
     Union(Term, Term),
     Insert(Term),
-    /// `(run [ruleset] N [:until (= a b) | :until (!= a b)])`.
+    /// `(run [ruleset] N [:goal (= a b) | :goal (!= a b)])`.
     Run {
         /// The ruleset to run, or `None` for the default one (rules with no `:ruleset` tag).
         ruleset: Option<String>,
@@ -593,9 +604,12 @@ pub enum Command {
     /// `(print-stats)` — the last run's counters on stdout — or `(print-stats :file "p.json")`,
     /// the same numbers as JSON in a file.
     PrintStats(Option<String>),
-    Check(Term),
-    CheckEq(Term, Term),
-    CheckNeq(Term, Term),
+    /// `(check-eq a b)` and `(check-neq a b)`; the flag is a `:complete` (`Some(true)`)
+    /// or `:no-complete` (`Some(false)`) override of check completion.
+    CheckEq(Term, Term, Option<bool>),
+    CheckNeq(Term, Term, Option<bool>),
+    /// `(set-option :completion off|eager)` or `(set-option :check-completion on|off)`.
+    SetOption(CompletionOption),
     Extract(Term),
     /// `(cost-model NAME :script "file.roto")` or `(cost-model NAME :rust "id")`.
     CostModel {

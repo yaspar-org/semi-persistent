@@ -2,7 +2,7 @@
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: check-failed
 ;; TYPES: machine
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; Edge cases 5 without `:flatten`, with AC completion on: completion is not what makes
 ;; the nested conjunction matchable. It orients equalities toward the reduced form and
 ;; proves And{g1, cc} equal to the flat conjunction, but it builds no flat node, so the
@@ -46,4 +46,4 @@
   :let ((K0 (min l)) (K1 (+ K0 (min (- u l)))))
   :when ((>= (count gs) 2) (> K1 0) (== (count (union-by p l u)) (count gs))))
 (run 1)
-(check (= e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc)))))
+(check-eq e (Global (Interval 1 3) (And va (Global (Interval 1 2) vb) (Global (Interval 2 3) vc))))

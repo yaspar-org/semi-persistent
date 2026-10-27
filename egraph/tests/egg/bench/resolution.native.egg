@@ -46,8 +46,8 @@
 (union (myor (negate p0) p1 p2 ff) tt)
 (run 10)
 
-(check (!= tt ff))
-(check (= p0 ff))
-(check (= p2 ff))
+(check-neq tt ff)
+(check-eq p0 ff)
+(check-eq p2 ff)
 (print-size)
 (print-stats :file "resolution.native.stats.json")

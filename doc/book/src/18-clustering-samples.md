@@ -82,7 +82,7 @@ and run. The samples themselves did not change.
 First inspect the unresolved syntax. If it is order or repetition, check the
 Chapter 4 declaration. If it is a domain equation, check that Chapter 8 ran
 the relevant ruleset to saturation. If it is an equality hidden by flattened
-AC structure, Chapter 11 explains when `--derive-ac-eqs` is required.
+AC structure, Chapter 11 explains when eager completion is required.
 
 ## When a cluster is too coarse
 

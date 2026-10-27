@@ -1,0 +1,14 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(datatype KAT
+    (par KAT KAT)
+)
+(constructor AConst () KAT)
+(let audit_A (AConst))
+
+(rewrite (par p p) p)
+(rule ((= r (par q r)) (= q (par q r))) ((union r q)))
+
+; tests
+(let audit_q (par audit_A audit_A))
+(run 10)
+(check (= audit_q audit_A))

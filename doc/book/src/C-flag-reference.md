@@ -28,8 +28,8 @@ the bignum group provides `IBig`, `UBig`, `RBig`, and `bool`.
 | --- | --- | --- |
 | `--use-naive` | selected | Explicitly select full re-matching each round. Conflicts with `--use-semi-naive`. |
 | `--use-semi-naive` | off | Select delta-driven saturation. Conflicts with `--use-naive`. |
-| `--derive-ac-eqs` | off | Run eager AC completion during rebuild. Conflicts with `--lazy-ac-eqs`. |
-| `--lazy-ac-eqs` | off | Run goal-directed AC completion for equality and disequality checks. Conflicts with `--derive-ac-eqs`. |
+| `--derive-ac-eqs` | off | Start with eager AC completion during rebuild, as `(set-option :completion eager)` does. A `set-option` in the program overrides it. Conflicts with `--lazy-ac-eqs`. |
+| `--lazy-ac-eqs` | off | Start with check completion, as `(set-option :check-completion on)` does: checks run goal-directed AC completion temporarily. A `set-option` in the program overrides it. Conflicts with `--derive-ac-eqs`. |
 | `--check-ac-basis` | off | Print expensive reduced-basis invariant checks during eager completion. It has no effect without `--derive-ac-eqs`. |
 | `--count-match-steps` | off | Count matching work and report `match steps: N` on standard error after the closing status. |
 | `--flatten-rhs` | off | Give an AC node a rewrite builds a flat alternative for each same-operator child kept nested because its class is used elsewhere; not for operators with `:inverse`. |
@@ -77,8 +77,6 @@ running the file by hand.
 | `;; WARNING:` | text, or `none` | none | none; some warning must contain the text, one directive per warning, or no warning may be raised |
 | `;; TYPES:` | as `--types` | `bignum` | `--types` |
 | `;; EVAL:` | `naive`, `semi`, `both` | `both` | `--use-naive` or `--use-semi-naive` |
-| `;; DERIVE_AC_EQS:` | `on` | off | `--derive-ac-eqs` |
-| `;; LAZY_AC_EQS:` | `on` | off | `--lazy-ac-eqs` |
 | `;; CHECK_AC_BASIS:` | `on` | off | `--check-ac-basis`; the harness also asserts the invariants after a successful run |
 | `;; UNION_BY:` | `rank`, `size`, `uses`, `sum` | `rank` | `--union-by` |
 

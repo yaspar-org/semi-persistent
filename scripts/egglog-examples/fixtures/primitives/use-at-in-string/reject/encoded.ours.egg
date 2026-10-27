@@ -1,0 +1,9 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(datatype Flag (Present))
+(constructor MyRel (String) Flag)
+(union (MyRel "@hey") (Present))
+(extract "@hello")
+
+(check-eq (MyRel "@hey") (Present))
+(check-neq (MyRel "@missing") (Present))
+(check-eq (MyRel "@missing") (Present))

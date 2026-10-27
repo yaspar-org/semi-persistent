@@ -43,10 +43,10 @@
       (Neg (Num 8)))))
 
 (run 30)
-(check (= e (Num 101)))
+(check-eq e (Num 101))
 
 ;; Also check intermediate values are reachable
-(check (= (Add (Num 2) (Num 3)) (Num 5)))
-(check (= (Mul (Num 4) (Num 5)) (Num 20)))
-(check (= (Sub (Num 10) (Num 3)) (Num 7)))
-(check (= (Neg (Num 8)) (Num -8)))
+(check-eq (Add (Num 2) (Num 3)) (Num 5))
+(check-eq (Mul (Num 4) (Num 5)) (Num 20))
+(check-eq (Sub (Num 10) (Num 3)) (Num 7))
+(check-eq (Neg (Num 8)) (Num -8))

@@ -56,6 +56,7 @@ struct Cli {
     /// Off by default: when off, leapfrog matching still enumerates sub-multisets of AC
     /// nodes, but rebuild does not run the completion procedure. A converged implemented
     /// fixpoint is not an unconditional completeness theorem. See the AC completion docs.
+    /// The starting setting only: `(set-option :completion ...)` in the program overrides it.
     #[arg(long, default_value_t = false, conflicts_with = "lazy_ac_eqs")]
     derive_ac_eqs: bool,
 
@@ -65,7 +66,8 @@ struct Cli {
     /// alternation as its second phase; the restore discards everything the checks
     /// derived. A `!=` check passes only if that implemented search reaches its
     /// operational fixpoint without deriving equality; this is not a theorem of semantic
-    /// disequality. Mutually exclusive with --derive-ac-eqs.
+    /// disequality. Mutually exclusive with --derive-ac-eqs. The starting setting only:
+    /// `(set-option :check-completion ...)` in the program overrides it.
     #[arg(long, default_value_t = false)]
     lazy_ac_eqs: bool,
 

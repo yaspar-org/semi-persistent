@@ -8,15 +8,15 @@
 (function c () E)
 
 (function L (E) E :assoc-left)
-(check (= (L (L a b) c) (L a b c)))
-(check (!= (L a (L b c)) (L a b c)))
+(check-eq (L (L a b) c) (L a b c))
+(check-neq (L a (L b c)) (L a b c))
 
 (function R (E) E :assoc-right)
-(check (= (R a (R b c)) (R a b c)))
-(check (!= (R (R a b) c) (R a b c)))
+(check-eq (R a (R b c)) (R a b c))
+(check-neq (R (R a b) c) (R a b c))
 
 (function A (E) E :assoc)
-(check (= (A (A a b) c) (A a b c)))
-(check (= (A a (A b c)) (A a b c)))
-(check (!= (A a b c) (A c b a)))
+(check-eq (A (A a b) c) (A a b c))
+(check-eq (A a (A b c)) (A a b c))
+(check-neq (A a b c) (A c b a))
 ;; ANCHOR_END: directional-flattening

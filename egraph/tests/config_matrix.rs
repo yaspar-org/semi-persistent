@@ -22,21 +22,10 @@ const CONFIGS: [&[&str]; 2] = [&["--bits", "32"], &["--bits", "64"]];
 
 fn run(file: &str, flags: &[&str]) -> (Outcome, String) {
     let path = format!("{}/tests/egg/{file}.egg", env!("CARGO_MANIFEST_DIR"));
-    // The fixture's own completion directives, as the egg_tests harness reads them.
-    let src = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut extra: Vec<&str> = Vec::new();
-    for line in src.lines().take(10) {
-        match line.trim() {
-            ";; DERIVE_AC_EQS: on" => extra.push("--derive-ac-eqs"),
-            ";; LAZY_AC_EQS: on" => extra.push("--lazy-ac-eqs"),
-            _ => {}
-        }
-    }
     let out = Command::new(env!("CARGO_BIN_EXE_semi-persistent"))
         .arg(&path)
         .args(["--types", "machine"])
         .args(flags)
-        .args(&extra)
         .output()
         .expect("run the binary");
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();

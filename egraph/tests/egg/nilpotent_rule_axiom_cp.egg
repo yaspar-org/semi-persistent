@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; CHECK_AC_BASIS: on
 ;; Nilpotent per-rule axiom critical pairs (Kapur Lemma 4.2(ii)/4.5):
 ;; superposing f(M)→f(N) with xⁿ = e gives, per a with multiplicity m in M, the pair
@@ -21,5 +21,5 @@
 (let x_bc (xor (b) (c)))
 
 (run 5)
-(check (= x_ac (b)))
-(check (= x_bc (a)))
+(check-eq x_ac (b))
+(check-eq x_bc (a))

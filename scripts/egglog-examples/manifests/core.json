@@ -1,0 +1,825 @@
+{
+  "group": "core",
+  "upstream_revision": "593df10e1465904e8b7a3dc85d8ef3976842b509",
+  "examples": [
+    {
+      "id": "array",
+      "source": {
+        "path": "tests/web-demo/array.egg",
+        "sha256": "4150210bf45f6c39b59131c99b1b4782a7165c32c7e4dd17e40f80bc970c1bf4",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/array.egg",
+        "vendored_path": "fixtures/core/array/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Use the explicit-rule array variant: retain all seven rules, six rewrites, six source checks, push/pop, and run 5. Commutativity, associativity, folding, and zero identity remain explicit rewrites.",
+        "Represent Neq tuples with constructors equated to Present; require the witness in every relation consumer. Preserve the active contradiction condition using Conflict and a check after each run, before pop.",
+        "Alpha-rename globals and qualify primitive operations for ours; translate negative equality checks to fail/check for egglog. Include positive guard validation and a missing-read-guard negative control."
+      ],
+      "limitations": [
+        "Contradictions reject at explicit checkpoints rather than at the original immediate panic; this changes error timing.",
+        "Private witnesses preserve tested tuple membership only. Merging asserted roots into Present does not preserve general relation-row identity.",
+        "This finite example uses explicit binary rewrite matching; no native-AC equivalence or performance claim is made."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/array/upstream.egg",
+              "sha256": "4150210bf45f6c39b59131c99b1b4782a7165c32c7e4dd17e40f80bc970c1bf4",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/array/source/encoded.egglog.egg",
+              "sha256": "69e42c2b1317c1d20e65eab96d5567f755afc301b7456b026b2d543564475d27",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/array/source/encoded.ours.egg",
+              "sha256": "1a98b6f9ad9d4ad1fc45cc256607d45a198fafc15a06aa277258c53d7ad60f1d",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "positive-guards",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/array/positive-guards/original.egglog.egg",
+              "sha256": "68c654b092011ba4b564b82cae63e602e0acc4f413326a5d8a70cbbf7dd0a2e1",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/array/positive-guards/encoded.egglog.egg",
+              "sha256": "758c66711f33e06e0e4680862f89e88c7669548ff24f1297374114ee368ee23e",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/array/positive-guards/encoded.ours.egg",
+              "sha256": "605483071a8d0e7ba494f616b947d1befae962ce78a5a2b5273f28a3aca6cdf4",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "must-fail-missing-read-guard",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/array/must-fail-missing-read-guard/original.egglog.egg",
+              "sha256": "79d7eb70df5d2cc9707c7a0c96ce5a7b6ff834cb9e1e81e5b0a6ad55fd37efb1",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/array/must-fail-missing-read-guard/encoded.egglog.egg",
+              "sha256": "ee8c451a8f59f446365fbe65b4e8d68c7898fecd8f57d37202239afa6bd5f5bf",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/array/must-fail-missing-read-guard/encoded.ours.egg",
+              "sha256": "f5cf3bef09e9c925a92202f8799cb9937fb369f9e7227106aaf109e1deb98be2",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "list",
+      "source": {
+        "path": "tests/web-demo/list.egg",
+        "sha256": "0db0bffbf91fdd80d9f28c1fa62c51931c5fe98d8ac4e2e7c9b404113a79135d",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/list.egg",
+        "vendored_path": "fixtures/core/list/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Retain both primitive-result tables, both demand relations, all six rules, append/set rewrites, all source input lists, and all five source checks. Replace source saturation with a bounded 10000-round computation run.",
+        "Keep n > 0 on recursive demand and i > 0 on update. The final get-propagation rule deliberately has no n > 0 guard; its n > MIN guard only prevents undefined query subtraction.",
+        "Use boxed scalar outputs and private Present witnesses for demand/definedness. Separate validation rules check definedness and conflicting no-merge outputs without advancing computation.",
+        "Bind stored primitive keys and test their computed-key equality. Preserve partial-query definedness guards before arithmetic; alpha-rename globals and qualify primitives in ours.",
+        "Validation seeds a negative-index tail value and checks its propagation; the control checks that a zero-index tail/head collision is rejected rather than hidden by an added positive-index guard."
+      ],
+      "limitations": [
+        "The 10000-round bound reached saturation for the audited finite source; it is not a translation of arbitrary unbounded schedules.",
+        "Conflicts reject after computation at a validation checkpoint, changing native no-merge error timing. Cyclic conflicting inputs are not represented by these selected cases.",
+        "The boxed no-merge interface does not establish mutable merge-new/min/max tables, arbitrary scalar-box unions, or general relation-row identity.",
+        "Additional validation phases, boxes, and computed-key joins change the measured workload; no native-table performance equivalence is claimed."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/list/upstream.egg",
+              "sha256": "0db0bffbf91fdd80d9f28c1fa62c51931c5fe98d8ac4e2e7c9b404113a79135d",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/list/source/encoded.egglog.egg",
+              "sha256": "29b240d892ebe1c9849af67d83ba171d4018bc28d44990a780ed9918d6c5a4a9",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/list/source/encoded.ours.egg",
+              "sha256": "c275a4d2fb02bb61ffdcce5b3b5189a49f9182da637f81865cadec9e00548824",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "negative-index-existing-tail",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/list/negative-index-existing-tail/original.egglog.egg",
+              "sha256": "f7e4ee157175621423e0f6845878cbed6b9f5b9920725cdb4391bb88c7351f15",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/list/negative-index-existing-tail/encoded.egglog.egg",
+              "sha256": "82e607c0ab21ec79f96e28b59ddaedbbcad0523f684d7f06d6e30927314c57e5",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/list/negative-index-existing-tail/encoded.ours.egg",
+              "sha256": "05e52c90c77a37dc8e6ce679e431327aca5924be223199fccdf0f0c5b5e53625",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "zero-index-negative-tail-conflict",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/list/zero-index-negative-tail-conflict/original.egglog.egg",
+              "sha256": "a97791d38b94ce3be346549a91a50e684af22748a7e9ec5efeafd7aec1629ce2",
+              "expected": "runtime_failure",
+              "stderr_contains": [
+                "Illegal merge attempted"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/list/zero-index-negative-tail-conflict/encoded.egglog.egg",
+              "sha256": "dcfad8b650d372513d3ffdf7296bb53ffdeafe7a5eaa3d32c73bb85141c0dde0",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Command should have failed."
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/list/zero-index-negative-tail-conflict/encoded.ours.egg",
+              "sha256": "1de8bf3c02d9de1ffc0ee56fc4bab07126ca75804bbec5a5ccd61b0dc1cbac85",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "antiunify",
+      "source": {
+        "path": "tests/web-demo/antiunify.egg",
+        "sha256": "e3c3ac21610be638c1d040fe6ee65fa1a699e4f704f91b8e4e4212c515841897",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/antiunify.egg",
+        "vendored_path": "fixtures/core/antiunify/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Retain all four rewrites, both source terms, the AU constructor, run 4, equality check, and extraction. Rename globals and qualify arithmetic for ours.",
+        "Use the same renamed full program in encoded egglog with unqualified arithmetic. Omit exploratory print-stats diagnostics. The appended wrong-generalization control must reject AU equal to Num 3."
+      ],
+      "limitations": [
+        "This small source exercises ordinary AU rewrite rules, not the native anti-unification implementation or a least-generality theorem.",
+        "Add has only the source commutativity rewrite; do not assume associativity. Extracted forms may exchange Add children or print strings with different quoting, so stdout checks require stable subterms and the program retains its complete equality oracle.",
+        "Egglog suppresses buffered extraction output when a later negative control fails; source cases require extraction output, while failing egglog controls require the check-failure diagnostic only."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/antiunify/upstream.egg",
+              "sha256": "e3c3ac21610be638c1d040fe6ee65fa1a699e4f704f91b8e4e4212c515841897",
+              "expected": "pass",
+              "stdout_contains": [
+                "(Add ",
+                "(AU (Var \"x\") (Var \"y\"))",
+                "(Num 3)"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/antiunify/source/encoded.egglog.egg",
+              "sha256": "559fa455c5db9e5cfa691b814ea67bcf267e0b450b23b64a84fd9a37f429ee9f",
+              "expected": "pass",
+              "stdout_contains": [
+                "(Add ",
+                "(AU (Var \"x\") (Var \"y\"))",
+                "(Num 3)"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/antiunify/source/encoded.ours.egg",
+              "sha256": "9f0de2425541e598093a792fafef895ad298145c0fc90f9a127224c553e20e74",
+              "expected": "pass",
+              "stdout_contains": [
+                "(Add ",
+                "(AU (Var x) (Var y))",
+                "(Num 3)"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "wrong-generalization",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/antiunify/wrong-generalization/original.egglog.egg",
+              "sha256": "a1bf8e6ee8faf99fbd6c1978d2c901a88f2cd1a3130c267e57f4230516e80ae9",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/antiunify/wrong-generalization/encoded.egglog.egg",
+              "sha256": "24d3e18315a3a62f3243edbcd640ef8c34ccf3b2b5efcb3470e8406b48169ada",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/antiunify/wrong-generalization/encoded.ours.egg",
+              "sha256": "d6d973f2b302493f8c658bc5dd158e226822b1455d020699951a8242f2d9f2c0",
+              "expected": "check_failure",
+              "stdout_contains": [
+                "(Add ",
+                "(AU (Var x) (Var y))",
+                "(Num 3)"
+              ],
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fibonacci",
+      "source": {
+        "path": "tests/web-demo/fibonacci.egg",
+        "sha256": "00f379c91c9db87ebd03a9b49b3dbe4f2f691d190e8c94d65885dc2786441b41",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/fibonacci.egg",
+        "vendored_path": "fixtures/core/fibonacci/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Retain seeds fib(0)=0 and fib(1)=1, forward recurrence with query x+1 and write x+2, the seven computation rounds, and the source fib(7)=13 check.",
+        "Use boxed scalar outputs and private Present witnesses for demand/definedness. Separate validation rules check definedness and conflicting no-merge outputs without advancing computation.",
+        "Bind stored primitive keys and test their computed-key equality. Preserve partial-query definedness guards before arithmetic; alpha-rename globals and qualify primitives in ours.",
+        "The x < MAX query guard preserves undefined x+1 as no match; arithmetic in rule heads remains checked and must still fail if undefined. The rounds-5 validation checks both the populated frontier and the missing next key; the wrong-answer control must fail."
+      ],
+      "limitations": [
+        "Validation does not advance the recurrence but delays conflict detection until a checkpoint.",
+        "This is forward primitive-table population, not recursive constructor-demand Fibonacci. Only the finite source and listed controls are classified here.",
+        "The boxed no-merge interface does not establish mutable merge-new/min/max tables, arbitrary scalar-box unions, or general relation-row identity.",
+        "Additional validation phases, boxes, and computed-key joins change the measured workload; no native-table performance equivalence is claimed."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/fibonacci/upstream.egg",
+              "sha256": "00f379c91c9db87ebd03a9b49b3dbe4f2f691d190e8c94d65885dc2786441b41",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci/source/encoded.egglog.egg",
+              "sha256": "c0262d1cddcb8082230a820c97ef3fd9bfbc037ca8e69fbf0cc172758aa44da1",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci/source/encoded.ours.egg",
+              "sha256": "b1d5df516569020f779c6d2f7aa21870802bec2f1e08377b0db91fce2b35c3f6",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "rounds-5",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/fibonacci/rounds-5/original.egglog.egg",
+              "sha256": "050f21ffcab547a46a52f3bb6c0c9510428ab040ffe52ab5931506c8bd71cecf",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci/rounds-5/encoded.egglog.egg",
+              "sha256": "737625f1139fa784ecbe045b7306d32f6a9b3bc684728d7b75add0f254a81d92",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci/rounds-5/encoded.ours.egg",
+              "sha256": "384b3391a497bbcc3a4eed01272feeb1367b6742b7ff610699fd8ae879d833f8",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "wrong-answer",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/fibonacci/wrong-answer/original.egglog.egg",
+              "sha256": "b98e7f461dbb02e2434d4373ac7dd11858bb9a8e669759b521fa7bddb6949dee",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci/wrong-answer/encoded.egglog.egg",
+              "sha256": "ea591816686044667efdee04f35a73f70a127ec2922320c050b1637a8fa882ed",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci/wrong-answer/encoded.ours.egg",
+              "sha256": "99d375b43b1d1592a0d0f893e02c0c858643966132737da02f651b9adc705069",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "path-union",
+      "source": {
+        "path": "tests/web-demo/path-union.egg",
+        "sha256": "0bcff8bd7fe7fc36ba91cb78c4878504c7a39f67cb60a7f5f31b1ecfa94c5b3c",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/path-union.egg",
+        "vendored_path": "fixtures/core/path-union/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Represent Edge and Path tuples by constructors equated with Present; every rule consumer and membership check requires that witness.",
+        "Preserve both rules, all three edge assertions, the node union before the run, run 10, and both source goals. Omit exploratory print-stats diagnostics.",
+        "The validation checks missing reverse reachability and an inserted but unasserted encoded Edge; the negative control requires an absent reverse path and must fail. The original validation makes no corresponding edge assertion."
+      ],
+      "limitations": [
+        "This private tuple-membership interface does not preserve general relation-row identity. Indexing and merge work differ from native relations.",
+        "The source merges nodes before the run, not after a fixed point. Negative checks may insert terms differently; no timing equivalence is claimed."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/path-union/upstream.egg",
+              "sha256": "0bcff8bd7fe7fc36ba91cb78c4878504c7a39f67cb60a7f5f31b1ecfa94c5b3c",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/path-union/source/encoded.egglog.egg",
+              "sha256": "1e4c16ecb35d5e56cd8314c125154996d0b97ebcdd71f3afde178a62ce5c6a3c",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/path-union/source/encoded.ours.egg",
+              "sha256": "900224e91082e28f15b47ff83cb50a98aaa66b702833428bbfad32904ad5be71",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "membership",
+          "kind": "validation",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/path-union/membership/original.egglog.egg",
+              "sha256": "2b9bb578b04fe5bb111065b57bf97a3120902b5636e75a6cbbd314c804bf9672",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/path-union/membership/encoded.egglog.egg",
+              "sha256": "5a9e2342867bb0a4e96767776716c9169d7cafa5703f46f9ec65568b7e9dcf5d",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/path-union/membership/encoded.ours.egg",
+              "sha256": "eec8543be8fbc6719ca8d0b61dc3f62a0ff18b3b99c979bc46725bbcf6eb31cd",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "absent-path",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/path-union/absent-path/original.egglog.egg",
+              "sha256": "d8b28736d1a5bb9f222afb4f06c2abee924aed16412d927e1326d975dde7a5cc",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/path-union/absent-path/encoded.egglog.egg",
+              "sha256": "42430ca064486dbeb0d58f3669f02c9feed4e75e13df472ffe3bef3dd0e41816",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/path-union/absent-path/encoded.ours.egg",
+              "sha256": "858b16b0bf511b04fadafafacb4a45268783ae317396d5ea7fed98c27a587b52",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "naturals",
+      "source": {
+        "path": "tests/web-demo/naturals.egg",
+        "sha256": "79a42c5d2213d1ca662ba845e90e33a6ffa33f76f399ad95a8d69a65522ec4bb",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/naturals.egg",
+        "vendored_path": "fixtures/core/naturals/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Preserve all constructors, four arithmetic rewrites, source terms, declaration/run order, and the negative-before/positive-after checks.",
+        "Replace both saturation drivers by run 10000, rename globals, translate negative equality checks for each engine, and omit exploratory print-stats diagnostics.",
+        "The appended unequal-results control must reject the source six and four as equal."
+      ],
+      "limitations": [
+        "The audited source inputs saturated after four and seven iterations in ours. The finite bound does not establish an arbitrary unbounded-schedule translation.",
+        "Negative checks can insert terms differently between engines. This finite arithmetic example does not add a general nonmembership or schedule guarantee."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/naturals/upstream.egg",
+              "sha256": "79a42c5d2213d1ca662ba845e90e33a6ffa33f76f399ad95a8d69a65522ec4bb",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/naturals/source/encoded.egglog.egg",
+              "sha256": "9ea0b985fc0bf1218ff64897132349a6c56624371e79d5fcf246774e0534aa48",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/naturals/source/encoded.ours.egg",
+              "sha256": "abc78c4a79a6fd5f76063172a4d34e2a4db76bb195ad49b7e72292628d61997d",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "unequal-results",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/naturals/unequal-results/original.egglog.egg",
+              "sha256": "7d362bc99eb0952461dd26bb217839d6451dd44415964b8050bd5cd14356a37e",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/naturals/unequal-results/encoded.egglog.egg",
+              "sha256": "129b959432edb7df69506fdebd4e8c0aefdddd88e3273d3930c4fff908aa8cdb",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/naturals/unequal-results/encoded.ours.egg",
+              "sha256": "8929462a7e65b618661ae3d1163c4a87e2e14303ef625729a80a69bad5d9e021",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "birewrite",
+      "source": {
+        "path": "tests/web-demo/birewrite.egg",
+        "sha256": "f18779fbae84d2497c72b0c36c138b9d8c0a084bb3ccbfb8ffb5fe5516a5149b",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/web-demo/birewrite.egg",
+        "vendored_path": "fixtures/core/birewrite/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Retain bidirectional associativity, both complete source expressions, run 10, and both equality checks. Rename globals and omit exploratory print-stats diagnostics.",
+        "The appended noncommutative control swaps two leaves and must fail under the retained associativity-only rules."
+      ],
+      "limitations": [
+        "This is a tiny associativity/parser regression, not a distinct performance family. Add is not commutative; no native A or AC normalization is substituted."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/birewrite/upstream.egg",
+              "sha256": "f18779fbae84d2497c72b0c36c138b9d8c0a084bb3ccbfb8ffb5fe5516a5149b",
+              "expected": "pass"
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/birewrite/source/encoded.egglog.egg",
+              "sha256": "704c4d73e8131155662b6c2e89fcf84dc3e2e4bdbe8e3cf2a33368955dbc6ee6",
+              "expected": "pass"
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/birewrite/source/encoded.ours.egg",
+              "sha256": "e9917087f0ba687a5b94a950a4520c7d75a2ff0bb90e4b46fc42f4293fe66d3f",
+              "expected": "pass"
+            }
+          ]
+        },
+        {
+          "id": "noncommutative",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/birewrite/noncommutative/original.egglog.egg",
+              "sha256": "3351e58b095e8def6bb7c2232e4ad347b2b20a60dc4e978531c56a7c42424ce8",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/birewrite/noncommutative/encoded.egglog.egg",
+              "sha256": "126086a81fa4bc5d56c9aa04de7109469d16b3fbd896e6b0e786e03e2c63590d",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/birewrite/noncommutative/encoded.ours.egg",
+              "sha256": "ff9e4cd0ad6efcae1afcdaf58a30ef98887a9fca0c9b30df86102457c50bbef6",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fibonacci-demand",
+      "source": {
+        "path": "tests/fibonacci-demand.egg",
+        "sha256": "03950a0421b8d40a3e6143af66aa35f4e4ed53acc53fe77d36a7602ae23f055f",
+        "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/fibonacci-demand.egg",
+        "vendored_path": "fixtures/core/fibonacci-demand/upstream.egg"
+      },
+      "classification": "finite-example",
+      "adaptations": [
+        "Retain recursive constructor demand, x > 1 and x <= 1 guards, Num/Add/Fib costs 1/5/10, run 1000, extraction, and the Num 13 equality check.",
+        "Rename globals and qualify arithmetic for ours. Omit only the diagnostic print-function table dump and exploratory print-stats; no constant-binding workaround is needed.",
+        "The appended wrong-answer control must reject Num 12 after the complete source workload."
+      ],
+      "limitations": [
+        "This is constructor-demand Fibonacci, with no primitive-table encoding. Add only folds numbers; no associativity or commutativity is assumed.",
+        "The small finite source overlaps existing demand/extraction workloads; no new performance-family or arbitrary recursion claim is made.",
+        "Egglog suppresses buffered extraction output when a later negative control fails; source cases require extraction output, while failing egglog controls require the check-failure diagnostic only."
+      ],
+      "cases": [
+        {
+          "id": "source",
+          "kind": "source",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/fibonacci-demand/upstream.egg",
+              "sha256": "03950a0421b8d40a3e6143af66aa35f4e4ed53acc53fe77d36a7602ae23f055f",
+              "expected": "pass",
+              "stdout_contains": [
+                "(Num 13)"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci-demand/source/encoded.egglog.egg",
+              "sha256": "e4ef27afea1640f399a40547ce86b5f09a0bcbfa9fb34be83359ed43dd7834d2",
+              "expected": "pass",
+              "stdout_contains": [
+                "(Num 13)"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci-demand/source/encoded.ours.egg",
+              "sha256": "7cc12cd0c27bdc4260bb497361e6984e9f72e921903928f37a451f137aabd113",
+              "expected": "pass",
+              "stdout_contains": [
+                "(Num 13)"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "wrong-answer",
+          "kind": "control",
+          "programs": [
+            {
+              "engine": "egglog",
+              "arm": "original",
+              "path": "fixtures/core/fibonacci-demand/wrong-answer/original.egglog.egg",
+              "sha256": "a10373d5963d2e20daa5893082bf33b91b128de47dec0496b3511b266206d65b",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "egglog",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci-demand/wrong-answer/encoded.egglog.egg",
+              "sha256": "cdfc3f067d31ed367a1a21ee78943be5df88f95d1c6a5fa56b9534bdd9c92eec",
+              "expected": "check_failure",
+              "stderr_contains": [
+                "Check failed"
+              ]
+            },
+            {
+              "engine": "ours",
+              "arm": "encoded",
+              "path": "fixtures/core/fibonacci-demand/wrong-answer/encoded.ours.egg",
+              "sha256": "6b8b2e95203dc7309a22cb299148be8a94b1e6d12a12fe5170a097e21a216a35",
+              "expected": "check_failure",
+              "stdout_contains": [
+                "(Num 13)"
+              ],
+              "stderr_contains": [
+                "check failed"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

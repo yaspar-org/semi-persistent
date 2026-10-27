@@ -1,6 +1,6 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; TYPES: machine
 ;; The A-only erased-reference gap (design doc section 13 companion): merging
 ;; two pure Seq classes leaves the equation seq(A,B) = seq(C,X) invisible to
@@ -11,4 +11,4 @@
     (A) (B) (C) (X)
     (S E :assoc))
 (union (S (A) (B)) (S (C) (X)))
-(check (= (S (A) (B) (X)) (S (C) (X) (X))))
+(check-eq (S (A) (B) (X)) (S (C) (X) (X)))

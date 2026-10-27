@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: off
+(set-option :completion off)
 ;; Unit-drop and count clamp compose in one recanonize cascade: xr(c,d,f) with
 ;; f = e (unit-drop → {c,d}) and c = d (coalesce → {c:2}, clamp → {})
 ;; must empty to the unit, whichever order the worklist processes the merges.
@@ -15,4 +15,4 @@
 (union (f) (e))
 (union (c) (d))
 (run 5)
-(check (= s (e)))
+(check-eq s (e))

@@ -1,0 +1,18 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(datatype*
+    (Math
+        (Add Math Math)
+        (Sum MathVec)
+        (B Bool))
+    (sort MathVec (Vec Math))
+    (Bool
+        (True)
+        (False)))
+
+(let $expr (Add (Sum (vec-of (B (True)) (B (False)))) (B (True))))
+
+(check (= $expr (Add (Sum (vec-of (B (True)) (B (False)))) (B (True)))))
+(check (!= (vec-of) (vec-of (B (True)))))
+(check (!= (vec-of (B (True)) (B (False))) (vec-of (B (False)) (B (True)))))
+
+(check (= (True) (False)))

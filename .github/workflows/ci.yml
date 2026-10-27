@@ -27,6 +27,8 @@ jobs:
           components: rustfmt
       - run: bash scripts/check-oss-scaffold.sh
       - run: cargo fmt --all -- --check
+      - name: Validate egglog example manifests and runner
+        run: python3 -B scripts/egglog-examples/test_runner.py
 
   clippy:
     runs-on: ubuntu-latest

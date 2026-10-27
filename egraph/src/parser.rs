@@ -1179,7 +1179,22 @@ fn pattern_as_rhs(p: &SurfacePattern) -> ModalResult<RhsTerm> {
     }
 }
 
-/// `:until (= a b)` / `:until (!= a b)` — two ground terms and the relation that stops the run.
+/// An optional `:complete` or `:no-complete` after a check's arguments: an override of
+/// check completion for that one command.
+fn parse_complete_flag(input: &mut &str) -> ModalResult<Option<bool>> {
+    ws(input)?;
+    if input.starts_with(":no-complete") {
+        *input = &input[":no-complete".len()..];
+        Ok(Some(false))
+    } else if input.starts_with(":complete") {
+        *input = &input[":complete".len()..];
+        Ok(Some(true))
+    } else {
+        Ok(None)
+    }
+}
+
+/// `:goal (= a b)` / `:goal (!= a b)` — two ground terms and the relation that stops the run.
 fn parse_run_goal(input: &mut &str, base: usize) -> ModalResult<RunGoal> {
     cut_char(input, '(')?;
     ws(input)?;
@@ -1192,7 +1207,7 @@ fn parse_run_goal(input: &mut &str, base: usize) -> ModalResult<RunGoal> {
     } else {
         let mut e = ContextError::new();
         e.push(StrContext::Expected(StrContextValue::Description(
-            ":until goal must be (= a b) or (!= a b)",
+            ":goal must be (= a b) or (!= a b)",
         )));
         return Err(ErrMode::Cut(e));
     };
@@ -1423,17 +1438,45 @@ fn parse_command(
             };
             let limit = number(input)?;
             ws(input)?;
-            let until = if input.starts_with(":until") {
+            // `:until fact ...` is egglog's query goal; `:goal (= a b)` / `:goal (!= a b)`
+            // is the ground goal, which builds its terms once.
+            if input.starts_with(":until") {
                 *input = &input[":until".len()..];
-                Some(parse_run_goal(input, base)?)
+                ws(input)?;
+                let start = *input;
+                let mut facts = Vec::new();
+                loop {
+                    ws(input)?;
+                    if input.starts_with(')') {
+                        break;
+                    }
+                    facts.push(parse_pattern(input, base)?);
+                }
+                if facts.is_empty() {
+                    let mut e = ContextError::new();
+                    e.push(StrContext::Label(":until needs at least one fact"));
+                    return Err(ErrMode::Cut(e));
+                }
+                let text = start[..start.len() - input.len()].trim().to_owned();
+                SurfaceCommand::RunUntil {
+                    ruleset,
+                    limit,
+                    facts,
+                    text,
+                }
             } else {
-                None
-            };
-            SurfaceCommand::Pass(Command::Run {
-                ruleset,
-                limit,
-                until,
-            })
+                let until = if input.starts_with(":goal") {
+                    *input = &input[":goal".len()..];
+                    Some(parse_run_goal(input, base)?)
+                } else {
+                    None
+                };
+                SurfaceCommand::Pass(Command::Run {
+                    ruleset,
+                    limit,
+                    until,
+                })
+            }
         }
         "print-size" => {
             ws(input)?;
@@ -1456,34 +1499,150 @@ fn parse_command(
             };
             SurfaceCommand::Pass(Command::PrintStats(file))
         }
-        "check" => {
+        "check" | "query" => {
+            let printing = kw == "query";
             ws(input)?;
-            let cmd = if input.starts_with("(!=") || input.starts_with("( !=") {
-                cut_char(input, '(')?;
+            let start = *input;
+            let mut facts = Vec::new();
+            loop {
                 ws(input)?;
-                *input = &input[2..];
-                let a = parse_term_inner(input, base)?;
-                let b = parse_term_inner(input, base)?;
-                cut_char(input, ')')?;
-                Command::CheckNeq(a, b)
-            } else if input.starts_with("(=") || input.starts_with("( =") {
-                cut_char(input, '(')?;
+                if input.starts_with(')') || input.starts_with(':') {
+                    break;
+                }
+                facts.push(parse_pattern(input, base)?);
+            }
+            if facts.is_empty() {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label("check needs at least one fact"));
+                return Err(ErrMode::Cut(e));
+            }
+            let text = start[..start.len() - input.len()].trim().to_owned();
+            let mut complete = parse_complete_flag(input)?;
+            let print = if !printing {
+                None
+            } else if input.starts_with(":limit") {
+                *input = &input[6..];
                 ws(input)?;
-                if !input.starts_with('=') {
+                Some(number(input)?)
+            } else if input.starts_with(':') {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label("a query option is :limit n"));
+                return Err(ErrMode::Cut(e));
+            } else {
+                Some(10)
+            };
+            let cond = if printing {
+                crate::surface_ast::CheckCond::Exists
+            } else if input.starts_with(":count") || input.starts_with(":min") {
+                let count = input.starts_with(":count");
+                *input = &input[if count { 6 } else { 4 }..];
+                ws(input)?;
+                let k = number(input)?;
+                if count {
+                    crate::surface_ast::CheckCond::Count(k)
+                } else {
+                    crate::surface_ast::CheckCond::Min(k)
+                }
+            } else if input.starts_with(":none") {
+                *input = &input[5..];
+                crate::surface_ast::CheckCond::None
+            } else if input.starts_with(':') {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label(
+                    "a check option is :count k, :min k, or :none",
+                ));
+                return Err(ErrMode::Cut(e));
+            } else {
+                crate::surface_ast::CheckCond::Exists
+            };
+            if complete.is_none() {
+                complete = parse_complete_flag(input)?;
+            }
+            SurfaceCommand::Check {
+                facts,
+                text,
+                cond,
+                print,
+                complete,
+            }
+        }
+        // `(check-eq t1 t2 ...)` and `(check-neq t1 t2)`: build the ground terms, rebuild,
+        // and compare classes. `(check-eq t1 t2 t3)` checks every term against the first,
+        // as consecutive commands, so they share one lazy-check transaction.
+        "check-eq" | "check-neq" => {
+            let eq = kw == "check-eq";
+            let mut terms = Vec::new();
+            loop {
+                ws(input)?;
+                if input.starts_with(')') || input.starts_with(':') {
+                    break;
+                }
+                terms.push(parse_term_inner(input, base)?);
+            }
+            let complete = parse_complete_flag(input)?;
+            if terms.len() < 2 || (!eq && terms.len() > 2) {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label(if eq {
+                    "check-eq takes two or more terms"
+                } else {
+                    "check-neq takes exactly two terms"
+                }));
+                return Err(ErrMode::Cut(e));
+            }
+            let first = terms.remove(0);
+            let mut rest = terms.into_iter();
+            let second = rest.next().expect("at least two terms");
+            for t in rest {
+                desugared.push(SurfaceCommand::Pass(Command::CheckEq(
+                    first.clone(),
+                    t,
+                    complete,
+                )));
+            }
+            SurfaceCommand::Pass(if eq {
+                Command::CheckEq(first, second, complete)
+            } else {
+                Command::CheckNeq(first, second, complete)
+            })
+        }
+        "prove" => {
+            let mut e = ContextError::new();
+            e.push(StrContext::Label(
+                "`prove` was renamed: `prove (= a b)` is `check-eq a b`, `prove (!= a b)` is \
+                 `check-neq a b`, and `prove t` is the bare term `t`",
+            ));
+            return Err(ErrMode::Cut(e));
+        }
+        "set-option" => {
+            ws(input)?;
+            let key = if input.starts_with(":check-completion") {
+                ":check-completion"
+            } else if input.starts_with(":completion") {
+                ":completion"
+            } else {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label(
+                    "set-option takes :completion off|eager or :check-completion on|off",
+                ));
+                return Err(ErrMode::Cut(e));
+            };
+            *input = &input[key.len()..];
+            ws(input)?;
+            let value = ident(input)?;
+            let opt = match (key, value) {
+                (":completion", "eager") => CompletionOption::Completion(true),
+                (":completion", "off") => CompletionOption::Completion(false),
+                (":check-completion", "on") => CompletionOption::CheckCompletion(true),
+                (":check-completion", "off") => CompletionOption::CheckCompletion(false),
+                _ => {
                     let mut e = ContextError::new();
-                    e.push(StrContext::Expected(StrContextValue::CharLiteral('=')));
+                    e.push(StrContext::Label(
+                        "set-option takes :completion off|eager or :check-completion on|off",
+                    ));
                     return Err(ErrMode::Cut(e));
                 }
-                *input = &input[1..];
-                let a = parse_term_inner(input, base)?;
-                let b = parse_term_inner(input, base)?;
-                cut_char(input, ')')?;
-                Command::CheckEq(a, b)
-            } else {
-                let t = parse_term_inner(input, base)?;
-                Command::Check(t)
             };
-            SurfaceCommand::Pass(cmd)
+            SurfaceCommand::Pass(Command::SetOption(opt))
         }
         "push" => {
             ws.parse_next(input).ok();
@@ -2039,10 +2198,13 @@ mod alg_tag_tests {
         };
         assert_eq!(one("(run 12)"), (None, 12, None));
         assert_eq!(one("(run fast 3)"), (Some("fast".to_string()), 3, None));
-        let (rs, limit, until) = one("(run fast 3 :until (!= a b))");
+        let (rs, limit, until) = one("(run fast 3 :goal (!= a b))");
         assert_eq!((rs, limit), (Some("fast".to_string()), 3));
         assert!(!until.expect("goal").equal);
-        assert!(one("(run 5 :until (= a b))").2.expect("goal").equal);
+        assert!(one("(run 5 :goal (= a b))").2.expect("goal").equal);
+        // `:goal` reads the same ground goal (doc/goal-egglog-check.md).
+        assert!(one("(run 5 :goal (= a b))").2.expect("goal").equal);
+        assert!(!one("(run 5 :goal (!= a b))").2.expect("goal").equal);
     }
 
     #[test]

@@ -20,13 +20,13 @@
                            (Add (Const 6.0)
                                 (Const 7.0))))))))
 (run add_ac 7)
-(check (= res
+(check-eq res
   (Add (Const 7.0)
        (Add (Const 6.0)
             (Add (Const 5.0)
                  (Add (Const 4.0)
                       (Add (Const 3.0)
                            (Add (Const 2.0)
-                                (Const 1.0)))))))))
+                                (Const 1.0))))))))
 (print-size)
 (print-stats :file "math-add-ac.rules.stats.json")

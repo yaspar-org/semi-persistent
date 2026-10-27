@@ -4,6 +4,13 @@
 
 ### Added
 
+- `(query fact ... :limit n)` prints a query's matches, each named variable as a term
+  extracted from its class, ordered by content colour so the output does not depend on
+  class ids.
+- `(check ... :count k)`, `:min k` and `:none` count a check's matches, as distinct
+  assignments of its named variables.
+- `(!= p q)` in checks and rule bodies requires two different e-classes. Literal values
+  are compared by the typed guard (`IBig::!=`).
 - `SpMap` has a key discipline parameter: `SpMap<K, V, I, TRACK, UNIQUE>`,
   with `SpUniqueMap<K, V, I, TRACK>` as the `UNIQUE = true` alias. Under it
   no key occurs twice in the log — `try_insert` refuses a present key with
@@ -52,6 +59,31 @@
 
 ### Changed
 
+- The AC completion mode is part of the program: `(set-option :completion
+  off|eager)` sets graph completion and `(set-option :check-completion on|off)`
+  check completion, from that command on; `:complete` and `:no-complete` override
+  check completion for one command. `--derive-ac-eqs` and `--lazy-ac-eqs` set the
+  starting values, which a program's `set-option` overrides. The test fixtures'
+  `;; DERIVE_AC_EQS:` and `;; LAZY_AC_EQS:` directives are replaced by `set-option`
+  lines (55 fixtures), and the harness rejects the old directives.
+
+- `prove` is renamed to `check-eq` and `check-neq`: `(prove (= a b))` is
+  `(check-eq a b)`, `(prove (!= a b))` is `(check-neq a b)`, and a build-only
+  `(prove t)` is the bare term `t`. `check-eq` takes two or more terms and requires
+  them all in one class. `prove` is a parse error that names its replacement.
+  `scripts/migrate-prove.py` rewrote the repository (3,509 sites); the hash-pinned
+  egglog example manifests were refreshed for the rewritten programs.
+
+- `check` has egglog's semantics: `(check fact ...)` is a conjunctive query over the
+  e-graph in the language of rule bodies, it builds nothing, and it succeeds when the
+  query has a match. A name that is not a global is a variable of that one check. In
+  lazy AC mode a check runs completion, and rule rounds when needed, inside the check
+  transaction, and reports a budget stop as inconclusive. The previous meaning (build the
+  terms, rebuild, compare classes) is `prove`; every check in the repository was rewritten
+  to `prove` by `scripts/migrate-check.py`. **Breaking:** a program whose check names a
+  term it never built now fails; write `prove` for the old meaning.
+- `(run N :until fact ...)` takes a query goal, as egglog's does. The ground goal that
+  builds its terms once is `(run N :goal (= a b))`.
 - `explain_deep`'s memoization is now recorded in full: the code comment,
   design chapter 15 and a regression test (`deep_proof_diamond_is_linear`)
   state both failure modes the two pair sets prevent, exponential
@@ -113,6 +145,13 @@
   value comparison, the precondition guard and the compression-mode heuristic
   with its statistics pass). The B+ tree paths pay Rust's bounds checks again;
   they remain faster than the unverified implementation.
+
+### Fixed
+
+- In lazy AC mode, a `check` whose facts contain `(!= p q)` now waits for the
+  completion fixpoint before answering. It stopped at the first match, so
+  `(check (!= u t))` could pass where a later merge, after a rule round and AC
+  completion, joins `u` and `t`.
 
 ### Removed
 

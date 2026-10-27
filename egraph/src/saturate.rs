@@ -19,7 +19,7 @@ use crate::literal::LitVal;
 pub struct RunGoal<G> {
     pub left: G,
     pub right: G,
-    /// `true` for `:until (= a b)`, `false` for `:until (!= a b)`.
+    /// `true` for `:goal (= a b)`, `false` for `:goal (!= a b)`.
     pub equal: bool,
 }
 
@@ -196,7 +196,8 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
-    saturate_rules_naive(rules, eg, model, spec, globals, scratch).map_err(SatError::into_eval)
+    saturate_rules_naive(rules, eg, model, spec, globals, scratch, None)
+        .map_err(SatError::into_eval)
 }
 
 /// An entry of the rule list [`saturate_rules_naive`] and [`saturate_rules_semi`] schedule.
@@ -368,6 +369,7 @@ pub fn saturate_rules_naive<Cfg, L, M, S, R, const T: bool, const P: bool>(
     spec: &RunSpec<Cfg::G>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     scratch: &mut crate::index::IndexScratch<Cfg>,
+    stop: Option<&StopGoal<'_, Cfg, L, T, P>>,
 ) -> Result<SatResult, SatError>
 where
     Cfg: EGraphConfig,
@@ -390,7 +392,7 @@ where
             eg.rebuild();
             width_check(eg)?;
         }
-        if goal_met(spec, eg) {
+        if goal_met(spec, eg) || stop.is_some_and(|f| f(eg)) {
             return Ok(sat_result_seq(seq_report, i, false, true, steps_base));
         }
         let index = {
@@ -439,16 +441,22 @@ where
     // The budget is spent, but a goal met by the last iteration's work should still be
     // reported as met. Rebuild first: the final actions may have made parent nodes
     // congruent without merging their classes directly.
-    if spec.until.is_some() {
+    if spec.until.is_some() || stop.is_some() {
         let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
         eg.rebuild();
         width_check(eg)?;
     }
-    let met = goal_met(spec, eg);
+    let met = goal_met(spec, eg) || stop.is_some_and(|f| f(eg));
     Ok(sat_result_seq(
         seq_report, spec.limit, false, met, steps_base,
     ))
 }
+
+/// A query goal for a run, `(run N :until fact ...)`: called on the rebuilt graph before
+/// every round and after the last, like the ground [`RunGoal`]. The run stops when it
+/// returns true.
+pub type StopGoal<'a, Cfg, L, const T: bool, const P: bool> =
+    dyn Fn(&EGraph<Cfg, L, T, P>) -> bool + 'a;
 
 /// Does the run's `:until` goal hold? Always false when there is no goal.
 fn goal_met<Cfg, L, const T: bool, const P: bool>(
@@ -522,7 +530,7 @@ pub(crate) fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
         | RAtom::Lit { op, .. }
         | RAtom::LitBind { op, .. }
         | RAtom::Collect { op, .. } => Some(*op),
-        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => None,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. } => None,
     }
 }
 
@@ -554,7 +562,7 @@ pub(crate) fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::Va
         | RAtom::ACISub { node, .. }
         | RAtom::LitBind { node, .. }
         | RAtom::Collect { node, .. } => Some(*node),
-        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => None,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. } => None,
     }
 }
 
@@ -652,6 +660,7 @@ fn pattern_refs_global<O, S, V>(a: &RAtom<O, S, V>) -> bool {
         | RAtom::Collect { .. }
         | RAtom::Eq(..)
         | RAtom::EqGlobal(..)
+        | RAtom::Neq(..)
         | RAtom::Pred { .. } => false,
     }
 }
@@ -828,7 +837,7 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
-    saturate_rules_semi(rules, eg, model, spec, globals, scratch).map_err(SatError::into_eval)
+    saturate_rules_semi(rules, eg, model, spec, globals, scratch, None).map_err(SatError::into_eval)
 }
 
 /// [`saturate_semi_spec_in`] over a rule list that may hold sequence rules ([`Rule`]).
@@ -840,6 +849,7 @@ pub fn saturate_rules_semi<Cfg, L, M, S, R, const T: bool, const P: bool>(
     spec: &RunSpec<Cfg::G>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     scratch: &mut crate::index::IndexScratch<Cfg>,
+    stop: Option<&StopGoal<'_, Cfg, L, T, P>>,
 ) -> Result<SatResult, SatError>
 where
     Cfg: EGraphConfig,
@@ -864,7 +874,7 @@ where
             eg.rebuild();
             width_check(eg)?;
         }
-        if goal_met(spec, eg) {
+        if goal_met(spec, eg) || stop.is_some_and(|f| f(eg)) {
             return Ok(sat_result_seq(seq_report, i, false, true, steps_base));
         }
         let full = {
@@ -1003,12 +1013,12 @@ where
             return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
         }
     }
-    if spec.until.is_some() {
+    if spec.until.is_some() || stop.is_some() {
         let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
         eg.rebuild();
         width_check(eg)?;
     }
-    let met = goal_met(spec, eg);
+    let met = goal_met(spec, eg) || stop.is_some_and(|f| f(eg));
     Ok(sat_result_seq(seq_report, limit, false, met, steps_base))
 }
 

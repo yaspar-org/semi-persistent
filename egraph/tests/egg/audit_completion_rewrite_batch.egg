@@ -2,7 +2,7 @@
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; TYPES: machine
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; WARNING: none
 ;; Completion normalizes Plus(c:2000000, d:2000000) by the ground rule c+d -> b in one
 ;; batch of 2,000,000 copies. It applied the rule one copy at a time, and the 2,000,000
@@ -13,4 +13,4 @@
 (let t (Plus (c):2000000 (d):2000000))
 (union (Plus (c) (d)) (b))
 (run 1)
-(check (= t (Plus (b):2000000)))
+(check-eq t (Plus (b):2000000))

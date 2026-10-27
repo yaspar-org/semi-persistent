@@ -37,8 +37,8 @@ The lazy result has size 5, the same as plain, rather than the eager result's
 size 2. As Chapter 11 explains, lazy completion is scoped to equality and
 disequality checks. Anti-unification reads the restored graph.
 
-When an AU query must observe consequences of asserted AC equations, run Semper
-with `--derive-ac-eqs`. Lazy completion is suitable for isolated equality
+When an AU query must observe consequences of asserted AC equations, turn on
+eager completion with `(set-option :completion eager)` or `--derive-ac-eqs`. Lazy completion is suitable for isolated equality
 questions, not for preparing an anti-unification snapshot.
 
 ## Optimal within the cycle policy

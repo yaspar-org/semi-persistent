@@ -1,0 +1,12 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(datatype Math (Add Math Math) (Num i64))
+(datatype Flag (Clean) (Conflict))
+(let zero (Num 0))
+(rewrite (Add zero x) x)
+(let a (Add (Num 0) (Num 3)))
+(let b (Add (Num 7) (Num 9)))
+(let c (Num 16))
+(union b c)
+(rule ((= r (Num x)) (= r (Num y)) (i64::!= x y)) ((union (Clean) (Conflict))))
+(run 10)
+(check-neq (Clean) (Conflict))

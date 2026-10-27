@@ -1,0 +1,4 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(check (= (to-string 20) "20"))
+
+(check (= (to-string 20) "02"))

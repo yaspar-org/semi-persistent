@@ -1,0 +1,16 @@
+; Adapted from egglog (MIT); see LICENSE.egglog at corpus root.
+(sort Math)
+(sort MathVec)
+(sort Bool)
+(constructor Add (Math Math) Math)
+(constructor Sum (MathVec) Math)
+(constructor B (Bool) Math)
+(constructor VNil () MathVec)
+(constructor VCons (Math MathVec) MathVec)
+(constructor True () Bool)
+(constructor False () Bool)
+(let expr (Add (Sum (VCons (B (True)) (VCons (B (False)) (VNil)))) (B (True))))
+
+(check-eq expr (Add (Sum (VCons (B (True)) (VCons (B (False)) (VNil)))) (B (True))))
+(check-neq (VNil) (VCons (B (True)) (VNil)))
+(check-neq (VCons (B (True)) (VCons (B (False)) (VNil))) (VCons (B (False)) (VCons (B (True)) (VNil))))

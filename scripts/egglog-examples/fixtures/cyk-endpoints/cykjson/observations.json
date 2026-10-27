@@ -1,0 +1,96 @@
+{
+  "example": "tests/cykjson.egg",
+  "upstream_revision": "593df10e1465904e8b7a3dc85d8ef3976842b509",
+  "dependencies": [
+    {
+      "source_path": "tests/cykjson_Prod.csv",
+      "path": "fixtures/cyk-endpoints/cykjson/tests/cykjson_Prod.csv",
+      "sha256": "aece90df9c3c0b7aedb277afbde21cd9465befb1641763d0bb8dd61ed29397a4",
+      "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/cykjson_Prod.csv"
+    },
+    {
+      "source_path": "tests/cykjson_End.csv",
+      "path": "fixtures/cyk-endpoints/cykjson/tests/cykjson_End.csv",
+      "sha256": "2e00a0f1603bdc33c60f8f327adfc609aaf9ef8ccba38bcaef5a2eb56c13e284",
+      "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/cykjson_End.csv"
+    },
+    {
+      "source_path": "tests/cykjson_small_token.csv",
+      "path": "fixtures/cyk-endpoints/cykjson/tests/cykjson_small_token.csv",
+      "sha256": "612ebca0f2402f3d340a143b268f402415ee69ed2eab34dc58a12681ee865949",
+      "url": "https://github.com/egraphs-good/egglog/blob/593df10e1465904e8b7a3dc85d8ef3976842b509/tests/cykjson_small_token.csv"
+    }
+  ],
+  "cases": {
+    "source-801": {
+      "input": "fixtures/cyk-endpoints/cykjson/inputs/source-801.json",
+      "input_sha256": "550e50ea48fd2a5b1d2c1d65d29a92c5c8d6e7a3a62d89e019e5c94a7387352a",
+      "tokens": 801,
+      "position_extent": 801,
+      "root_mapping": {
+        "span": 801,
+        "start": 1,
+        "end": 802,
+        "nonterminal": "VAL"
+      },
+      "schedule": {
+        "original": [
+          "run 10000"
+        ],
+        "encoded": [
+          "run compute 10000",
+          "run validate 10000"
+        ]
+      },
+      "oracle_scope": "root-and-conflict; no independent chart supplied for source-801"
+    },
+    "validation-4": {
+      "input": "fixtures/cyk-endpoints/cykjson/inputs/array-4.json",
+      "input_sha256": "81bc6b3a2eabef52f290fe70be94697e1a59101c5804f673404f2438ed4966c4",
+      "tokens": 9,
+      "position_extent": 9,
+      "root_mapping": {
+        "span": 9,
+        "start": 1,
+        "end": 10,
+        "nonterminal": "VAL"
+      },
+      "schedule": {
+        "original": [
+          "run 10000"
+        ],
+        "encoded": [
+          "run compute 10000",
+          "run validate 10000"
+        ]
+      },
+      "oracle_scope": "positive-chart-and-sampled-negatives",
+      "oracle": "fixtures/cyk-endpoints/cykjson/validation-4/oracle.json",
+      "oracle_sha256": "67dd928eb28d786e16e1dc619c4f6e9803d3b6d3f1bacf7f502ff2da172abc82",
+      "positive_checks": 28,
+      "sampled_negative_checks": 40
+    },
+    "ambiguous-three": {
+      "input": "fixtures/cyk-endpoints/cykjson/inputs/ambiguous-three.json",
+      "input_sha256": "822171f4288739b82ad6277c094ab8b5468a044d57707c3eb00343d6e192e90a",
+      "tokens": 3,
+      "position_extent": 3,
+      "root_mapping": {
+        "span": 3,
+        "start": 1,
+        "end": 4,
+        "nonterminal": "VAL"
+      },
+      "schedule": {
+        "original": [
+          "run 10000"
+        ],
+        "encoded": [
+          "run compute 10000",
+          "run validate 10000"
+        ]
+      },
+      "oracle_scope": "expected-invalid-source-contract"
+    }
+  }
+}

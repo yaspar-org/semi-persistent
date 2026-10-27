@@ -1,7 +1,7 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
-;; DERIVE_AC_EQS: on
+(set-option :completion eager)
 ;; The §5b cancellation scenario solved NATIVELY by the group facet — no user rewrite
 ;; rule (contrast ac_complete_cancel.egg, which needs one): a + b + neg(a+b) = 0.
 ;; Completion's (A′) inter-reduction substitutes the inner sum's class c into the outer
@@ -15,4 +15,4 @@
 (function add (E) E :assoc :comm :identity (zero) :inverse neg)
 (let t (add (a) (b) (neg (add (a) (b)))))
 (run 8)
-(check (= t (zero)))
+(check-eq t (zero))

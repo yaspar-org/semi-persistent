@@ -15,7 +15,7 @@ A CI source gate rejects executable `admit()` and `assume()` calls in
 this crate. The pinned `vstd` dependency contains admitted specifications and
 is part of the trust boundary, as are the `IBig` wrapper's `external_body`
 functions and one axiom ([ledger](doc/domain-traits.md#7-trust)); a global `--no-cheating` run therefore fails in
-`vstd` before project verification. A separate 32-test Rust mirror suite
+`vstd` before project verification. A separate Rust mirror suite
 provides randomized and exhaustive finite evidence; it mirrors the Verus
 definitions rather than constituting a second formal verification.
 
@@ -136,7 +136,7 @@ cargo verus verify -- --verify-only-module unum
 # Per-module timing breakdown
 cargo verus verify -- --time-expanded
 
-# Run the 32-test Rust mirror suite
+# Run the Rust mirror suite
 cargo test --test fuzz --release
 
 # Run demo
@@ -150,7 +150,7 @@ cargo run --features bin
 - pinned `vstd` admitted specifications remain in the trust boundary
 - `IBig` (`num-bigint` wrapper): 7 `external_body` functions and 1 axiom, listed in the
   [trust ledger](doc/domain-traits.md#7-trust); machine-word domains do not use it
-- 32 Rust mirror tests and 3 exhaustive reference-domain tests, all passing
+- Rust mirror tests, reference-domain tests, and Congruence tests, all passing
 - 4 enabled bit-widths: u8, u16, u32, u64
 
 ## Design documents

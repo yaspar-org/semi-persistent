@@ -80,7 +80,7 @@ Syntax, sort-checking, failed-check, and other run-time errors exit with status
 | Status | Cause | Standard error |
 | --- | --- | --- |
 | 0 | The program ran and every check passed. | `ok — N nodes` |
-| 1 | A `check` or `checkau` assertion failed. | `error: check failed: ...` |
+| 1 | A `check`, `check-eq`, `check-neq`, or `checkau` assertion failed. | `error: check failed: ...` |
 | 1 | Another command failed while running, for example a `(pop)` without a `(push)`. | `error: ...` |
 | 1 | The parser rejected the program. | `parse error: ...` |
 | 1 | A declaration or term failed sort-checking. | `sort error: ...` or `sort error at line L column C: ...` |
@@ -114,7 +114,7 @@ cargo test -p semi-persistent-egraph --test egg_tests book_examples
 
 The `book_examples` test scans every `.egg` file at the top level of the
 directory. The first eight lines of a file, the two header lines and six more,
-may contain directives such as `;; EXPECT: ok` or `;; DERIVE_AC_EQS: on`.
+may contain directives such as `;; EXPECT: ok` or `;; TYPES: machine`.
 These lines are comments to the engine binary; the test
 harness reads them to select settings and the expected outcome.
 

@@ -47,9 +47,11 @@ elision with retained empty-state fields, not a zero-layout-overhead or
 minimum-layout claim.
 
 AC completion has three modes. Plain congruence closure is the default.
-`--derive-ac-eqs` enables eager completion during rebuild;
-`--lazy-ac-eqs` runs goal-directed completion on demand after a plain equality
-check fails, then restores the transaction. A negative lazy check reports that
+Eager completion during rebuild is `(set-option :completion eager)` in the
+program, or `--derive-ac-eqs` as the starting setting; lazy completion,
+`(set-option :check-completion on)` or `--lazy-ac-eqs`, runs goal-directed
+completion on demand after a plain equality check fails, then restores the
+transaction. A negative lazy check reports that
 the implemented bounded search did not derive equality; it is not a proved
 semantic disequality result.
 

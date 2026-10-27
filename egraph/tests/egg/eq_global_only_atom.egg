@@ -9,4 +9,4 @@
 (let tt (TC))
 (rule ((= x tt)) ((D x)))
 (run 1)
-(check (= (D tt) (D (TC))))
+(check-eq (D tt) (D (TC)))

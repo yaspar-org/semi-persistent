@@ -76,21 +76,21 @@
 
 (run 30)
 
-(check (= bt0 bv0)) ; bddnot cancels
-(check (= bt1 bTrue))
-(check (= bt2 bFalse))
-(check (= bt3 bv0))
-(check (= bt4 bv0))
-(check (= bt5 bTrue))
-(check (= bt6 bv2))
+(check-eq bt0 bv0) ; bddnot cancels
+(check-eq bt1 bTrue)
+(check-eq bt2 bFalse)
+(check-eq bt3 bv0)
+(check-eq bt4 bv0)
+(check-eq bt5 bTrue)
+(check-eq bt6 bv2)
 
-(check (= bt7a bt7b))
-(check (= bt7a bt7c))
+(check-eq bt7a bt7b)
+(check-eq bt7a bt7c)
 
-(check (= bt8 (ITE 1 (ITE 2 bTrue bFalse) bFalse)))
+(check-eq bt8 (ITE 1 (ITE 2 bTrue bFalse) bFalse))
 
-(check (= bt9 bFalse))
-(check (= bt10 bTrue))
+(check-eq bt9 bFalse)
+(check-eq bt10 bTrue)
 
 (print-size)
 (print-stats :file "bdd.rules.stats.json")
