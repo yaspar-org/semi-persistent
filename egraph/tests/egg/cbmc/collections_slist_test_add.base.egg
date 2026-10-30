@@ -1,0 +1,3244 @@
+;; Converted from the CBMC e-graph dump collections_slist_test_add.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Leaf 0))  ; slist_add_last::list!0@1#1
+(let ebase_1 (Leaf 1))  ; address_of
+(let ebase_2 (Leaf 2))  ; slist_add_last::list!0@2#1
+(let ebase_3 (Leaf 3))  ; symex_dynamic::dynamic_object#5..tail
+(let ebase_4 (Leaf 4))  ; address_of
+(let ebase_5 (Leaf 5))  ; slist_add_last::list!0@3#1
+(let ebase_6 (Leaf 6))  ; symex_dynamic::dynamic_object#9..tail
+(let ebase_7 (Leaf 7))  ; address_of
+(let ebase_8 (Leaf 8))  ; slist_add_last::list$object#8..tail
+(let ebase_9 (Leaf 9))  ; slist_add_last::list!0@4#1
+(let ebase_10 (Leaf 10))  ; symex_dynamic::dynamic_object#13..tail
+(let ebase_11 (Leaf 11))  ; address_of
+(let ebase_12 (Leaf 12))  ; slist_add_last::list$object#12..tail
+(let ebase_13 (Leaf 13))  ; unlinkn_all::list!0@1#1
+(let ebase_14 (Leaf 14))  ; slist_remove_all::list!0@1#1
+(let ebase_15 (Leaf 15))  ; slist_remove_all::list!0@2#1
+(let ebase_16 (Leaf 16))  ; address_of
+(let ebase_17 (Leaf 17))  ; __CPROVER_alloca_object#1
+(let ebase_18 (Null 18))  ; const NULL
+(let ebase_19 (Equal ebase_17 ebase_18))  ; =  ;; [ASSUME]
+(let ebase_20 (Leaf 20))  ; __CPROVER_dead_object#1
+(let ebase_21 (Equal ebase_18 ebase_20))  ; =  ;; [ASSUME]
+(let ebase_22 (Leaf 22))  ; __CPROVER_deallocated#1
+(let ebase_23 (Equal ebase_18 ebase_22))  ; =  ;; [ASSUME]
+(let ebase_24 (Leaf 24))  ; __CPROVER_malloc_is_new_array#1
+(let ebase_25 (Leaf 25))  ; const false
+(let ebase_26 (Equal ebase_24 ebase_25))  ; =  ;; [ASSUME]
+(let ebase_27 (Leaf 27))  ; __CPROVER_max_malloc_size!0#1
+(let ebase_28 (Const 36028797018963968 28))  ; const 80000000000000
+(let ebase_29 (Equal ebase_27 ebase_28))  ; =  ;; [ASSUME]
+(let ebase_30 (Leaf 30))  ; __CPROVER_memory_leak#1
+(let ebase_31 (Equal ebase_18 ebase_30))  ; =  ;; [ASSUME]
+(let ebase_32 (Leaf 32))  ; __CPROVER_new_object#1
+(let ebase_33 (Equal ebase_18 ebase_32))  ; =  ;; [ASSUME]
+(let ebase_34 (Leaf 34))  ; __CPROVER_rounding_mode!0#1
+(let ebase_35 (Const 0 35))  ; const 0
+(let ebase_36 (Equal ebase_34 ebase_35))  ; =  ;; [ASSUME]
+(let ebase_37 (Leaf 37))  ; list#1
+(let ebase_38 (Null 38))  ; const NULL
+(let ebase_39 (Equal ebase_37 ebase_38))  ; =  ;; [ASSUME]
+(let ebase_40 (Leaf 40))  ; list2#1
+(let ebase_41 (Equal ebase_38 ebase_40))  ; =  ;; [ASSUME]
+(let ebase_42 (Leaf 42))  ; stat#1
+(let ebase_43 (Equal ebase_35 ebase_42))  ; =  ;; [ASSUME]
+(let ebase_44 (Leaf 44))  ; slist_new::out!0@1#1
+(let ebase_45 (Leaf 45))  ; address_of
+(let ebase_46 (Equal ebase_44 ebase_45))  ; =  ;; [ASSUME]
+(let ebase_47 (Leaf 47))  ; slist_conf_init::conf!0@1#1
+(let ebase_48 (Leaf 48))  ; address_of
+(let ebase_49 (Equal ebase_47 ebase_48))  ; =  ;; [ASSUME]
+(let ebase_50 (Leaf 50))  ; slist_new::1::conf!0@1#2..mem_alloc
+(let ebase_51 (Leaf 51))  ; address_of
+(let ebase_52 (Equal ebase_50 ebase_51))  ; =  ;; [ASSUME]
+(let ebase_53 (Leaf 53))  ; slist_new::1::conf!0@1#2..mem_calloc
+(let ebase_54 (Leaf 54))  ; address_of
+(let ebase_55 (Equal ebase_53 ebase_54))  ; =  ;; [ASSUME]
+(let ebase_56 (Leaf 56))  ; slist_new::1::conf!0@1#2..mem_free
+(let ebase_57 (Leaf 57))  ; address_of
+(let ebase_58 (Equal ebase_56 ebase_57))  ; =  ;; [ASSUME]
+(let ebase_59 (Leaf 59))  ; slist_new_conf::conf!0@1#1
+(let ebase_60 (Equal ebase_48 ebase_59))  ; =  ;; [ASSUME]
+(let ebase_61 (Leaf 61))  ; slist_new_conf::out!0@1#1
+(let ebase_62 (Equal ebase_45 ebase_61))  ; =  ;; [ASSUME]
+(let ebase_63 (Leaf 63))  ; calloc::nmemb!0@1#1
+(let ebase_64 (Const 1 64))  ; const 1
+(let ebase_65 (Equal ebase_63 ebase_64))  ; =  ;; [ASSUME]
+(let ebase_66 (Leaf 66))  ; calloc::size!0@1#1
+(let ebase_67 (Const 48 67))  ; const 30
+(let ebase_68 (Equal ebase_66 ebase_67))  ; =  ;; [ASSUME]
+(let ebase_69 (Leaf 69))  ; calloc::$tmp::tmp_overflow_result!0@1#2
+(let ebase_70 (Leaf 70))  ; struct
+(let ebase_71 (Equal ebase_69 ebase_70))  ; =  ;; [ASSUME]
+(let ebase_72 (Leaf 72))  ; calloc::$tmp::tmp_overflow_result!0@1#2..value
+(let ebase_73 (Equal ebase_67 ebase_72))  ; =  ;; [ASSUME]
+(let ebase_74 (Leaf 74))  ; calloc::$tmp::tmp_overflow_result!0@1#2..overflow-*
+(let ebase_75 (Equal ebase_25 ebase_74))  ; =  ;; [ASSUME]
+(let ebase_76 (Leaf 76))  ; calloc::1::alloc_size!0@1#2
+(let ebase_77 (Equal ebase_67 ebase_76))  ; =  ;; [ASSUME]
+(let ebase_78 (Leaf 78))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@1#2
+(let ebase_79 (Leaf 79))  ; nondet_symbol
+(let ebase_80 (Equal ebase_78 ebase_79))  ; =  ;; [ASSUME]
+(let ebase_81 (Leaf 81))  ; calloc::1::1::should_malloc_fail!0@1#2
+(let ebase_82 (Equal ebase_78 ebase_81))  ; =  ;; [ASSUME]
+(let ebase_83 (Leaf 83))  ; goto_symex::return_value::calloc!0#1
+(let ebase_84 (Equal ebase_18 ebase_83))  ; =  ;; [ASSUME]
+(let ebase_85 (Leaf 85))  ; __CPROVER_dead_object#2
+(let ebase_86 (Leaf 86))  ; if
+(let ebase_87 (Equal ebase_85 ebase_86))  ; =  ;; [ASSUME]
+(let ebase_88 (Type 88))
+(let ebase_89 (Leaf 89))  ; address_of
+(let ebase_90 (Typecast ebase_88 ebase_89))  ; typecast
+(let ebase_91 (Leaf 91))  ; symex_dynamic::dynamic_object#1..size
+(let ebase_92 (Const 0 92))  ; const 0
+(let ebase_93 (Equal ebase_91 ebase_92))  ; =  ;; [ASSUME]
+(let ebase_94 (Leaf 94))  ; symex_dynamic::dynamic_object#1..head
+(let ebase_95 (Null 95))  ; const NULL
+(let ebase_96 (Equal ebase_94 ebase_95))  ; =  ;; [ASSUME]
+(let ebase_97 (Leaf 97))  ; symex_dynamic::dynamic_object#1..tail
+(let ebase_98 (Equal ebase_95 ebase_97))  ; =  ;; [ASSUME]
+(let ebase_99 (Leaf 99))  ; symex_dynamic::dynamic_object#1..mem_alloc
+(let ebase_100 (Null 100))  ; const NULL
+(let ebase_101 (Equal ebase_99 ebase_100))  ; =  ;; [ASSUME]
+(let ebase_102 (Leaf 102))  ; symex_dynamic::dynamic_object#1..mem_calloc
+(let ebase_103 (Null 103))  ; const NULL
+(let ebase_104 (Equal ebase_102 ebase_103))  ; =  ;; [ASSUME]
+(let ebase_105 (Leaf 105))  ; symex_dynamic::dynamic_object#1..mem_free
+(let ebase_106 (Null 106))  ; const NULL
+(let ebase_107 (Equal ebase_105 ebase_106))  ; =  ;; [ASSUME]
+(let ebase_108 (Leaf 108))  ; calloc::$tmp::malloc_value!0@1#2
+(let ebase_109 (Typecast ebase_88 ebase_1))  ; typecast
+(let ebase_110 (Equal ebase_108 ebase_109))  ; =  ;; [ASSUME]
+(let ebase_111 (Leaf 111))  ; calloc::1::malloc_res!0@1#2
+(let ebase_112 (Equal ebase_109 ebase_111))  ; =  ;; [ASSUME]
+(let ebase_113 (Leaf 113))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@1#2
+(let ebase_114 (Leaf 114))  ; nondet_symbol
+(let ebase_115 (Equal ebase_113 ebase_114))  ; =  ;; [ASSUME]
+(let ebase_116 (Leaf 116))  ; calloc::1::record_malloc!0@1#2
+(let ebase_117 (Equal ebase_113 ebase_116))  ; =  ;; [ASSUME]
+(let ebase_118 (Leaf 118))  ; __CPROVER_malloc_is_new_array#2
+(let ebase_119 (Equal ebase_25 ebase_118))  ; =  ;; [ASSUME]
+(let ebase_120 (Leaf 120))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@1#2
+(let ebase_121 (Leaf 121))  ; nondet_symbol
+(let ebase_122 (Equal ebase_120 ebase_121))  ; =  ;; [ASSUME]
+(let ebase_123 (Leaf 123))  ; calloc::1::record_may_leak!0@1#2
+(let ebase_124 (Equal ebase_120 ebase_123))  ; =  ;; [ASSUME]
+(let ebase_125 (Leaf 125))  ; __CPROVER_memory_leak#2
+(let ebase_126 (Leaf 126))  ; if
+(let ebase_127 (Equal ebase_125 ebase_126))  ; =  ;; [ASSUME]
+(let ebase_128 (Leaf 128))  ; goto_symex::return_value::calloc!0#2
+(let ebase_129 (Equal ebase_109 ebase_128))  ; =  ;; [ASSUME]
+(let ebase_130 (Leaf 130))  ; __CPROVER_dead_object#3
+(let ebase_131 (Leaf 131))  ; if
+(let ebase_132 (Equal ebase_130 ebase_131))  ; =  ;; [ASSUME]
+(let ebase_133 (Leaf 133))  ; __CPROVER_dead_object#4
+(let ebase_134 (Leaf 134))  ; if
+(let ebase_135 (Equal ebase_133 ebase_134))  ; =  ;; [ASSUME]
+(let ebase_136 (Leaf 136))  ; __CPROVER_malloc_is_new_array#3
+(let ebase_137 (Equal ebase_25 ebase_136))  ; =  ;; [ASSUME]
+(let ebase_138 (Leaf 138))  ; __CPROVER_memory_leak#3
+(let ebase_139 (Leaf 139))  ; if
+(let ebase_140 (Equal ebase_138 ebase_139))  ; =  ;; [ASSUME]
+(let ebase_141 (Leaf 141))  ; goto_symex::return_value::calloc!0#3
+(let ebase_142 (Leaf 142))  ; if
+(let ebase_143 (Equal ebase_141 ebase_142))  ; =  ;; [ASSUME]
+(let ebase_144 (Leaf 144))  ; symex_dynamic::dynamic_object#2..head
+(let ebase_145 (Equal ebase_95 ebase_144))  ; =  ;; [ASSUME]
+(let ebase_146 (Leaf 146))  ; symex_dynamic::dynamic_object#2..mem_alloc
+(let ebase_147 (Equal ebase_100 ebase_146))  ; =  ;; [ASSUME]
+(let ebase_148 (Leaf 148))  ; symex_dynamic::dynamic_object#2..mem_calloc
+(let ebase_149 (Equal ebase_103 ebase_148))  ; =  ;; [ASSUME]
+(let ebase_150 (Leaf 150))  ; symex_dynamic::dynamic_object#2..mem_free
+(let ebase_151 (Equal ebase_106 ebase_150))  ; =  ;; [ASSUME]
+(let ebase_152 (Leaf 152))  ; symex_dynamic::dynamic_object#2..size
+(let ebase_153 (Equal ebase_92 ebase_152))  ; =  ;; [ASSUME]
+(let ebase_154 (Leaf 154))  ; symex_dynamic::dynamic_object#2..tail
+(let ebase_155 (Equal ebase_95 ebase_154))  ; =  ;; [ASSUME]
+(let ebase_156 (Leaf 156))  ; slist_new_conf::$tmp::return_value!0@1#2
+(let ebase_157 (Equal ebase_141 ebase_156))  ; =  ;; [ASSUME]
+(let ebase_158 (Leaf 158))  ; slist_new_conf::1::list!0@1#2
+(let ebase_159 (Type 159))
+(let ebase_160 (Typecast ebase_159 ebase_156))  ; typecast
+(let ebase_161 (Equal ebase_158 ebase_160))  ; =  ;; [ASSUME]
+(let ebase_162 (Leaf 162))  ; goto_symex::\guard#1
+(let ebase_163 (Leaf 163))  ; not
+(let ebase_164 (Equal ebase_162 ebase_163))  ; =  ;; [ASSUME]
+(let ebase_165 (Leaf 165))  ; goto_symex::return_value::slist_new_conf!0#1
+(let ebase_166 (Const 1 166))  ; const 1
+(let ebase_167 (Equal ebase_165 ebase_166))  ; =  ;; [ASSUME]
+(let ebase_168 (Leaf 168))  ; symex_dynamic::dynamic_object#3..mem_alloc
+(let ebase_169 (Equal ebase_51 ebase_168))  ; =  ;; [ASSUME]
+(let ebase_170 (Leaf 170))  ; symex_dynamic::dynamic_object#3..mem_calloc
+(let ebase_171 (Equal ebase_54 ebase_170))  ; =  ;; [ASSUME]
+(let ebase_172 (Leaf 172))  ; symex_dynamic::dynamic_object#3..mem_free
+(let ebase_173 (Equal ebase_57 ebase_172))  ; =  ;; [ASSUME]
+(let ebase_174 (Leaf 174))  ; list#2
+(let ebase_175 (Equal ebase_158 ebase_174))  ; =  ;; [ASSUME]
+(let ebase_176 (Leaf 176))  ; goto_symex::return_value::slist_new_conf!0#2
+(let ebase_177 (Const 0 177))  ; const 0
+(let ebase_178 (Equal ebase_176 ebase_177))  ; =  ;; [ASSUME]
+(let ebase_179 (Leaf 179))  ; goto_symex::return_value::slist_new_conf!0#3
+(let ebase_180 (Leaf 180))  ; if
+(let ebase_181 (Equal ebase_179 ebase_180))  ; =  ;; [ASSUME]
+(let ebase_182 (Leaf 182))  ; list#3
+(let ebase_183 (Leaf 183))  ; if
+(let ebase_184 (Equal ebase_182 ebase_183))  ; =  ;; [ASSUME]
+(let ebase_185 (Leaf 185))  ; symex_dynamic::dynamic_object#4..mem_alloc
+(let ebase_186 (Leaf 186))  ; if
+(let ebase_187 (Equal ebase_185 ebase_186))  ; =  ;; [ASSUME]
+(let ebase_188 (Leaf 188))  ; symex_dynamic::dynamic_object#4..mem_calloc
+(let ebase_189 (Leaf 189))  ; if
+(let ebase_190 (Equal ebase_188 ebase_189))  ; =  ;; [ASSUME]
+(let ebase_191 (Leaf 191))  ; symex_dynamic::dynamic_object#4..mem_free
+(let ebase_192 (Leaf 192))  ; if
+(let ebase_193 (Equal ebase_191 ebase_192))  ; =  ;; [ASSUME]
+(let ebase_194 (Leaf 194))  ; slist_new::$tmp::return_value_slist_new_conf!0@1#2
+(let ebase_195 (Equal ebase_179 ebase_194))  ; =  ;; [ASSUME]
+(let ebase_196 (Leaf 196))  ; goto_symex::return_value::slist_new!0#1
+(let ebase_197 (Equal ebase_194 ebase_196))  ; =  ;; [ASSUME]
+(let ebase_198 (Leaf 198))  ; __CPROVER_dead_object#5
+(let ebase_199 (Leaf 199))  ; if
+(let ebase_200 (Equal ebase_198 ebase_199))  ; =  ;; [ASSUME]
+(let ebase_201 (Typecast ebase_88 ebase_48))  ; typecast
+(let ebase_202 (Leaf 202))  ; setup_test::$tmp::return_value_slist_new!0@1#2
+(let ebase_203 (Equal ebase_196 ebase_202))  ; =  ;; [ASSUME]
+(let ebase_204 (Leaf 204))  ; stat#2
+(let ebase_205 (Type 205))
+(let ebase_206 (Typecast ebase_205 ebase_202))  ; typecast
+(let ebase_207 (Equal ebase_204 ebase_206))  ; =  ;; [ASSUME]
+(let ebase_208 (Leaf 208))  ; slist_new::out!0@2#1
+(let ebase_209 (Leaf 209))  ; address_of
+(let ebase_210 (Equal ebase_208 ebase_209))  ; =  ;; [ASSUME]
+(let ebase_211 (Leaf 211))  ; slist_conf_init::conf!0@2#1
+(let ebase_212 (Leaf 212))  ; address_of
+(let ebase_213 (Equal ebase_211 ebase_212))  ; =  ;; [ASSUME]
+(let ebase_214 (Leaf 214))  ; slist_new::1::conf!0@2#2..mem_alloc
+(let ebase_215 (Equal ebase_51 ebase_214))  ; =  ;; [ASSUME]
+(let ebase_216 (Leaf 216))  ; slist_new::1::conf!0@2#2..mem_calloc
+(let ebase_217 (Equal ebase_54 ebase_216))  ; =  ;; [ASSUME]
+(let ebase_218 (Leaf 218))  ; slist_new::1::conf!0@2#2..mem_free
+(let ebase_219 (Equal ebase_57 ebase_218))  ; =  ;; [ASSUME]
+(let ebase_220 (Leaf 220))  ; slist_new_conf::conf!0@2#1
+(let ebase_221 (Equal ebase_212 ebase_220))  ; =  ;; [ASSUME]
+(let ebase_222 (Leaf 222))  ; slist_new_conf::out!0@2#1
+(let ebase_223 (Equal ebase_209 ebase_222))  ; =  ;; [ASSUME]
+(let ebase_224 (Leaf 224))  ; calloc::nmemb!0@2#1
+(let ebase_225 (Equal ebase_64 ebase_224))  ; =  ;; [ASSUME]
+(let ebase_226 (Leaf 226))  ; calloc::size!0@2#1
+(let ebase_227 (Equal ebase_67 ebase_226))  ; =  ;; [ASSUME]
+(let ebase_228 (Leaf 228))  ; calloc::$tmp::tmp_overflow_result!0@2#2
+(let ebase_229 (Equal ebase_70 ebase_228))  ; =  ;; [ASSUME]
+(let ebase_230 (Leaf 230))  ; calloc::$tmp::tmp_overflow_result!0@2#2..value
+(let ebase_231 (Equal ebase_67 ebase_230))  ; =  ;; [ASSUME]
+(let ebase_232 (Leaf 232))  ; calloc::$tmp::tmp_overflow_result!0@2#2..overflow-*
+(let ebase_233 (Equal ebase_25 ebase_232))  ; =  ;; [ASSUME]
+(let ebase_234 (Leaf 234))  ; calloc::1::alloc_size!0@2#2
+(let ebase_235 (Equal ebase_67 ebase_234))  ; =  ;; [ASSUME]
+(let ebase_236 (Leaf 236))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@2#2
+(let ebase_237 (Leaf 237))  ; nondet_symbol
+(let ebase_238 (Equal ebase_236 ebase_237))  ; =  ;; [ASSUME]
+(let ebase_239 (Leaf 239))  ; calloc::1::1::should_malloc_fail!0@2#2
+(let ebase_240 (Equal ebase_236 ebase_239))  ; =  ;; [ASSUME]
+(let ebase_241 (Leaf 241))  ; goto_symex::return_value::calloc!0#4
+(let ebase_242 (Equal ebase_18 ebase_241))  ; =  ;; [ASSUME]
+(let ebase_243 (Leaf 243))  ; __CPROVER_dead_object#6
+(let ebase_244 (Leaf 244))  ; if
+(let ebase_245 (Equal ebase_243 ebase_244))  ; =  ;; [ASSUME]
+(let ebase_246 (Leaf 246))  ; address_of
+(let ebase_247 (Typecast ebase_88 ebase_246))  ; typecast
+(let ebase_248 (Leaf 248))  ; symex_dynamic::dynamic_object$0#1..size
+(let ebase_249 (Equal ebase_92 ebase_248))  ; =  ;; [ASSUME]
+(let ebase_250 (Leaf 250))  ; symex_dynamic::dynamic_object$0#1..head
+(let ebase_251 (Equal ebase_95 ebase_250))  ; =  ;; [ASSUME]
+(let ebase_252 (Leaf 252))  ; symex_dynamic::dynamic_object$0#1..tail
+(let ebase_253 (Equal ebase_95 ebase_252))  ; =  ;; [ASSUME]
+(let ebase_254 (Leaf 254))  ; symex_dynamic::dynamic_object$0#1..mem_alloc
+(let ebase_255 (Equal ebase_100 ebase_254))  ; =  ;; [ASSUME]
+(let ebase_256 (Leaf 256))  ; symex_dynamic::dynamic_object$0#1..mem_calloc
+(let ebase_257 (Equal ebase_103 ebase_256))  ; =  ;; [ASSUME]
+(let ebase_258 (Leaf 258))  ; symex_dynamic::dynamic_object$0#1..mem_free
+(let ebase_259 (Equal ebase_106 ebase_258))  ; =  ;; [ASSUME]
+(let ebase_260 (Leaf 260))  ; calloc::$tmp::malloc_value!0@2#2
+(let ebase_261 (Typecast ebase_88 ebase_16))  ; typecast
+(let ebase_262 (Equal ebase_260 ebase_261))  ; =  ;; [ASSUME]
+(let ebase_263 (Leaf 263))  ; calloc::1::malloc_res!0@2#2
+(let ebase_264 (Equal ebase_261 ebase_263))  ; =  ;; [ASSUME]
+(let ebase_265 (Leaf 265))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@2#2
+(let ebase_266 (Leaf 266))  ; nondet_symbol
+(let ebase_267 (Equal ebase_265 ebase_266))  ; =  ;; [ASSUME]
+(let ebase_268 (Leaf 268))  ; calloc::1::record_malloc!0@2#2
+(let ebase_269 (Equal ebase_265 ebase_268))  ; =  ;; [ASSUME]
+(let ebase_270 (Leaf 270))  ; __CPROVER_malloc_is_new_array#4
+(let ebase_271 (Equal ebase_25 ebase_270))  ; =  ;; [ASSUME]
+(let ebase_272 (Leaf 272))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@2#2
+(let ebase_273 (Leaf 273))  ; nondet_symbol
+(let ebase_274 (Equal ebase_272 ebase_273))  ; =  ;; [ASSUME]
+(let ebase_275 (Leaf 275))  ; calloc::1::record_may_leak!0@2#2
+(let ebase_276 (Equal ebase_272 ebase_275))  ; =  ;; [ASSUME]
+(let ebase_277 (Leaf 277))  ; __CPROVER_memory_leak#4
+(let ebase_278 (Leaf 278))  ; if
+(let ebase_279 (Equal ebase_277 ebase_278))  ; =  ;; [ASSUME]
+(let ebase_280 (Leaf 280))  ; goto_symex::return_value::calloc!0#5
+(let ebase_281 (Equal ebase_261 ebase_280))  ; =  ;; [ASSUME]
+(let ebase_282 (Leaf 282))  ; __CPROVER_dead_object#7
+(let ebase_283 (Leaf 283))  ; if
+(let ebase_284 (Equal ebase_282 ebase_283))  ; =  ;; [ASSUME]
+(let ebase_285 (Leaf 285))  ; __CPROVER_dead_object#8
+(let ebase_286 (Leaf 286))  ; if
+(let ebase_287 (Equal ebase_285 ebase_286))  ; =  ;; [ASSUME]
+(let ebase_288 (Leaf 288))  ; __CPROVER_malloc_is_new_array#5
+(let ebase_289 (Equal ebase_25 ebase_288))  ; =  ;; [ASSUME]
+(let ebase_290 (Leaf 290))  ; __CPROVER_memory_leak#5
+(let ebase_291 (Leaf 291))  ; if
+(let ebase_292 (Equal ebase_290 ebase_291))  ; =  ;; [ASSUME]
+(let ebase_293 (Leaf 293))  ; goto_symex::return_value::calloc!0#6
+(let ebase_294 (Leaf 294))  ; if
+(let ebase_295 (Equal ebase_293 ebase_294))  ; =  ;; [ASSUME]
+(let ebase_296 (Leaf 296))  ; symex_dynamic::dynamic_object$0#2..head
+(let ebase_297 (Equal ebase_95 ebase_296))  ; =  ;; [ASSUME]
+(let ebase_298 (Leaf 298))  ; symex_dynamic::dynamic_object$0#2..mem_alloc
+(let ebase_299 (Equal ebase_100 ebase_298))  ; =  ;; [ASSUME]
+(let ebase_300 (Leaf 300))  ; symex_dynamic::dynamic_object$0#2..mem_calloc
+(let ebase_301 (Equal ebase_103 ebase_300))  ; =  ;; [ASSUME]
+(let ebase_302 (Leaf 302))  ; symex_dynamic::dynamic_object$0#2..mem_free
+(let ebase_303 (Equal ebase_106 ebase_302))  ; =  ;; [ASSUME]
+(let ebase_304 (Leaf 304))  ; symex_dynamic::dynamic_object$0#2..size
+(let ebase_305 (Equal ebase_92 ebase_304))  ; =  ;; [ASSUME]
+(let ebase_306 (Leaf 306))  ; symex_dynamic::dynamic_object$0#2..tail
+(let ebase_307 (Equal ebase_95 ebase_306))  ; =  ;; [ASSUME]
+(let ebase_308 (Leaf 308))  ; slist_new_conf::$tmp::return_value!0@2#2
+(let ebase_309 (Equal ebase_293 ebase_308))  ; =  ;; [ASSUME]
+(let ebase_310 (Leaf 310))  ; slist_new_conf::1::list!0@2#2
+(let ebase_311 (Typecast ebase_159 ebase_308))  ; typecast
+(let ebase_312 (Equal ebase_310 ebase_311))  ; =  ;; [ASSUME]
+(let ebase_313 (Leaf 313))  ; goto_symex::\guard#2
+(let ebase_314 (Leaf 314))  ; not
+(let ebase_315 (Equal ebase_313 ebase_314))  ; =  ;; [ASSUME]
+(let ebase_316 (Leaf 316))  ; goto_symex::return_value::slist_new_conf!0#4
+(let ebase_317 (Equal ebase_166 ebase_316))  ; =  ;; [ASSUME]
+(let ebase_318 (Leaf 318))  ; symex_dynamic::dynamic_object$0#3..mem_alloc
+(let ebase_319 (Equal ebase_51 ebase_318))  ; =  ;; [ASSUME]
+(let ebase_320 (Leaf 320))  ; symex_dynamic::dynamic_object$0#3..mem_calloc
+(let ebase_321 (Equal ebase_54 ebase_320))  ; =  ;; [ASSUME]
+(let ebase_322 (Leaf 322))  ; symex_dynamic::dynamic_object$0#3..mem_free
+(let ebase_323 (Equal ebase_57 ebase_322))  ; =  ;; [ASSUME]
+(let ebase_324 (Leaf 324))  ; list2#2
+(let ebase_325 (Equal ebase_310 ebase_324))  ; =  ;; [ASSUME]
+(let ebase_326 (Leaf 326))  ; goto_symex::return_value::slist_new_conf!0#5
+(let ebase_327 (Equal ebase_177 ebase_326))  ; =  ;; [ASSUME]
+(let ebase_328 (Leaf 328))  ; goto_symex::return_value::slist_new_conf!0#6
+(let ebase_329 (Leaf 329))  ; if
+(let ebase_330 (Equal ebase_328 ebase_329))  ; =  ;; [ASSUME]
+(let ebase_331 (Leaf 331))  ; list2#3
+(let ebase_332 (Leaf 332))  ; if
+(let ebase_333 (Equal ebase_331 ebase_332))  ; =  ;; [ASSUME]
+(let ebase_334 (Leaf 334))  ; symex_dynamic::dynamic_object$0#4..mem_alloc
+(let ebase_335 (Leaf 335))  ; if
+(let ebase_336 (Equal ebase_334 ebase_335))  ; =  ;; [ASSUME]
+(let ebase_337 (Leaf 337))  ; symex_dynamic::dynamic_object$0#4..mem_calloc
+(let ebase_338 (Leaf 338))  ; if
+(let ebase_339 (Equal ebase_337 ebase_338))  ; =  ;; [ASSUME]
+(let ebase_340 (Leaf 340))  ; symex_dynamic::dynamic_object$0#4..mem_free
+(let ebase_341 (Leaf 341))  ; if
+(let ebase_342 (Equal ebase_340 ebase_341))  ; =  ;; [ASSUME]
+(let ebase_343 (Leaf 343))  ; slist_new::$tmp::return_value_slist_new_conf!0@2#2
+(let ebase_344 (Equal ebase_328 ebase_343))  ; =  ;; [ASSUME]
+(let ebase_345 (Leaf 345))  ; __CPROVER_dead_object#9
+(let ebase_346 (Leaf 346))  ; if
+(let ebase_347 (Equal ebase_345 ebase_346))  ; =  ;; [ASSUME]
+(let ebase_348 (Typecast ebase_88 ebase_212))  ; typecast
+(let ebase_349 (Leaf 349))  ; main::$tmp::return_value___nondet_int!0@1#2
+(let ebase_350 (Leaf 350))  ; nondet_symbol
+(let ebase_351 (Equal ebase_349 ebase_350))  ; =  ;; [ASSUME]
+(let ebase_352 (Leaf 352))  ; main::1::s1!0@1#2
+(let ebase_353 (Type 353))
+(let ebase_354 (Typecast ebase_353 ebase_349))  ; typecast
+(let ebase_355 (Equal ebase_352 ebase_354))  ; =  ;; [ASSUME]
+(let ebase_356 (Leaf 356))  ; main::1::str_s1!0@1#2
+(let ebase_357 (Leaf 357))  ; array
+(let ebase_358 (Equal ebase_356 ebase_357))  ; =  ;; [ASSUME]
+(let ebase_359 (Const 0 359))  ; const 0
+(let ebase_360 (Leaf 360))  ; main::1::str_s1!0@1#2[[0]]
+(let ebase_361 (Equal ebase_352 ebase_360))  ; =  ;; [ASSUME]
+(let ebase_362 (Leaf 362))  ; main::1::str_s1!0@1#2[[1]]
+(let ebase_363 (Equal ebase_359 ebase_362))  ; =  ;; [ASSUME]
+(let ebase_364 (Leaf 364))  ; main::$tmp::return_value___nondet_int$0!0@1#2
+(let ebase_365 (Leaf 365))  ; nondet_symbol
+(let ebase_366 (Equal ebase_364 ebase_365))  ; =  ;; [ASSUME]
+(let ebase_367 (Leaf 367))  ; main::1::s2!0@1#2
+(let ebase_368 (Typecast ebase_353 ebase_364))  ; typecast
+(let ebase_369 (Equal ebase_367 ebase_368))  ; =  ;; [ASSUME]
+(let ebase_370 (Leaf 370))  ; main::1::str_s2!0@1#2
+(let ebase_371 (Leaf 371))  ; array
+(let ebase_372 (Equal ebase_370 ebase_371))  ; =  ;; [ASSUME]
+(let ebase_373 (Leaf 373))  ; main::1::str_s2!0@1#2[[0]]
+(let ebase_374 (Equal ebase_367 ebase_373))  ; =  ;; [ASSUME]
+(let ebase_375 (Leaf 375))  ; main::1::str_s2!0@1#2[[1]]
+(let ebase_376 (Equal ebase_359 ebase_375))  ; =  ;; [ASSUME]
+(let ebase_377 (Leaf 377))  ; main::$tmp::return_value___nondet_int$1!0@1#2
+(let ebase_378 (Leaf 378))  ; nondet_symbol
+(let ebase_379 (Equal ebase_377 ebase_378))  ; =  ;; [ASSUME]
+(let ebase_380 (Leaf 380))  ; main::1::s3!0@1#2
+(let ebase_381 (Typecast ebase_353 ebase_377))  ; typecast
+(let ebase_382 (Equal ebase_380 ebase_381))  ; =  ;; [ASSUME]
+(let ebase_383 (Leaf 383))  ; main::1::str_s3!0@1#2
+(let ebase_384 (Leaf 384))  ; array
+(let ebase_385 (Equal ebase_383 ebase_384))  ; =  ;; [ASSUME]
+(let ebase_386 (Leaf 386))  ; main::1::str_s3!0@1#2[[0]]
+(let ebase_387 (Equal ebase_380 ebase_386))  ; =  ;; [ASSUME]
+(let ebase_388 (Leaf 388))  ; main::1::str_s3!0@1#2[[1]]
+(let ebase_389 (Equal ebase_359 ebase_388))  ; =  ;; [ASSUME]
+(let ebase_390 (Leaf 390))  ; main::$tmp::return_value___nondet_int$2!0@1#2
+(let ebase_391 (Leaf 391))  ; nondet_symbol
+(let ebase_392 (Equal ebase_390 ebase_391))  ; =  ;; [ASSUME]
+(let ebase_393 (Leaf 393))  ; main::1::s4!0@1#2
+(let ebase_394 (Typecast ebase_353 ebase_390))  ; typecast
+(let ebase_395 (Equal ebase_393 ebase_394))  ; =  ;; [ASSUME]
+(let ebase_396 (Leaf 396))  ; main::1::str_s4!0@1#2
+(let ebase_397 (Leaf 397))  ; array
+(let ebase_398 (Equal ebase_396 ebase_397))  ; =  ;; [ASSUME]
+(let ebase_399 (Leaf 399))  ; main::1::str_s4!0@1#2[[0]]
+(let ebase_400 (Equal ebase_393 ebase_399))  ; =  ;; [ASSUME]
+(let ebase_401 (Leaf 401))  ; main::1::str_s4!0@1#2[[1]]
+(let ebase_402 (Equal ebase_359 ebase_401))  ; =  ;; [ASSUME]
+(let ebase_403 (Leaf 403))  ; slist_add::list!0@1#1
+(let ebase_404 (Equal ebase_182 ebase_403))  ; =  ;; [ASSUME]
+(let ebase_405 (Leaf 405))  ; slist_add::element!0@1#1
+(let ebase_406 (Leaf 406))  ; address_of
+(let ebase_407 (Typecast ebase_88 ebase_406))  ; typecast
+(let ebase_408 (Equal ebase_405 ebase_407))  ; =  ;; [ASSUME]
+(let ebase_409 (Type 409))
+(let ebase_410 (Const 0 410))  ; const 0
+(let ebase_411 (Typecast ebase_409 ebase_410))  ; typecast
+(let ebase_412 (Equal ebase_0 ebase_403))  ; =  ;; [ASSUME]
+(let ebase_413 (Leaf 413))  ; slist_add_last::element!0@1#1
+(let ebase_414 (Equal ebase_407 ebase_413))  ; =  ;; [ASSUME]
+(let ebase_415 (Leaf 415))  ; goto_symex::\guard#3
+(let ebase_416 (Leaf 416))  ; not
+(let ebase_417 (Equal ebase_415 ebase_416))  ; =  ;; [ASSUME]
+(let ebase_418 (Leaf 418))  ; slist_add_last::list$object#0..mem_calloc
+(let ebase_419 (Leaf 419))  ; calloc::nmemb!0@3#1
+(let ebase_420 (Equal ebase_64 ebase_419))  ; =  ;; [ASSUME]
+(let ebase_421 (Leaf 421))  ; calloc::size!0@3#1
+(let ebase_422 (Const 16 422))  ; const 10
+(let ebase_423 (Equal ebase_421 ebase_422))  ; =  ;; [ASSUME]
+(let ebase_424 (Leaf 424))  ; calloc::$tmp::tmp_overflow_result!0@3#2
+(let ebase_425 (Leaf 425))  ; struct
+(let ebase_426 (Equal ebase_424 ebase_425))  ; =  ;; [ASSUME]
+(let ebase_427 (Leaf 427))  ; calloc::$tmp::tmp_overflow_result!0@3#2..value
+(let ebase_428 (Equal ebase_422 ebase_427))  ; =  ;; [ASSUME]
+(let ebase_429 (Leaf 429))  ; calloc::$tmp::tmp_overflow_result!0@3#2..overflow-*
+(let ebase_430 (Equal ebase_25 ebase_429))  ; =  ;; [ASSUME]
+(let ebase_431 (Leaf 431))  ; calloc::1::alloc_size!0@3#2
+(let ebase_432 (Equal ebase_422 ebase_431))  ; =  ;; [ASSUME]
+(let ebase_433 (Leaf 433))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@3#2
+(let ebase_434 (Leaf 434))  ; nondet_symbol
+(let ebase_435 (Equal ebase_433 ebase_434))  ; =  ;; [ASSUME]
+(let ebase_436 (Leaf 436))  ; calloc::1::1::should_malloc_fail!0@3#2
+(let ebase_437 (Equal ebase_433 ebase_436))  ; =  ;; [ASSUME]
+(let ebase_438 (Leaf 438))  ; goto_symex::return_value::calloc!0#7
+(let ebase_439 (Equal ebase_18 ebase_438))  ; =  ;; [ASSUME]
+(let ebase_440 (Leaf 440))  ; __CPROVER_dead_object#10
+(let ebase_441 (Leaf 441))  ; if
+(let ebase_442 (Equal ebase_440 ebase_441))  ; =  ;; [ASSUME]
+(let ebase_443 (Leaf 443))  ; address_of
+(let ebase_444 (Typecast ebase_88 ebase_443))  ; typecast
+(let ebase_445 (Leaf 445))  ; symex_dynamic::dynamic_object$1#1..data
+(let ebase_446 (Equal ebase_18 ebase_445))  ; =  ;; [ASSUME]
+(let ebase_447 (Leaf 447))  ; symex_dynamic::dynamic_object$1#1..next
+(let ebase_448 (Equal ebase_95 ebase_447))  ; =  ;; [ASSUME]
+(let ebase_449 (Leaf 449))  ; calloc::$tmp::malloc_value!0@3#2
+(let ebase_450 (Typecast ebase_88 ebase_4))  ; typecast
+(let ebase_451 (Equal ebase_449 ebase_450))  ; =  ;; [ASSUME]
+(let ebase_452 (Leaf 452))  ; calloc::1::malloc_res!0@3#2
+(let ebase_453 (Equal ebase_450 ebase_452))  ; =  ;; [ASSUME]
+(let ebase_454 (Leaf 454))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@3#2
+(let ebase_455 (Leaf 455))  ; nondet_symbol
+(let ebase_456 (Equal ebase_454 ebase_455))  ; =  ;; [ASSUME]
+(let ebase_457 (Leaf 457))  ; calloc::1::record_malloc!0@3#2
+(let ebase_458 (Equal ebase_454 ebase_457))  ; =  ;; [ASSUME]
+(let ebase_459 (Leaf 459))  ; __CPROVER_malloc_is_new_array#6
+(let ebase_460 (Equal ebase_25 ebase_459))  ; =  ;; [ASSUME]
+(let ebase_461 (Leaf 461))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@3#2
+(let ebase_462 (Leaf 462))  ; nondet_symbol
+(let ebase_463 (Equal ebase_461 ebase_462))  ; =  ;; [ASSUME]
+(let ebase_464 (Leaf 464))  ; calloc::1::record_may_leak!0@3#2
+(let ebase_465 (Equal ebase_461 ebase_464))  ; =  ;; [ASSUME]
+(let ebase_466 (Leaf 466))  ; __CPROVER_memory_leak#6
+(let ebase_467 (Leaf 467))  ; if
+(let ebase_468 (Equal ebase_466 ebase_467))  ; =  ;; [ASSUME]
+(let ebase_469 (Leaf 469))  ; goto_symex::return_value::calloc!0#8
+(let ebase_470 (Equal ebase_450 ebase_469))  ; =  ;; [ASSUME]
+(let ebase_471 (Leaf 471))  ; __CPROVER_dead_object#11
+(let ebase_472 (Leaf 472))  ; if
+(let ebase_473 (Equal ebase_471 ebase_472))  ; =  ;; [ASSUME]
+(let ebase_474 (Leaf 474))  ; __CPROVER_dead_object#12
+(let ebase_475 (Leaf 475))  ; if
+(let ebase_476 (Equal ebase_474 ebase_475))  ; =  ;; [ASSUME]
+(let ebase_477 (Leaf 477))  ; __CPROVER_malloc_is_new_array#7
+(let ebase_478 (Equal ebase_25 ebase_477))  ; =  ;; [ASSUME]
+(let ebase_479 (Leaf 479))  ; __CPROVER_memory_leak#7
+(let ebase_480 (Leaf 480))  ; if
+(let ebase_481 (Equal ebase_479 ebase_480))  ; =  ;; [ASSUME]
+(let ebase_482 (Leaf 482))  ; goto_symex::return_value::calloc!0#9
+(let ebase_483 (Leaf 483))  ; if
+(let ebase_484 (Equal ebase_482 ebase_483))  ; =  ;; [ASSUME]
+(let ebase_485 (Leaf 485))  ; symex_dynamic::dynamic_object$1#2..data
+(let ebase_486 (Equal ebase_18 ebase_485))  ; =  ;; [ASSUME]
+(let ebase_487 (Leaf 487))  ; symex_dynamic::dynamic_object$1#2..next
+(let ebase_488 (Equal ebase_95 ebase_487))  ; =  ;; [ASSUME]
+(let ebase_489 (Leaf 489))  ; slist_add_last::$tmp::return_value!0@1#2
+(let ebase_490 (Equal ebase_482 ebase_489))  ; =  ;; [ASSUME]
+(let ebase_491 (Leaf 491))  ; slist_add_last::1::node!0@1#2
+(let ebase_492 (Type 492))
+(let ebase_493 (Typecast ebase_492 ebase_489))  ; typecast
+(let ebase_494 (Equal ebase_491 ebase_493))  ; =  ;; [ASSUME]
+(let ebase_495 (Leaf 495))  ; goto_symex::\guard#4
+(let ebase_496 (Leaf 496))  ; not
+(let ebase_497 (Equal ebase_495 ebase_496))  ; =  ;; [ASSUME]
+(let ebase_498 (Leaf 498))  ; goto_symex::return_value::slist_add_last!0#1
+(let ebase_499 (Equal ebase_166 ebase_498))  ; =  ;; [ASSUME]
+(let ebase_500 (Leaf 500))  ; symex_dynamic::dynamic_object$1#3..data
+(let ebase_501 (Equal ebase_407 ebase_500))  ; =  ;; [ASSUME]
+(let ebase_502 (Leaf 502))  ; goto_symex::\guard#5
+(let ebase_503 (Leaf 503))  ; not
+(let ebase_504 (Equal ebase_502 ebase_503))  ; =  ;; [ASSUME]
+(let ebase_505 (Leaf 505))  ; slist_add_last::list$object#0..size
+(let ebase_506 (Leaf 506))  ; symex_dynamic::dynamic_object#3..head
+(let ebase_507 (Leaf 507))  ; if
+(let ebase_508 (Equal ebase_506 ebase_507))  ; =  ;; [ASSUME]
+(let ebase_509 (Leaf 509))  ; slist_add_last::list$object#1..head
+(let ebase_510 (Leaf 510))  ; if
+(let ebase_511 (Equal ebase_509 ebase_510))  ; =  ;; [ASSUME]
+(let ebase_512 (Leaf 512))  ; slist_add_last::list$object#0..head
+(let ebase_513 (Leaf 513))  ; symex_dynamic::dynamic_object#3..tail
+(let ebase_514 (Equal ebase_507 ebase_513))  ; =  ;; [ASSUME]
+(let ebase_515 (Leaf 515))  ; slist_add_last::list$object#1..tail
+(let ebase_516 (Leaf 516))  ; if
+(let ebase_517 (Equal ebase_515 ebase_516))  ; =  ;; [ASSUME]
+(let ebase_518 (Leaf 518))  ; slist_add_last::list$object#0..tail
+(let ebase_519 (Leaf 519))  ; symex::invalid_object!0#1..next
+(let ebase_520 (Equal ebase_491 ebase_519))  ; =  ;; [ASSUME]
+(let ebase_521 (Leaf 521))  ; slist_add_last::list$object#2..tail
+(let ebase_522 (Equal ebase_491 ebase_521))  ; =  ;; [ASSUME]
+(let ebase_523 (Leaf 523))  ; slist_add_last::list$object#2..head
+(let ebase_524 (Equal ebase_509 ebase_523))  ; =  ;; [ASSUME]
+(let ebase_525 (Leaf 525))  ; slist_add_last::list$object#3..tail
+(let ebase_526 (Leaf 526))  ; if
+(let ebase_527 (Equal ebase_525 ebase_526))  ; =  ;; [ASSUME]
+(let ebase_528 (Leaf 528))  ; symex_dynamic::dynamic_object#4..head
+(let ebase_529 (Leaf 529))  ; if
+(let ebase_530 (Equal ebase_528 ebase_529))  ; =  ;; [ASSUME]
+(let ebase_531 (Leaf 531))  ; symex_dynamic::dynamic_object#4..tail
+(let ebase_532 (Leaf 532))  ; if
+(let ebase_533 (Equal ebase_531 ebase_532))  ; =  ;; [ASSUME]
+(let ebase_534 (Leaf 534))  ; symex::invalid_object!0#2..next
+(let ebase_535 (Equal ebase_519 ebase_534))  ; =  ;; [ASSUME]
+(let ebase_536 (Leaf 536))  ; symex_dynamic::dynamic_object#3..size
+(let ebase_537 (Leaf 537))  ; if
+(let ebase_538 (Equal ebase_536 ebase_537))  ; =  ;; [ASSUME]
+(let ebase_539 (Leaf 539))  ; if
+(let ebase_540 (Plus ebase_64 ebase_539))  ; +
+(let ebase_541 (Leaf 541))  ; slist_add_last::list$object#1..size
+(let ebase_542 (Leaf 542))  ; if
+(let ebase_543 (Equal ebase_541 ebase_542))  ; =  ;; [ASSUME]
+(let ebase_544 (Leaf 544))  ; if
+(let ebase_545 (Plus ebase_64 ebase_544))  ; +
+(let ebase_546 (Leaf 546))  ; goto_symex::return_value::slist_add_last!0#2
+(let ebase_547 (Equal ebase_177 ebase_546))  ; =  ;; [ASSUME]
+(let ebase_548 (Leaf 548))  ; goto_symex::return_value::slist_add_last!0#3
+(let ebase_549 (Leaf 549))  ; if
+(let ebase_550 (Equal ebase_548 ebase_549))  ; =  ;; [ASSUME]
+(let ebase_551 (Leaf 551))  ; symex_dynamic::dynamic_object$1#4..data
+(let ebase_552 (Leaf 552))  ; if
+(let ebase_553 (Equal ebase_551 ebase_552))  ; =  ;; [ASSUME]
+(let ebase_554 (Leaf 554))  ; symex_dynamic::dynamic_object#5..head
+(let ebase_555 (Leaf 555))  ; if
+(let ebase_556 (Equal ebase_554 ebase_555))  ; =  ;; [ASSUME]
+(let ebase_557 (Leaf 557))  ; symex_dynamic::dynamic_object#4..size
+(let ebase_558 (Leaf 558))  ; if
+(let ebase_559 (Equal ebase_557 ebase_558))  ; =  ;; [ASSUME]
+(let ebase_560 (Leaf 560))  ; if
+(let ebase_561 (Equal ebase_3 ebase_560))  ; =  ;; [ASSUME]
+(let ebase_562 (Leaf 562))  ; slist_add_last::list$object#3..head
+(let ebase_563 (Equal ebase_523 ebase_562))  ; =  ;; [ASSUME]
+(let ebase_564 (Leaf 564))  ; slist_add_last::list$object#2..size
+(let ebase_565 (Equal ebase_541 ebase_564))  ; =  ;; [ASSUME]
+(let ebase_566 (Leaf 566))  ; slist_add_last::list$object#4..tail
+(let ebase_567 (Equal ebase_525 ebase_566))  ; =  ;; [ASSUME]
+(let ebase_568 (Leaf 568))  ; symex::invalid_object!0#3..next
+(let ebase_569 (Equal ebase_534 ebase_568))  ; =  ;; [ASSUME]
+(let ebase_570 (Leaf 570))  ; slist_add::$tmp::return_value_slist_add_last!0@1#2
+(let ebase_571 (Equal ebase_548 ebase_570))  ; =  ;; [ASSUME]
+(let ebase_572 (Leaf 572))  ; goto_symex::return_value::slist_add!0#1
+(let ebase_573 (Equal ebase_570 ebase_572))  ; =  ;; [ASSUME]
+(let ebase_574 (Leaf 574))  ; main::$tmp::return_value_slist_add!0@1#2
+(let ebase_575 (Equal ebase_572 ebase_574))  ; =  ;; [ASSUME]
+(let ebase_576 (Leaf 576))  ; slist_add::list!0@2#1
+(let ebase_577 (Equal ebase_182 ebase_576))  ; =  ;; [ASSUME]
+(let ebase_578 (Leaf 578))  ; slist_add::element!0@2#1
+(let ebase_579 (Leaf 579))  ; address_of
+(let ebase_580 (Typecast ebase_88 ebase_579))  ; typecast
+(let ebase_581 (Equal ebase_578 ebase_580))  ; =  ;; [ASSUME]
+(let ebase_582 (Equal ebase_2 ebase_576))  ; =  ;; [ASSUME]
+(let ebase_583 (Leaf 583))  ; slist_add_last::element!0@2#1
+(let ebase_584 (Equal ebase_580 ebase_583))  ; =  ;; [ASSUME]
+(let ebase_585 (Leaf 585))  ; goto_symex::\guard#6
+(let ebase_586 (Leaf 586))  ; not
+(let ebase_587 (Equal ebase_585 ebase_586))  ; =  ;; [ASSUME]
+(let ebase_588 (Leaf 588))  ; calloc::nmemb!0@4#1
+(let ebase_589 (Equal ebase_64 ebase_588))  ; =  ;; [ASSUME]
+(let ebase_590 (Leaf 590))  ; calloc::size!0@4#1
+(let ebase_591 (Equal ebase_422 ebase_590))  ; =  ;; [ASSUME]
+(let ebase_592 (Leaf 592))  ; calloc::$tmp::tmp_overflow_result!0@4#2
+(let ebase_593 (Equal ebase_425 ebase_592))  ; =  ;; [ASSUME]
+(let ebase_594 (Leaf 594))  ; calloc::$tmp::tmp_overflow_result!0@4#2..value
+(let ebase_595 (Equal ebase_422 ebase_594))  ; =  ;; [ASSUME]
+(let ebase_596 (Leaf 596))  ; calloc::$tmp::tmp_overflow_result!0@4#2..overflow-*
+(let ebase_597 (Equal ebase_25 ebase_596))  ; =  ;; [ASSUME]
+(let ebase_598 (Leaf 598))  ; calloc::1::alloc_size!0@4#2
+(let ebase_599 (Equal ebase_422 ebase_598))  ; =  ;; [ASSUME]
+(let ebase_600 (Leaf 600))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@4#2
+(let ebase_601 (Leaf 601))  ; nondet_symbol
+(let ebase_602 (Equal ebase_600 ebase_601))  ; =  ;; [ASSUME]
+(let ebase_603 (Leaf 603))  ; calloc::1::1::should_malloc_fail!0@4#2
+(let ebase_604 (Equal ebase_600 ebase_603))  ; =  ;; [ASSUME]
+(let ebase_605 (Leaf 605))  ; goto_symex::return_value::calloc!0#10
+(let ebase_606 (Equal ebase_18 ebase_605))  ; =  ;; [ASSUME]
+(let ebase_607 (Leaf 607))  ; __CPROVER_dead_object#13
+(let ebase_608 (Leaf 608))  ; if
+(let ebase_609 (Equal ebase_607 ebase_608))  ; =  ;; [ASSUME]
+(let ebase_610 (Leaf 610))  ; address_of
+(let ebase_611 (Typecast ebase_88 ebase_610))  ; typecast
+(let ebase_612 (Leaf 612))  ; symex_dynamic::dynamic_object$2#1..data
+(let ebase_613 (Equal ebase_18 ebase_612))  ; =  ;; [ASSUME]
+(let ebase_614 (Leaf 614))  ; symex_dynamic::dynamic_object$2#1..next
+(let ebase_615 (Equal ebase_95 ebase_614))  ; =  ;; [ASSUME]
+(let ebase_616 (Leaf 616))  ; calloc::$tmp::malloc_value!0@4#2
+(let ebase_617 (Typecast ebase_88 ebase_7))  ; typecast
+(let ebase_618 (Equal ebase_616 ebase_617))  ; =  ;; [ASSUME]
+(let ebase_619 (Leaf 619))  ; calloc::1::malloc_res!0@4#2
+(let ebase_620 (Equal ebase_617 ebase_619))  ; =  ;; [ASSUME]
+(let ebase_621 (Leaf 621))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@4#2
+(let ebase_622 (Leaf 622))  ; nondet_symbol
+(let ebase_623 (Equal ebase_621 ebase_622))  ; =  ;; [ASSUME]
+(let ebase_624 (Leaf 624))  ; calloc::1::record_malloc!0@4#2
+(let ebase_625 (Equal ebase_621 ebase_624))  ; =  ;; [ASSUME]
+(let ebase_626 (Leaf 626))  ; __CPROVER_malloc_is_new_array#8
+(let ebase_627 (Equal ebase_25 ebase_626))  ; =  ;; [ASSUME]
+(let ebase_628 (Leaf 628))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@4#2
+(let ebase_629 (Leaf 629))  ; nondet_symbol
+(let ebase_630 (Equal ebase_628 ebase_629))  ; =  ;; [ASSUME]
+(let ebase_631 (Leaf 631))  ; calloc::1::record_may_leak!0@4#2
+(let ebase_632 (Equal ebase_628 ebase_631))  ; =  ;; [ASSUME]
+(let ebase_633 (Leaf 633))  ; __CPROVER_memory_leak#8
+(let ebase_634 (Leaf 634))  ; if
+(let ebase_635 (Equal ebase_633 ebase_634))  ; =  ;; [ASSUME]
+(let ebase_636 (Leaf 636))  ; goto_symex::return_value::calloc!0#11
+(let ebase_637 (Equal ebase_617 ebase_636))  ; =  ;; [ASSUME]
+(let ebase_638 (Leaf 638))  ; __CPROVER_dead_object#14
+(let ebase_639 (Leaf 639))  ; if
+(let ebase_640 (Equal ebase_638 ebase_639))  ; =  ;; [ASSUME]
+(let ebase_641 (Leaf 641))  ; __CPROVER_dead_object#15
+(let ebase_642 (Leaf 642))  ; if
+(let ebase_643 (Equal ebase_641 ebase_642))  ; =  ;; [ASSUME]
+(let ebase_644 (Leaf 644))  ; __CPROVER_malloc_is_new_array#9
+(let ebase_645 (Equal ebase_25 ebase_644))  ; =  ;; [ASSUME]
+(let ebase_646 (Leaf 646))  ; __CPROVER_memory_leak#9
+(let ebase_647 (Leaf 647))  ; if
+(let ebase_648 (Equal ebase_646 ebase_647))  ; =  ;; [ASSUME]
+(let ebase_649 (Leaf 649))  ; goto_symex::return_value::calloc!0#12
+(let ebase_650 (Leaf 650))  ; if
+(let ebase_651 (Equal ebase_649 ebase_650))  ; =  ;; [ASSUME]
+(let ebase_652 (Leaf 652))  ; symex_dynamic::dynamic_object$2#2..data
+(let ebase_653 (Equal ebase_18 ebase_652))  ; =  ;; [ASSUME]
+(let ebase_654 (Leaf 654))  ; symex_dynamic::dynamic_object$2#2..next
+(let ebase_655 (Equal ebase_95 ebase_654))  ; =  ;; [ASSUME]
+(let ebase_656 (Leaf 656))  ; slist_add_last::$tmp::return_value!0@2#2
+(let ebase_657 (Equal ebase_649 ebase_656))  ; =  ;; [ASSUME]
+(let ebase_658 (Leaf 658))  ; slist_add_last::1::node!0@2#2
+(let ebase_659 (Typecast ebase_492 ebase_656))  ; typecast
+(let ebase_660 (Equal ebase_658 ebase_659))  ; =  ;; [ASSUME]
+(let ebase_661 (Leaf 661))  ; goto_symex::\guard#7
+(let ebase_662 (Leaf 662))  ; not
+(let ebase_663 (Equal ebase_661 ebase_662))  ; =  ;; [ASSUME]
+(let ebase_664 (Leaf 664))  ; goto_symex::return_value::slist_add_last!0#4
+(let ebase_665 (Equal ebase_166 ebase_664))  ; =  ;; [ASSUME]
+(let ebase_666 (Leaf 666))  ; symex_dynamic::dynamic_object$2#3..data
+(let ebase_667 (Equal ebase_580 ebase_666))  ; =  ;; [ASSUME]
+(let ebase_668 (Leaf 668))  ; goto_symex::\guard#8
+(let ebase_669 (Leaf 669))  ; if
+(let ebase_670 (Equal ebase_668 ebase_669))  ; =  ;; [ASSUME]
+(let ebase_671 (Leaf 671))  ; symex_dynamic::dynamic_object#6..head
+(let ebase_672 (Leaf 672))  ; if
+(let ebase_673 (Equal ebase_671 ebase_672))  ; =  ;; [ASSUME]
+(let ebase_674 (Leaf 674))  ; slist_add_last::list$object#4..head
+(let ebase_675 (Leaf 675))  ; if
+(let ebase_676 (Equal ebase_674 ebase_675))  ; =  ;; [ASSUME]
+(let ebase_677 (Leaf 677))  ; symex_dynamic::dynamic_object#6..tail
+(let ebase_678 (Leaf 678))  ; if
+(let ebase_679 (Equal ebase_677 ebase_678))  ; =  ;; [ASSUME]
+(let ebase_680 (Leaf 680))  ; slist_add_last::list$object#5..tail
+(let ebase_681 (Leaf 681))  ; if
+(let ebase_682 (Equal ebase_680 ebase_681))  ; =  ;; [ASSUME]
+(let ebase_683 (Leaf 683))  ; symex_dynamic::dynamic_object$1#3..next
+(let ebase_684 (Leaf 684))  ; if
+(let ebase_685 (Equal ebase_683 ebase_684))  ; =  ;; [ASSUME]
+(let ebase_686 (Leaf 686))  ; symex::invalid_object$0!0#1..next
+(let ebase_687 (Leaf 687))  ; if
+(let ebase_688 (Equal ebase_686 ebase_687))  ; =  ;; [ASSUME]
+(let ebase_689 (Leaf 689))  ; symex::invalid_object$0!0#0..next
+(let ebase_690 (Leaf 690))  ; symex_dynamic::dynamic_object$1#4..next
+(let ebase_691 (Leaf 691))  ; if
+(let ebase_692 (Equal ebase_690 ebase_691))  ; =  ;; [ASSUME]
+(let ebase_693 (Leaf 693))  ; symex_dynamic::dynamic_object#7..tail
+(let ebase_694 (Equal ebase_678 ebase_693))  ; =  ;; [ASSUME]
+(let ebase_695 (Leaf 695))  ; slist_add_last::list$object#6..tail
+(let ebase_696 (Equal ebase_681 ebase_695))  ; =  ;; [ASSUME]
+(let ebase_697 (Leaf 697))  ; slist_add_last::list$object#5..head
+(let ebase_698 (Leaf 698))  ; if
+(let ebase_699 (Equal ebase_697 ebase_698))  ; =  ;; [ASSUME]
+(let ebase_700 (Leaf 700))  ; slist_add_last::list$object#7..tail
+(let ebase_701 (Leaf 701))  ; if
+(let ebase_702 (Equal ebase_700 ebase_701))  ; =  ;; [ASSUME]
+(let ebase_703 (Leaf 703))  ; symex_dynamic::dynamic_object$1#5..next
+(let ebase_704 (Leaf 704))  ; if
+(let ebase_705 (Equal ebase_703 ebase_704))  ; =  ;; [ASSUME]
+(let ebase_706 (Leaf 706))  ; symex_dynamic::dynamic_object#7..head
+(let ebase_707 (Leaf 707))  ; if
+(let ebase_708 (Equal ebase_706 ebase_707))  ; =  ;; [ASSUME]
+(let ebase_709 (Leaf 709))  ; symex_dynamic::dynamic_object#8..tail
+(let ebase_710 (Leaf 710))  ; if
+(let ebase_711 (Equal ebase_709 ebase_710))  ; =  ;; [ASSUME]
+(let ebase_712 (Leaf 712))  ; symex::invalid_object$0!0#2..next
+(let ebase_713 (Equal ebase_686 ebase_712))  ; =  ;; [ASSUME]
+(let ebase_714 (Leaf 714))  ; symex_dynamic::dynamic_object#5..size
+(let ebase_715 (Leaf 715))  ; if
+(let ebase_716 (Equal ebase_714 ebase_715))  ; =  ;; [ASSUME]
+(let ebase_717 (Leaf 717))  ; if
+(let ebase_718 (Plus ebase_64 ebase_717))  ; +
+(let ebase_719 (Leaf 719))  ; slist_add_last::list$object#3..size
+(let ebase_720 (Leaf 720))  ; if
+(let ebase_721 (Equal ebase_719 ebase_720))  ; =  ;; [ASSUME]
+(let ebase_722 (Leaf 722))  ; if
+(let ebase_723 (Plus ebase_64 ebase_722))  ; +
+(let ebase_724 (Leaf 724))  ; goto_symex::return_value::slist_add_last!0#5
+(let ebase_725 (Equal ebase_177 ebase_724))  ; =  ;; [ASSUME]
+(let ebase_726 (Leaf 726))  ; goto_symex::return_value::slist_add_last!0#6
+(let ebase_727 (Leaf 727))  ; if
+(let ebase_728 (Equal ebase_726 ebase_727))  ; =  ;; [ASSUME]
+(let ebase_729 (Leaf 729))  ; slist_add_last::list$object#6..head
+(let ebase_730 (Leaf 730))  ; if
+(let ebase_731 (Equal ebase_729 ebase_730))  ; =  ;; [ASSUME]
+(let ebase_732 (Leaf 732))  ; slist_add_last::list$object#4..size
+(let ebase_733 (Leaf 733))  ; if
+(let ebase_734 (Equal ebase_732 ebase_733))  ; =  ;; [ASSUME]
+(let ebase_735 (Leaf 735))  ; if
+(let ebase_736 (Equal ebase_8 ebase_735))  ; =  ;; [ASSUME]
+(let ebase_737 (Leaf 737))  ; symex_dynamic::dynamic_object$1#6..next
+(let ebase_738 (Leaf 738))  ; if
+(let ebase_739 (Equal ebase_737 ebase_738))  ; =  ;; [ASSUME]
+(let ebase_740 (Leaf 740))  ; symex_dynamic::dynamic_object$2#4..data
+(let ebase_741 (Leaf 741))  ; if
+(let ebase_742 (Equal ebase_740 ebase_741))  ; =  ;; [ASSUME]
+(let ebase_743 (Leaf 743))  ; symex_dynamic::dynamic_object#8..head
+(let ebase_744 (Leaf 744))  ; if
+(let ebase_745 (Equal ebase_743 ebase_744))  ; =  ;; [ASSUME]
+(let ebase_746 (Leaf 746))  ; symex_dynamic::dynamic_object#6..size
+(let ebase_747 (Leaf 747))  ; if
+(let ebase_748 (Equal ebase_746 ebase_747))  ; =  ;; [ASSUME]
+(let ebase_749 (Leaf 749))  ; if
+(let ebase_750 (Equal ebase_6 ebase_749))  ; =  ;; [ASSUME]
+(let ebase_751 (Leaf 751))  ; symex::invalid_object$0!0#3..next
+(let ebase_752 (Equal ebase_712 ebase_751))  ; =  ;; [ASSUME]
+(let ebase_753 (Leaf 753))  ; slist_add::$tmp::return_value_slist_add_last!0@2#2
+(let ebase_754 (Equal ebase_726 ebase_753))  ; =  ;; [ASSUME]
+(let ebase_755 (Leaf 755))  ; goto_symex::return_value::slist_add!0#2
+(let ebase_756 (Equal ebase_753 ebase_755))  ; =  ;; [ASSUME]
+(let ebase_757 (Leaf 757))  ; main::$tmp::return_value_slist_add$0!0@1#2
+(let ebase_758 (Equal ebase_755 ebase_757))  ; =  ;; [ASSUME]
+(let ebase_759 (Leaf 759))  ; slist_add::list!0@3#1
+(let ebase_760 (Equal ebase_182 ebase_759))  ; =  ;; [ASSUME]
+(let ebase_761 (Leaf 761))  ; slist_add::element!0@3#1
+(let ebase_762 (Leaf 762))  ; address_of
+(let ebase_763 (Typecast ebase_88 ebase_762))  ; typecast
+(let ebase_764 (Equal ebase_761 ebase_763))  ; =  ;; [ASSUME]
+(let ebase_765 (Equal ebase_5 ebase_759))  ; =  ;; [ASSUME]
+(let ebase_766 (Leaf 766))  ; slist_add_last::element!0@3#1
+(let ebase_767 (Equal ebase_763 ebase_766))  ; =  ;; [ASSUME]
+(let ebase_768 (Leaf 768))  ; goto_symex::\guard#9
+(let ebase_769 (Leaf 769))  ; not
+(let ebase_770 (Equal ebase_768 ebase_769))  ; =  ;; [ASSUME]
+(let ebase_771 (Leaf 771))  ; calloc::nmemb!0@5#1
+(let ebase_772 (Equal ebase_64 ebase_771))  ; =  ;; [ASSUME]
+(let ebase_773 (Leaf 773))  ; calloc::size!0@5#1
+(let ebase_774 (Equal ebase_422 ebase_773))  ; =  ;; [ASSUME]
+(let ebase_775 (Leaf 775))  ; calloc::$tmp::tmp_overflow_result!0@5#2
+(let ebase_776 (Equal ebase_425 ebase_775))  ; =  ;; [ASSUME]
+(let ebase_777 (Leaf 777))  ; calloc::$tmp::tmp_overflow_result!0@5#2..value
+(let ebase_778 (Equal ebase_422 ebase_777))  ; =  ;; [ASSUME]
+(let ebase_779 (Leaf 779))  ; calloc::$tmp::tmp_overflow_result!0@5#2..overflow-*
+(let ebase_780 (Equal ebase_25 ebase_779))  ; =  ;; [ASSUME]
+(let ebase_781 (Leaf 781))  ; calloc::1::alloc_size!0@5#2
+(let ebase_782 (Equal ebase_422 ebase_781))  ; =  ;; [ASSUME]
+(let ebase_783 (Leaf 783))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@5#2
+(let ebase_784 (Leaf 784))  ; nondet_symbol
+(let ebase_785 (Equal ebase_783 ebase_784))  ; =  ;; [ASSUME]
+(let ebase_786 (Leaf 786))  ; calloc::1::1::should_malloc_fail!0@5#2
+(let ebase_787 (Equal ebase_783 ebase_786))  ; =  ;; [ASSUME]
+(let ebase_788 (Leaf 788))  ; goto_symex::return_value::calloc!0#13
+(let ebase_789 (Equal ebase_18 ebase_788))  ; =  ;; [ASSUME]
+(let ebase_790 (Leaf 790))  ; __CPROVER_dead_object#16
+(let ebase_791 (Leaf 791))  ; if
+(let ebase_792 (Equal ebase_790 ebase_791))  ; =  ;; [ASSUME]
+(let ebase_793 (Leaf 793))  ; address_of
+(let ebase_794 (Typecast ebase_88 ebase_793))  ; typecast
+(let ebase_795 (Leaf 795))  ; symex_dynamic::dynamic_object$3#1..data
+(let ebase_796 (Equal ebase_18 ebase_795))  ; =  ;; [ASSUME]
+(let ebase_797 (Leaf 797))  ; symex_dynamic::dynamic_object$3#1..next
+(let ebase_798 (Equal ebase_95 ebase_797))  ; =  ;; [ASSUME]
+(let ebase_799 (Leaf 799))  ; calloc::$tmp::malloc_value!0@5#2
+(let ebase_800 (Typecast ebase_88 ebase_11))  ; typecast
+(let ebase_801 (Equal ebase_799 ebase_800))  ; =  ;; [ASSUME]
+(let ebase_802 (Leaf 802))  ; calloc::1::malloc_res!0@5#2
+(let ebase_803 (Equal ebase_800 ebase_802))  ; =  ;; [ASSUME]
+(let ebase_804 (Leaf 804))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@5#2
+(let ebase_805 (Leaf 805))  ; nondet_symbol
+(let ebase_806 (Equal ebase_804 ebase_805))  ; =  ;; [ASSUME]
+(let ebase_807 (Leaf 807))  ; calloc::1::record_malloc!0@5#2
+(let ebase_808 (Equal ebase_804 ebase_807))  ; =  ;; [ASSUME]
+(let ebase_809 (Leaf 809))  ; __CPROVER_malloc_is_new_array#10
+(let ebase_810 (Equal ebase_25 ebase_809))  ; =  ;; [ASSUME]
+(let ebase_811 (Leaf 811))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@5#2
+(let ebase_812 (Leaf 812))  ; nondet_symbol
+(let ebase_813 (Equal ebase_811 ebase_812))  ; =  ;; [ASSUME]
+(let ebase_814 (Leaf 814))  ; calloc::1::record_may_leak!0@5#2
+(let ebase_815 (Equal ebase_811 ebase_814))  ; =  ;; [ASSUME]
+(let ebase_816 (Leaf 816))  ; __CPROVER_memory_leak#10
+(let ebase_817 (Leaf 817))  ; if
+(let ebase_818 (Equal ebase_816 ebase_817))  ; =  ;; [ASSUME]
+(let ebase_819 (Leaf 819))  ; goto_symex::return_value::calloc!0#14
+(let ebase_820 (Equal ebase_800 ebase_819))  ; =  ;; [ASSUME]
+(let ebase_821 (Leaf 821))  ; __CPROVER_dead_object#17
+(let ebase_822 (Leaf 822))  ; if
+(let ebase_823 (Equal ebase_821 ebase_822))  ; =  ;; [ASSUME]
+(let ebase_824 (Leaf 824))  ; __CPROVER_dead_object#18
+(let ebase_825 (Leaf 825))  ; if
+(let ebase_826 (Equal ebase_824 ebase_825))  ; =  ;; [ASSUME]
+(let ebase_827 (Leaf 827))  ; __CPROVER_malloc_is_new_array#11
+(let ebase_828 (Equal ebase_25 ebase_827))  ; =  ;; [ASSUME]
+(let ebase_829 (Leaf 829))  ; __CPROVER_memory_leak#11
+(let ebase_830 (Leaf 830))  ; if
+(let ebase_831 (Equal ebase_829 ebase_830))  ; =  ;; [ASSUME]
+(let ebase_832 (Leaf 832))  ; goto_symex::return_value::calloc!0#15
+(let ebase_833 (Leaf 833))  ; if
+(let ebase_834 (Equal ebase_832 ebase_833))  ; =  ;; [ASSUME]
+(let ebase_835 (Leaf 835))  ; symex_dynamic::dynamic_object$3#2..data
+(let ebase_836 (Equal ebase_18 ebase_835))  ; =  ;; [ASSUME]
+(let ebase_837 (Leaf 837))  ; symex_dynamic::dynamic_object$3#2..next
+(let ebase_838 (Equal ebase_95 ebase_837))  ; =  ;; [ASSUME]
+(let ebase_839 (Leaf 839))  ; slist_add_last::$tmp::return_value!0@3#2
+(let ebase_840 (Equal ebase_832 ebase_839))  ; =  ;; [ASSUME]
+(let ebase_841 (Leaf 841))  ; slist_add_last::1::node!0@3#2
+(let ebase_842 (Typecast ebase_492 ebase_839))  ; typecast
+(let ebase_843 (Equal ebase_841 ebase_842))  ; =  ;; [ASSUME]
+(let ebase_844 (Leaf 844))  ; goto_symex::\guard#10
+(let ebase_845 (Leaf 845))  ; not
+(let ebase_846 (Equal ebase_844 ebase_845))  ; =  ;; [ASSUME]
+(let ebase_847 (Leaf 847))  ; goto_symex::return_value::slist_add_last!0#7
+(let ebase_848 (Equal ebase_166 ebase_847))  ; =  ;; [ASSUME]
+(let ebase_849 (Leaf 849))  ; symex_dynamic::dynamic_object$3#3..data
+(let ebase_850 (Equal ebase_763 ebase_849))  ; =  ;; [ASSUME]
+(let ebase_851 (Leaf 851))  ; goto_symex::\guard#11
+(let ebase_852 (Leaf 852))  ; if
+(let ebase_853 (Equal ebase_851 ebase_852))  ; =  ;; [ASSUME]
+(let ebase_854 (Leaf 854))  ; symex_dynamic::dynamic_object#9..head
+(let ebase_855 (Leaf 855))  ; if
+(let ebase_856 (Equal ebase_854 ebase_855))  ; =  ;; [ASSUME]
+(let ebase_857 (Leaf 857))  ; slist_add_last::list$object#7..head
+(let ebase_858 (Leaf 858))  ; if
+(let ebase_859 (Equal ebase_857 ebase_858))  ; =  ;; [ASSUME]
+(let ebase_860 (Leaf 860))  ; symex_dynamic::dynamic_object#10..tail
+(let ebase_861 (Leaf 861))  ; if
+(let ebase_862 (Equal ebase_860 ebase_861))  ; =  ;; [ASSUME]
+(let ebase_863 (Leaf 863))  ; slist_add_last::list$object#9..tail
+(let ebase_864 (Leaf 864))  ; if
+(let ebase_865 (Equal ebase_863 ebase_864))  ; =  ;; [ASSUME]
+(let ebase_866 (Leaf 866))  ; symex_dynamic::dynamic_object$2#3..next
+(let ebase_867 (Leaf 867))  ; if
+(let ebase_868 (Equal ebase_866 ebase_867))  ; =  ;; [ASSUME]
+(let ebase_869 (Leaf 869))  ; symex_dynamic::dynamic_object$1#7..next
+(let ebase_870 (Leaf 870))  ; if
+(let ebase_871 (Equal ebase_869 ebase_870))  ; =  ;; [ASSUME]
+(let ebase_872 (Leaf 872))  ; symex::invalid_object$1!0#1..next
+(let ebase_873 (Leaf 873))  ; if
+(let ebase_874 (Equal ebase_872 ebase_873))  ; =  ;; [ASSUME]
+(let ebase_875 (Leaf 875))  ; symex::invalid_object$1!0#0..next
+(let ebase_876 (Leaf 876))  ; symex_dynamic::dynamic_object$2#4..next
+(let ebase_877 (Leaf 877))  ; if
+(let ebase_878 (Equal ebase_876 ebase_877))  ; =  ;; [ASSUME]
+(let ebase_879 (Leaf 879))  ; symex_dynamic::dynamic_object$1#8..next
+(let ebase_880 (Leaf 880))  ; if
+(let ebase_881 (Equal ebase_879 ebase_880))  ; =  ;; [ASSUME]
+(let ebase_882 (Leaf 882))  ; symex_dynamic::dynamic_object#11..tail
+(let ebase_883 (Equal ebase_861 ebase_882))  ; =  ;; [ASSUME]
+(let ebase_884 (Leaf 884))  ; slist_add_last::list$object#10..tail
+(let ebase_885 (Equal ebase_864 ebase_884))  ; =  ;; [ASSUME]
+(let ebase_886 (Leaf 886))  ; slist_add_last::list$object#8..head
+(let ebase_887 (Leaf 887))  ; if
+(let ebase_888 (Equal ebase_886 ebase_887))  ; =  ;; [ASSUME]
+(let ebase_889 (Leaf 889))  ; slist_add_last::list$object#11..tail
+(let ebase_890 (Leaf 890))  ; if
+(let ebase_891 (Equal ebase_889 ebase_890))  ; =  ;; [ASSUME]
+(let ebase_892 (Leaf 892))  ; symex_dynamic::dynamic_object$1#9..next
+(let ebase_893 (Leaf 893))  ; if
+(let ebase_894 (Equal ebase_892 ebase_893))  ; =  ;; [ASSUME]
+(let ebase_895 (Leaf 895))  ; symex_dynamic::dynamic_object$2#5..next
+(let ebase_896 (Leaf 896))  ; if
+(let ebase_897 (Equal ebase_895 ebase_896))  ; =  ;; [ASSUME]
+(let ebase_898 (Leaf 898))  ; symex_dynamic::dynamic_object#10..head
+(let ebase_899 (Leaf 899))  ; if
+(let ebase_900 (Equal ebase_898 ebase_899))  ; =  ;; [ASSUME]
+(let ebase_901 (Leaf 901))  ; symex_dynamic::dynamic_object#12..tail
+(let ebase_902 (Leaf 902))  ; if
+(let ebase_903 (Equal ebase_901 ebase_902))  ; =  ;; [ASSUME]
+(let ebase_904 (Leaf 904))  ; symex::invalid_object$1!0#2..next
+(let ebase_905 (Equal ebase_872 ebase_904))  ; =  ;; [ASSUME]
+(let ebase_906 (Leaf 906))  ; symex_dynamic::dynamic_object#7..size
+(let ebase_907 (Leaf 907))  ; if
+(let ebase_908 (Equal ebase_906 ebase_907))  ; =  ;; [ASSUME]
+(let ebase_909 (Leaf 909))  ; if
+(let ebase_910 (Plus ebase_64 ebase_909))  ; +
+(let ebase_911 (Leaf 911))  ; slist_add_last::list$object#5..size
+(let ebase_912 (Leaf 912))  ; if
+(let ebase_913 (Equal ebase_911 ebase_912))  ; =  ;; [ASSUME]
+(let ebase_914 (Leaf 914))  ; if
+(let ebase_915 (Plus ebase_64 ebase_914))  ; +
+(let ebase_916 (Leaf 916))  ; goto_symex::return_value::slist_add_last!0#8
+(let ebase_917 (Equal ebase_177 ebase_916))  ; =  ;; [ASSUME]
+(let ebase_918 (Leaf 918))  ; goto_symex::return_value::slist_add_last!0#9
+(let ebase_919 (Leaf 919))  ; if
+(let ebase_920 (Equal ebase_918 ebase_919))  ; =  ;; [ASSUME]
+(let ebase_921 (Leaf 921))  ; slist_add_last::list$object#9..head
+(let ebase_922 (Leaf 922))  ; if
+(let ebase_923 (Equal ebase_921 ebase_922))  ; =  ;; [ASSUME]
+(let ebase_924 (Leaf 924))  ; slist_add_last::list$object#6..size
+(let ebase_925 (Leaf 925))  ; if
+(let ebase_926 (Equal ebase_924 ebase_925))  ; =  ;; [ASSUME]
+(let ebase_927 (Leaf 927))  ; if
+(let ebase_928 (Equal ebase_12 ebase_927))  ; =  ;; [ASSUME]
+(let ebase_929 (Leaf 929))  ; symex_dynamic::dynamic_object$1#10..next
+(let ebase_930 (Leaf 930))  ; if
+(let ebase_931 (Equal ebase_929 ebase_930))  ; =  ;; [ASSUME]
+(let ebase_932 (Leaf 932))  ; symex_dynamic::dynamic_object$2#6..next
+(let ebase_933 (Leaf 933))  ; if
+(let ebase_934 (Equal ebase_932 ebase_933))  ; =  ;; [ASSUME]
+(let ebase_935 (Leaf 935))  ; symex_dynamic::dynamic_object$3#4..data
+(let ebase_936 (Leaf 936))  ; if
+(let ebase_937 (Equal ebase_935 ebase_936))  ; =  ;; [ASSUME]
+(let ebase_938 (Leaf 938))  ; symex_dynamic::dynamic_object#11..head
+(let ebase_939 (Leaf 939))  ; if
+(let ebase_940 (Equal ebase_938 ebase_939))  ; =  ;; [ASSUME]
+(let ebase_941 (Leaf 941))  ; symex_dynamic::dynamic_object#8..size
+(let ebase_942 (Leaf 942))  ; if
+(let ebase_943 (Equal ebase_941 ebase_942))  ; =  ;; [ASSUME]
+(let ebase_944 (Leaf 944))  ; if
+(let ebase_945 (Equal ebase_10 ebase_944))  ; =  ;; [ASSUME]
+(let ebase_946 (Leaf 946))  ; symex::invalid_object$1!0#3..next
+(let ebase_947 (Equal ebase_904 ebase_946))  ; =  ;; [ASSUME]
+(let ebase_948 (Leaf 948))  ; slist_add::$tmp::return_value_slist_add_last!0@3#2
+(let ebase_949 (Equal ebase_918 ebase_948))  ; =  ;; [ASSUME]
+(let ebase_950 (Leaf 950))  ; goto_symex::return_value::slist_add!0#3
+(let ebase_951 (Equal ebase_948 ebase_950))  ; =  ;; [ASSUME]
+(let ebase_952 (Leaf 952))  ; main::$tmp::return_value_slist_add$1!0@1#2
+(let ebase_953 (Equal ebase_950 ebase_952))  ; =  ;; [ASSUME]
+(let ebase_954 (Leaf 954))  ; slist_add::list!0@4#1
+(let ebase_955 (Equal ebase_182 ebase_954))  ; =  ;; [ASSUME]
+(let ebase_956 (Leaf 956))  ; slist_add::element!0@4#1
+(let ebase_957 (Leaf 957))  ; address_of
+(let ebase_958 (Typecast ebase_88 ebase_957))  ; typecast
+(let ebase_959 (Equal ebase_956 ebase_958))  ; =  ;; [ASSUME]
+(let ebase_960 (Equal ebase_9 ebase_954))  ; =  ;; [ASSUME]
+(let ebase_961 (Leaf 961))  ; slist_add_last::element!0@4#1
+(let ebase_962 (Equal ebase_958 ebase_961))  ; =  ;; [ASSUME]
+(let ebase_963 (Leaf 963))  ; goto_symex::\guard#12
+(let ebase_964 (Leaf 964))  ; not
+(let ebase_965 (Equal ebase_963 ebase_964))  ; =  ;; [ASSUME]
+(let ebase_966 (Leaf 966))  ; calloc::nmemb!0@6#1
+(let ebase_967 (Equal ebase_64 ebase_966))  ; =  ;; [ASSUME]
+(let ebase_968 (Leaf 968))  ; calloc::size!0@6#1
+(let ebase_969 (Equal ebase_422 ebase_968))  ; =  ;; [ASSUME]
+(let ebase_970 (Leaf 970))  ; calloc::$tmp::tmp_overflow_result!0@6#2
+(let ebase_971 (Equal ebase_425 ebase_970))  ; =  ;; [ASSUME]
+(let ebase_972 (Leaf 972))  ; calloc::$tmp::tmp_overflow_result!0@6#2..value
+(let ebase_973 (Equal ebase_422 ebase_972))  ; =  ;; [ASSUME]
+(let ebase_974 (Leaf 974))  ; calloc::$tmp::tmp_overflow_result!0@6#2..overflow-*
+(let ebase_975 (Equal ebase_25 ebase_974))  ; =  ;; [ASSUME]
+(let ebase_976 (Leaf 976))  ; calloc::1::alloc_size!0@6#2
+(let ebase_977 (Equal ebase_422 ebase_976))  ; =  ;; [ASSUME]
+(let ebase_978 (Leaf 978))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@6#2
+(let ebase_979 (Leaf 979))  ; nondet_symbol
+(let ebase_980 (Equal ebase_978 ebase_979))  ; =  ;; [ASSUME]
+(let ebase_981 (Leaf 981))  ; calloc::1::1::should_malloc_fail!0@6#2
+(let ebase_982 (Equal ebase_978 ebase_981))  ; =  ;; [ASSUME]
+(let ebase_983 (Leaf 983))  ; goto_symex::return_value::calloc!0#16
+(let ebase_984 (Equal ebase_18 ebase_983))  ; =  ;; [ASSUME]
+(let ebase_985 (Leaf 985))  ; __CPROVER_dead_object#19
+(let ebase_986 (Leaf 986))  ; if
+(let ebase_987 (Equal ebase_985 ebase_986))  ; =  ;; [ASSUME]
+(let ebase_988 (Leaf 988))  ; address_of
+(let ebase_989 (Typecast ebase_88 ebase_988))  ; typecast
+(let ebase_990 (Leaf 990))  ; symex_dynamic::dynamic_object$4#1..data
+(let ebase_991 (Equal ebase_18 ebase_990))  ; =  ;; [ASSUME]
+(let ebase_992 (Leaf 992))  ; symex_dynamic::dynamic_object$4#1..next
+(let ebase_993 (Equal ebase_95 ebase_992))  ; =  ;; [ASSUME]
+(let ebase_994 (Leaf 994))  ; calloc::$tmp::malloc_value!0@6#2
+(let ebase_995 (Leaf 995))  ; address_of
+(let ebase_996 (Typecast ebase_88 ebase_995))  ; typecast
+(let ebase_997 (Equal ebase_994 ebase_996))  ; =  ;; [ASSUME]
+(let ebase_998 (Leaf 998))  ; calloc::1::malloc_res!0@6#2
+(let ebase_999 (Equal ebase_996 ebase_998))  ; =  ;; [ASSUME]
+(let ebase_1000 (Leaf 1000))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@6#2
+(let ebase_1001 (Leaf 1001))  ; nondet_symbol
+(let ebase_1002 (Equal ebase_1000 ebase_1001))  ; =  ;; [ASSUME]
+(let ebase_1003 (Leaf 1003))  ; calloc::1::record_malloc!0@6#2
+(let ebase_1004 (Equal ebase_1000 ebase_1003))  ; =  ;; [ASSUME]
+(let ebase_1005 (Leaf 1005))  ; __CPROVER_malloc_is_new_array#12
+(let ebase_1006 (Equal ebase_25 ebase_1005))  ; =  ;; [ASSUME]
+(let ebase_1007 (Leaf 1007))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@6#2
+(let ebase_1008 (Leaf 1008))  ; nondet_symbol
+(let ebase_1009 (Equal ebase_1007 ebase_1008))  ; =  ;; [ASSUME]
+(let ebase_1010 (Leaf 1010))  ; calloc::1::record_may_leak!0@6#2
+(let ebase_1011 (Equal ebase_1007 ebase_1010))  ; =  ;; [ASSUME]
+(let ebase_1012 (Leaf 1012))  ; __CPROVER_memory_leak#12
+(let ebase_1013 (Leaf 1013))  ; if
+(let ebase_1014 (Equal ebase_1012 ebase_1013))  ; =  ;; [ASSUME]
+(let ebase_1015 (Leaf 1015))  ; goto_symex::return_value::calloc!0#17
+(let ebase_1016 (Equal ebase_996 ebase_1015))  ; =  ;; [ASSUME]
+(let ebase_1017 (Leaf 1017))  ; __CPROVER_dead_object#20
+(let ebase_1018 (Leaf 1018))  ; if
+(let ebase_1019 (Equal ebase_1017 ebase_1018))  ; =  ;; [ASSUME]
+(let ebase_1020 (Leaf 1020))  ; __CPROVER_dead_object#21
+(let ebase_1021 (Leaf 1021))  ; if
+(let ebase_1022 (Equal ebase_1020 ebase_1021))  ; =  ;; [ASSUME]
+(let ebase_1023 (Leaf 1023))  ; __CPROVER_malloc_is_new_array#13
+(let ebase_1024 (Equal ebase_25 ebase_1023))  ; =  ;; [ASSUME]
+(let ebase_1025 (Leaf 1025))  ; __CPROVER_memory_leak#13
+(let ebase_1026 (Leaf 1026))  ; if
+(let ebase_1027 (Equal ebase_1025 ebase_1026))  ; =  ;; [ASSUME]
+(let ebase_1028 (Leaf 1028))  ; goto_symex::return_value::calloc!0#18
+(let ebase_1029 (Leaf 1029))  ; if
+(let ebase_1030 (Equal ebase_1028 ebase_1029))  ; =  ;; [ASSUME]
+(let ebase_1031 (Leaf 1031))  ; symex_dynamic::dynamic_object$4#2..data
+(let ebase_1032 (Equal ebase_18 ebase_1031))  ; =  ;; [ASSUME]
+(let ebase_1033 (Leaf 1033))  ; symex_dynamic::dynamic_object$4#2..next
+(let ebase_1034 (Equal ebase_95 ebase_1033))  ; =  ;; [ASSUME]
+(let ebase_1035 (Leaf 1035))  ; slist_add_last::$tmp::return_value!0@4#2
+(let ebase_1036 (Equal ebase_1028 ebase_1035))  ; =  ;; [ASSUME]
+(let ebase_1037 (Leaf 1037))  ; slist_add_last::1::node!0@4#2
+(let ebase_1038 (Typecast ebase_492 ebase_1035))  ; typecast
+(let ebase_1039 (Equal ebase_1037 ebase_1038))  ; =  ;; [ASSUME]
+(let ebase_1040 (Leaf 1040))  ; goto_symex::\guard#13
+(let ebase_1041 (Leaf 1041))  ; not
+(let ebase_1042 (Equal ebase_1040 ebase_1041))  ; =  ;; [ASSUME]
+(let ebase_1043 (Leaf 1043))  ; goto_symex::return_value::slist_add_last!0#10
+(let ebase_1044 (Equal ebase_166 ebase_1043))  ; =  ;; [ASSUME]
+(let ebase_1045 (Leaf 1045))  ; symex_dynamic::dynamic_object$4#3..data
+(let ebase_1046 (Equal ebase_958 ebase_1045))  ; =  ;; [ASSUME]
+(let ebase_1047 (Leaf 1047))  ; goto_symex::\guard#14
+(let ebase_1048 (Leaf 1048))  ; if
+(let ebase_1049 (Equal ebase_1047 ebase_1048))  ; =  ;; [ASSUME]
+(let ebase_1050 (Leaf 1050))  ; symex_dynamic::dynamic_object#12..head
+(let ebase_1051 (Leaf 1051))  ; if
+(let ebase_1052 (Equal ebase_1050 ebase_1051))  ; =  ;; [ASSUME]
+(let ebase_1053 (Leaf 1053))  ; slist_add_last::list$object#10..head
+(let ebase_1054 (Leaf 1054))  ; if
+(let ebase_1055 (Equal ebase_1053 ebase_1054))  ; =  ;; [ASSUME]
+(let ebase_1056 (Leaf 1056))  ; symex_dynamic::dynamic_object#14..tail
+(let ebase_1057 (Leaf 1057))  ; if
+(let ebase_1058 (Equal ebase_1056 ebase_1057))  ; =  ;; [ASSUME]
+(let ebase_1059 (Leaf 1059))  ; slist_add_last::list$object#13..tail
+(let ebase_1060 (Leaf 1060))  ; if
+(let ebase_1061 (Equal ebase_1059 ebase_1060))  ; =  ;; [ASSUME]
+(let ebase_1062 (Leaf 1062))  ; symex_dynamic::dynamic_object$3#3..next
+(let ebase_1063 (Leaf 1063))  ; if
+(let ebase_1064 (Equal ebase_1062 ebase_1063))  ; =  ;; [ASSUME]
+(let ebase_1065 (Leaf 1065))  ; symex_dynamic::dynamic_object$2#7..next
+(let ebase_1066 (Leaf 1066))  ; if
+(let ebase_1067 (Equal ebase_1065 ebase_1066))  ; =  ;; [ASSUME]
+(let ebase_1068 (Leaf 1068))  ; symex_dynamic::dynamic_object$1#11..next
+(let ebase_1069 (Leaf 1069))  ; if
+(let ebase_1070 (Equal ebase_1068 ebase_1069))  ; =  ;; [ASSUME]
+(let ebase_1071 (Leaf 1071))  ; symex::invalid_object$2!0#1..next
+(let ebase_1072 (Leaf 1072))  ; if
+(let ebase_1073 (Equal ebase_1071 ebase_1072))  ; =  ;; [ASSUME]
+(let ebase_1074 (Leaf 1074))  ; symex::invalid_object$2!0#0..next
+(let ebase_1075 (Leaf 1075))  ; symex_dynamic::dynamic_object$3#4..next
+(let ebase_1076 (Leaf 1076))  ; if
+(let ebase_1077 (Equal ebase_1075 ebase_1076))  ; =  ;; [ASSUME]
+(let ebase_1078 (Leaf 1078))  ; symex_dynamic::dynamic_object$2#8..next
+(let ebase_1079 (Leaf 1079))  ; if
+(let ebase_1080 (Equal ebase_1078 ebase_1079))  ; =  ;; [ASSUME]
+(let ebase_1081 (Leaf 1081))  ; symex_dynamic::dynamic_object$1#12..next
+(let ebase_1082 (Leaf 1082))  ; if
+(let ebase_1083 (Equal ebase_1081 ebase_1082))  ; =  ;; [ASSUME]
+(let ebase_1084 (Leaf 1084))  ; symex_dynamic::dynamic_object#15..tail
+(let ebase_1085 (Equal ebase_1057 ebase_1084))  ; =  ;; [ASSUME]
+(let ebase_1086 (Leaf 1086))  ; slist_add_last::list$object#14..tail
+(let ebase_1087 (Equal ebase_1060 ebase_1086))  ; =  ;; [ASSUME]
+(let ebase_1088 (Leaf 1088))  ; slist_add_last::list$object#11..head
+(let ebase_1089 (Leaf 1089))  ; if
+(let ebase_1090 (Equal ebase_1088 ebase_1089))  ; =  ;; [ASSUME]
+(let ebase_1091 (Leaf 1091))  ; slist_add_last::list$object#15..tail
+(let ebase_1092 (Leaf 1092))  ; if
+(let ebase_1093 (Equal ebase_1091 ebase_1092))  ; =  ;; [ASSUME]
+(let ebase_1094 (Leaf 1094))  ; symex_dynamic::dynamic_object$1#13..next
+(let ebase_1095 (Leaf 1095))  ; if
+(let ebase_1096 (Equal ebase_1094 ebase_1095))  ; =  ;; [ASSUME]
+(let ebase_1097 (Leaf 1097))  ; symex_dynamic::dynamic_object$2#9..next
+(let ebase_1098 (Leaf 1098))  ; if
+(let ebase_1099 (Equal ebase_1097 ebase_1098))  ; =  ;; [ASSUME]
+(let ebase_1100 (Leaf 1100))  ; symex_dynamic::dynamic_object$3#5..next
+(let ebase_1101 (Leaf 1101))  ; if
+(let ebase_1102 (Equal ebase_1100 ebase_1101))  ; =  ;; [ASSUME]
+(let ebase_1103 (Leaf 1103))  ; symex_dynamic::dynamic_object#13..head
+(let ebase_1104 (Leaf 1104))  ; if
+(let ebase_1105 (Equal ebase_1103 ebase_1104))  ; =  ;; [ASSUME]
+(let ebase_1106 (Leaf 1106))  ; symex_dynamic::dynamic_object#16..tail
+(let ebase_1107 (Leaf 1107))  ; if
+(let ebase_1108 (Equal ebase_1106 ebase_1107))  ; =  ;; [ASSUME]
+(let ebase_1109 (Leaf 1109))  ; symex::invalid_object$2!0#2..next
+(let ebase_1110 (Equal ebase_1071 ebase_1109))  ; =  ;; [ASSUME]
+(let ebase_1111 (Leaf 1111))  ; symex_dynamic::dynamic_object#9..size
+(let ebase_1112 (Leaf 1112))  ; if
+(let ebase_1113 (Equal ebase_1111 ebase_1112))  ; =  ;; [ASSUME]
+(let ebase_1114 (Leaf 1114))  ; if
+(let ebase_1115 (Plus ebase_64 ebase_1114))  ; +
+(let ebase_1116 (Leaf 1116))  ; slist_add_last::list$object#7..size
+(let ebase_1117 (Leaf 1117))  ; if
+(let ebase_1118 (Equal ebase_1116 ebase_1117))  ; =  ;; [ASSUME]
+(let ebase_1119 (Leaf 1119))  ; if
+(let ebase_1120 (Plus ebase_64 ebase_1119))  ; +
+(let ebase_1121 (Leaf 1121))  ; goto_symex::return_value::slist_add_last!0#11
+(let ebase_1122 (Equal ebase_177 ebase_1121))  ; =  ;; [ASSUME]
+(let ebase_1123 (Leaf 1123))  ; goto_symex::return_value::slist_add_last!0#12
+(let ebase_1124 (Leaf 1124))  ; if
+(let ebase_1125 (Equal ebase_1123 ebase_1124))  ; =  ;; [ASSUME]
+(let ebase_1126 (Leaf 1126))  ; slist_add_last::list$object#12..head
+(let ebase_1127 (Leaf 1127))  ; if
+(let ebase_1128 (Equal ebase_1126 ebase_1127))  ; =  ;; [ASSUME]
+(let ebase_1129 (Leaf 1129))  ; slist_add_last::list$object#8..size
+(let ebase_1130 (Leaf 1130))  ; if
+(let ebase_1131 (Equal ebase_1129 ebase_1130))  ; =  ;; [ASSUME]
+(let ebase_1132 (Leaf 1132))  ; slist_add_last::list$object#16..tail
+(let ebase_1133 (Leaf 1133))  ; if
+(let ebase_1134 (Equal ebase_1132 ebase_1133))  ; =  ;; [ASSUME]
+(let ebase_1135 (Leaf 1135))  ; symex_dynamic::dynamic_object$1#14..next
+(let ebase_1136 (Leaf 1136))  ; if
+(let ebase_1137 (Equal ebase_1135 ebase_1136))  ; =  ;; [ASSUME]
+(let ebase_1138 (Leaf 1138))  ; symex_dynamic::dynamic_object$2#10..next
+(let ebase_1139 (Leaf 1139))  ; if
+(let ebase_1140 (Equal ebase_1138 ebase_1139))  ; =  ;; [ASSUME]
+(let ebase_1141 (Leaf 1141))  ; symex_dynamic::dynamic_object$3#6..next
+(let ebase_1142 (Leaf 1142))  ; if
+(let ebase_1143 (Equal ebase_1141 ebase_1142))  ; =  ;; [ASSUME]
+(let ebase_1144 (Leaf 1144))  ; symex_dynamic::dynamic_object$4#4..data
+(let ebase_1145 (Leaf 1145))  ; if
+(let ebase_1146 (Equal ebase_1144 ebase_1145))  ; =  ;; [ASSUME]
+(let ebase_1147 (Leaf 1147))  ; symex_dynamic::dynamic_object#14..head
+(let ebase_1148 (Leaf 1148))  ; if
+(let ebase_1149 (Equal ebase_1147 ebase_1148))  ; =  ;; [ASSUME]
+(let ebase_1150 (Leaf 1150))  ; symex_dynamic::dynamic_object#10..size
+(let ebase_1151 (Leaf 1151))  ; if
+(let ebase_1152 (Equal ebase_1150 ebase_1151))  ; =  ;; [ASSUME]
+(let ebase_1153 (Leaf 1153))  ; symex_dynamic::dynamic_object#17..tail
+(let ebase_1154 (Leaf 1154))  ; if
+(let ebase_1155 (Equal ebase_1153 ebase_1154))  ; =  ;; [ASSUME]
+(let ebase_1156 (Leaf 1156))  ; symex::invalid_object$2!0#3..next
+(let ebase_1157 (Equal ebase_1109 ebase_1156))  ; =  ;; [ASSUME]
+(let ebase_1158 (Leaf 1158))  ; slist_add::$tmp::return_value_slist_add_last!0@4#2
+(let ebase_1159 (Equal ebase_1123 ebase_1158))  ; =  ;; [ASSUME]
+(let ebase_1160 (Leaf 1160))  ; goto_symex::return_value::slist_add!0#4
+(let ebase_1161 (Equal ebase_1158 ebase_1160))  ; =  ;; [ASSUME]
+(let ebase_1162 (Leaf 1162))  ; main::$tmp::return_value_slist_add$2!0@1#2
+(let ebase_1163 (Equal ebase_1160 ebase_1162))  ; =  ;; [ASSUME]
+(let ebase_1164 (Leaf 1164))  ; slist_get_first::list!0@1#1
+(let ebase_1165 (Equal ebase_182 ebase_1164))  ; =  ;; [ASSUME]
+(let ebase_1166 (Leaf 1166))  ; slist_get_first::out!0@1#1
+(let ebase_1167 (Leaf 1167))  ; address_of
+(let ebase_1168 (Equal ebase_1166 ebase_1167))  ; =  ;; [ASSUME]
+(let ebase_1169 (Leaf 1169))  ; goto_symex::\guard#15
+(let ebase_1170 (Leaf 1170))  ; if
+(let ebase_1171 (Equal ebase_1169 ebase_1170))  ; =  ;; [ASSUME]
+(let ebase_1172 (Leaf 1172))  ; slist_get_first::list$object#0..size
+(let ebase_1173 (Leaf 1173))  ; main::1::e!0@1#2
+(let ebase_1174 (Leaf 1174))  ; if
+(let ebase_1175 (Equal ebase_1173 ebase_1174))  ; =  ;; [ASSUME]
+(let ebase_1176 (Leaf 1176))  ; if
+(let ebase_1177 (Leaf 1177))  ; if
+(let ebase_1178 (Leaf 1178))  ; if
+(let ebase_1179 (Leaf 1179))  ; if
+(let ebase_1180 (Leaf 1180))  ; symex::invalid_object$3!0#0..data
+(let ebase_1181 (Leaf 1181))  ; symex::invalid_object$4!0#0..data
+(let ebase_1182 (Leaf 1182))  ; main::1::e!0@1#3
+(let ebase_1183 (Leaf 1183))  ; if
+(let ebase_1184 (Equal ebase_1182 ebase_1183))  ; =  ;; [ASSUME]
+(let ebase_1185 (Leaf 1185))  ; main::1::e!0@1#1
+(let ebase_1186 (Leaf 1186))  ; slist_get_last::list!0@1#1
+(let ebase_1187 (Equal ebase_182 ebase_1186))  ; =  ;; [ASSUME]
+(let ebase_1188 (Leaf 1188))  ; slist_get_last::out!0@1#1
+(let ebase_1189 (Equal ebase_1167 ebase_1188))  ; =  ;; [ASSUME]
+(let ebase_1190 (Leaf 1190))  ; goto_symex::\guard#16
+(let ebase_1191 (Leaf 1191))  ; if
+(let ebase_1192 (Equal ebase_1190 ebase_1191))  ; =  ;; [ASSUME]
+(let ebase_1193 (Leaf 1193))  ; slist_get_last::list$object#0..size
+(let ebase_1194 (Leaf 1194))  ; main::1::e!0@1#4
+(let ebase_1195 (Leaf 1195))  ; if
+(let ebase_1196 (Equal ebase_1194 ebase_1195))  ; =  ;; [ASSUME]
+(let ebase_1197 (Leaf 1197))  ; if
+(let ebase_1198 (Leaf 1198))  ; if
+(let ebase_1199 (Leaf 1199))  ; if
+(let ebase_1200 (Leaf 1200))  ; if
+(let ebase_1201 (Leaf 1201))  ; symex::invalid_object$5!0#0..data
+(let ebase_1202 (Leaf 1202))  ; symex::invalid_object$6!0#0..data
+(let ebase_1203 (Leaf 1203))  ; main::1::e!0@1#5
+(let ebase_1204 (Leaf 1204))  ; if
+(let ebase_1205 (Equal ebase_1203 ebase_1204))  ; =  ;; [ASSUME]
+(let ebase_1206 (Leaf 1206))  ; slist_destroy::list!0@1#1
+(let ebase_1207 (Equal ebase_182 ebase_1206))  ; =  ;; [ASSUME]
+(let ebase_1208 (Equal ebase_14 ebase_1206))  ; =  ;; [ASSUME]
+(let ebase_1209 (Equal ebase_13 ebase_14))  ; =  ;; [ASSUME]
+(let ebase_1210 (Leaf 1210))  ; unlinkn_all::cb!0@1#1
+(let ebase_1211 (Equal ebase_106 ebase_1210))  ; =  ;; [ASSUME]
+(let ebase_1212 (Leaf 1212))  ; goto_symex::\guard#17
+(let ebase_1213 (Leaf 1213))  ; if
+(let ebase_1214 (Equal ebase_1212 ebase_1213))  ; =  ;; [ASSUME]
+(let ebase_1215 (Leaf 1215))  ; unlinkn_all::list$object#0..size
+(let ebase_1216 (Leaf 1216))  ; goto_symex::return_value::unlinkn_all!0#1
+(let ebase_1217 (Const 0 1217))  ; const 0
+(let ebase_1218 (Equal ebase_1216 ebase_1217))  ; =  ;; [ASSUME]
+(let ebase_1219 (Leaf 1219))  ; unlinkn_all::1::n!0@1#2
+(let ebase_1220 (Leaf 1220))  ; if
+(let ebase_1221 (Equal ebase_1219 ebase_1220))  ; =  ;; [ASSUME]
+(let ebase_1222 (Leaf 1222))  ; unlinkn_all::list$object#0..head
+(let ebase_1223 (Leaf 1223))  ; goto_symex::\guard#18
+(let ebase_1224 (Leaf 1224))  ; not
+(let ebase_1225 (Equal ebase_1223 ebase_1224))  ; =  ;; [ASSUME]
+(let ebase_1226 (Leaf 1226))  ; unlinkn_all::1::1::tmp!0@1#2
+(let ebase_1227 (Leaf 1227))  ; if
+(let ebase_1228 (Equal ebase_1226 ebase_1227))  ; =  ;; [ASSUME]
+(let ebase_1229 (Leaf 1229))  ; if
+(let ebase_1230 (Leaf 1230))  ; if
+(let ebase_1231 (Leaf 1231))  ; goto_symex::\guard#19
+(let ebase_1232 (Leaf 1232))  ; not
+(let ebase_1233 (Equal ebase_1231 ebase_1232))  ; =  ;; [ASSUME]
+(let ebase_1234 (Leaf 1234))  ; unlinkn_all::list$object#0..mem_free
+(let ebase_1235 (Leaf 1235))  ; goto_symex::\guard#20
+(let ebase_1236 (Leaf 1236))  ; not
+(let ebase_1237 (Equal ebase_1235 ebase_1236))  ; =  ;; [ASSUME]
+(let ebase_1238 (Type 1238))
+(let ebase_1239 (Typecast ebase_1238 ebase_51))  ; typecast
+(let ebase_1240 (Leaf 1240))  ; free::ptr!0@1#1
+(let ebase_1241 (Typecast ebase_88 ebase_1219))  ; typecast
+(let ebase_1242 (Equal ebase_1240 ebase_1241))  ; =  ;; [ASSUME]
+(let ebase_1243 (Leaf 1243))  ; goto_symex::\guard#21
+(let ebase_1244 (Leaf 1244))  ; not
+(let ebase_1245 (Equal ebase_1243 ebase_1244))  ; =  ;; [ASSUME]
+(let ebase_1246 (Leaf 1246))  ; __CPROVER_deallocate::ptr!0@1#1
+(let ebase_1247 (Equal ebase_1240 ebase_1246))  ; =  ;; [ASSUME]
+(let ebase_1248 (Leaf 1248))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@1#2
+(let ebase_1249 (Leaf 1249))  ; nondet_symbol
+(let ebase_1250 (Equal ebase_1248 ebase_1249))  ; =  ;; [ASSUME]
+(let ebase_1251 (Leaf 1251))  ; __CPROVER_deallocated#2
+(let ebase_1252 (Equal ebase_1246 ebase_1251))  ; =  ;; [ASSUME]
+(let ebase_1253 (Leaf 1253))  ; __CPROVER_deallocated#3
+(let ebase_1254 (Leaf 1254))  ; if
+(let ebase_1255 (Equal ebase_1253 ebase_1254))  ; =  ;; [ASSUME]
+(let ebase_1256 (Leaf 1256))  ; goto_symex::\guard#22
+(let ebase_1257 (Equal ebase_1025 ebase_1240))  ; =
+(let ebase_1258 (Equal ebase_1256 ebase_1257))  ; =  ;; [ASSUME]
+(let ebase_1259 (Leaf 1259))  ; __CPROVER_memory_leak#14
+(let ebase_1260 (Equal ebase_18 ebase_1259))  ; =  ;; [ASSUME]
+(let ebase_1261 (Leaf 1261))  ; __CPROVER_memory_leak#15
+(let ebase_1262 (Leaf 1262))  ; if
+(let ebase_1263 (Equal ebase_1261 ebase_1262))  ; =  ;; [ASSUME]
+(let ebase_1264 (Leaf 1264))  ; __CPROVER_deallocated#4
+(let ebase_1265 (Leaf 1265))  ; if
+(let ebase_1266 (Equal ebase_1264 ebase_1265))  ; =  ;; [ASSUME]
+(let ebase_1267 (Leaf 1267))  ; __CPROVER_memory_leak#16
+(let ebase_1268 (Leaf 1268))  ; if
+(let ebase_1269 (Equal ebase_1267 ebase_1268))  ; =  ;; [ASSUME]
+(let ebase_1270 (Leaf 1270))  ; free::ptr!0@1#3
+(let ebase_1271 (Leaf 1271))  ; if
+(let ebase_1272 (Equal ebase_1270 ebase_1271))  ; =  ;; [ASSUME]
+(let ebase_1273 (Leaf 1273))  ; malloc::malloc_size!0@1#1
+(let ebase_1274 (Leaf 1274))  ; byte_extract_little_endian
+(let ebase_1275 (Equal ebase_1273 ebase_1274))  ; =  ;; [ASSUME]
+(let ebase_1276 (Leaf 1276))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@1#2
+(let ebase_1277 (Leaf 1277))  ; nondet_symbol
+(let ebase_1278 (Equal ebase_1276 ebase_1277))  ; =  ;; [ASSUME]
+(let ebase_1279 (Leaf 1279))  ; malloc::1::1::should_malloc_fail!0@1#2
+(let ebase_1280 (Equal ebase_1276 ebase_1279))  ; =  ;; [ASSUME]
+(let ebase_1281 (Leaf 1281))  ; goto_symex::\guard#23
+(let ebase_1282 (Leaf 1282))  ; not
+(let ebase_1283 (Equal ebase_1281 ebase_1282))  ; =  ;; [ASSUME]
+(let ebase_1284 (Const 36028797018963969 1284))  ; const 80000000000001
+(let ebase_1285 (Leaf 1285))  ; symex_dynamic::dynamic_object_size!0#1
+(let ebase_1286 (Equal ebase_1273 ebase_1285))  ; =  ;; [ASSUME]
+(let ebase_1287 (Leaf 1287))  ; symex_dynamic::dynamic_object$5#1
+(let ebase_1288 (Leaf 1288))  ; nondet_symbol
+(let ebase_1289 (Equal ebase_1287 ebase_1288))  ; =  ;; [ASSUME]
+(let ebase_1290 (Leaf 1290))  ; malloc::$tmp::malloc_value!0@1#2
+(let ebase_1291 (Leaf 1291))  ; address_of
+(let ebase_1292 (Typecast ebase_88 ebase_1291))  ; typecast
+(let ebase_1293 (Equal ebase_1290 ebase_1292))  ; =  ;; [ASSUME]
+(let ebase_1294 (Leaf 1294))  ; malloc::1::malloc_res!0@1#2
+(let ebase_1295 (Equal ebase_1292 ebase_1294))  ; =  ;; [ASSUME]
+(let ebase_1296 (Leaf 1296))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@1#2
+(let ebase_1297 (Leaf 1297))  ; nondet_symbol
+(let ebase_1298 (Equal ebase_1296 ebase_1297))  ; =  ;; [ASSUME]
+(let ebase_1299 (Leaf 1299))  ; malloc::1::record_malloc!0@1#2
+(let ebase_1300 (Equal ebase_1296 ebase_1299))  ; =  ;; [ASSUME]
+(let ebase_1301 (Leaf 1301))  ; __CPROVER_malloc_is_new_array#14
+(let ebase_1302 (Equal ebase_25 ebase_1301))  ; =  ;; [ASSUME]
+(let ebase_1303 (Leaf 1303))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@1#2
+(let ebase_1304 (Leaf 1304))  ; nondet_symbol
+(let ebase_1305 (Equal ebase_1303 ebase_1304))  ; =  ;; [ASSUME]
+(let ebase_1306 (Leaf 1306))  ; malloc::1::record_may_leak!0@1#2
+(let ebase_1307 (Equal ebase_1303 ebase_1306))  ; =  ;; [ASSUME]
+(let ebase_1308 (Leaf 1308))  ; __CPROVER_memory_leak#17
+(let ebase_1309 (Leaf 1309))  ; if
+(let ebase_1310 (Equal ebase_1308 ebase_1309))  ; =  ;; [ASSUME]
+(let ebase_1311 (Leaf 1311))  ; __CPROVER_malloc_is_new_array#15
+(let ebase_1312 (Equal ebase_25 ebase_1311))  ; =  ;; [ASSUME]
+(let ebase_1313 (Leaf 1313))  ; __CPROVER_memory_leak#18
+(let ebase_1314 (Leaf 1314))  ; if
+(let ebase_1315 (Equal ebase_1313 ebase_1314))  ; =  ;; [ASSUME]
+(let ebase_1316 (Leaf 1316))  ; symex_dynamic::dynamic_object$5#2
+(let ebase_1317 (Equal ebase_1287 ebase_1316))  ; =  ;; [ASSUME]
+(let ebase_1318 (Leaf 1318))  ; symex_dynamic::dynamic_object_size!0#2
+(let ebase_1319 (Equal ebase_1285 ebase_1318))  ; =  ;; [ASSUME]
+(let ebase_1320 (Leaf 1320))  ; __CPROVER_deallocated#5
+(let ebase_1321 (Leaf 1321))  ; if
+(let ebase_1322 (Equal ebase_1320 ebase_1321))  ; =  ;; [ASSUME]
+(let ebase_1323 (Leaf 1323))  ; __CPROVER_malloc_is_new_array#16
+(let ebase_1324 (Equal ebase_25 ebase_1323))  ; =  ;; [ASSUME]
+(let ebase_1325 (Leaf 1325))  ; __CPROVER_memory_leak#19
+(let ebase_1326 (Leaf 1326))  ; if
+(let ebase_1327 (Equal ebase_1325 ebase_1326))  ; =  ;; [ASSUME]
+(let ebase_1328 (Leaf 1328))  ; symex_dynamic::dynamic_object$5#3
+(let ebase_1329 (Equal ebase_1316 ebase_1328))  ; =  ;; [ASSUME]
+(let ebase_1330 (Leaf 1330))  ; symex_dynamic::dynamic_object_size!0#3
+(let ebase_1331 (Equal ebase_1318 ebase_1330))  ; =  ;; [ASSUME]
+(let ebase_1332 (Leaf 1332))  ; unlinkn_all::1::n!0@1#4
+(let ebase_1333 (Equal ebase_1226 ebase_1332))  ; =  ;; [ASSUME]
+(let ebase_1334 (Leaf 1334))  ; symex_dynamic::dynamic_object#11..size
+(let ebase_1335 (Leaf 1335))  ; if
+(let ebase_1336 (Equal ebase_1334 ebase_1335))  ; =  ;; [ASSUME]
+(let ebase_1337 (Leaf 1337))  ; if
+(let ebase_1338 (Const 18446744073709551615 1338))  ; const FFFFFFFFFFFFFFFF
+(let ebase_1339 (Plus ebase_1337 ebase_1338))  ; +
+(let ebase_1340 (Leaf 1340))  ; unlinkn_all::list$object#1..size
+(let ebase_1341 (Leaf 1341))  ; if
+(let ebase_1342 (Equal ebase_1340 ebase_1341))  ; =  ;; [ASSUME]
+(let ebase_1343 (Leaf 1343))  ; if
+(let ebase_1344 (Plus ebase_1338 ebase_1343))  ; +
+(let ebase_1345 (Leaf 1345))  ; goto_symex::\guard#24
+(let ebase_1346 (Leaf 1346))  ; not
+(let ebase_1347 (Equal ebase_1345 ebase_1346))  ; =  ;; [ASSUME]
+(let ebase_1348 (Leaf 1348))  ; unlinkn_all::1::1::tmp!0@2#2
+(let ebase_1349 (Leaf 1349))  ; if
+(let ebase_1350 (Equal ebase_1348 ebase_1349))  ; =  ;; [ASSUME]
+(let ebase_1351 (Leaf 1351))  ; if
+(let ebase_1352 (Leaf 1352))  ; goto_symex::\guard#25
+(let ebase_1353 (Equal ebase_1232 ebase_1352))  ; =  ;; [ASSUME]
+(let ebase_1354 (Leaf 1354))  ; goto_symex::\guard#26
+(let ebase_1355 (Equal ebase_1236 ebase_1354))  ; =  ;; [ASSUME]
+(let ebase_1356 (Leaf 1356))  ; free::ptr!0@2#1
+(let ebase_1357 (Typecast ebase_88 ebase_1332))  ; typecast
+(let ebase_1358 (Equal ebase_1356 ebase_1357))  ; =  ;; [ASSUME]
+(let ebase_1359 (Leaf 1359))  ; __CPROVER_deallocate::ptr!0@2#1
+(let ebase_1360 (Equal ebase_1356 ebase_1359))  ; =  ;; [ASSUME]
+(let ebase_1361 (Leaf 1361))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@2#2
+(let ebase_1362 (Leaf 1362))  ; nondet_symbol
+(let ebase_1363 (Equal ebase_1361 ebase_1362))  ; =  ;; [ASSUME]
+(let ebase_1364 (Leaf 1364))  ; __CPROVER_deallocated#6
+(let ebase_1365 (Equal ebase_1359 ebase_1364))  ; =  ;; [ASSUME]
+(let ebase_1366 (Leaf 1366))  ; __CPROVER_deallocated#7
+(let ebase_1367 (Leaf 1367))  ; if
+(let ebase_1368 (Equal ebase_1366 ebase_1367))  ; =  ;; [ASSUME]
+(let ebase_1369 (Leaf 1369))  ; goto_symex::\guard#27
+(let ebase_1370 (Equal ebase_1325 ebase_1356))  ; =
+(let ebase_1371 (Equal ebase_1369 ebase_1370))  ; =  ;; [ASSUME]
+(let ebase_1372 (Leaf 1372))  ; __CPROVER_memory_leak#20
+(let ebase_1373 (Equal ebase_18 ebase_1372))  ; =  ;; [ASSUME]
+(let ebase_1374 (Leaf 1374))  ; __CPROVER_memory_leak#21
+(let ebase_1375 (Leaf 1375))  ; if
+(let ebase_1376 (Equal ebase_1374 ebase_1375))  ; =  ;; [ASSUME]
+(let ebase_1377 (Leaf 1377))  ; malloc::malloc_size!0@2#1
+(let ebase_1378 (Leaf 1378))  ; byte_extract_little_endian
+(let ebase_1379 (Equal ebase_1377 ebase_1378))  ; =  ;; [ASSUME]
+(let ebase_1380 (Leaf 1380))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@2#2
+(let ebase_1381 (Leaf 1381))  ; nondet_symbol
+(let ebase_1382 (Equal ebase_1380 ebase_1381))  ; =  ;; [ASSUME]
+(let ebase_1383 (Leaf 1383))  ; malloc::1::1::should_malloc_fail!0@2#2
+(let ebase_1384 (Equal ebase_1380 ebase_1383))  ; =  ;; [ASSUME]
+(let ebase_1385 (Leaf 1385))  ; goto_symex::\guard#28
+(let ebase_1386 (Leaf 1386))  ; not
+(let ebase_1387 (Equal ebase_1385 ebase_1386))  ; =  ;; [ASSUME]
+(let ebase_1388 (Leaf 1388))  ; symex_dynamic::dynamic_object_size$0!0#1
+(let ebase_1389 (Equal ebase_1377 ebase_1388))  ; =  ;; [ASSUME]
+(let ebase_1390 (Leaf 1390))  ; symex_dynamic::dynamic_object$6#1
+(let ebase_1391 (Leaf 1391))  ; nondet_symbol
+(let ebase_1392 (Equal ebase_1390 ebase_1391))  ; =  ;; [ASSUME]
+(let ebase_1393 (Leaf 1393))  ; malloc::$tmp::malloc_value!0@2#2
+(let ebase_1394 (Leaf 1394))  ; address_of
+(let ebase_1395 (Typecast ebase_88 ebase_1394))  ; typecast
+(let ebase_1396 (Equal ebase_1393 ebase_1395))  ; =  ;; [ASSUME]
+(let ebase_1397 (Leaf 1397))  ; malloc::1::malloc_res!0@2#2
+(let ebase_1398 (Equal ebase_1395 ebase_1397))  ; =  ;; [ASSUME]
+(let ebase_1399 (Leaf 1399))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@2#2
+(let ebase_1400 (Leaf 1400))  ; nondet_symbol
+(let ebase_1401 (Equal ebase_1399 ebase_1400))  ; =  ;; [ASSUME]
+(let ebase_1402 (Leaf 1402))  ; malloc::1::record_malloc!0@2#2
+(let ebase_1403 (Equal ebase_1399 ebase_1402))  ; =  ;; [ASSUME]
+(let ebase_1404 (Leaf 1404))  ; __CPROVER_malloc_is_new_array#17
+(let ebase_1405 (Equal ebase_25 ebase_1404))  ; =  ;; [ASSUME]
+(let ebase_1406 (Leaf 1406))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@2#2
+(let ebase_1407 (Leaf 1407))  ; nondet_symbol
+(let ebase_1408 (Equal ebase_1406 ebase_1407))  ; =  ;; [ASSUME]
+(let ebase_1409 (Leaf 1409))  ; malloc::1::record_may_leak!0@2#2
+(let ebase_1410 (Equal ebase_1406 ebase_1409))  ; =  ;; [ASSUME]
+(let ebase_1411 (Leaf 1411))  ; __CPROVER_memory_leak#22
+(let ebase_1412 (Leaf 1412))  ; if
+(let ebase_1413 (Equal ebase_1411 ebase_1412))  ; =  ;; [ASSUME]
+(let ebase_1414 (Leaf 1414))  ; __CPROVER_malloc_is_new_array#18
+(let ebase_1415 (Equal ebase_25 ebase_1414))  ; =  ;; [ASSUME]
+(let ebase_1416 (Leaf 1416))  ; __CPROVER_memory_leak#23
+(let ebase_1417 (Leaf 1417))  ; if
+(let ebase_1418 (Equal ebase_1416 ebase_1417))  ; =  ;; [ASSUME]
+(let ebase_1419 (Leaf 1419))  ; symex_dynamic::dynamic_object$6#2
+(let ebase_1420 (Equal ebase_1390 ebase_1419))  ; =  ;; [ASSUME]
+(let ebase_1421 (Leaf 1421))  ; symex_dynamic::dynamic_object_size$0!0#2
+(let ebase_1422 (Equal ebase_1388 ebase_1421))  ; =  ;; [ASSUME]
+(let ebase_1423 (Leaf 1423))  ; __CPROVER_deallocated#8
+(let ebase_1424 (Leaf 1424))  ; if
+(let ebase_1425 (Equal ebase_1423 ebase_1424))  ; =  ;; [ASSUME]
+(let ebase_1426 (Leaf 1426))  ; __CPROVER_malloc_is_new_array#19
+(let ebase_1427 (Equal ebase_25 ebase_1426))  ; =  ;; [ASSUME]
+(let ebase_1428 (Leaf 1428))  ; __CPROVER_memory_leak#24
+(let ebase_1429 (Leaf 1429))  ; if
+(let ebase_1430 (Equal ebase_1428 ebase_1429))  ; =  ;; [ASSUME]
+(let ebase_1431 (Leaf 1431))  ; symex_dynamic::dynamic_object$6#3
+(let ebase_1432 (Equal ebase_1419 ebase_1431))  ; =  ;; [ASSUME]
+(let ebase_1433 (Leaf 1433))  ; symex_dynamic::dynamic_object_size$0!0#3
+(let ebase_1434 (Equal ebase_1421 ebase_1433))  ; =  ;; [ASSUME]
+(let ebase_1435 (Leaf 1435))  ; unlinkn_all::1::n!0@1#6
+(let ebase_1436 (Equal ebase_1348 ebase_1435))  ; =  ;; [ASSUME]
+(let ebase_1437 (Leaf 1437))  ; symex_dynamic::dynamic_object#12..size
+(let ebase_1438 (Leaf 1438))  ; if
+(let ebase_1439 (Equal ebase_1437 ebase_1438))  ; =  ;; [ASSUME]
+(let ebase_1440 (Leaf 1440))  ; if
+(let ebase_1441 (Plus ebase_1338 ebase_1440))  ; +
+(let ebase_1442 (Leaf 1442))  ; unlinkn_all::list$object#2..size
+(let ebase_1443 (Leaf 1443))  ; if
+(let ebase_1444 (Equal ebase_1442 ebase_1443))  ; =  ;; [ASSUME]
+(let ebase_1445 (Leaf 1445))  ; if
+(let ebase_1446 (Plus ebase_1338 ebase_1445))  ; +
+(let ebase_1447 (Leaf 1447))  ; goto_symex::\guard#29
+(let ebase_1448 (Leaf 1448))  ; not
+(let ebase_1449 (Equal ebase_1447 ebase_1448))  ; =  ;; [ASSUME]
+(let ebase_1450 (Leaf 1450))  ; unlinkn_all::1::1::tmp!0@3#2
+(let ebase_1451 (Leaf 1451))  ; if
+(let ebase_1452 (Equal ebase_1450 ebase_1451))  ; =  ;; [ASSUME]
+(let ebase_1453 (Leaf 1453))  ; goto_symex::\guard#30
+(let ebase_1454 (Equal ebase_1232 ebase_1453))  ; =  ;; [ASSUME]
+(let ebase_1455 (Leaf 1455))  ; goto_symex::\guard#31
+(let ebase_1456 (Equal ebase_1236 ebase_1455))  ; =  ;; [ASSUME]
+(let ebase_1457 (Leaf 1457))  ; free::ptr!0@3#1
+(let ebase_1458 (Typecast ebase_88 ebase_1435))  ; typecast
+(let ebase_1459 (Equal ebase_1457 ebase_1458))  ; =  ;; [ASSUME]
+(let ebase_1460 (Leaf 1460))  ; __CPROVER_deallocate::ptr!0@3#1
+(let ebase_1461 (Equal ebase_1457 ebase_1460))  ; =  ;; [ASSUME]
+(let ebase_1462 (Leaf 1462))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@3#2
+(let ebase_1463 (Leaf 1463))  ; nondet_symbol
+(let ebase_1464 (Equal ebase_1462 ebase_1463))  ; =  ;; [ASSUME]
+(let ebase_1465 (Leaf 1465))  ; __CPROVER_deallocated#9
+(let ebase_1466 (Equal ebase_1460 ebase_1465))  ; =  ;; [ASSUME]
+(let ebase_1467 (Leaf 1467))  ; __CPROVER_deallocated#10
+(let ebase_1468 (Leaf 1468))  ; if
+(let ebase_1469 (Equal ebase_1467 ebase_1468))  ; =  ;; [ASSUME]
+(let ebase_1470 (Leaf 1470))  ; goto_symex::\guard#32
+(let ebase_1471 (Equal ebase_1428 ebase_1457))  ; =
+(let ebase_1472 (Equal ebase_1470 ebase_1471))  ; =  ;; [ASSUME]
+(let ebase_1473 (Leaf 1473))  ; __CPROVER_memory_leak#25
+(let ebase_1474 (Equal ebase_18 ebase_1473))  ; =  ;; [ASSUME]
+(let ebase_1475 (Leaf 1475))  ; __CPROVER_memory_leak#26
+(let ebase_1476 (Leaf 1476))  ; if
+(let ebase_1477 (Equal ebase_1475 ebase_1476))  ; =  ;; [ASSUME]
+(let ebase_1478 (Leaf 1478))  ; malloc::malloc_size!0@3#1
+(let ebase_1479 (Leaf 1479))  ; byte_extract_little_endian
+(let ebase_1480 (Equal ebase_1478 ebase_1479))  ; =  ;; [ASSUME]
+(let ebase_1481 (Leaf 1481))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@3#2
+(let ebase_1482 (Leaf 1482))  ; nondet_symbol
+(let ebase_1483 (Equal ebase_1481 ebase_1482))  ; =  ;; [ASSUME]
+(let ebase_1484 (Leaf 1484))  ; malloc::1::1::should_malloc_fail!0@3#2
+(let ebase_1485 (Equal ebase_1481 ebase_1484))  ; =  ;; [ASSUME]
+(let ebase_1486 (Leaf 1486))  ; goto_symex::\guard#33
+(let ebase_1487 (Leaf 1487))  ; not
+(let ebase_1488 (Equal ebase_1486 ebase_1487))  ; =  ;; [ASSUME]
+(let ebase_1489 (Leaf 1489))  ; symex_dynamic::dynamic_object_size$1!0#1
+(let ebase_1490 (Equal ebase_1478 ebase_1489))  ; =  ;; [ASSUME]
+(let ebase_1491 (Leaf 1491))  ; symex_dynamic::dynamic_object$7#1
+(let ebase_1492 (Leaf 1492))  ; nondet_symbol
+(let ebase_1493 (Equal ebase_1491 ebase_1492))  ; =  ;; [ASSUME]
+(let ebase_1494 (Leaf 1494))  ; malloc::$tmp::malloc_value!0@3#2
+(let ebase_1495 (Leaf 1495))  ; address_of
+(let ebase_1496 (Typecast ebase_88 ebase_1495))  ; typecast
+(let ebase_1497 (Equal ebase_1494 ebase_1496))  ; =  ;; [ASSUME]
+(let ebase_1498 (Leaf 1498))  ; malloc::1::malloc_res!0@3#2
+(let ebase_1499 (Equal ebase_1496 ebase_1498))  ; =  ;; [ASSUME]
+(let ebase_1500 (Leaf 1500))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@3#2
+(let ebase_1501 (Leaf 1501))  ; nondet_symbol
+(let ebase_1502 (Equal ebase_1500 ebase_1501))  ; =  ;; [ASSUME]
+(let ebase_1503 (Leaf 1503))  ; malloc::1::record_malloc!0@3#2
+(let ebase_1504 (Equal ebase_1500 ebase_1503))  ; =  ;; [ASSUME]
+(let ebase_1505 (Leaf 1505))  ; __CPROVER_malloc_is_new_array#20
+(let ebase_1506 (Equal ebase_25 ebase_1505))  ; =  ;; [ASSUME]
+(let ebase_1507 (Leaf 1507))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@3#2
+(let ebase_1508 (Leaf 1508))  ; nondet_symbol
+(let ebase_1509 (Equal ebase_1507 ebase_1508))  ; =  ;; [ASSUME]
+(let ebase_1510 (Leaf 1510))  ; malloc::1::record_may_leak!0@3#2
+(let ebase_1511 (Equal ebase_1507 ebase_1510))  ; =  ;; [ASSUME]
+(let ebase_1512 (Leaf 1512))  ; __CPROVER_memory_leak#27
+(let ebase_1513 (Leaf 1513))  ; if
+(let ebase_1514 (Equal ebase_1512 ebase_1513))  ; =  ;; [ASSUME]
+(let ebase_1515 (Leaf 1515))  ; __CPROVER_malloc_is_new_array#21
+(let ebase_1516 (Equal ebase_25 ebase_1515))  ; =  ;; [ASSUME]
+(let ebase_1517 (Leaf 1517))  ; __CPROVER_memory_leak#28
+(let ebase_1518 (Leaf 1518))  ; if
+(let ebase_1519 (Equal ebase_1517 ebase_1518))  ; =  ;; [ASSUME]
+(let ebase_1520 (Leaf 1520))  ; symex_dynamic::dynamic_object$7#2
+(let ebase_1521 (Equal ebase_1491 ebase_1520))  ; =  ;; [ASSUME]
+(let ebase_1522 (Leaf 1522))  ; symex_dynamic::dynamic_object_size$1!0#2
+(let ebase_1523 (Equal ebase_1489 ebase_1522))  ; =  ;; [ASSUME]
+(let ebase_1524 (Leaf 1524))  ; __CPROVER_deallocated#11
+(let ebase_1525 (Leaf 1525))  ; if
+(let ebase_1526 (Equal ebase_1524 ebase_1525))  ; =  ;; [ASSUME]
+(let ebase_1527 (Leaf 1527))  ; __CPROVER_malloc_is_new_array#22
+(let ebase_1528 (Equal ebase_25 ebase_1527))  ; =  ;; [ASSUME]
+(let ebase_1529 (Leaf 1529))  ; __CPROVER_memory_leak#29
+(let ebase_1530 (Leaf 1530))  ; if
+(let ebase_1531 (Equal ebase_1529 ebase_1530))  ; =  ;; [ASSUME]
+(let ebase_1532 (Leaf 1532))  ; symex_dynamic::dynamic_object$7#3
+(let ebase_1533 (Equal ebase_1520 ebase_1532))  ; =  ;; [ASSUME]
+(let ebase_1534 (Leaf 1534))  ; symex_dynamic::dynamic_object_size$1!0#3
+(let ebase_1535 (Equal ebase_1522 ebase_1534))  ; =  ;; [ASSUME]
+(let ebase_1536 (Leaf 1536))  ; unlinkn_all::1::n!0@1#8
+(let ebase_1537 (Equal ebase_1450 ebase_1536))  ; =  ;; [ASSUME]
+(let ebase_1538 (Leaf 1538))  ; symex_dynamic::dynamic_object#13..size
+(let ebase_1539 (Leaf 1539))  ; if
+(let ebase_1540 (Equal ebase_1538 ebase_1539))  ; =  ;; [ASSUME]
+(let ebase_1541 (Leaf 1541))  ; if
+(let ebase_1542 (Plus ebase_1338 ebase_1541))  ; +
+(let ebase_1543 (Leaf 1543))  ; unlinkn_all::list$object#3..size
+(let ebase_1544 (Leaf 1544))  ; if
+(let ebase_1545 (Equal ebase_1543 ebase_1544))  ; =  ;; [ASSUME]
+(let ebase_1546 (Leaf 1546))  ; if
+(let ebase_1547 (Plus ebase_1338 ebase_1546))  ; +
+(let ebase_1548 (Leaf 1548))  ; goto_symex::\guard#34
+(let ebase_1549 (Leaf 1549))  ; not
+(let ebase_1550 (Equal ebase_1548 ebase_1549))  ; =  ;; [ASSUME]
+(let ebase_1551 (Leaf 1551))  ; unlinkn_all::1::1::tmp!0@4#2
+(let ebase_1552 (Equal ebase_95 ebase_1551))  ; =  ;; [ASSUME]
+(let ebase_1553 (Leaf 1553))  ; goto_symex::\guard#35
+(let ebase_1554 (Equal ebase_1232 ebase_1553))  ; =  ;; [ASSUME]
+(let ebase_1555 (Leaf 1555))  ; goto_symex::\guard#36
+(let ebase_1556 (Equal ebase_1236 ebase_1555))  ; =  ;; [ASSUME]
+(let ebase_1557 (Leaf 1557))  ; free::ptr!0@4#1
+(let ebase_1558 (Typecast ebase_88 ebase_1536))  ; typecast
+(let ebase_1559 (Equal ebase_1557 ebase_1558))  ; =  ;; [ASSUME]
+(let ebase_1560 (Leaf 1560))  ; __CPROVER_deallocate::ptr!0@4#1
+(let ebase_1561 (Equal ebase_1557 ebase_1560))  ; =  ;; [ASSUME]
+(let ebase_1562 (Leaf 1562))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@4#2
+(let ebase_1563 (Leaf 1563))  ; nondet_symbol
+(let ebase_1564 (Equal ebase_1562 ebase_1563))  ; =  ;; [ASSUME]
+(let ebase_1565 (Leaf 1565))  ; __CPROVER_deallocated#12
+(let ebase_1566 (Equal ebase_1560 ebase_1565))  ; =  ;; [ASSUME]
+(let ebase_1567 (Leaf 1567))  ; __CPROVER_deallocated#13
+(let ebase_1568 (Leaf 1568))  ; if
+(let ebase_1569 (Equal ebase_1567 ebase_1568))  ; =  ;; [ASSUME]
+(let ebase_1570 (Leaf 1570))  ; goto_symex::\guard#37
+(let ebase_1571 (Equal ebase_1529 ebase_1557))  ; =
+(let ebase_1572 (Equal ebase_1570 ebase_1571))  ; =  ;; [ASSUME]
+(let ebase_1573 (Leaf 1573))  ; __CPROVER_memory_leak#30
+(let ebase_1574 (Equal ebase_18 ebase_1573))  ; =  ;; [ASSUME]
+(let ebase_1575 (Leaf 1575))  ; __CPROVER_memory_leak#31
+(let ebase_1576 (Leaf 1576))  ; if
+(let ebase_1577 (Equal ebase_1575 ebase_1576))  ; =  ;; [ASSUME]
+(let ebase_1578 (Leaf 1578))  ; malloc::malloc_size!0@4#1
+(let ebase_1579 (Leaf 1579))  ; byte_extract_little_endian
+(let ebase_1580 (Equal ebase_1578 ebase_1579))  ; =  ;; [ASSUME]
+(let ebase_1581 (Leaf 1581))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@4#2
+(let ebase_1582 (Leaf 1582))  ; nondet_symbol
+(let ebase_1583 (Equal ebase_1581 ebase_1582))  ; =  ;; [ASSUME]
+(let ebase_1584 (Leaf 1584))  ; malloc::1::1::should_malloc_fail!0@4#2
+(let ebase_1585 (Equal ebase_1581 ebase_1584))  ; =  ;; [ASSUME]
+(let ebase_1586 (Leaf 1586))  ; goto_symex::\guard#38
+(let ebase_1587 (Leaf 1587))  ; not
+(let ebase_1588 (Equal ebase_1586 ebase_1587))  ; =  ;; [ASSUME]
+(let ebase_1589 (Leaf 1589))  ; symex_dynamic::dynamic_object_size$2!0#1
+(let ebase_1590 (Equal ebase_1578 ebase_1589))  ; =  ;; [ASSUME]
+(let ebase_1591 (Leaf 1591))  ; symex_dynamic::dynamic_object$8#1
+(let ebase_1592 (Leaf 1592))  ; nondet_symbol
+(let ebase_1593 (Equal ebase_1591 ebase_1592))  ; =  ;; [ASSUME]
+(let ebase_1594 (Leaf 1594))  ; malloc::$tmp::malloc_value!0@4#2
+(let ebase_1595 (Leaf 1595))  ; address_of
+(let ebase_1596 (Typecast ebase_88 ebase_1595))  ; typecast
+(let ebase_1597 (Equal ebase_1594 ebase_1596))  ; =  ;; [ASSUME]
+(let ebase_1598 (Leaf 1598))  ; malloc::1::malloc_res!0@4#2
+(let ebase_1599 (Equal ebase_1596 ebase_1598))  ; =  ;; [ASSUME]
+(let ebase_1600 (Leaf 1600))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@4#2
+(let ebase_1601 (Leaf 1601))  ; nondet_symbol
+(let ebase_1602 (Equal ebase_1600 ebase_1601))  ; =  ;; [ASSUME]
+(let ebase_1603 (Leaf 1603))  ; malloc::1::record_malloc!0@4#2
+(let ebase_1604 (Equal ebase_1600 ebase_1603))  ; =  ;; [ASSUME]
+(let ebase_1605 (Leaf 1605))  ; __CPROVER_malloc_is_new_array#23
+(let ebase_1606 (Equal ebase_25 ebase_1605))  ; =  ;; [ASSUME]
+(let ebase_1607 (Leaf 1607))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@4#2
+(let ebase_1608 (Leaf 1608))  ; nondet_symbol
+(let ebase_1609 (Equal ebase_1607 ebase_1608))  ; =  ;; [ASSUME]
+(let ebase_1610 (Leaf 1610))  ; malloc::1::record_may_leak!0@4#2
+(let ebase_1611 (Equal ebase_1607 ebase_1610))  ; =  ;; [ASSUME]
+(let ebase_1612 (Leaf 1612))  ; __CPROVER_memory_leak#32
+(let ebase_1613 (Leaf 1613))  ; if
+(let ebase_1614 (Equal ebase_1612 ebase_1613))  ; =  ;; [ASSUME]
+(let ebase_1615 (Leaf 1615))  ; __CPROVER_malloc_is_new_array#24
+(let ebase_1616 (Equal ebase_25 ebase_1615))  ; =  ;; [ASSUME]
+(let ebase_1617 (Leaf 1617))  ; __CPROVER_memory_leak#33
+(let ebase_1618 (Leaf 1618))  ; if
+(let ebase_1619 (Equal ebase_1617 ebase_1618))  ; =  ;; [ASSUME]
+(let ebase_1620 (Leaf 1620))  ; symex_dynamic::dynamic_object$8#2
+(let ebase_1621 (Equal ebase_1591 ebase_1620))  ; =  ;; [ASSUME]
+(let ebase_1622 (Leaf 1622))  ; symex_dynamic::dynamic_object_size$2!0#2
+(let ebase_1623 (Equal ebase_1589 ebase_1622))  ; =  ;; [ASSUME]
+(let ebase_1624 (Leaf 1624))  ; __CPROVER_deallocated#14
+(let ebase_1625 (Leaf 1625))  ; if
+(let ebase_1626 (Equal ebase_1624 ebase_1625))  ; =  ;; [ASSUME]
+(let ebase_1627 (Leaf 1627))  ; __CPROVER_malloc_is_new_array#25
+(let ebase_1628 (Equal ebase_25 ebase_1627))  ; =  ;; [ASSUME]
+(let ebase_1629 (Leaf 1629))  ; __CPROVER_memory_leak#34
+(let ebase_1630 (Leaf 1630))  ; if
+(let ebase_1631 (Equal ebase_1629 ebase_1630))  ; =  ;; [ASSUME]
+(let ebase_1632 (Leaf 1632))  ; symex_dynamic::dynamic_object$8#3
+(let ebase_1633 (Equal ebase_1620 ebase_1632))  ; =  ;; [ASSUME]
+(let ebase_1634 (Leaf 1634))  ; symex_dynamic::dynamic_object_size$2!0#3
+(let ebase_1635 (Equal ebase_1622 ebase_1634))  ; =  ;; [ASSUME]
+(let ebase_1636 (Leaf 1636))  ; unlinkn_all::1::n!0@1#10
+(let ebase_1637 (Equal ebase_95 ebase_1636))  ; =  ;; [ASSUME]
+(let ebase_1638 (Leaf 1638))  ; symex_dynamic::dynamic_object#14..size
+(let ebase_1639 (Leaf 1639))  ; if
+(let ebase_1640 (Equal ebase_1638 ebase_1639))  ; =  ;; [ASSUME]
+(let ebase_1641 (Leaf 1641))  ; if
+(let ebase_1642 (Plus ebase_1338 ebase_1641))  ; +
+(let ebase_1643 (Leaf 1643))  ; unlinkn_all::list$object#4..size
+(let ebase_1644 (Leaf 1644))  ; if
+(let ebase_1645 (Equal ebase_1643 ebase_1644))  ; =  ;; [ASSUME]
+(let ebase_1646 (Leaf 1646))  ; if
+(let ebase_1647 (Plus ebase_1338 ebase_1646))  ; +
+(let ebase_1648 (Leaf 1648))  ; __CPROVER_deallocated#15
+(let ebase_1649 (Leaf 1649))  ; if
+(let ebase_1650 (Equal ebase_1648 ebase_1649))  ; =  ;; [ASSUME]
+(let ebase_1651 (Leaf 1651))  ; __CPROVER_malloc_is_new_array#26
+(let ebase_1652 (Equal ebase_25 ebase_1651))  ; =  ;; [ASSUME]
+(let ebase_1653 (Leaf 1653))  ; __CPROVER_memory_leak#35
+(let ebase_1654 (Leaf 1654))  ; if
+(let ebase_1655 (Equal ebase_1653 ebase_1654))  ; =  ;; [ASSUME]
+(let ebase_1656 (Leaf 1656))  ; symex_dynamic::dynamic_object#15..size
+(let ebase_1657 (Leaf 1657))  ; if
+(let ebase_1658 (Equal ebase_1656 ebase_1657))  ; =  ;; [ASSUME]
+(let ebase_1659 (Leaf 1659))  ; unlinkn_all::1::n!0@1#11
+(let ebase_1660 (Equal ebase_95 ebase_1659))  ; =  ;; [ASSUME]
+(let ebase_1661 (Leaf 1661))  ; unlinkn_all::list$object#5..size
+(let ebase_1662 (Leaf 1662))  ; if
+(let ebase_1663 (Equal ebase_1661 ebase_1662))  ; =  ;; [ASSUME]
+(let ebase_1664 (Leaf 1664))  ; symex_dynamic::dynamic_object$8#4
+(let ebase_1665 (Equal ebase_1632 ebase_1664))  ; =  ;; [ASSUME]
+(let ebase_1666 (Leaf 1666))  ; symex_dynamic::dynamic_object_size$2!0#4
+(let ebase_1667 (Equal ebase_1634 ebase_1666))  ; =  ;; [ASSUME]
+(let ebase_1668 (Leaf 1668))  ; __CPROVER_deallocated#16
+(let ebase_1669 (Leaf 1669))  ; if
+(let ebase_1670 (Equal ebase_1668 ebase_1669))  ; =  ;; [ASSUME]
+(let ebase_1671 (Leaf 1671))  ; __CPROVER_malloc_is_new_array#27
+(let ebase_1672 (Equal ebase_25 ebase_1671))  ; =  ;; [ASSUME]
+(let ebase_1673 (Leaf 1673))  ; __CPROVER_memory_leak#36
+(let ebase_1674 (Leaf 1674))  ; if
+(let ebase_1675 (Equal ebase_1673 ebase_1674))  ; =  ;; [ASSUME]
+(let ebase_1676 (Leaf 1676))  ; symex_dynamic::dynamic_object#16..size
+(let ebase_1677 (Leaf 1677))  ; if
+(let ebase_1678 (Equal ebase_1676 ebase_1677))  ; =  ;; [ASSUME]
+(let ebase_1679 (Leaf 1679))  ; unlinkn_all::1::n!0@1#12
+(let ebase_1680 (Equal ebase_95 ebase_1679))  ; =  ;; [ASSUME]
+(let ebase_1681 (Leaf 1681))  ; unlinkn_all::list$object#6..size
+(let ebase_1682 (Leaf 1682))  ; if
+(let ebase_1683 (Equal ebase_1681 ebase_1682))  ; =  ;; [ASSUME]
+(let ebase_1684 (Leaf 1684))  ; symex_dynamic::dynamic_object$7#4
+(let ebase_1685 (Equal ebase_1532 ebase_1684))  ; =  ;; [ASSUME]
+(let ebase_1686 (Leaf 1686))  ; symex_dynamic::dynamic_object$8#5
+(let ebase_1687 (Equal ebase_1664 ebase_1686))  ; =  ;; [ASSUME]
+(let ebase_1688 (Leaf 1688))  ; symex_dynamic::dynamic_object_size$1!0#4
+(let ebase_1689 (Equal ebase_1534 ebase_1688))  ; =  ;; [ASSUME]
+(let ebase_1690 (Leaf 1690))  ; symex_dynamic::dynamic_object_size$2!0#5
+(let ebase_1691 (Equal ebase_1666 ebase_1690))  ; =  ;; [ASSUME]
+(let ebase_1692 (Leaf 1692))  ; __CPROVER_deallocated#17
+(let ebase_1693 (Leaf 1693))  ; if
+(let ebase_1694 (Equal ebase_1692 ebase_1693))  ; =  ;; [ASSUME]
+(let ebase_1695 (Leaf 1695))  ; __CPROVER_malloc_is_new_array#28
+(let ebase_1696 (Equal ebase_25 ebase_1695))  ; =  ;; [ASSUME]
+(let ebase_1697 (Leaf 1697))  ; __CPROVER_memory_leak#37
+(let ebase_1698 (Leaf 1698))  ; if
+(let ebase_1699 (Equal ebase_1697 ebase_1698))  ; =  ;; [ASSUME]
+(let ebase_1700 (Leaf 1700))  ; symex_dynamic::dynamic_object#17..size
+(let ebase_1701 (Leaf 1701))  ; if
+(let ebase_1702 (Equal ebase_1700 ebase_1701))  ; =  ;; [ASSUME]
+(let ebase_1703 (Leaf 1703))  ; unlinkn_all::1::n!0@1#13
+(let ebase_1704 (Equal ebase_95 ebase_1703))  ; =  ;; [ASSUME]
+(let ebase_1705 (Leaf 1705))  ; unlinkn_all::list$object#7..size
+(let ebase_1706 (Leaf 1706))  ; if
+(let ebase_1707 (Equal ebase_1705 ebase_1706))  ; =  ;; [ASSUME]
+(let ebase_1708 (Leaf 1708))  ; symex_dynamic::dynamic_object$6#4
+(let ebase_1709 (Equal ebase_1431 ebase_1708))  ; =  ;; [ASSUME]
+(let ebase_1710 (Leaf 1710))  ; symex_dynamic::dynamic_object$7#5
+(let ebase_1711 (Equal ebase_1684 ebase_1710))  ; =  ;; [ASSUME]
+(let ebase_1712 (Leaf 1712))  ; symex_dynamic::dynamic_object$8#6
+(let ebase_1713 (Equal ebase_1686 ebase_1712))  ; =  ;; [ASSUME]
+(let ebase_1714 (Leaf 1714))  ; symex_dynamic::dynamic_object_size$0!0#4
+(let ebase_1715 (Equal ebase_1433 ebase_1714))  ; =  ;; [ASSUME]
+(let ebase_1716 (Leaf 1716))  ; symex_dynamic::dynamic_object_size$1!0#5
+(let ebase_1717 (Equal ebase_1688 ebase_1716))  ; =  ;; [ASSUME]
+(let ebase_1718 (Leaf 1718))  ; symex_dynamic::dynamic_object_size$2!0#6
+(let ebase_1719 (Equal ebase_1690 ebase_1718))  ; =  ;; [ASSUME]
+(let ebase_1720 (Leaf 1720))  ; __CPROVER_deallocated#18
+(let ebase_1721 (Leaf 1721))  ; if
+(let ebase_1722 (Equal ebase_1720 ebase_1721))  ; =  ;; [ASSUME]
+(let ebase_1723 (Leaf 1723))  ; __CPROVER_malloc_is_new_array#29
+(let ebase_1724 (Equal ebase_25 ebase_1723))  ; =  ;; [ASSUME]
+(let ebase_1725 (Leaf 1725))  ; __CPROVER_memory_leak#38
+(let ebase_1726 (Leaf 1726))  ; if
+(let ebase_1727 (Equal ebase_1725 ebase_1726))  ; =  ;; [ASSUME]
+(let ebase_1728 (Leaf 1728))  ; symex_dynamic::dynamic_object#18..size
+(let ebase_1729 (Leaf 1729))  ; if
+(let ebase_1730 (Equal ebase_1728 ebase_1729))  ; =  ;; [ASSUME]
+(let ebase_1731 (Leaf 1731))  ; unlinkn_all::1::n!0@1#14
+(let ebase_1732 (Equal ebase_95 ebase_1731))  ; =  ;; [ASSUME]
+(let ebase_1733 (Leaf 1733))  ; symex_dynamic::dynamic_object$5#4
+(let ebase_1734 (Equal ebase_1328 ebase_1733))  ; =  ;; [ASSUME]
+(let ebase_1735 (Leaf 1735))  ; symex_dynamic::dynamic_object$6#5
+(let ebase_1736 (Equal ebase_1708 ebase_1735))  ; =  ;; [ASSUME]
+(let ebase_1737 (Leaf 1737))  ; symex_dynamic::dynamic_object$7#6
+(let ebase_1738 (Equal ebase_1710 ebase_1737))  ; =  ;; [ASSUME]
+(let ebase_1739 (Leaf 1739))  ; symex_dynamic::dynamic_object$8#7
+(let ebase_1740 (Equal ebase_1712 ebase_1739))  ; =  ;; [ASSUME]
+(let ebase_1741 (Leaf 1741))  ; symex_dynamic::dynamic_object_size!0#4
+(let ebase_1742 (Equal ebase_1330 ebase_1741))  ; =  ;; [ASSUME]
+(let ebase_1743 (Leaf 1743))  ; symex_dynamic::dynamic_object_size$0!0#5
+(let ebase_1744 (Equal ebase_1714 ebase_1743))  ; =  ;; [ASSUME]
+(let ebase_1745 (Leaf 1745))  ; symex_dynamic::dynamic_object_size$1!0#6
+(let ebase_1746 (Equal ebase_1716 ebase_1745))  ; =  ;; [ASSUME]
+(let ebase_1747 (Leaf 1747))  ; symex_dynamic::dynamic_object_size$2!0#7
+(let ebase_1748 (Equal ebase_1718 ebase_1747))  ; =  ;; [ASSUME]
+(let ebase_1749 (Leaf 1749))  ; unlinkn_all::list$object#8..size
+(let ebase_1750 (Equal ebase_1705 ebase_1749))  ; =  ;; [ASSUME]
+(let ebase_1751 (Leaf 1751))  ; goto_symex::return_value::unlinkn_all!0#2
+(let ebase_1752 (Const 1 1752))  ; const 1
+(let ebase_1753 (Equal ebase_1751 ebase_1752))  ; =  ;; [ASSUME]
+(let ebase_1754 (Leaf 1754))  ; __CPROVER_deallocated#19
+(let ebase_1755 (Leaf 1755))  ; if
+(let ebase_1756 (Equal ebase_1754 ebase_1755))  ; =  ;; [ASSUME]
+(let ebase_1757 (Leaf 1757))  ; __CPROVER_malloc_is_new_array#30
+(let ebase_1758 (Equal ebase_25 ebase_1757))  ; =  ;; [ASSUME]
+(let ebase_1759 (Leaf 1759))  ; __CPROVER_memory_leak#39
+(let ebase_1760 (Leaf 1760))  ; if
+(let ebase_1761 (Equal ebase_1759 ebase_1760))  ; =  ;; [ASSUME]
+(let ebase_1762 (Leaf 1762))  ; goto_symex::return_value::unlinkn_all!0#3
+(let ebase_1763 (Leaf 1763))  ; if
+(let ebase_1764 (Equal ebase_1762 ebase_1763))  ; =  ;; [ASSUME]
+(let ebase_1765 (Leaf 1765))  ; symex_dynamic::dynamic_object#19..size
+(let ebase_1766 (Leaf 1766))  ; if
+(let ebase_1767 (Equal ebase_1765 ebase_1766))  ; =  ;; [ASSUME]
+(let ebase_1768 (Leaf 1768))  ; symex_dynamic::dynamic_object$5#5
+(let ebase_1769 (Equal ebase_1733 ebase_1768))  ; =  ;; [ASSUME]
+(let ebase_1770 (Leaf 1770))  ; symex_dynamic::dynamic_object$6#6
+(let ebase_1771 (Equal ebase_1735 ebase_1770))  ; =  ;; [ASSUME]
+(let ebase_1772 (Leaf 1772))  ; symex_dynamic::dynamic_object$7#7
+(let ebase_1773 (Equal ebase_1737 ebase_1772))  ; =  ;; [ASSUME]
+(let ebase_1774 (Leaf 1774))  ; symex_dynamic::dynamic_object$8#8
+(let ebase_1775 (Equal ebase_1739 ebase_1774))  ; =  ;; [ASSUME]
+(let ebase_1776 (Leaf 1776))  ; symex_dynamic::dynamic_object_size!0#5
+(let ebase_1777 (Equal ebase_1741 ebase_1776))  ; =  ;; [ASSUME]
+(let ebase_1778 (Leaf 1778))  ; symex_dynamic::dynamic_object_size$0!0#6
+(let ebase_1779 (Equal ebase_1743 ebase_1778))  ; =  ;; [ASSUME]
+(let ebase_1780 (Leaf 1780))  ; symex_dynamic::dynamic_object_size$1!0#7
+(let ebase_1781 (Equal ebase_1745 ebase_1780))  ; =  ;; [ASSUME]
+(let ebase_1782 (Leaf 1782))  ; symex_dynamic::dynamic_object_size$2!0#8
+(let ebase_1783 (Equal ebase_1747 ebase_1782))  ; =  ;; [ASSUME]
+(let ebase_1784 (Leaf 1784))  ; unlinkn_all::list$object#9..size
+(let ebase_1785 (Equal ebase_1749 ebase_1784))  ; =  ;; [ASSUME]
+(let ebase_1786 (Leaf 1786))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@1#2
+(let ebase_1787 (Equal ebase_1762 ebase_1786))  ; =  ;; [ASSUME]
+(let ebase_1788 (Leaf 1788))  ; slist_remove_all::1::unlinked!0@1#2
+(let ebase_1789 (Equal ebase_1786 ebase_1788))  ; =  ;; [ASSUME]
+(let ebase_1790 (Leaf 1790))  ; goto_symex::\guard#39
+(let ebase_1791 (Leaf 1791))  ; not
+(let ebase_1792 (Equal ebase_1790 ebase_1791))  ; =  ;; [ASSUME]
+(let ebase_1793 (Leaf 1793))  ; symex_dynamic::dynamic_object#15..head
+(let ebase_1794 (Leaf 1794))  ; if
+(let ebase_1795 (Equal ebase_1793 ebase_1794))  ; =  ;; [ASSUME]
+(let ebase_1796 (Leaf 1796))  ; slist_remove_all::list$object#1..head
+(let ebase_1797 (Leaf 1797))  ; if
+(let ebase_1798 (Equal ebase_1796 ebase_1797))  ; =  ;; [ASSUME]
+(let ebase_1799 (Leaf 1799))  ; slist_remove_all::list$object#0..head
+(let ebase_1800 (Leaf 1800))  ; symex_dynamic::dynamic_object#18..tail
+(let ebase_1801 (Leaf 1801))  ; if
+(let ebase_1802 (Equal ebase_1800 ebase_1801))  ; =  ;; [ASSUME]
+(let ebase_1803 (Leaf 1803))  ; slist_remove_all::list$object#1..tail
+(let ebase_1804 (Leaf 1804))  ; if
+(let ebase_1805 (Equal ebase_1803 ebase_1804))  ; =  ;; [ASSUME]
+(let ebase_1806 (Leaf 1806))  ; slist_remove_all::list$object#0..tail
+(let ebase_1807 (Leaf 1807))  ; slist_remove_all::list$object#2..head
+(let ebase_1808 (Equal ebase_1796 ebase_1807))  ; =  ;; [ASSUME]
+(let ebase_1809 (Leaf 1809))  ; slist_remove_all::list$object#2..tail
+(let ebase_1810 (Equal ebase_1803 ebase_1809))  ; =  ;; [ASSUME]
+(let ebase_1811 (Leaf 1811))  ; symex_dynamic::dynamic_object#16..head
+(let ebase_1812 (Leaf 1812))  ; if
+(let ebase_1813 (Equal ebase_1811 ebase_1812))  ; =  ;; [ASSUME]
+(let ebase_1814 (Leaf 1814))  ; symex_dynamic::dynamic_object#19..tail
+(let ebase_1815 (Leaf 1815))  ; if
+(let ebase_1816 (Equal ebase_1814 ebase_1815))  ; =  ;; [ASSUME]
+(let ebase_1817 (Leaf 1817))  ; goto_symex::\guard#40
+(let ebase_1818 (Leaf 1818))  ; not
+(let ebase_1819 (Equal ebase_1817 ebase_1818))  ; =  ;; [ASSUME]
+(let ebase_1820 (Leaf 1820))  ; slist_destroy::list$object#0..mem_free
+(let ebase_1821 (Leaf 1821))  ; goto_symex::\guard#41
+(let ebase_1822 (Leaf 1822))  ; not
+(let ebase_1823 (Equal ebase_1821 ebase_1822))  ; =  ;; [ASSUME]
+(let ebase_1824 (Leaf 1824))  ; free::ptr!0@5#1
+(let ebase_1825 (Typecast ebase_88 ebase_1206))  ; typecast
+(let ebase_1826 (Equal ebase_1824 ebase_1825))  ; =  ;; [ASSUME]
+(let ebase_1827 (Leaf 1827))  ; goto_symex::\guard#42
+(let ebase_1828 (Leaf 1828))  ; not
+(let ebase_1829 (Equal ebase_1827 ebase_1828))  ; =  ;; [ASSUME]
+(let ebase_1830 (Leaf 1830))  ; __CPROVER_deallocate::ptr!0@5#1
+(let ebase_1831 (Equal ebase_1824 ebase_1830))  ; =  ;; [ASSUME]
+(let ebase_1832 (Leaf 1832))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@5#2
+(let ebase_1833 (Leaf 1833))  ; nondet_symbol
+(let ebase_1834 (Equal ebase_1832 ebase_1833))  ; =  ;; [ASSUME]
+(let ebase_1835 (Leaf 1835))  ; __CPROVER_deallocated#20
+(let ebase_1836 (Equal ebase_1830 ebase_1835))  ; =  ;; [ASSUME]
+(let ebase_1837 (Leaf 1837))  ; __CPROVER_deallocated#21
+(let ebase_1838 (Leaf 1838))  ; if
+(let ebase_1839 (Equal ebase_1837 ebase_1838))  ; =  ;; [ASSUME]
+(let ebase_1840 (Leaf 1840))  ; goto_symex::\guard#43
+(let ebase_1841 (Equal ebase_1759 ebase_1824))  ; =
+(let ebase_1842 (Equal ebase_1840 ebase_1841))  ; =  ;; [ASSUME]
+(let ebase_1843 (Leaf 1843))  ; __CPROVER_memory_leak#40
+(let ebase_1844 (Equal ebase_18 ebase_1843))  ; =  ;; [ASSUME]
+(let ebase_1845 (Leaf 1845))  ; __CPROVER_memory_leak#41
+(let ebase_1846 (Leaf 1846))  ; if
+(let ebase_1847 (Equal ebase_1845 ebase_1846))  ; =  ;; [ASSUME]
+(let ebase_1848 (Leaf 1848))  ; __CPROVER_deallocated#22
+(let ebase_1849 (Leaf 1849))  ; if
+(let ebase_1850 (Equal ebase_1848 ebase_1849))  ; =  ;; [ASSUME]
+(let ebase_1851 (Leaf 1851))  ; __CPROVER_memory_leak#42
+(let ebase_1852 (Leaf 1852))  ; if
+(let ebase_1853 (Equal ebase_1851 ebase_1852))  ; =  ;; [ASSUME]
+(let ebase_1854 (Leaf 1854))  ; free::ptr!0@5#3
+(let ebase_1855 (Leaf 1855))  ; if
+(let ebase_1856 (Equal ebase_1854 ebase_1855))  ; =  ;; [ASSUME]
+(let ebase_1857 (Leaf 1857))  ; malloc::malloc_size!0@5#1
+(let ebase_1858 (Leaf 1858))  ; byte_extract_little_endian
+(let ebase_1859 (Equal ebase_1857 ebase_1858))  ; =  ;; [ASSUME]
+(let ebase_1860 (Leaf 1860))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@5#2
+(let ebase_1861 (Leaf 1861))  ; nondet_symbol
+(let ebase_1862 (Equal ebase_1860 ebase_1861))  ; =  ;; [ASSUME]
+(let ebase_1863 (Leaf 1863))  ; malloc::1::1::should_malloc_fail!0@5#2
+(let ebase_1864 (Equal ebase_1860 ebase_1863))  ; =  ;; [ASSUME]
+(let ebase_1865 (Leaf 1865))  ; goto_symex::\guard#44
+(let ebase_1866 (Leaf 1866))  ; not
+(let ebase_1867 (Equal ebase_1865 ebase_1866))  ; =  ;; [ASSUME]
+(let ebase_1868 (Leaf 1868))  ; symex_dynamic::dynamic_object_size$3!0#1
+(let ebase_1869 (Equal ebase_1857 ebase_1868))  ; =  ;; [ASSUME]
+(let ebase_1870 (Leaf 1870))  ; symex_dynamic::dynamic_object$9#1
+(let ebase_1871 (Leaf 1871))  ; nondet_symbol
+(let ebase_1872 (Equal ebase_1870 ebase_1871))  ; =  ;; [ASSUME]
+(let ebase_1873 (Leaf 1873))  ; malloc::$tmp::malloc_value!0@5#2
+(let ebase_1874 (Leaf 1874))  ; address_of
+(let ebase_1875 (Typecast ebase_88 ebase_1874))  ; typecast
+(let ebase_1876 (Equal ebase_1873 ebase_1875))  ; =  ;; [ASSUME]
+(let ebase_1877 (Leaf 1877))  ; malloc::1::malloc_res!0@5#2
+(let ebase_1878 (Equal ebase_1875 ebase_1877))  ; =  ;; [ASSUME]
+(let ebase_1879 (Leaf 1879))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@5#2
+(let ebase_1880 (Leaf 1880))  ; nondet_symbol
+(let ebase_1881 (Equal ebase_1879 ebase_1880))  ; =  ;; [ASSUME]
+(let ebase_1882 (Leaf 1882))  ; malloc::1::record_malloc!0@5#2
+(let ebase_1883 (Equal ebase_1879 ebase_1882))  ; =  ;; [ASSUME]
+(let ebase_1884 (Leaf 1884))  ; __CPROVER_malloc_is_new_array#31
+(let ebase_1885 (Equal ebase_25 ebase_1884))  ; =  ;; [ASSUME]
+(let ebase_1886 (Leaf 1886))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@5#2
+(let ebase_1887 (Leaf 1887))  ; nondet_symbol
+(let ebase_1888 (Equal ebase_1886 ebase_1887))  ; =  ;; [ASSUME]
+(let ebase_1889 (Leaf 1889))  ; malloc::1::record_may_leak!0@5#2
+(let ebase_1890 (Equal ebase_1886 ebase_1889))  ; =  ;; [ASSUME]
+(let ebase_1891 (Leaf 1891))  ; __CPROVER_memory_leak#43
+(let ebase_1892 (Leaf 1892))  ; if
+(let ebase_1893 (Equal ebase_1891 ebase_1892))  ; =  ;; [ASSUME]
+(let ebase_1894 (Leaf 1894))  ; __CPROVER_malloc_is_new_array#32
+(let ebase_1895 (Equal ebase_25 ebase_1894))  ; =  ;; [ASSUME]
+(let ebase_1896 (Leaf 1896))  ; __CPROVER_memory_leak#44
+(let ebase_1897 (Leaf 1897))  ; if
+(let ebase_1898 (Equal ebase_1896 ebase_1897))  ; =  ;; [ASSUME]
+(let ebase_1899 (Leaf 1899))  ; symex_dynamic::dynamic_object$9#2
+(let ebase_1900 (Equal ebase_1870 ebase_1899))  ; =  ;; [ASSUME]
+(let ebase_1901 (Leaf 1901))  ; symex_dynamic::dynamic_object_size$3!0#2
+(let ebase_1902 (Equal ebase_1868 ebase_1901))  ; =  ;; [ASSUME]
+(let ebase_1903 (Leaf 1903))  ; __CPROVER_deallocated#23
+(let ebase_1904 (Leaf 1904))  ; if
+(let ebase_1905 (Equal ebase_1903 ebase_1904))  ; =  ;; [ASSUME]
+(let ebase_1906 (Leaf 1906))  ; __CPROVER_malloc_is_new_array#33
+(let ebase_1907 (Equal ebase_25 ebase_1906))  ; =  ;; [ASSUME]
+(let ebase_1908 (Leaf 1908))  ; __CPROVER_memory_leak#45
+(let ebase_1909 (Leaf 1909))  ; if
+(let ebase_1910 (Equal ebase_1908 ebase_1909))  ; =  ;; [ASSUME]
+(let ebase_1911 (Leaf 1911))  ; symex_dynamic::dynamic_object$9#3
+(let ebase_1912 (Equal ebase_1899 ebase_1911))  ; =  ;; [ASSUME]
+(let ebase_1913 (Leaf 1913))  ; symex_dynamic::dynamic_object_size$3!0#3
+(let ebase_1914 (Equal ebase_1901 ebase_1913))  ; =  ;; [ASSUME]
+(let ebase_1915 (Leaf 1915))  ; slist_destroy::list!0@2#1
+(let ebase_1916 (Equal ebase_331 ebase_1915))  ; =  ;; [ASSUME]
+(let ebase_1917 (Equal ebase_15 ebase_1915))  ; =  ;; [ASSUME]
+(let ebase_1918 (Leaf 1918))  ; unlinkn_all::list!0@2#1
+(let ebase_1919 (Equal ebase_15 ebase_1918))  ; =  ;; [ASSUME]
+(let ebase_1920 (Leaf 1920))  ; unlinkn_all::cb!0@2#1
+(let ebase_1921 (Equal ebase_106 ebase_1920))  ; =  ;; [ASSUME]
+(let ebase_1922 (Leaf 1922))  ; goto_symex::\guard#45
+(let ebase_1923 (Leaf 1923))  ; not
+(let ebase_1924 (Equal ebase_1922 ebase_1923))  ; =  ;; [ASSUME]
+(let ebase_1925 (Leaf 1925))  ; goto_symex::return_value::unlinkn_all!0#4
+(let ebase_1926 (Equal ebase_1217 ebase_1925))  ; =  ;; [ASSUME]
+(let ebase_1927 (Leaf 1927))  ; unlinkn_all::1::n!0@2#2
+(let ebase_1928 (Equal ebase_1222 ebase_1927))  ; =  ;; [ASSUME]
+(let ebase_1929 (Leaf 1929))  ; goto_symex::\guard#46
+(let ebase_1930 (Leaf 1930))  ; not
+(let ebase_1931 (Equal ebase_1929 ebase_1930))  ; =  ;; [ASSUME]
+(let ebase_1932 (Leaf 1932))  ; unlinkn_all::1::1::tmp!0@5#2
+(let ebase_1933 (Leaf 1933))  ; unlinkn_all::1::n$object#0..next
+(let ebase_1934 (Equal ebase_1932 ebase_1933))  ; =  ;; [ASSUME]
+(let ebase_1935 (Leaf 1935))  ; goto_symex::\guard#47
+(let ebase_1936 (Leaf 1936))  ; not
+(let ebase_1937 (Equal ebase_1935 ebase_1936))  ; =  ;; [ASSUME]
+(let ebase_1938 (Leaf 1938))  ; goto_symex::\guard#48
+(let ebase_1939 (Leaf 1939))  ; not
+(let ebase_1940 (Equal ebase_1938 ebase_1939))  ; =  ;; [ASSUME]
+(let ebase_1941 (Leaf 1941))  ; free::ptr!0@6#1
+(let ebase_1942 (Typecast ebase_88 ebase_1927))  ; typecast
+(let ebase_1943 (Equal ebase_1941 ebase_1942))  ; =  ;; [ASSUME]
+(let ebase_1944 (Leaf 1944))  ; goto_symex::\guard#49
+(let ebase_1945 (Leaf 1945))  ; not
+(let ebase_1946 (Equal ebase_1944 ebase_1945))  ; =  ;; [ASSUME]
+(let ebase_1947 (Leaf 1947))  ; __CPROVER_deallocate::ptr!0@6#1
+(let ebase_1948 (Equal ebase_1941 ebase_1947))  ; =  ;; [ASSUME]
+(let ebase_1949 (Leaf 1949))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@6#2
+(let ebase_1950 (Leaf 1950))  ; nondet_symbol
+(let ebase_1951 (Equal ebase_1949 ebase_1950))  ; =  ;; [ASSUME]
+(let ebase_1952 (Leaf 1952))  ; __CPROVER_deallocated#24
+(let ebase_1953 (Equal ebase_1947 ebase_1952))  ; =  ;; [ASSUME]
+(let ebase_1954 (Leaf 1954))  ; __CPROVER_deallocated#25
+(let ebase_1955 (Leaf 1955))  ; if
+(let ebase_1956 (Equal ebase_1954 ebase_1955))  ; =  ;; [ASSUME]
+(let ebase_1957 (Leaf 1957))  ; goto_symex::\guard#50
+(let ebase_1958 (Equal ebase_1908 ebase_1941))  ; =
+(let ebase_1959 (Equal ebase_1957 ebase_1958))  ; =  ;; [ASSUME]
+(let ebase_1960 (Leaf 1960))  ; __CPROVER_memory_leak#46
+(let ebase_1961 (Equal ebase_18 ebase_1960))  ; =  ;; [ASSUME]
+(let ebase_1962 (Leaf 1962))  ; __CPROVER_memory_leak#47
+(let ebase_1963 (Leaf 1963))  ; if
+(let ebase_1964 (Equal ebase_1962 ebase_1963))  ; =  ;; [ASSUME]
+(let ebase_1965 (Leaf 1965))  ; __CPROVER_deallocated#26
+(let ebase_1966 (Leaf 1966))  ; if
+(let ebase_1967 (Equal ebase_1965 ebase_1966))  ; =  ;; [ASSUME]
+(let ebase_1968 (Leaf 1968))  ; __CPROVER_memory_leak#48
+(let ebase_1969 (Leaf 1969))  ; if
+(let ebase_1970 (Equal ebase_1968 ebase_1969))  ; =  ;; [ASSUME]
+(let ebase_1971 (Leaf 1971))  ; free::ptr!0@6#3
+(let ebase_1972 (Leaf 1972))  ; if
+(let ebase_1973 (Equal ebase_1971 ebase_1972))  ; =  ;; [ASSUME]
+(let ebase_1974 (Leaf 1974))  ; malloc::malloc_size!0@6#1
+(let ebase_1975 (Leaf 1975))  ; byte_extract_little_endian
+(let ebase_1976 (Equal ebase_1974 ebase_1975))  ; =  ;; [ASSUME]
+(let ebase_1977 (Leaf 1977))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@6#2
+(let ebase_1978 (Leaf 1978))  ; nondet_symbol
+(let ebase_1979 (Equal ebase_1977 ebase_1978))  ; =  ;; [ASSUME]
+(let ebase_1980 (Leaf 1980))  ; malloc::1::1::should_malloc_fail!0@6#2
+(let ebase_1981 (Equal ebase_1977 ebase_1980))  ; =  ;; [ASSUME]
+(let ebase_1982 (Leaf 1982))  ; goto_symex::\guard#51
+(let ebase_1983 (Leaf 1983))  ; not
+(let ebase_1984 (Equal ebase_1982 ebase_1983))  ; =  ;; [ASSUME]
+(let ebase_1985 (Leaf 1985))  ; symex_dynamic::dynamic_object_size$4!0#1
+(let ebase_1986 (Equal ebase_1974 ebase_1985))  ; =  ;; [ASSUME]
+(let ebase_1987 (Leaf 1987))  ; symex_dynamic::dynamic_object$10#1
+(let ebase_1988 (Leaf 1988))  ; nondet_symbol
+(let ebase_1989 (Equal ebase_1987 ebase_1988))  ; =  ;; [ASSUME]
+(let ebase_1990 (Leaf 1990))  ; malloc::$tmp::malloc_value!0@6#2
+(let ebase_1991 (Leaf 1991))  ; address_of
+(let ebase_1992 (Typecast ebase_88 ebase_1991))  ; typecast
+(let ebase_1993 (Equal ebase_1990 ebase_1992))  ; =  ;; [ASSUME]
+(let ebase_1994 (Leaf 1994))  ; malloc::1::malloc_res!0@6#2
+(let ebase_1995 (Equal ebase_1992 ebase_1994))  ; =  ;; [ASSUME]
+(let ebase_1996 (Leaf 1996))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@6#2
+(let ebase_1997 (Leaf 1997))  ; nondet_symbol
+(let ebase_1998 (Equal ebase_1996 ebase_1997))  ; =  ;; [ASSUME]
+(let ebase_1999 (Leaf 1999))  ; malloc::1::record_malloc!0@6#2
+(let ebase_2000 (Equal ebase_1996 ebase_1999))  ; =  ;; [ASSUME]
+(let ebase_2001 (Leaf 2001))  ; __CPROVER_malloc_is_new_array#34
+(let ebase_2002 (Equal ebase_25 ebase_2001))  ; =  ;; [ASSUME]
+(let ebase_2003 (Leaf 2003))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@6#2
+(let ebase_2004 (Leaf 2004))  ; nondet_symbol
+(let ebase_2005 (Equal ebase_2003 ebase_2004))  ; =  ;; [ASSUME]
+(let ebase_2006 (Leaf 2006))  ; malloc::1::record_may_leak!0@6#2
+(let ebase_2007 (Equal ebase_2003 ebase_2006))  ; =  ;; [ASSUME]
+(let ebase_2008 (Leaf 2008))  ; __CPROVER_memory_leak#49
+(let ebase_2009 (Leaf 2009))  ; if
+(let ebase_2010 (Equal ebase_2008 ebase_2009))  ; =  ;; [ASSUME]
+(let ebase_2011 (Leaf 2011))  ; __CPROVER_malloc_is_new_array#35
+(let ebase_2012 (Equal ebase_25 ebase_2011))  ; =  ;; [ASSUME]
+(let ebase_2013 (Leaf 2013))  ; __CPROVER_memory_leak#50
+(let ebase_2014 (Leaf 2014))  ; if
+(let ebase_2015 (Equal ebase_2013 ebase_2014))  ; =  ;; [ASSUME]
+(let ebase_2016 (Leaf 2016))  ; symex_dynamic::dynamic_object$10#2
+(let ebase_2017 (Equal ebase_1987 ebase_2016))  ; =  ;; [ASSUME]
+(let ebase_2018 (Leaf 2018))  ; symex_dynamic::dynamic_object_size$4!0#2
+(let ebase_2019 (Equal ebase_1985 ebase_2018))  ; =  ;; [ASSUME]
+(let ebase_2020 (Leaf 2020))  ; __CPROVER_deallocated#27
+(let ebase_2021 (Leaf 2021))  ; if
+(let ebase_2022 (Equal ebase_2020 ebase_2021))  ; =  ;; [ASSUME]
+(let ebase_2023 (Leaf 2023))  ; __CPROVER_malloc_is_new_array#36
+(let ebase_2024 (Equal ebase_25 ebase_2023))  ; =  ;; [ASSUME]
+(let ebase_2025 (Leaf 2025))  ; __CPROVER_memory_leak#51
+(let ebase_2026 (Leaf 2026))  ; if
+(let ebase_2027 (Equal ebase_2025 ebase_2026))  ; =  ;; [ASSUME]
+(let ebase_2028 (Leaf 2028))  ; unlinkn_all::list$object#3..mem_free
+(let ebase_2029 (Leaf 2029))  ; if
+(let ebase_2030 (Equal ebase_2028 ebase_2029))  ; =  ;; [ASSUME]
+(let ebase_2031 (Leaf 2031))  ; symex_dynamic::dynamic_object$10#3
+(let ebase_2032 (Equal ebase_2016 ebase_2031))  ; =  ;; [ASSUME]
+(let ebase_2033 (Leaf 2033))  ; symex_dynamic::dynamic_object_size$4!0#3
+(let ebase_2034 (Equal ebase_2018 ebase_2033))  ; =  ;; [ASSUME]
+(let ebase_2035 (Leaf 2035))  ; unlinkn_all::1::n!0@2#4
+(let ebase_2036 (Equal ebase_1932 ebase_2035))  ; =  ;; [ASSUME]
+(let ebase_2037 (Leaf 2037))  ; unlinkn_all::list$object#10..size
+(let ebase_2038 (Plus ebase_1338 ebase_1784))  ; +
+(let ebase_2039 (Equal ebase_2037 ebase_2038))  ; =  ;; [ASSUME]
+(let ebase_2040 (Leaf 2040))  ; goto_symex::\guard#52
+(let ebase_2041 (Leaf 2041))  ; not
+(let ebase_2042 (Equal ebase_2040 ebase_2041))  ; =  ;; [ASSUME]
+(let ebase_2043 (Leaf 2043))  ; unlinkn_all::1::1::tmp!0@6#2
+(let ebase_2044 (Equal ebase_1933 ebase_2043))  ; =  ;; [ASSUME]
+(let ebase_2045 (Leaf 2045))  ; goto_symex::\guard#53
+(let ebase_2046 (Leaf 2046))  ; not
+(let ebase_2047 (Equal ebase_2045 ebase_2046))  ; =  ;; [ASSUME]
+(let ebase_2048 (Leaf 2048))  ; goto_symex::\guard#54
+(let ebase_2049 (Leaf 2049))  ; not
+(let ebase_2050 (Equal ebase_2048 ebase_2049))  ; =  ;; [ASSUME]
+(let ebase_2051 (Leaf 2051))  ; free::ptr!0@7#1
+(let ebase_2052 (Typecast ebase_88 ebase_2035))  ; typecast
+(let ebase_2053 (Equal ebase_2051 ebase_2052))  ; =  ;; [ASSUME]
+(let ebase_2054 (Leaf 2054))  ; goto_symex::\guard#55
+(let ebase_2055 (Leaf 2055))  ; not
+(let ebase_2056 (Equal ebase_2054 ebase_2055))  ; =  ;; [ASSUME]
+(let ebase_2057 (Leaf 2057))  ; __CPROVER_deallocate::ptr!0@7#1
+(let ebase_2058 (Equal ebase_2051 ebase_2057))  ; =  ;; [ASSUME]
+(let ebase_2059 (Leaf 2059))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@7#2
+(let ebase_2060 (Leaf 2060))  ; nondet_symbol
+(let ebase_2061 (Equal ebase_2059 ebase_2060))  ; =  ;; [ASSUME]
+(let ebase_2062 (Leaf 2062))  ; __CPROVER_deallocated#28
+(let ebase_2063 (Equal ebase_2057 ebase_2062))  ; =  ;; [ASSUME]
+(let ebase_2064 (Leaf 2064))  ; __CPROVER_deallocated#29
+(let ebase_2065 (Leaf 2065))  ; if
+(let ebase_2066 (Equal ebase_2064 ebase_2065))  ; =  ;; [ASSUME]
+(let ebase_2067 (Leaf 2067))  ; goto_symex::\guard#56
+(let ebase_2068 (Equal ebase_2025 ebase_2051))  ; =
+(let ebase_2069 (Equal ebase_2067 ebase_2068))  ; =  ;; [ASSUME]
+(let ebase_2070 (Leaf 2070))  ; __CPROVER_memory_leak#52
+(let ebase_2071 (Equal ebase_18 ebase_2070))  ; =  ;; [ASSUME]
+(let ebase_2072 (Leaf 2072))  ; __CPROVER_memory_leak#53
+(let ebase_2073 (Leaf 2073))  ; if
+(let ebase_2074 (Equal ebase_2072 ebase_2073))  ; =  ;; [ASSUME]
+(let ebase_2075 (Leaf 2075))  ; __CPROVER_deallocated#30
+(let ebase_2076 (Leaf 2076))  ; if
+(let ebase_2077 (Equal ebase_2075 ebase_2076))  ; =  ;; [ASSUME]
+(let ebase_2078 (Leaf 2078))  ; __CPROVER_memory_leak#54
+(let ebase_2079 (Leaf 2079))  ; if
+(let ebase_2080 (Equal ebase_2078 ebase_2079))  ; =  ;; [ASSUME]
+(let ebase_2081 (Leaf 2081))  ; free::ptr!0@7#3
+(let ebase_2082 (Leaf 2082))  ; if
+(let ebase_2083 (Equal ebase_2081 ebase_2082))  ; =  ;; [ASSUME]
+(let ebase_2084 (Leaf 2084))  ; malloc::malloc_size!0@7#1
+(let ebase_2085 (Leaf 2085))  ; byte_extract_little_endian
+(let ebase_2086 (Equal ebase_2084 ebase_2085))  ; =  ;; [ASSUME]
+(let ebase_2087 (Leaf 2087))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@7#2
+(let ebase_2088 (Leaf 2088))  ; nondet_symbol
+(let ebase_2089 (Equal ebase_2087 ebase_2088))  ; =  ;; [ASSUME]
+(let ebase_2090 (Leaf 2090))  ; malloc::1::1::should_malloc_fail!0@7#2
+(let ebase_2091 (Equal ebase_2087 ebase_2090))  ; =  ;; [ASSUME]
+(let ebase_2092 (Leaf 2092))  ; goto_symex::\guard#57
+(let ebase_2093 (Leaf 2093))  ; not
+(let ebase_2094 (Equal ebase_2092 ebase_2093))  ; =  ;; [ASSUME]
+(let ebase_2095 (Leaf 2095))  ; symex_dynamic::dynamic_object_size$5!0#1
+(let ebase_2096 (Equal ebase_2084 ebase_2095))  ; =  ;; [ASSUME]
+(let ebase_2097 (Leaf 2097))  ; symex_dynamic::dynamic_object$11#1
+(let ebase_2098 (Leaf 2098))  ; nondet_symbol
+(let ebase_2099 (Equal ebase_2097 ebase_2098))  ; =  ;; [ASSUME]
+(let ebase_2100 (Leaf 2100))  ; malloc::$tmp::malloc_value!0@7#2
+(let ebase_2101 (Leaf 2101))  ; address_of
+(let ebase_2102 (Typecast ebase_88 ebase_2101))  ; typecast
+(let ebase_2103 (Equal ebase_2100 ebase_2102))  ; =  ;; [ASSUME]
+(let ebase_2104 (Leaf 2104))  ; malloc::1::malloc_res!0@7#2
+(let ebase_2105 (Equal ebase_2102 ebase_2104))  ; =  ;; [ASSUME]
+(let ebase_2106 (Leaf 2106))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@7#2
+(let ebase_2107 (Leaf 2107))  ; nondet_symbol
+(let ebase_2108 (Equal ebase_2106 ebase_2107))  ; =  ;; [ASSUME]
+(let ebase_2109 (Leaf 2109))  ; malloc::1::record_malloc!0@7#2
+(let ebase_2110 (Equal ebase_2106 ebase_2109))  ; =  ;; [ASSUME]
+(let ebase_2111 (Leaf 2111))  ; __CPROVER_malloc_is_new_array#37
+(let ebase_2112 (Equal ebase_25 ebase_2111))  ; =  ;; [ASSUME]
+(let ebase_2113 (Leaf 2113))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@7#2
+(let ebase_2114 (Leaf 2114))  ; nondet_symbol
+(let ebase_2115 (Equal ebase_2113 ebase_2114))  ; =  ;; [ASSUME]
+(let ebase_2116 (Leaf 2116))  ; malloc::1::record_may_leak!0@7#2
+(let ebase_2117 (Equal ebase_2113 ebase_2116))  ; =  ;; [ASSUME]
+(let ebase_2118 (Leaf 2118))  ; __CPROVER_memory_leak#55
+(let ebase_2119 (Leaf 2119))  ; if
+(let ebase_2120 (Equal ebase_2118 ebase_2119))  ; =  ;; [ASSUME]
+(let ebase_2121 (Leaf 2121))  ; __CPROVER_malloc_is_new_array#38
+(let ebase_2122 (Equal ebase_25 ebase_2121))  ; =  ;; [ASSUME]
+(let ebase_2123 (Leaf 2123))  ; __CPROVER_memory_leak#56
+(let ebase_2124 (Leaf 2124))  ; if
+(let ebase_2125 (Equal ebase_2123 ebase_2124))  ; =  ;; [ASSUME]
+(let ebase_2126 (Leaf 2126))  ; symex_dynamic::dynamic_object$11#2
+(let ebase_2127 (Equal ebase_2097 ebase_2126))  ; =  ;; [ASSUME]
+(let ebase_2128 (Leaf 2128))  ; symex_dynamic::dynamic_object_size$5!0#2
+(let ebase_2129 (Equal ebase_2095 ebase_2128))  ; =  ;; [ASSUME]
+(let ebase_2130 (Leaf 2130))  ; __CPROVER_deallocated#31
+(let ebase_2131 (Leaf 2131))  ; if
+(let ebase_2132 (Equal ebase_2130 ebase_2131))  ; =  ;; [ASSUME]
+(let ebase_2133 (Leaf 2133))  ; __CPROVER_malloc_is_new_array#39
+(let ebase_2134 (Equal ebase_25 ebase_2133))  ; =  ;; [ASSUME]
+(let ebase_2135 (Leaf 2135))  ; __CPROVER_memory_leak#57
+(let ebase_2136 (Leaf 2136))  ; if
+(let ebase_2137 (Equal ebase_2135 ebase_2136))  ; =  ;; [ASSUME]
+(let ebase_2138 (Leaf 2138))  ; unlinkn_all::list$object#6..mem_free
+(let ebase_2139 (Leaf 2139))  ; if
+(let ebase_2140 (Equal ebase_2138 ebase_2139))  ; =  ;; [ASSUME]
+(let ebase_2141 (Leaf 2141))  ; symex_dynamic::dynamic_object$11#3
+(let ebase_2142 (Equal ebase_2126 ebase_2141))  ; =  ;; [ASSUME]
+(let ebase_2143 (Leaf 2143))  ; symex_dynamic::dynamic_object_size$5!0#3
+(let ebase_2144 (Equal ebase_2128 ebase_2143))  ; =  ;; [ASSUME]
+(let ebase_2145 (Leaf 2145))  ; unlinkn_all::1::n!0@2#6
+(let ebase_2146 (Equal ebase_2043 ebase_2145))  ; =  ;; [ASSUME]
+(let ebase_2147 (Leaf 2147))  ; unlinkn_all::list$object#11..size
+(let ebase_2148 (Plus ebase_1338 ebase_2037))  ; +
+(let ebase_2149 (Equal ebase_2147 ebase_2148))  ; =  ;; [ASSUME]
+(let ebase_2150 (Leaf 2150))  ; goto_symex::\guard#58
+(let ebase_2151 (Leaf 2151))  ; not
+(let ebase_2152 (Equal ebase_2150 ebase_2151))  ; =  ;; [ASSUME]
+(let ebase_2153 (Leaf 2153))  ; unlinkn_all::1::1::tmp!0@7#2
+(let ebase_2154 (Equal ebase_1933 ebase_2153))  ; =  ;; [ASSUME]
+(let ebase_2155 (Leaf 2155))  ; goto_symex::\guard#59
+(let ebase_2156 (Leaf 2156))  ; not
+(let ebase_2157 (Equal ebase_2155 ebase_2156))  ; =  ;; [ASSUME]
+(let ebase_2158 (Leaf 2158))  ; goto_symex::\guard#60
+(let ebase_2159 (Leaf 2159))  ; not
+(let ebase_2160 (Equal ebase_2158 ebase_2159))  ; =  ;; [ASSUME]
+(let ebase_2161 (Leaf 2161))  ; free::ptr!0@8#1
+(let ebase_2162 (Typecast ebase_88 ebase_2145))  ; typecast
+(let ebase_2163 (Equal ebase_2161 ebase_2162))  ; =  ;; [ASSUME]
+(let ebase_2164 (Leaf 2164))  ; goto_symex::\guard#61
+(let ebase_2165 (Leaf 2165))  ; not
+(let ebase_2166 (Equal ebase_2164 ebase_2165))  ; =  ;; [ASSUME]
+(let ebase_2167 (Leaf 2167))  ; __CPROVER_deallocate::ptr!0@8#1
+(let ebase_2168 (Equal ebase_2161 ebase_2167))  ; =  ;; [ASSUME]
+(let ebase_2169 (Leaf 2169))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@8#2
+(let ebase_2170 (Leaf 2170))  ; nondet_symbol
+(let ebase_2171 (Equal ebase_2169 ebase_2170))  ; =  ;; [ASSUME]
+(let ebase_2172 (Leaf 2172))  ; __CPROVER_deallocated#32
+(let ebase_2173 (Equal ebase_2167 ebase_2172))  ; =  ;; [ASSUME]
+(let ebase_2174 (Leaf 2174))  ; __CPROVER_deallocated#33
+(let ebase_2175 (Leaf 2175))  ; if
+(let ebase_2176 (Equal ebase_2174 ebase_2175))  ; =  ;; [ASSUME]
+(let ebase_2177 (Leaf 2177))  ; goto_symex::\guard#62
+(let ebase_2178 (Equal ebase_2135 ebase_2161))  ; =
+(let ebase_2179 (Equal ebase_2177 ebase_2178))  ; =  ;; [ASSUME]
+(let ebase_2180 (Leaf 2180))  ; __CPROVER_memory_leak#58
+(let ebase_2181 (Equal ebase_18 ebase_2180))  ; =  ;; [ASSUME]
+(let ebase_2182 (Leaf 2182))  ; __CPROVER_memory_leak#59
+(let ebase_2183 (Leaf 2183))  ; if
+(let ebase_2184 (Equal ebase_2182 ebase_2183))  ; =  ;; [ASSUME]
+(let ebase_2185 (Leaf 2185))  ; __CPROVER_deallocated#34
+(let ebase_2186 (Leaf 2186))  ; if
+(let ebase_2187 (Equal ebase_2185 ebase_2186))  ; =  ;; [ASSUME]
+(let ebase_2188 (Leaf 2188))  ; __CPROVER_memory_leak#60
+(let ebase_2189 (Leaf 2189))  ; if
+(let ebase_2190 (Equal ebase_2188 ebase_2189))  ; =  ;; [ASSUME]
+(let ebase_2191 (Leaf 2191))  ; free::ptr!0@8#3
+(let ebase_2192 (Leaf 2192))  ; if
+(let ebase_2193 (Equal ebase_2191 ebase_2192))  ; =  ;; [ASSUME]
+(let ebase_2194 (Leaf 2194))  ; malloc::malloc_size!0@8#1
+(let ebase_2195 (Leaf 2195))  ; byte_extract_little_endian
+(let ebase_2196 (Equal ebase_2194 ebase_2195))  ; =  ;; [ASSUME]
+(let ebase_2197 (Leaf 2197))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@8#2
+(let ebase_2198 (Leaf 2198))  ; nondet_symbol
+(let ebase_2199 (Equal ebase_2197 ebase_2198))  ; =  ;; [ASSUME]
+(let ebase_2200 (Leaf 2200))  ; malloc::1::1::should_malloc_fail!0@8#2
+(let ebase_2201 (Equal ebase_2197 ebase_2200))  ; =  ;; [ASSUME]
+(let ebase_2202 (Leaf 2202))  ; goto_symex::\guard#63
+(let ebase_2203 (Leaf 2203))  ; not
+(let ebase_2204 (Equal ebase_2202 ebase_2203))  ; =  ;; [ASSUME]
+(let ebase_2205 (Leaf 2205))  ; symex_dynamic::dynamic_object_size$6!0#1
+(let ebase_2206 (Equal ebase_2194 ebase_2205))  ; =  ;; [ASSUME]
+(let ebase_2207 (Leaf 2207))  ; symex_dynamic::dynamic_object$12#1
+(let ebase_2208 (Leaf 2208))  ; nondet_symbol
+(let ebase_2209 (Equal ebase_2207 ebase_2208))  ; =  ;; [ASSUME]
+(let ebase_2210 (Leaf 2210))  ; malloc::$tmp::malloc_value!0@8#2
+(let ebase_2211 (Leaf 2211))  ; address_of
+(let ebase_2212 (Typecast ebase_88 ebase_2211))  ; typecast
+(let ebase_2213 (Equal ebase_2210 ebase_2212))  ; =  ;; [ASSUME]
+(let ebase_2214 (Leaf 2214))  ; malloc::1::malloc_res!0@8#2
+(let ebase_2215 (Equal ebase_2212 ebase_2214))  ; =  ;; [ASSUME]
+(let ebase_2216 (Leaf 2216))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@8#2
+(let ebase_2217 (Leaf 2217))  ; nondet_symbol
+(let ebase_2218 (Equal ebase_2216 ebase_2217))  ; =  ;; [ASSUME]
+(let ebase_2219 (Leaf 2219))  ; malloc::1::record_malloc!0@8#2
+(let ebase_2220 (Equal ebase_2216 ebase_2219))  ; =  ;; [ASSUME]
+(let ebase_2221 (Leaf 2221))  ; __CPROVER_malloc_is_new_array#40
+(let ebase_2222 (Equal ebase_25 ebase_2221))  ; =  ;; [ASSUME]
+(let ebase_2223 (Leaf 2223))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@8#2
+(let ebase_2224 (Leaf 2224))  ; nondet_symbol
+(let ebase_2225 (Equal ebase_2223 ebase_2224))  ; =  ;; [ASSUME]
+(let ebase_2226 (Leaf 2226))  ; malloc::1::record_may_leak!0@8#2
+(let ebase_2227 (Equal ebase_2223 ebase_2226))  ; =  ;; [ASSUME]
+(let ebase_2228 (Leaf 2228))  ; __CPROVER_memory_leak#61
+(let ebase_2229 (Leaf 2229))  ; if
+(let ebase_2230 (Equal ebase_2228 ebase_2229))  ; =  ;; [ASSUME]
+(let ebase_2231 (Leaf 2231))  ; __CPROVER_malloc_is_new_array#41
+(let ebase_2232 (Equal ebase_25 ebase_2231))  ; =  ;; [ASSUME]
+(let ebase_2233 (Leaf 2233))  ; __CPROVER_memory_leak#62
+(let ebase_2234 (Leaf 2234))  ; if
+(let ebase_2235 (Equal ebase_2233 ebase_2234))  ; =  ;; [ASSUME]
+(let ebase_2236 (Leaf 2236))  ; symex_dynamic::dynamic_object$12#2
+(let ebase_2237 (Equal ebase_2207 ebase_2236))  ; =  ;; [ASSUME]
+(let ebase_2238 (Leaf 2238))  ; symex_dynamic::dynamic_object_size$6!0#2
+(let ebase_2239 (Equal ebase_2205 ebase_2238))  ; =  ;; [ASSUME]
+(let ebase_2240 (Leaf 2240))  ; __CPROVER_deallocated#35
+(let ebase_2241 (Leaf 2241))  ; if
+(let ebase_2242 (Equal ebase_2240 ebase_2241))  ; =  ;; [ASSUME]
+(let ebase_2243 (Leaf 2243))  ; __CPROVER_malloc_is_new_array#42
+(let ebase_2244 (Equal ebase_25 ebase_2243))  ; =  ;; [ASSUME]
+(let ebase_2245 (Leaf 2245))  ; __CPROVER_memory_leak#63
+(let ebase_2246 (Leaf 2246))  ; if
+(let ebase_2247 (Equal ebase_2245 ebase_2246))  ; =  ;; [ASSUME]
+(let ebase_2248 (Leaf 2248))  ; unlinkn_all::list$object#9..mem_free
+(let ebase_2249 (Leaf 2249))  ; if
+(let ebase_2250 (Equal ebase_2248 ebase_2249))  ; =  ;; [ASSUME]
+(let ebase_2251 (Leaf 2251))  ; symex_dynamic::dynamic_object$12#3
+(let ebase_2252 (Equal ebase_2236 ebase_2251))  ; =  ;; [ASSUME]
+(let ebase_2253 (Leaf 2253))  ; symex_dynamic::dynamic_object_size$6!0#3
+(let ebase_2254 (Equal ebase_2238 ebase_2253))  ; =  ;; [ASSUME]
+(let ebase_2255 (Leaf 2255))  ; unlinkn_all::1::n!0@2#8
+(let ebase_2256 (Equal ebase_2153 ebase_2255))  ; =  ;; [ASSUME]
+(let ebase_2257 (Leaf 2257))  ; unlinkn_all::list$object#12..size
+(let ebase_2258 (Plus ebase_1338 ebase_2147))  ; +
+(let ebase_2259 (Equal ebase_2257 ebase_2258))  ; =  ;; [ASSUME]
+(let ebase_2260 (Leaf 2260))  ; goto_symex::\guard#64
+(let ebase_2261 (Leaf 2261))  ; not
+(let ebase_2262 (Equal ebase_2260 ebase_2261))  ; =  ;; [ASSUME]
+(let ebase_2263 (Leaf 2263))  ; unlinkn_all::1::1::tmp!0@8#2
+(let ebase_2264 (Equal ebase_1933 ebase_2263))  ; =  ;; [ASSUME]
+(let ebase_2265 (Leaf 2265))  ; goto_symex::\guard#65
+(let ebase_2266 (Leaf 2266))  ; not
+(let ebase_2267 (Equal ebase_2265 ebase_2266))  ; =  ;; [ASSUME]
+(let ebase_2268 (Leaf 2268))  ; goto_symex::\guard#66
+(let ebase_2269 (Leaf 2269))  ; not
+(let ebase_2270 (Equal ebase_2268 ebase_2269))  ; =  ;; [ASSUME]
+(let ebase_2271 (Leaf 2271))  ; free::ptr!0@9#1
+(let ebase_2272 (Typecast ebase_88 ebase_2255))  ; typecast
+(let ebase_2273 (Equal ebase_2271 ebase_2272))  ; =  ;; [ASSUME]
+(let ebase_2274 (Leaf 2274))  ; goto_symex::\guard#67
+(let ebase_2275 (Leaf 2275))  ; not
+(let ebase_2276 (Equal ebase_2274 ebase_2275))  ; =  ;; [ASSUME]
+(let ebase_2277 (Leaf 2277))  ; __CPROVER_deallocate::ptr!0@9#1
+(let ebase_2278 (Equal ebase_2271 ebase_2277))  ; =  ;; [ASSUME]
+(let ebase_2279 (Leaf 2279))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@9#2
+(let ebase_2280 (Leaf 2280))  ; nondet_symbol
+(let ebase_2281 (Equal ebase_2279 ebase_2280))  ; =  ;; [ASSUME]
+(let ebase_2282 (Leaf 2282))  ; __CPROVER_deallocated#36
+(let ebase_2283 (Equal ebase_2277 ebase_2282))  ; =  ;; [ASSUME]
+(let ebase_2284 (Leaf 2284))  ; __CPROVER_deallocated#37
+(let ebase_2285 (Leaf 2285))  ; if
+(let ebase_2286 (Equal ebase_2284 ebase_2285))  ; =  ;; [ASSUME]
+(let ebase_2287 (Leaf 2287))  ; goto_symex::\guard#68
+(let ebase_2288 (Equal ebase_2245 ebase_2271))  ; =
+(let ebase_2289 (Equal ebase_2287 ebase_2288))  ; =  ;; [ASSUME]
+(let ebase_2290 (Leaf 2290))  ; __CPROVER_memory_leak#64
+(let ebase_2291 (Equal ebase_18 ebase_2290))  ; =  ;; [ASSUME]
+(let ebase_2292 (Leaf 2292))  ; __CPROVER_memory_leak#65
+(let ebase_2293 (Leaf 2293))  ; if
+(let ebase_2294 (Equal ebase_2292 ebase_2293))  ; =  ;; [ASSUME]
+(let ebase_2295 (Leaf 2295))  ; __CPROVER_deallocated#38
+(let ebase_2296 (Leaf 2296))  ; if
+(let ebase_2297 (Equal ebase_2295 ebase_2296))  ; =  ;; [ASSUME]
+(let ebase_2298 (Leaf 2298))  ; __CPROVER_memory_leak#66
+(let ebase_2299 (Leaf 2299))  ; if
+(let ebase_2300 (Equal ebase_2298 ebase_2299))  ; =  ;; [ASSUME]
+(let ebase_2301 (Leaf 2301))  ; free::ptr!0@9#3
+(let ebase_2302 (Leaf 2302))  ; if
+(let ebase_2303 (Equal ebase_2301 ebase_2302))  ; =  ;; [ASSUME]
+(let ebase_2304 (Leaf 2304))  ; malloc::malloc_size!0@9#1
+(let ebase_2305 (Leaf 2305))  ; byte_extract_little_endian
+(let ebase_2306 (Equal ebase_2304 ebase_2305))  ; =  ;; [ASSUME]
+(let ebase_2307 (Leaf 2307))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@9#2
+(let ebase_2308 (Leaf 2308))  ; nondet_symbol
+(let ebase_2309 (Equal ebase_2307 ebase_2308))  ; =  ;; [ASSUME]
+(let ebase_2310 (Leaf 2310))  ; malloc::1::1::should_malloc_fail!0@9#2
+(let ebase_2311 (Equal ebase_2307 ebase_2310))  ; =  ;; [ASSUME]
+(let ebase_2312 (Leaf 2312))  ; goto_symex::\guard#69
+(let ebase_2313 (Leaf 2313))  ; not
+(let ebase_2314 (Equal ebase_2312 ebase_2313))  ; =  ;; [ASSUME]
+(let ebase_2315 (Leaf 2315))  ; symex_dynamic::dynamic_object_size$7!0#1
+(let ebase_2316 (Equal ebase_2304 ebase_2315))  ; =  ;; [ASSUME]
+(let ebase_2317 (Leaf 2317))  ; symex_dynamic::dynamic_object$13#1
+(let ebase_2318 (Leaf 2318))  ; nondet_symbol
+(let ebase_2319 (Equal ebase_2317 ebase_2318))  ; =  ;; [ASSUME]
+(let ebase_2320 (Leaf 2320))  ; malloc::$tmp::malloc_value!0@9#2
+(let ebase_2321 (Leaf 2321))  ; address_of
+(let ebase_2322 (Typecast ebase_88 ebase_2321))  ; typecast
+(let ebase_2323 (Equal ebase_2320 ebase_2322))  ; =  ;; [ASSUME]
+(let ebase_2324 (Leaf 2324))  ; malloc::1::malloc_res!0@9#2
+(let ebase_2325 (Equal ebase_2322 ebase_2324))  ; =  ;; [ASSUME]
+(let ebase_2326 (Leaf 2326))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@9#2
+(let ebase_2327 (Leaf 2327))  ; nondet_symbol
+(let ebase_2328 (Equal ebase_2326 ebase_2327))  ; =  ;; [ASSUME]
+(let ebase_2329 (Leaf 2329))  ; malloc::1::record_malloc!0@9#2
+(let ebase_2330 (Equal ebase_2326 ebase_2329))  ; =  ;; [ASSUME]
+(let ebase_2331 (Leaf 2331))  ; __CPROVER_malloc_is_new_array#43
+(let ebase_2332 (Equal ebase_25 ebase_2331))  ; =  ;; [ASSUME]
+(let ebase_2333 (Leaf 2333))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@9#2
+(let ebase_2334 (Leaf 2334))  ; nondet_symbol
+(let ebase_2335 (Equal ebase_2333 ebase_2334))  ; =  ;; [ASSUME]
+(let ebase_2336 (Leaf 2336))  ; malloc::1::record_may_leak!0@9#2
+(let ebase_2337 (Equal ebase_2333 ebase_2336))  ; =  ;; [ASSUME]
+(let ebase_2338 (Leaf 2338))  ; __CPROVER_memory_leak#67
+(let ebase_2339 (Leaf 2339))  ; if
+(let ebase_2340 (Equal ebase_2338 ebase_2339))  ; =  ;; [ASSUME]
+(let ebase_2341 (Leaf 2341))  ; __CPROVER_malloc_is_new_array#44
+(let ebase_2342 (Equal ebase_25 ebase_2341))  ; =  ;; [ASSUME]
+(let ebase_2343 (Leaf 2343))  ; __CPROVER_memory_leak#68
+(let ebase_2344 (Leaf 2344))  ; if
+(let ebase_2345 (Equal ebase_2343 ebase_2344))  ; =  ;; [ASSUME]
+(let ebase_2346 (Leaf 2346))  ; symex_dynamic::dynamic_object$13#2
+(let ebase_2347 (Equal ebase_2317 ebase_2346))  ; =  ;; [ASSUME]
+(let ebase_2348 (Leaf 2348))  ; symex_dynamic::dynamic_object_size$7!0#2
+(let ebase_2349 (Equal ebase_2315 ebase_2348))  ; =  ;; [ASSUME]
+(let ebase_2350 (Leaf 2350))  ; __CPROVER_deallocated#39
+(let ebase_2351 (Leaf 2351))  ; if
+(let ebase_2352 (Equal ebase_2350 ebase_2351))  ; =  ;; [ASSUME]
+(let ebase_2353 (Leaf 2353))  ; __CPROVER_malloc_is_new_array#45
+(let ebase_2354 (Equal ebase_25 ebase_2353))  ; =  ;; [ASSUME]
+(let ebase_2355 (Leaf 2355))  ; __CPROVER_memory_leak#69
+(let ebase_2356 (Leaf 2356))  ; if
+(let ebase_2357 (Equal ebase_2355 ebase_2356))  ; =  ;; [ASSUME]
+(let ebase_2358 (Leaf 2358))  ; unlinkn_all::list$object#12..mem_free
+(let ebase_2359 (Leaf 2359))  ; if
+(let ebase_2360 (Equal ebase_2358 ebase_2359))  ; =  ;; [ASSUME]
+(let ebase_2361 (Leaf 2361))  ; symex_dynamic::dynamic_object$13#3
+(let ebase_2362 (Equal ebase_2346 ebase_2361))  ; =  ;; [ASSUME]
+(let ebase_2363 (Leaf 2363))  ; symex_dynamic::dynamic_object_size$7!0#3
+(let ebase_2364 (Equal ebase_2348 ebase_2363))  ; =  ;; [ASSUME]
+(let ebase_2365 (Leaf 2365))  ; unlinkn_all::1::n!0@2#10
+(let ebase_2366 (Equal ebase_2263 ebase_2365))  ; =  ;; [ASSUME]
+(let ebase_2367 (Leaf 2367))  ; unlinkn_all::list$object#13..size
+(let ebase_2368 (Plus ebase_1338 ebase_2257))  ; +
+(let ebase_2369 (Equal ebase_2367 ebase_2368))  ; =  ;; [ASSUME]
+(let ebase_2370 (Leaf 2370))  ; goto_symex::\guard#70
+(let ebase_2371 (Leaf 2371))  ; not
+(let ebase_2372 (Equal ebase_2370 ebase_2371))  ; =  ;; [ASSUME]
+(let ebase_2373 (Leaf 2373))  ; unlinkn_all::1::1::tmp!0@9#2
+(let ebase_2374 (Equal ebase_1933 ebase_2373))  ; =  ;; [ASSUME]
+(let ebase_2375 (Leaf 2375))  ; goto_symex::\guard#71
+(let ebase_2376 (Leaf 2376))  ; not
+(let ebase_2377 (Equal ebase_2375 ebase_2376))  ; =  ;; [ASSUME]
+(let ebase_2378 (Leaf 2378))  ; goto_symex::\guard#72
+(let ebase_2379 (Leaf 2379))  ; not
+(let ebase_2380 (Equal ebase_2378 ebase_2379))  ; =  ;; [ASSUME]
+(let ebase_2381 (Leaf 2381))  ; free::ptr!0@10#1
+(let ebase_2382 (Typecast ebase_88 ebase_2365))  ; typecast
+(let ebase_2383 (Equal ebase_2381 ebase_2382))  ; =  ;; [ASSUME]
+(let ebase_2384 (Leaf 2384))  ; goto_symex::\guard#73
+(let ebase_2385 (Leaf 2385))  ; not
+(let ebase_2386 (Equal ebase_2384 ebase_2385))  ; =  ;; [ASSUME]
+(let ebase_2387 (Leaf 2387))  ; __CPROVER_deallocate::ptr!0@10#1
+(let ebase_2388 (Equal ebase_2381 ebase_2387))  ; =  ;; [ASSUME]
+(let ebase_2389 (Leaf 2389))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@10#2
+(let ebase_2390 (Leaf 2390))  ; nondet_symbol
+(let ebase_2391 (Equal ebase_2389 ebase_2390))  ; =  ;; [ASSUME]
+(let ebase_2392 (Leaf 2392))  ; __CPROVER_deallocated#40
+(let ebase_2393 (Equal ebase_2387 ebase_2392))  ; =  ;; [ASSUME]
+(let ebase_2394 (Leaf 2394))  ; __CPROVER_deallocated#41
+(let ebase_2395 (Leaf 2395))  ; if
+(let ebase_2396 (Equal ebase_2394 ebase_2395))  ; =  ;; [ASSUME]
+(let ebase_2397 (Leaf 2397))  ; goto_symex::\guard#74
+(let ebase_2398 (Equal ebase_2355 ebase_2381))  ; =
+(let ebase_2399 (Equal ebase_2397 ebase_2398))  ; =  ;; [ASSUME]
+(let ebase_2400 (Leaf 2400))  ; __CPROVER_memory_leak#70
+(let ebase_2401 (Equal ebase_18 ebase_2400))  ; =  ;; [ASSUME]
+(let ebase_2402 (Leaf 2402))  ; __CPROVER_memory_leak#71
+(let ebase_2403 (Leaf 2403))  ; if
+(let ebase_2404 (Equal ebase_2402 ebase_2403))  ; =  ;; [ASSUME]
+(let ebase_2405 (Leaf 2405))  ; __CPROVER_deallocated#42
+(let ebase_2406 (Leaf 2406))  ; if
+(let ebase_2407 (Equal ebase_2405 ebase_2406))  ; =  ;; [ASSUME]
+(let ebase_2408 (Leaf 2408))  ; __CPROVER_memory_leak#72
+(let ebase_2409 (Leaf 2409))  ; if
+(let ebase_2410 (Equal ebase_2408 ebase_2409))  ; =  ;; [ASSUME]
+(let ebase_2411 (Leaf 2411))  ; free::ptr!0@10#3
+(let ebase_2412 (Leaf 2412))  ; if
+(let ebase_2413 (Equal ebase_2411 ebase_2412))  ; =  ;; [ASSUME]
+(let ebase_2414 (Leaf 2414))  ; malloc::malloc_size!0@10#1
+(let ebase_2415 (Leaf 2415))  ; byte_extract_little_endian
+(let ebase_2416 (Equal ebase_2414 ebase_2415))  ; =  ;; [ASSUME]
+(let ebase_2417 (Leaf 2417))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@10#2
+(let ebase_2418 (Leaf 2418))  ; nondet_symbol
+(let ebase_2419 (Equal ebase_2417 ebase_2418))  ; =  ;; [ASSUME]
+(let ebase_2420 (Leaf 2420))  ; malloc::1::1::should_malloc_fail!0@10#2
+(let ebase_2421 (Equal ebase_2417 ebase_2420))  ; =  ;; [ASSUME]
+(let ebase_2422 (Leaf 2422))  ; goto_symex::\guard#75
+(let ebase_2423 (Leaf 2423))  ; not
+(let ebase_2424 (Equal ebase_2422 ebase_2423))  ; =  ;; [ASSUME]
+(let ebase_2425 (Leaf 2425))  ; symex_dynamic::dynamic_object_size$8!0#1
+(let ebase_2426 (Equal ebase_2414 ebase_2425))  ; =  ;; [ASSUME]
+(let ebase_2427 (Leaf 2427))  ; symex_dynamic::dynamic_object$14#1
+(let ebase_2428 (Leaf 2428))  ; nondet_symbol
+(let ebase_2429 (Equal ebase_2427 ebase_2428))  ; =  ;; [ASSUME]
+(let ebase_2430 (Leaf 2430))  ; malloc::$tmp::malloc_value!0@10#2
+(let ebase_2431 (Leaf 2431))  ; address_of
+(let ebase_2432 (Typecast ebase_88 ebase_2431))  ; typecast
+(let ebase_2433 (Equal ebase_2430 ebase_2432))  ; =  ;; [ASSUME]
+(let ebase_2434 (Leaf 2434))  ; malloc::1::malloc_res!0@10#2
+(let ebase_2435 (Equal ebase_2432 ebase_2434))  ; =  ;; [ASSUME]
+(let ebase_2436 (Leaf 2436))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@10#2
+(let ebase_2437 (Leaf 2437))  ; nondet_symbol
+(let ebase_2438 (Equal ebase_2436 ebase_2437))  ; =  ;; [ASSUME]
+(let ebase_2439 (Leaf 2439))  ; malloc::1::record_malloc!0@10#2
+(let ebase_2440 (Equal ebase_2436 ebase_2439))  ; =  ;; [ASSUME]
+(let ebase_2441 (Leaf 2441))  ; __CPROVER_malloc_is_new_array#46
+(let ebase_2442 (Equal ebase_25 ebase_2441))  ; =  ;; [ASSUME]
+(let ebase_2443 (Leaf 2443))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@10#2
+(let ebase_2444 (Leaf 2444))  ; nondet_symbol
+(let ebase_2445 (Equal ebase_2443 ebase_2444))  ; =  ;; [ASSUME]
+(let ebase_2446 (Leaf 2446))  ; malloc::1::record_may_leak!0@10#2
+(let ebase_2447 (Equal ebase_2443 ebase_2446))  ; =  ;; [ASSUME]
+(let ebase_2448 (Leaf 2448))  ; __CPROVER_memory_leak#73
+(let ebase_2449 (Leaf 2449))  ; if
+(let ebase_2450 (Equal ebase_2448 ebase_2449))  ; =  ;; [ASSUME]
+(let ebase_2451 (Leaf 2451))  ; __CPROVER_malloc_is_new_array#47
+(let ebase_2452 (Equal ebase_25 ebase_2451))  ; =  ;; [ASSUME]
+(let ebase_2453 (Leaf 2453))  ; __CPROVER_memory_leak#74
+(let ebase_2454 (Leaf 2454))  ; if
+(let ebase_2455 (Equal ebase_2453 ebase_2454))  ; =  ;; [ASSUME]
+(let ebase_2456 (Leaf 2456))  ; symex_dynamic::dynamic_object$14#2
+(let ebase_2457 (Equal ebase_2427 ebase_2456))  ; =  ;; [ASSUME]
+(let ebase_2458 (Leaf 2458))  ; symex_dynamic::dynamic_object_size$8!0#2
+(let ebase_2459 (Equal ebase_2425 ebase_2458))  ; =  ;; [ASSUME]
+(let ebase_2460 (Leaf 2460))  ; __CPROVER_deallocated#43
+(let ebase_2461 (Leaf 2461))  ; if
+(let ebase_2462 (Equal ebase_2460 ebase_2461))  ; =  ;; [ASSUME]
+(let ebase_2463 (Leaf 2463))  ; __CPROVER_malloc_is_new_array#48
+(let ebase_2464 (Equal ebase_25 ebase_2463))  ; =  ;; [ASSUME]
+(let ebase_2465 (Leaf 2465))  ; __CPROVER_memory_leak#75
+(let ebase_2466 (Leaf 2466))  ; if
+(let ebase_2467 (Equal ebase_2465 ebase_2466))  ; =  ;; [ASSUME]
+(let ebase_2468 (Leaf 2468))  ; unlinkn_all::list$object#15..mem_free
+(let ebase_2469 (Leaf 2469))  ; if
+(let ebase_2470 (Equal ebase_2468 ebase_2469))  ; =  ;; [ASSUME]
+(let ebase_2471 (Leaf 2471))  ; symex_dynamic::dynamic_object$14#3
+(let ebase_2472 (Equal ebase_2456 ebase_2471))  ; =  ;; [ASSUME]
+(let ebase_2473 (Leaf 2473))  ; symex_dynamic::dynamic_object_size$8!0#3
+(let ebase_2474 (Equal ebase_2458 ebase_2473))  ; =  ;; [ASSUME]
+(let ebase_2475 (Leaf 2475))  ; unlinkn_all::1::n!0@2#12
+(let ebase_2476 (Equal ebase_2373 ebase_2475))  ; =  ;; [ASSUME]
+(let ebase_2477 (Leaf 2477))  ; unlinkn_all::list$object#14..size
+(let ebase_2478 (Plus ebase_1338 ebase_2367))  ; +
+(let ebase_2479 (Equal ebase_2477 ebase_2478))  ; =  ;; [ASSUME]
+(let ebase_2480 (Leaf 2480))  ; __CPROVER_deallocated#44
+(let ebase_2481 (Leaf 2481))  ; if
+(let ebase_2482 (Equal ebase_2480 ebase_2481))  ; =  ;; [ASSUME]
+(let ebase_2483 (Leaf 2483))  ; __CPROVER_malloc_is_new_array#49
+(let ebase_2484 (Equal ebase_25 ebase_2483))  ; =  ;; [ASSUME]
+(let ebase_2485 (Leaf 2485))  ; __CPROVER_memory_leak#76
+(let ebase_2486 (Leaf 2486))  ; if
+(let ebase_2487 (Equal ebase_2485 ebase_2486))  ; =  ;; [ASSUME]
+(let ebase_2488 (Leaf 2488))  ; unlinkn_all::1::n!0@2#13
+(let ebase_2489 (Equal ebase_95 ebase_2488))  ; =  ;; [ASSUME]
+(let ebase_2490 (Leaf 2490))  ; unlinkn_all::list$object#16..mem_free
+(let ebase_2491 (Leaf 2491))  ; if
+(let ebase_2492 (Equal ebase_2490 ebase_2491))  ; =  ;; [ASSUME]
+(let ebase_2493 (Leaf 2493))  ; unlinkn_all::list$object#15..size
+(let ebase_2494 (Leaf 2494))  ; if
+(let ebase_2495 (Equal ebase_2493 ebase_2494))  ; =  ;; [ASSUME]
+(let ebase_2496 (Leaf 2496))  ; symex_dynamic::dynamic_object$13#4
+(let ebase_2497 (Equal ebase_2361 ebase_2496))  ; =  ;; [ASSUME]
+(let ebase_2498 (Leaf 2498))  ; symex_dynamic::dynamic_object_size$7!0#4
+(let ebase_2499 (Equal ebase_2363 ebase_2498))  ; =  ;; [ASSUME]
+(let ebase_2500 (Leaf 2500))  ; __CPROVER_deallocated#45
+(let ebase_2501 (Leaf 2501))  ; if
+(let ebase_2502 (Equal ebase_2500 ebase_2501))  ; =  ;; [ASSUME]
+(let ebase_2503 (Leaf 2503))  ; __CPROVER_malloc_is_new_array#50
+(let ebase_2504 (Equal ebase_25 ebase_2503))  ; =  ;; [ASSUME]
+(let ebase_2505 (Leaf 2505))  ; __CPROVER_memory_leak#77
+(let ebase_2506 (Leaf 2506))  ; if
+(let ebase_2507 (Equal ebase_2505 ebase_2506))  ; =  ;; [ASSUME]
+(let ebase_2508 (Leaf 2508))  ; unlinkn_all::1::n!0@2#14
+(let ebase_2509 (Equal ebase_95 ebase_2508))  ; =  ;; [ASSUME]
+(let ebase_2510 (Leaf 2510))  ; unlinkn_all::list$object#17..mem_free
+(let ebase_2511 (Leaf 2511))  ; if
+(let ebase_2512 (Equal ebase_2510 ebase_2511))  ; =  ;; [ASSUME]
+(let ebase_2513 (Leaf 2513))  ; unlinkn_all::list$object#16..size
+(let ebase_2514 (Leaf 2514))  ; if
+(let ebase_2515 (Equal ebase_2513 ebase_2514))  ; =  ;; [ASSUME]
+(let ebase_2516 (Leaf 2516))  ; symex_dynamic::dynamic_object$12#4
+(let ebase_2517 (Equal ebase_2251 ebase_2516))  ; =  ;; [ASSUME]
+(let ebase_2518 (Leaf 2518))  ; symex_dynamic::dynamic_object$13#5
+(let ebase_2519 (Equal ebase_2496 ebase_2518))  ; =  ;; [ASSUME]
+(let ebase_2520 (Leaf 2520))  ; symex_dynamic::dynamic_object_size$6!0#4
+(let ebase_2521 (Equal ebase_2253 ebase_2520))  ; =  ;; [ASSUME]
+(let ebase_2522 (Leaf 2522))  ; symex_dynamic::dynamic_object_size$7!0#5
+(let ebase_2523 (Equal ebase_2498 ebase_2522))  ; =  ;; [ASSUME]
+(let ebase_2524 (Leaf 2524))  ; __CPROVER_deallocated#46
+(let ebase_2525 (Leaf 2525))  ; if
+(let ebase_2526 (Equal ebase_2524 ebase_2525))  ; =  ;; [ASSUME]
+(let ebase_2527 (Leaf 2527))  ; __CPROVER_malloc_is_new_array#51
+(let ebase_2528 (Equal ebase_25 ebase_2527))  ; =  ;; [ASSUME]
+(let ebase_2529 (Leaf 2529))  ; __CPROVER_memory_leak#78
+(let ebase_2530 (Leaf 2530))  ; if
+(let ebase_2531 (Equal ebase_2529 ebase_2530))  ; =  ;; [ASSUME]
+(let ebase_2532 (Leaf 2532))  ; unlinkn_all::1::n!0@2#15
+(let ebase_2533 (Equal ebase_95 ebase_2532))  ; =  ;; [ASSUME]
+(let ebase_2534 (Leaf 2534))  ; unlinkn_all::list$object#18..mem_free
+(let ebase_2535 (Leaf 2535))  ; if
+(let ebase_2536 (Equal ebase_2534 ebase_2535))  ; =  ;; [ASSUME]
+(let ebase_2537 (Leaf 2537))  ; unlinkn_all::list$object#17..size
+(let ebase_2538 (Leaf 2538))  ; if
+(let ebase_2539 (Equal ebase_2537 ebase_2538))  ; =  ;; [ASSUME]
+(let ebase_2540 (Leaf 2540))  ; symex_dynamic::dynamic_object$11#4
+(let ebase_2541 (Equal ebase_2141 ebase_2540))  ; =  ;; [ASSUME]
+(let ebase_2542 (Leaf 2542))  ; symex_dynamic::dynamic_object$12#5
+(let ebase_2543 (Equal ebase_2516 ebase_2542))  ; =  ;; [ASSUME]
+(let ebase_2544 (Leaf 2544))  ; symex_dynamic::dynamic_object$13#6
+(let ebase_2545 (Equal ebase_2518 ebase_2544))  ; =  ;; [ASSUME]
+(let ebase_2546 (Leaf 2546))  ; symex_dynamic::dynamic_object_size$5!0#4
+(let ebase_2547 (Equal ebase_2143 ebase_2546))  ; =  ;; [ASSUME]
+(let ebase_2548 (Leaf 2548))  ; symex_dynamic::dynamic_object_size$6!0#5
+(let ebase_2549 (Equal ebase_2520 ebase_2548))  ; =  ;; [ASSUME]
+(let ebase_2550 (Leaf 2550))  ; symex_dynamic::dynamic_object_size$7!0#6
+(let ebase_2551 (Equal ebase_2522 ebase_2550))  ; =  ;; [ASSUME]
+(let ebase_2552 (Leaf 2552))  ; __CPROVER_deallocated#47
+(let ebase_2553 (Leaf 2553))  ; if
+(let ebase_2554 (Equal ebase_2552 ebase_2553))  ; =  ;; [ASSUME]
+(let ebase_2555 (Leaf 2555))  ; __CPROVER_malloc_is_new_array#52
+(let ebase_2556 (Equal ebase_25 ebase_2555))  ; =  ;; [ASSUME]
+(let ebase_2557 (Leaf 2557))  ; __CPROVER_memory_leak#79
+(let ebase_2558 (Leaf 2558))  ; if
+(let ebase_2559 (Equal ebase_2557 ebase_2558))  ; =  ;; [ASSUME]
+(let ebase_2560 (Leaf 2560))  ; unlinkn_all::1::n!0@2#16
+(let ebase_2561 (Equal ebase_95 ebase_2560))  ; =  ;; [ASSUME]
+(let ebase_2562 (Leaf 2562))  ; unlinkn_all::list$object#18..size
+(let ebase_2563 (Leaf 2563))  ; if
+(let ebase_2564 (Equal ebase_2562 ebase_2563))  ; =  ;; [ASSUME]
+(let ebase_2565 (Leaf 2565))  ; symex_dynamic::dynamic_object$10#4
+(let ebase_2566 (Equal ebase_2031 ebase_2565))  ; =  ;; [ASSUME]
+(let ebase_2567 (Leaf 2567))  ; symex_dynamic::dynamic_object$11#5
+(let ebase_2568 (Equal ebase_2540 ebase_2567))  ; =  ;; [ASSUME]
+(let ebase_2569 (Leaf 2569))  ; symex_dynamic::dynamic_object$12#6
+(let ebase_2570 (Equal ebase_2542 ebase_2569))  ; =  ;; [ASSUME]
+(let ebase_2571 (Leaf 2571))  ; symex_dynamic::dynamic_object$13#7
+(let ebase_2572 (Equal ebase_2544 ebase_2571))  ; =  ;; [ASSUME]
+(let ebase_2573 (Leaf 2573))  ; symex_dynamic::dynamic_object_size$4!0#4
+(let ebase_2574 (Equal ebase_2033 ebase_2573))  ; =  ;; [ASSUME]
+(let ebase_2575 (Leaf 2575))  ; symex_dynamic::dynamic_object_size$5!0#5
+(let ebase_2576 (Equal ebase_2546 ebase_2575))  ; =  ;; [ASSUME]
+(let ebase_2577 (Leaf 2577))  ; symex_dynamic::dynamic_object_size$6!0#6
+(let ebase_2578 (Equal ebase_2548 ebase_2577))  ; =  ;; [ASSUME]
+(let ebase_2579 (Leaf 2579))  ; symex_dynamic::dynamic_object_size$7!0#7
+(let ebase_2580 (Equal ebase_2550 ebase_2579))  ; =  ;; [ASSUME]
+(let ebase_2581 (Leaf 2581))  ; unlinkn_all::list$object#19..mem_free
+(let ebase_2582 (Equal ebase_2534 ebase_2581))  ; =  ;; [ASSUME]
+(let ebase_2583 (Leaf 2583))  ; goto_symex::return_value::unlinkn_all!0#5
+(let ebase_2584 (Equal ebase_1752 ebase_2583))  ; =  ;; [ASSUME]
+(let ebase_2585 (Leaf 2585))  ; __CPROVER_deallocated#48
+(let ebase_2586 (Leaf 2586))  ; if
+(let ebase_2587 (Equal ebase_2585 ebase_2586))  ; =  ;; [ASSUME]
+(let ebase_2588 (Leaf 2588))  ; __CPROVER_malloc_is_new_array#53
+(let ebase_2589 (Equal ebase_25 ebase_2588))  ; =  ;; [ASSUME]
+(let ebase_2590 (Leaf 2590))  ; __CPROVER_memory_leak#80
+(let ebase_2591 (Leaf 2591))  ; if
+(let ebase_2592 (Equal ebase_2590 ebase_2591))  ; =  ;; [ASSUME]
+(let ebase_2593 (Leaf 2593))  ; goto_symex::return_value::unlinkn_all!0#6
+(let ebase_2594 (Leaf 2594))  ; if
+(let ebase_2595 (Equal ebase_2593 ebase_2594))  ; =  ;; [ASSUME]
+(let ebase_2596 (Leaf 2596))  ; unlinkn_all::list$object#19..size
+(let ebase_2597 (Leaf 2597))  ; if
+(let ebase_2598 (Equal ebase_2596 ebase_2597))  ; =  ;; [ASSUME]
+(let ebase_2599 (Leaf 2599))  ; symex_dynamic::dynamic_object$10#5
+(let ebase_2600 (Equal ebase_2565 ebase_2599))  ; =  ;; [ASSUME]
+(let ebase_2601 (Leaf 2601))  ; symex_dynamic::dynamic_object$11#6
+(let ebase_2602 (Equal ebase_2567 ebase_2601))  ; =  ;; [ASSUME]
+(let ebase_2603 (Leaf 2603))  ; symex_dynamic::dynamic_object$12#7
+(let ebase_2604 (Equal ebase_2569 ebase_2603))  ; =  ;; [ASSUME]
+(let ebase_2605 (Leaf 2605))  ; symex_dynamic::dynamic_object$13#8
+(let ebase_2606 (Equal ebase_2571 ebase_2605))  ; =  ;; [ASSUME]
+(let ebase_2607 (Leaf 2607))  ; symex_dynamic::dynamic_object_size$4!0#5
+(let ebase_2608 (Equal ebase_2573 ebase_2607))  ; =  ;; [ASSUME]
+(let ebase_2609 (Leaf 2609))  ; symex_dynamic::dynamic_object_size$5!0#6
+(let ebase_2610 (Equal ebase_2575 ebase_2609))  ; =  ;; [ASSUME]
+(let ebase_2611 (Leaf 2611))  ; symex_dynamic::dynamic_object_size$6!0#7
+(let ebase_2612 (Equal ebase_2577 ebase_2611))  ; =  ;; [ASSUME]
+(let ebase_2613 (Leaf 2613))  ; symex_dynamic::dynamic_object_size$7!0#8
+(let ebase_2614 (Equal ebase_2579 ebase_2613))  ; =  ;; [ASSUME]
+(let ebase_2615 (Leaf 2615))  ; unlinkn_all::list$object#20..mem_free
+(let ebase_2616 (Equal ebase_2581 ebase_2615))  ; =  ;; [ASSUME]
+(let ebase_2617 (Leaf 2617))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@2#2
+(let ebase_2618 (Equal ebase_2593 ebase_2617))  ; =  ;; [ASSUME]
+(let ebase_2619 (Leaf 2619))  ; slist_remove_all::1::unlinked!0@2#2
+(let ebase_2620 (Equal ebase_2617 ebase_2619))  ; =  ;; [ASSUME]
+(let ebase_2621 (Leaf 2621))  ; goto_symex::\guard#76
+(let ebase_2622 (Leaf 2622))  ; not
+(let ebase_2623 (Equal ebase_2621 ebase_2622))  ; =  ;; [ASSUME]
+(let ebase_2624 (Leaf 2624))  ; symex_dynamic::dynamic_object$0#3..head
+(let ebase_2625 (Equal ebase_95 ebase_2624))  ; =  ;; [ASSUME]
+(let ebase_2626 (Leaf 2626))  ; slist_remove_all::list$object#3..head
+(let ebase_2627 (Leaf 2627))  ; if
+(let ebase_2628 (Equal ebase_2626 ebase_2627))  ; =  ;; [ASSUME]
+(let ebase_2629 (Leaf 2629))  ; symex_dynamic::dynamic_object$0#3..tail
+(let ebase_2630 (Equal ebase_95 ebase_2629))  ; =  ;; [ASSUME]
+(let ebase_2631 (Leaf 2631))  ; slist_remove_all::list$object#3..tail
+(let ebase_2632 (Leaf 2632))  ; if
+(let ebase_2633 (Equal ebase_2631 ebase_2632))  ; =  ;; [ASSUME]
+(let ebase_2634 (Leaf 2634))  ; slist_remove_all::list$object#4..head
+(let ebase_2635 (Leaf 2635))  ; if
+(let ebase_2636 (Equal ebase_2634 ebase_2635))  ; =  ;; [ASSUME]
+(let ebase_2637 (Leaf 2637))  ; slist_remove_all::list$object#4..tail
+(let ebase_2638 (Leaf 2638))  ; if
+(let ebase_2639 (Equal ebase_2637 ebase_2638))  ; =  ;; [ASSUME]
+(let ebase_2640 (Leaf 2640))  ; symex_dynamic::dynamic_object$0#4..head
+(let ebase_2641 (Equal ebase_95 ebase_2640))  ; =  ;; [ASSUME]
+(let ebase_2642 (Leaf 2642))  ; symex_dynamic::dynamic_object$0#4..tail
+(let ebase_2643 (Equal ebase_95 ebase_2642))  ; =  ;; [ASSUME]
+(let ebase_2644 (Leaf 2644))  ; goto_symex::\guard#77
+(let ebase_2645 (Leaf 2645))  ; not
+(let ebase_2646 (Equal ebase_2644 ebase_2645))  ; =  ;; [ASSUME]
+(let ebase_2647 (Leaf 2647))  ; goto_symex::\guard#78
+(let ebase_2648 (Leaf 2648))  ; not
+(let ebase_2649 (Equal ebase_2647 ebase_2648))  ; =  ;; [ASSUME]
+(let ebase_2650 (Leaf 2650))  ; setup_test::$tmp::return_value_slist_new!0@1#1
+(let ebase_2651 (Leaf 2651))  ; slist_new::1::conf!0@1#1
+(let ebase_2652 (Leaf 2652))  ; struct
+(let ebase_2653 (Leaf 2653))  ; slist_new::1::conf!0@1#1..mem_alloc
+(let ebase_2654 (Leaf 2654))  ; slist_new::1::conf!0@1#1..mem_calloc
+(let ebase_2655 (Leaf 2655))  ; slist_new::1::conf!0@1#1..mem_free
+(let ebase_2656 (Leaf 2656))  ; slist_new::$tmp::return_value_slist_new_conf!0@1#1
+(let ebase_2657 (Leaf 2657))  ; slist_new_conf::1::list!0@1#1
+(let ebase_2658 (Leaf 2658))  ; slist_new_conf::$tmp::return_value!0@1#1
+(let ebase_2659 (Leaf 2659))  ; calloc::1::alloc_size!0@1#1
+(let ebase_2660 (Leaf 2660))  ; calloc::$tmp::tmp_overflow_result!0@1#1
+(let ebase_2661 (Leaf 2661))  ; struct
+(let ebase_2662 (Leaf 2662))  ; calloc::$tmp::tmp_overflow_result!0@1#1..value
+(let ebase_2663 (Leaf 2663))  ; calloc::$tmp::tmp_overflow_result!0@1#1..overflow-*
+(let ebase_2664 (Leaf 2664))  ; calloc::1::malloc_res!0@1#1
+(let ebase_2665 (Leaf 2665))  ; calloc::$tmp::malloc_value!0@1#1
+(let ebase_2666 (Leaf 2666))  ; slist_new::1::conf!0@2#1
+(let ebase_2667 (Leaf 2667))  ; struct
+(let ebase_2668 (Leaf 2668))  ; slist_new::1::conf!0@2#1..mem_alloc
+(let ebase_2669 (Leaf 2669))  ; slist_new::1::conf!0@2#1..mem_calloc
+(let ebase_2670 (Leaf 2670))  ; slist_new::1::conf!0@2#1..mem_free
+(let ebase_2671 (Leaf 2671))  ; slist_new::$tmp::return_value_slist_new_conf!0@2#1
+(let ebase_2672 (Leaf 2672))  ; slist_new_conf::1::list!0@2#1
+(let ebase_2673 (Leaf 2673))  ; slist_new_conf::$tmp::return_value!0@2#1
+(let ebase_2674 (Leaf 2674))  ; calloc::1::alloc_size!0@2#1
+(let ebase_2675 (Leaf 2675))  ; calloc::$tmp::tmp_overflow_result!0@2#1
+(let ebase_2676 (Leaf 2676))  ; struct
+(let ebase_2677 (Leaf 2677))  ; calloc::$tmp::tmp_overflow_result!0@2#1..value
+(let ebase_2678 (Leaf 2678))  ; calloc::$tmp::tmp_overflow_result!0@2#1..overflow-*
+(let ebase_2679 (Leaf 2679))  ; calloc::1::malloc_res!0@2#1
+(let ebase_2680 (Leaf 2680))  ; calloc::$tmp::malloc_value!0@2#1
+(let ebase_2681 (Leaf 2681))  ; main::1::s1!0@1#1
+(let ebase_2682 (Leaf 2682))  ; main::$tmp::return_value___nondet_int!0@1#1
+(let ebase_2683 (Leaf 2683))  ; main::1::str_s1!0@1#1
+(let ebase_2684 (Leaf 2684))  ; array
+(let ebase_2685 (Leaf 2685))  ; main::1::str_s1!0@1#1[[0]]
+(let ebase_2686 (Leaf 2686))  ; main::1::str_s1!0@1#1[[1]]
+(let ebase_2687 (Leaf 2687))  ; main::1::s2!0@1#1
+(let ebase_2688 (Leaf 2688))  ; main::$tmp::return_value___nondet_int$0!0@1#1
+(let ebase_2689 (Leaf 2689))  ; main::1::str_s2!0@1#1
+(let ebase_2690 (Leaf 2690))  ; array
+(let ebase_2691 (Leaf 2691))  ; main::1::str_s2!0@1#1[[0]]
+(let ebase_2692 (Leaf 2692))  ; main::1::str_s2!0@1#1[[1]]
+(let ebase_2693 (Leaf 2693))  ; main::1::s3!0@1#1
+(let ebase_2694 (Leaf 2694))  ; main::$tmp::return_value___nondet_int$1!0@1#1
+(let ebase_2695 (Leaf 2695))  ; main::1::str_s3!0@1#1
+(let ebase_2696 (Leaf 2696))  ; array
+(let ebase_2697 (Leaf 2697))  ; main::1::str_s3!0@1#1[[0]]
+(let ebase_2698 (Leaf 2698))  ; main::1::str_s3!0@1#1[[1]]
+(let ebase_2699 (Leaf 2699))  ; main::1::s4!0@1#1
+(let ebase_2700 (Leaf 2700))  ; main::$tmp::return_value___nondet_int$2!0@1#1
+(let ebase_2701 (Leaf 2701))  ; main::1::str_s4!0@1#1
+(let ebase_2702 (Leaf 2702))  ; array
+(let ebase_2703 (Leaf 2703))  ; main::1::str_s4!0@1#1[[0]]
+(let ebase_2704 (Leaf 2704))  ; main::1::str_s4!0@1#1[[1]]
+(let ebase_2705 (Leaf 2705))  ; main::$tmp::return_value_slist_add!0@1#1
+(let ebase_2706 (Leaf 2706))  ; slist_add::$tmp::return_value_slist_add_last!0@1#1
+(let ebase_2707 (Leaf 2707))  ; slist_add_last::1::node!0@1#1
+(let ebase_2708 (Leaf 2708))  ; slist_add_last::$tmp::return_value!0@1#1
+(let ebase_2709 (Leaf 2709))  ; calloc::1::alloc_size!0@3#1
+(let ebase_2710 (Leaf 2710))  ; calloc::$tmp::tmp_overflow_result!0@3#1
+(let ebase_2711 (Leaf 2711))  ; struct
+(let ebase_2712 (Leaf 2712))  ; calloc::$tmp::tmp_overflow_result!0@3#1..value
+(let ebase_2713 (Leaf 2713))  ; calloc::$tmp::tmp_overflow_result!0@3#1..overflow-*
+(let ebase_2714 (Leaf 2714))  ; calloc::1::malloc_res!0@3#1
+(let ebase_2715 (Leaf 2715))  ; calloc::$tmp::malloc_value!0@3#1
+(let ebase_2716 (Leaf 2716))  ; main::$tmp::return_value_slist_add$0!0@1#1
+(let ebase_2717 (Leaf 2717))  ; slist_add::$tmp::return_value_slist_add_last!0@2#1
+(let ebase_2718 (Leaf 2718))  ; slist_add_last::1::node!0@2#1
+(let ebase_2719 (Leaf 2719))  ; slist_add_last::$tmp::return_value!0@2#1
+(let ebase_2720 (Leaf 2720))  ; calloc::1::alloc_size!0@4#1
+(let ebase_2721 (Leaf 2721))  ; calloc::$tmp::tmp_overflow_result!0@4#1
+(let ebase_2722 (Leaf 2722))  ; struct
+(let ebase_2723 (Leaf 2723))  ; calloc::$tmp::tmp_overflow_result!0@4#1..value
+(let ebase_2724 (Leaf 2724))  ; calloc::$tmp::tmp_overflow_result!0@4#1..overflow-*
+(let ebase_2725 (Leaf 2725))  ; calloc::1::malloc_res!0@4#1
+(let ebase_2726 (Leaf 2726))  ; calloc::$tmp::malloc_value!0@4#1
+(let ebase_2727 (Leaf 2727))  ; main::$tmp::return_value_slist_add$1!0@1#1
+(let ebase_2728 (Leaf 2728))  ; slist_add::$tmp::return_value_slist_add_last!0@3#1
+(let ebase_2729 (Leaf 2729))  ; slist_add_last::1::node!0@3#1
+(let ebase_2730 (Leaf 2730))  ; slist_add_last::$tmp::return_value!0@3#1
+(let ebase_2731 (Leaf 2731))  ; calloc::1::alloc_size!0@5#1
+(let ebase_2732 (Leaf 2732))  ; calloc::$tmp::tmp_overflow_result!0@5#1
+(let ebase_2733 (Leaf 2733))  ; struct
+(let ebase_2734 (Leaf 2734))  ; calloc::$tmp::tmp_overflow_result!0@5#1..value
+(let ebase_2735 (Leaf 2735))  ; calloc::$tmp::tmp_overflow_result!0@5#1..overflow-*
+(let ebase_2736 (Leaf 2736))  ; calloc::1::malloc_res!0@5#1
+(let ebase_2737 (Leaf 2737))  ; calloc::$tmp::malloc_value!0@5#1
+(let ebase_2738 (Leaf 2738))  ; main::$tmp::return_value_slist_add$2!0@1#1
+(let ebase_2739 (Leaf 2739))  ; slist_add::$tmp::return_value_slist_add_last!0@4#1
+(let ebase_2740 (Leaf 2740))  ; slist_add_last::1::node!0@4#1
+(let ebase_2741 (Leaf 2741))  ; slist_add_last::$tmp::return_value!0@4#1
+(let ebase_2742 (Leaf 2742))  ; calloc::1::alloc_size!0@6#1
+(let ebase_2743 (Leaf 2743))  ; calloc::$tmp::tmp_overflow_result!0@6#1
+(let ebase_2744 (Leaf 2744))  ; struct
+(let ebase_2745 (Leaf 2745))  ; calloc::$tmp::tmp_overflow_result!0@6#1..value
+(let ebase_2746 (Leaf 2746))  ; calloc::$tmp::tmp_overflow_result!0@6#1..overflow-*
+(let ebase_2747 (Leaf 2747))  ; calloc::1::malloc_res!0@6#1
+(let ebase_2748 (Leaf 2748))  ; calloc::$tmp::malloc_value!0@6#1
+(let ebase_2749 (Leaf 2749))  ; slist_remove_all::1::unlinked!0@1#1
+(let ebase_2750 (Leaf 2750))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@1#1
+(let ebase_2751 (Leaf 2751))  ; unlinkn_all::1::n!0@1#1
+(let ebase_2752 (Leaf 2752))  ; unlinkn_all::1::1::tmp!0@1#1
+(let ebase_2753 (Leaf 2753))  ; malloc::1::malloc_res!0@1#1
+(let ebase_2754 (Leaf 2754))  ; malloc::$tmp::malloc_value!0@1#1
+(let ebase_2755 (Leaf 2755))  ; unlinkn_all::1::1::tmp!0@2#1
+(let ebase_2756 (Leaf 2756))  ; malloc::1::malloc_res!0@2#1
+(let ebase_2757 (Leaf 2757))  ; malloc::$tmp::malloc_value!0@2#1
+(let ebase_2758 (Leaf 2758))  ; unlinkn_all::1::1::tmp!0@3#1
+(let ebase_2759 (Leaf 2759))  ; malloc::1::malloc_res!0@3#1
+(let ebase_2760 (Leaf 2760))  ; malloc::$tmp::malloc_value!0@3#1
+(let ebase_2761 (Leaf 2761))  ; unlinkn_all::1::1::tmp!0@4#1
+(let ebase_2762 (Leaf 2762))  ; malloc::1::malloc_res!0@4#1
+(let ebase_2763 (Leaf 2763))  ; malloc::$tmp::malloc_value!0@4#1
+(let ebase_2764 (Leaf 2764))  ; malloc::1::malloc_res!0@5#1
+(let ebase_2765 (Leaf 2765))  ; malloc::$tmp::malloc_value!0@5#1
+(let ebase_2766 (Leaf 2766))  ; slist_remove_all::1::unlinked!0@2#1
+(let ebase_2767 (Leaf 2767))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@2#1
+(let ebase_2768 (Leaf 2768))  ; unlinkn_all::1::n!0@2#1
+(let ebase_2769 (Leaf 2769))  ; unlinkn_all::1::1::tmp!0@5#1
+(let ebase_2770 (Leaf 2770))  ; malloc::1::malloc_res!0@6#1
+(let ebase_2771 (Leaf 2771))  ; malloc::$tmp::malloc_value!0@6#1
+(let ebase_2772 (Leaf 2772))  ; unlinkn_all::1::1::tmp!0@6#1
+(let ebase_2773 (Leaf 2773))  ; malloc::1::malloc_res!0@7#1
+(let ebase_2774 (Leaf 2774))  ; malloc::$tmp::malloc_value!0@7#1
+(let ebase_2775 (Leaf 2775))  ; unlinkn_all::1::1::tmp!0@7#1
+(let ebase_2776 (Leaf 2776))  ; malloc::1::malloc_res!0@8#1
+(let ebase_2777 (Leaf 2777))  ; malloc::$tmp::malloc_value!0@8#1
+(let ebase_2778 (Leaf 2778))  ; unlinkn_all::1::1::tmp!0@8#1
+(let ebase_2779 (Leaf 2779))  ; malloc::1::malloc_res!0@9#1
+(let ebase_2780 (Leaf 2780))  ; malloc::$tmp::malloc_value!0@9#1
+(let ebase_2781 (Leaf 2781))  ; unlinkn_all::1::1::tmp!0@9#1
+(let ebase_2782 (Leaf 2782))  ; malloc::1::malloc_res!0@10#1
+(let ebase_2783 (Leaf 2783))  ; malloc::$tmp::malloc_value!0@10#1
+(let ebase_2784 (Leaf 2784))  ; symex::args::0
+(let ebase_2785 (Equal ebase_45 ebase_2784))  ; =  ;; [ASSUME]
+(let ebase_2786 (Leaf 2786))  ; symex::args::1
+(let ebase_2787 (Equal ebase_48 ebase_2786))  ; =  ;; [ASSUME]
+(let ebase_2788 (Leaf 2788))  ; symex::args::2
+(let ebase_2789 (Equal ebase_48 ebase_2788))  ; =  ;; [ASSUME]
+(let ebase_2790 (Leaf 2790))  ; symex::args::3
+(let ebase_2791 (Equal ebase_45 ebase_2790))  ; =  ;; [ASSUME]
+(let ebase_2792 (Leaf 2792))  ; symex::args::4
+(let ebase_2793 (Equal ebase_209 ebase_2792))  ; =  ;; [ASSUME]
+(let ebase_2794 (Leaf 2794))  ; symex::args::5
+(let ebase_2795 (Equal ebase_212 ebase_2794))  ; =  ;; [ASSUME]
+(let ebase_2796 (Leaf 2796))  ; symex::args::6
+(let ebase_2797 (Equal ebase_212 ebase_2796))  ; =  ;; [ASSUME]
+(let ebase_2798 (Leaf 2798))  ; symex::args::7
+(let ebase_2799 (Equal ebase_209 ebase_2798))  ; =  ;; [ASSUME]
+(let ebase_2800 (Leaf 2800))  ; symex::args::8
+(let ebase_2801 (Equal ebase_182 ebase_2800))  ; =  ;; [ASSUME]
+(let ebase_2802 (Leaf 2802))  ; symex::args::9
+(let ebase_2803 (Equal ebase_407 ebase_2802))  ; =  ;; [ASSUME]
+(let ebase_2804 (Leaf 2804))  ; symex::args::10
+(let ebase_2805 (Equal ebase_403 ebase_2804))  ; =  ;; [ASSUME]
+(let ebase_2806 (Leaf 2806))  ; symex::args::11
+(let ebase_2807 (Equal ebase_407 ebase_2806))  ; =  ;; [ASSUME]
+(let ebase_2808 (Leaf 2808))  ; symex::args::12
+(let ebase_2809 (Equal ebase_182 ebase_2808))  ; =  ;; [ASSUME]
+(let ebase_2810 (Leaf 2810))  ; symex::args::13
+(let ebase_2811 (Equal ebase_580 ebase_2810))  ; =  ;; [ASSUME]
+(let ebase_2812 (Leaf 2812))  ; symex::args::14
+(let ebase_2813 (Equal ebase_576 ebase_2812))  ; =  ;; [ASSUME]
+(let ebase_2814 (Leaf 2814))  ; symex::args::15
+(let ebase_2815 (Equal ebase_580 ebase_2814))  ; =  ;; [ASSUME]
+(let ebase_2816 (Leaf 2816))  ; symex::args::16
+(let ebase_2817 (Equal ebase_182 ebase_2816))  ; =  ;; [ASSUME]
+(let ebase_2818 (Leaf 2818))  ; symex::args::17
+(let ebase_2819 (Equal ebase_763 ebase_2818))  ; =  ;; [ASSUME]
+(let ebase_2820 (Leaf 2820))  ; symex::args::18
+(let ebase_2821 (Equal ebase_759 ebase_2820))  ; =  ;; [ASSUME]
+(let ebase_2822 (Leaf 2822))  ; symex::args::19
+(let ebase_2823 (Equal ebase_763 ebase_2822))  ; =  ;; [ASSUME]
+(let ebase_2824 (Leaf 2824))  ; symex::args::20
+(let ebase_2825 (Equal ebase_182 ebase_2824))  ; =  ;; [ASSUME]
+(let ebase_2826 (Leaf 2826))  ; symex::args::21
+(let ebase_2827 (Equal ebase_958 ebase_2826))  ; =  ;; [ASSUME]
+(let ebase_2828 (Leaf 2828))  ; symex::args::22
+(let ebase_2829 (Equal ebase_954 ebase_2828))  ; =  ;; [ASSUME]
+(let ebase_2830 (Leaf 2830))  ; symex::args::23
+(let ebase_2831 (Equal ebase_958 ebase_2830))  ; =  ;; [ASSUME]
+(let ebase_2832 (Leaf 2832))  ; symex::args::24
+(let ebase_2833 (Equal ebase_182 ebase_2832))  ; =  ;; [ASSUME]
+(let ebase_2834 (Leaf 2834))  ; symex::args::25
+(let ebase_2835 (Equal ebase_1167 ebase_2834))  ; =  ;; [ASSUME]
+(let ebase_2836 (Leaf 2836))  ; symex::args::26
+(let ebase_2837 (Equal ebase_182 ebase_2836))  ; =  ;; [ASSUME]
+(let ebase_2838 (Leaf 2838))  ; symex::args::27
+(let ebase_2839 (Equal ebase_1167 ebase_2838))  ; =  ;; [ASSUME]
+(let ebase_2840 (Leaf 2840))  ; symex::args::28
+(let ebase_2841 (Equal ebase_182 ebase_2840))  ; =  ;; [ASSUME]
+(let ebase_2842 (Leaf 2842))  ; symex::args::29
+(let ebase_2843 (Equal ebase_1206 ebase_2842))  ; =  ;; [ASSUME]
+(let ebase_2844 (Leaf 2844))  ; symex::args::30
+(let ebase_2845 (Equal ebase_14 ebase_2844))  ; =  ;; [ASSUME]
+(let ebase_2846 (Leaf 2846))  ; symex::args::31
+(let ebase_2847 (Equal ebase_1241 ebase_2846))  ; =  ;; [ASSUME]
+(let ebase_2848 (Leaf 2848))  ; symex::args::32
+(let ebase_2849 (Equal ebase_1240 ebase_2848))  ; =  ;; [ASSUME]
+(let ebase_2850 (Leaf 2850))  ; symex::args::33
+(let ebase_2851 (Equal ebase_1274 ebase_2850))  ; =  ;; [ASSUME]
+(let ebase_2852 (Leaf 2852))  ; symex::args::34
+(let ebase_2853 (Equal ebase_1357 ebase_2852))  ; =  ;; [ASSUME]
+(let ebase_2854 (Leaf 2854))  ; symex::args::35
+(let ebase_2855 (Equal ebase_1356 ebase_2854))  ; =  ;; [ASSUME]
+(let ebase_2856 (Leaf 2856))  ; symex::args::36
+(let ebase_2857 (Equal ebase_1378 ebase_2856))  ; =  ;; [ASSUME]
+(let ebase_2858 (Leaf 2858))  ; symex::args::37
+(let ebase_2859 (Equal ebase_1458 ebase_2858))  ; =  ;; [ASSUME]
+(let ebase_2860 (Leaf 2860))  ; symex::args::38
+(let ebase_2861 (Equal ebase_1457 ebase_2860))  ; =  ;; [ASSUME]
+(let ebase_2862 (Leaf 2862))  ; symex::args::39
+(let ebase_2863 (Equal ebase_1479 ebase_2862))  ; =  ;; [ASSUME]
+(let ebase_2864 (Leaf 2864))  ; symex::args::40
+(let ebase_2865 (Equal ebase_1558 ebase_2864))  ; =  ;; [ASSUME]
+(let ebase_2866 (Leaf 2866))  ; symex::args::41
+(let ebase_2867 (Equal ebase_1557 ebase_2866))  ; =  ;; [ASSUME]
+(let ebase_2868 (Leaf 2868))  ; symex::args::42
+(let ebase_2869 (Equal ebase_1579 ebase_2868))  ; =  ;; [ASSUME]
+(let ebase_2870 (Leaf 2870))  ; symex::args::43
+(let ebase_2871 (Equal ebase_1825 ebase_2870))  ; =  ;; [ASSUME]
+(let ebase_2872 (Leaf 2872))  ; symex::args::44
+(let ebase_2873 (Equal ebase_1824 ebase_2872))  ; =  ;; [ASSUME]
+(let ebase_2874 (Leaf 2874))  ; symex::args::45
+(let ebase_2875 (Equal ebase_1858 ebase_2874))  ; =  ;; [ASSUME]
+(let ebase_2876 (Leaf 2876))  ; symex::args::46
+(let ebase_2877 (Equal ebase_331 ebase_2876))  ; =  ;; [ASSUME]
+(let ebase_2878 (Leaf 2878))  ; symex::args::47
+(let ebase_2879 (Equal ebase_1915 ebase_2878))  ; =  ;; [ASSUME]
+(let ebase_2880 (Leaf 2880))  ; symex::args::48
+(let ebase_2881 (Equal ebase_15 ebase_2880))  ; =  ;; [ASSUME]
+(let ebase_2882 (Leaf 2882))  ; symex::args::49
+(let ebase_2883 (Equal ebase_1942 ebase_2882))  ; =  ;; [ASSUME]
+(let ebase_2884 (Leaf 2884))  ; symex::args::50
+(let ebase_2885 (Equal ebase_1941 ebase_2884))  ; =  ;; [ASSUME]
+(let ebase_2886 (Leaf 2886))  ; symex::args::51
+(let ebase_2887 (Equal ebase_1975 ebase_2886))  ; =  ;; [ASSUME]
+(let ebase_2888 (Leaf 2888))  ; symex::args::52
+(let ebase_2889 (Equal ebase_2052 ebase_2888))  ; =  ;; [ASSUME]
+(let ebase_2890 (Leaf 2890))  ; symex::args::53
+(let ebase_2891 (Equal ebase_2051 ebase_2890))  ; =  ;; [ASSUME]
+(let ebase_2892 (Leaf 2892))  ; symex::args::54
+(let ebase_2893 (Equal ebase_2085 ebase_2892))  ; =  ;; [ASSUME]
+(let ebase_2894 (Leaf 2894))  ; symex::args::55
+(let ebase_2895 (Equal ebase_2162 ebase_2894))  ; =  ;; [ASSUME]
+(let ebase_2896 (Leaf 2896))  ; symex::args::56
+(let ebase_2897 (Equal ebase_2161 ebase_2896))  ; =  ;; [ASSUME]
+(let ebase_2898 (Leaf 2898))  ; symex::args::57
+(let ebase_2899 (Equal ebase_2195 ebase_2898))  ; =  ;; [ASSUME]
+(let ebase_2900 (Leaf 2900))  ; symex::args::58
+(let ebase_2901 (Equal ebase_2272 ebase_2900))  ; =  ;; [ASSUME]
+(let ebase_2902 (Leaf 2902))  ; symex::args::59
+(let ebase_2903 (Equal ebase_2271 ebase_2902))  ; =  ;; [ASSUME]
+(let ebase_2904 (Leaf 2904))  ; symex::args::60
+(let ebase_2905 (Equal ebase_2305 ebase_2904))  ; =  ;; [ASSUME]
+(let ebase_2906 (Leaf 2906))  ; symex::args::61
+(let ebase_2907 (Equal ebase_2382 ebase_2906))  ; =  ;; [ASSUME]
+(let ebase_2908 (Leaf 2908))  ; symex::args::62
+(let ebase_2909 (Equal ebase_2381 ebase_2908))  ; =  ;; [ASSUME]
+(let ebase_2910 (Leaf 2910))  ; symex::args::63
+(let ebase_2911 (Equal ebase_2415 ebase_2910))  ; =  ;; [ASSUME]
+(let ebase_2912 (Type 2912))
+(let ebase_2913 (Leaf 2913))  ; object_size
+(let ebase_2914 (Typecast ebase_2912 ebase_2913))  ; typecast
+(let ebase_2915 (Const 32 2915))  ; const 20
+(let ebase_2916 (Const 40 2916))  ; const 28
+(let ebase_2917 (Const 48 2917))  ; const 30
+(let ebase_2918 (Leaf 2918))  ; object_size
+(let ebase_2919 (Typecast ebase_2912 ebase_2918))  ; typecast
+(let ebase_2920 (Leaf 2920))  ; pointer_object
+(let ebase_2921 (Null 2921))  ; const NULL
+(let ebase_2922 (Leaf 2922))  ; pointer_object
+(let ebase_2923 (Leaf 2923))  ; object_size
+(let ebase_2924 (Typecast ebase_2912 ebase_2923))  ; typecast
+(let ebase_2925 (Type 2925))
+(let ebase_2926 (Typecast ebase_2925 ebase_0))  ; typecast
+(let ebase_2927 (Const 32 2927))  ; const 20
+(let ebase_2928 (Plus ebase_2926 ebase_2927))  ; +
+(let ebase_2929 (Null 2929))  ; const NULL
+(let ebase_2930 (Leaf 2930))  ; pointer_object
+(let ebase_2931 (Leaf 2931))  ; pointer_object
+(let ebase_2932 (Leaf 2932))  ; pointer_object
+(let ebase_2933 (Leaf 2933))  ; pointer_object
+(let ebase_2934 (Leaf 2934))  ; pointer_object
+(let ebase_2935 (Leaf 2935))  ; object_size
+(let ebase_2936 (Typecast ebase_2912 ebase_2935))  ; typecast
+(let ebase_2937 (Leaf 2937))  ; if
+(let ebase_2938 (Typecast ebase_2912 ebase_92))  ; typecast
+(let ebase_2939 (Leaf 2939))  ; pointer_offset
+(let ebase_2940 (Typecast ebase_2912 ebase_2939))  ; typecast
+(let ebase_2941 (Leaf 2941))  ; object_size
+(let ebase_2942 (Typecast ebase_2912 ebase_2941))  ; typecast
+(let ebase_2943 (Leaf 2943))  ; object_size
+(let ebase_2944 (Typecast ebase_2912 ebase_2943))  ; typecast
+(let ebase_2945 (Const 8 2945))  ; const 8
+(let ebase_2946 (Leaf 2946))  ; pointer_object
+(let ebase_2947 (Null 2947))  ; const NULL
+(let ebase_2948 (Leaf 2948))  ; pointer_object
+(let ebase_2949 (Null 2949))  ; const NULL
+(let ebase_2950 (Const 16 2950))  ; const 10
+(let ebase_2951 (Const 8 2951))  ; const 8
+(let ebase_2952 (Plus ebase_2926 ebase_2951))  ; +
+(let ebase_2953 (Const 24 2953))  ; const 18
+(let ebase_2954 (Const 16 2954))  ; const 10
+(let ebase_2955 (Plus ebase_2926 ebase_2954))  ; +
+(let ebase_2956 (Leaf 2956))  ; pointer_object
+(let ebase_2957 (Leaf 2957))  ; pointer_object
+(let ebase_2958 (Leaf 2958))  ; object_size
+(let ebase_2959 (Typecast ebase_2912 ebase_2958))  ; typecast
+(let ebase_2960 (Leaf 2960))  ; pointer_offset
+(let ebase_2961 (Const 8 2961))  ; const 8
+(let ebase_2962 (Plus ebase_2960 ebase_2961))  ; +
+(let ebase_2963 (Typecast ebase_2912 ebase_2962))  ; typecast
+(let ebase_2964 (Plus ebase_2945 ebase_2963))  ; +
+(let ebase_2965 (Typecast ebase_2925 ebase_518))  ; typecast
+(let ebase_2966 (Plus ebase_2951 ebase_2965))  ; +
+(let ebase_2967 (Typecast ebase_205 ebase_574))  ; typecast
+(let ebase_2968 (Leaf 2968))  ; pointer_object
+(let ebase_2969 (Leaf 2969))  ; object_size
+(let ebase_2970 (Typecast ebase_2912 ebase_2969))  ; typecast
+(let ebase_2971 (Typecast ebase_2925 ebase_2))  ; typecast
+(let ebase_2972 (Plus ebase_2927 ebase_2971))  ; +
+(let ebase_2973 (Leaf 2973))  ; if
+(let ebase_2974 (Leaf 2974))  ; object_size
+(let ebase_2975 (Typecast ebase_2912 ebase_2974))  ; typecast
+(let ebase_2976 (Plus ebase_2951 ebase_2971))  ; +
+(let ebase_2977 (Plus ebase_2954 ebase_2971))  ; +
+(let ebase_2978 (Leaf 2978))  ; pointer_object
+(let ebase_2979 (Leaf 2979))  ; pointer_object
+(let ebase_2980 (Leaf 2980))  ; pointer_object
+(let ebase_2981 (Leaf 2981))  ; object_size
+(let ebase_2982 (Typecast ebase_2912 ebase_2981))  ; typecast
+(let ebase_2983 (Leaf 2983))  ; if
+(let ebase_2984 (Plus ebase_2961 ebase_2983))  ; +
+(let ebase_2985 (Typecast ebase_2912 ebase_2984))  ; typecast
+(let ebase_2986 (Plus ebase_2945 ebase_2985))  ; +
+(let ebase_2987 (Leaf 2987))  ; pointer_offset
+(let ebase_2988 (Leaf 2988))  ; object_size
+(let ebase_2989 (Typecast ebase_2912 ebase_2988))  ; typecast
+(let ebase_2990 (Leaf 2990))  ; if
+(let ebase_2991 (Plus ebase_2951 ebase_2990))  ; +
+(let ebase_2992 (Typecast ebase_2925 ebase_3))  ; typecast
+(let ebase_2993 (Typecast ebase_2925 ebase_566))  ; typecast
+(let ebase_2994 (Typecast ebase_205 ebase_757))  ; typecast
+(let ebase_2995 (Leaf 2995))  ; pointer_object
+(let ebase_2996 (Leaf 2996))  ; object_size
+(let ebase_2997 (Typecast ebase_2912 ebase_2996))  ; typecast
+(let ebase_2998 (Typecast ebase_2925 ebase_5))  ; typecast
+(let ebase_2999 (Plus ebase_2927 ebase_2998))  ; +
+(let ebase_3000 (Leaf 3000))  ; if
+(let ebase_3001 (Leaf 3001))  ; object_size
+(let ebase_3002 (Typecast ebase_2912 ebase_3001))  ; typecast
+(let ebase_3003 (Plus ebase_2951 ebase_2998))  ; +
+(let ebase_3004 (Plus ebase_2954 ebase_2998))  ; +
+(let ebase_3005 (Leaf 3005))  ; pointer_object
+(let ebase_3006 (Leaf 3006))  ; pointer_object
+(let ebase_3007 (Leaf 3007))  ; pointer_object
+(let ebase_3008 (Leaf 3008))  ; object_size
+(let ebase_3009 (Typecast ebase_2912 ebase_3008))  ; typecast
+(let ebase_3010 (Leaf 3010))  ; if
+(let ebase_3011 (Plus ebase_2961 ebase_3010))  ; +
+(let ebase_3012 (Typecast ebase_2912 ebase_3011))  ; typecast
+(let ebase_3013 (Plus ebase_2945 ebase_3012))  ; +
+(let ebase_3014 (Leaf 3014))  ; pointer_offset
+(let ebase_3015 (Leaf 3015))  ; object_size
+(let ebase_3016 (Typecast ebase_2912 ebase_3015))  ; typecast
+(let ebase_3017 (Leaf 3017))  ; if
+(let ebase_3018 (Plus ebase_2951 ebase_3017))  ; +
+(let ebase_3019 (Typecast ebase_2925 ebase_6))  ; typecast
+(let ebase_3020 (Typecast ebase_2925 ebase_8))  ; typecast
+(let ebase_3021 (Typecast ebase_205 ebase_952))  ; typecast
+(let ebase_3022 (Leaf 3022))  ; pointer_object
+(let ebase_3023 (Leaf 3023))  ; object_size
+(let ebase_3024 (Typecast ebase_2912 ebase_3023))  ; typecast
+(let ebase_3025 (Typecast ebase_2925 ebase_9))  ; typecast
+(let ebase_3026 (Plus ebase_2927 ebase_3025))  ; +
+(let ebase_3027 (Leaf 3027))  ; if
+(let ebase_3028 (Leaf 3028))  ; object_size
+(let ebase_3029 (Typecast ebase_2912 ebase_3028))  ; typecast
+(let ebase_3030 (Plus ebase_2951 ebase_3025))  ; +
+(let ebase_3031 (Plus ebase_2954 ebase_3025))  ; +
+(let ebase_3032 (Leaf 3032))  ; pointer_object
+(let ebase_3033 (Leaf 3033))  ; pointer_object
+(let ebase_3034 (Leaf 3034))  ; pointer_object
+(let ebase_3035 (Leaf 3035))  ; object_size
+(let ebase_3036 (Typecast ebase_2912 ebase_3035))  ; typecast
+(let ebase_3037 (Leaf 3037))  ; if
+(let ebase_3038 (Plus ebase_2961 ebase_3037))  ; +
+(let ebase_3039 (Typecast ebase_2912 ebase_3038))  ; typecast
+(let ebase_3040 (Plus ebase_2945 ebase_3039))  ; +
+(let ebase_3041 (Leaf 3041))  ; pointer_offset
+(let ebase_3042 (Leaf 3042))  ; object_size
+(let ebase_3043 (Typecast ebase_2912 ebase_3042))  ; typecast
+(let ebase_3044 (Leaf 3044))  ; if
+(let ebase_3045 (Plus ebase_2951 ebase_3044))  ; +
+(let ebase_3046 (Typecast ebase_2925 ebase_10))  ; typecast
+(let ebase_3047 (Typecast ebase_2925 ebase_12))  ; typecast
+(let ebase_3048 (Typecast ebase_205 ebase_1162))  ; typecast
+(let ebase_3049 (Leaf 3049))  ; pointer_object
+(let ebase_3050 (Leaf 3050))  ; object_size
+(let ebase_3051 (Typecast ebase_2912 ebase_3050))  ; typecast
+(let ebase_3052 (Typecast ebase_2925 ebase_1164))  ; typecast
+(let ebase_3053 (Plus ebase_2951 ebase_3052))  ; +
+(let ebase_3054 (Leaf 3054))  ; pointer_object
+(let ebase_3055 (Leaf 3055))  ; slist_get_first::list$object#0..head
+(let ebase_3056 (Leaf 3056))  ; pointer_object
+(let ebase_3057 (Null 3057))  ; const NULL
+(let ebase_3058 (Leaf 3058))  ; pointer_object
+(let ebase_3059 (Leaf 3059))  ; object_size
+(let ebase_3060 (Typecast ebase_2912 ebase_3059))  ; typecast
+(let ebase_3061 (Leaf 3061))  ; if
+(let ebase_3062 (Plus ebase_2945 ebase_3061))  ; +
+(let ebase_3063 (Leaf 3063))  ; pointer_offset
+(let ebase_3064 (Typecast ebase_2912 ebase_3063))  ; typecast
+(let ebase_3065 (Leaf 3065))  ; object_size
+(let ebase_3066 (Typecast ebase_2912 ebase_3065))  ; typecast
+(let ebase_3067 (Leaf 3067))  ; pointer_object
+(let ebase_3068 (Leaf 3068))  ; object_size
+(let ebase_3069 (Typecast ebase_2912 ebase_3068))  ; typecast
+(let ebase_3070 (Typecast ebase_2925 ebase_1186))  ; typecast
+(let ebase_3071 (Plus ebase_2954 ebase_3070))  ; +
+(let ebase_3072 (Leaf 3072))  ; pointer_object
+(let ebase_3073 (Leaf 3073))  ; slist_get_last::list$object#0..tail
+(let ebase_3074 (Leaf 3074))  ; pointer_object
+(let ebase_3075 (Leaf 3075))  ; object_size
+(let ebase_3076 (Typecast ebase_2912 ebase_3075))  ; typecast
+(let ebase_3077 (Leaf 3077))  ; if
+(let ebase_3078 (Plus ebase_2945 ebase_3077))  ; +
+(let ebase_3079 (Leaf 3079))  ; pointer_offset
+(let ebase_3080 (Typecast ebase_2912 ebase_3079))  ; typecast
+(let ebase_3081 (Leaf 3081))  ; object_size
+(let ebase_3082 (Typecast ebase_2912 ebase_3081))  ; typecast
+(let ebase_3083 (Leaf 3083))  ; pointer_object
+(let ebase_3084 (Leaf 3084))  ; object_size
+(let ebase_3085 (Typecast ebase_2912 ebase_3084))  ; typecast
+(let ebase_3086 (Typecast ebase_2925 ebase_13))  ; typecast
+(let ebase_3087 (Plus ebase_2951 ebase_3086))  ; +
+(let ebase_3088 (Leaf 3088))  ; pointer_object
+(let ebase_3089 (Leaf 3089))  ; object_size
+(let ebase_3090 (Typecast ebase_2912 ebase_3089))  ; typecast
+(let ebase_3091 (Leaf 3091))  ; pointer_offset
+(let ebase_3092 (Plus ebase_2961 ebase_3091))  ; +
+(let ebase_3093 (Typecast ebase_2912 ebase_3092))  ; typecast
+(let ebase_3094 (Plus ebase_2945 ebase_3093))  ; +
+(let ebase_3095 (Leaf 3095))  ; pointer_object
+(let ebase_3096 (Null 3096))  ; const NULL
+(let ebase_3097 (Const 40 3097))  ; const 28
+(let ebase_3098 (Plus ebase_3086 ebase_3097))  ; +
+(let ebase_3099 (Leaf 3099))  ; pointer_object
+(let ebase_3100 (Leaf 3100))  ; pointer_object
+(let ebase_3101 (Leaf 3101))  ; pointer_object
+(let ebase_3102 (Leaf 3102))  ; object_size
+(let ebase_3103 (Typecast ebase_2912 ebase_3102))  ; typecast
+(let ebase_3104 (Leaf 3104))  ; if
+(let ebase_3105 (Leaf 3105))  ; pointer_offset
+(let ebase_3106 (Typecast ebase_2912 ebase_3105))  ; typecast
+(let ebase_3107 (Leaf 3107))  ; object_size
+(let ebase_3108 (Typecast ebase_2912 ebase_3107))  ; typecast
+(let ebase_3109 (Typecast ebase_2912 ebase_3091))  ; typecast
+(let ebase_3110 (Leaf 3110))  ; pointer_object
+(let ebase_3111 (Leaf 3111))  ; pointer_object
+(let ebase_3112 (Leaf 3112))  ; object_size
+(let ebase_3113 (Typecast ebase_2912 ebase_3112))  ; typecast
+(let ebase_3114 (Leaf 3114))  ; pointer_offset
+(let ebase_3115 (Typecast ebase_2912 ebase_3114))  ; typecast
+(let ebase_3116 (Leaf 3116))  ; pointer_object
+(let ebase_3117 (Leaf 3117))  ; pointer_object
+(let ebase_3118 (Leaf 3118))  ; object_size
+(let ebase_3119 (Typecast ebase_2912 ebase_3118))  ; typecast
+(let ebase_3120 (Leaf 3120))  ; pointer_offset
+(let ebase_3121 (Typecast ebase_2912 ebase_3120))  ; typecast
+(let ebase_3122 (Leaf 3122))  ; pointer_object
+(let ebase_3123 (Leaf 3123))  ; pointer_object
+(let ebase_3124 (Leaf 3124))  ; object_size
+(let ebase_3125 (Typecast ebase_2912 ebase_3124))  ; typecast
+(let ebase_3126 (Leaf 3126))  ; pointer_offset
+(let ebase_3127 (Typecast ebase_2912 ebase_3126))  ; typecast
+(let ebase_3128 (Leaf 3128))  ; pointer_object
+(let ebase_3129 (Leaf 3129))  ; pointer_object
+(let ebase_3130 (Leaf 3130))  ; pointer_object
+(let ebase_3131 (Leaf 3131))  ; object_size
+(let ebase_3132 (Typecast ebase_2912 ebase_3131))  ; typecast
+(let ebase_3133 (Typecast ebase_2925 ebase_14))  ; typecast
+(let ebase_3134 (Plus ebase_2951 ebase_3133))  ; +
+(let ebase_3135 (Plus ebase_2954 ebase_3133))  ; +
+(let ebase_3136 (Leaf 3136))  ; pointer_object
+(let ebase_3137 (Leaf 3137))  ; object_size
+(let ebase_3138 (Typecast ebase_2912 ebase_3137))  ; typecast
+(let ebase_3139 (Typecast ebase_2925 ebase_1206))  ; typecast
+(let ebase_3140 (Plus ebase_3097 ebase_3139))  ; +
+(let ebase_3141 (Leaf 3141))  ; pointer_object
+(let ebase_3142 (Leaf 3142))  ; object_size
+(let ebase_3143 (Typecast ebase_2912 ebase_3142))  ; typecast
+(let ebase_3144 (Leaf 3144))  ; if
+(let ebase_3145 (Leaf 3145))  ; pointer_offset
+(let ebase_3146 (Typecast ebase_2912 ebase_3145))  ; typecast
+(let ebase_3147 (Leaf 3147))  ; pointer_offset
+(let ebase_3148 (Typecast ebase_2912 ebase_3147))  ; typecast
+(let ebase_3149 (Leaf 3149))  ; pointer_object
+(let ebase_3150 (Leaf 3150))  ; pointer_object
+(let ebase_3151 (Leaf 3151))  ; object_size
+(let ebase_3152 (Typecast ebase_2912 ebase_3151))  ; typecast
+(let ebase_3153 (Typecast ebase_2925 ebase_1918))  ; typecast
+(let ebase_3154 (Plus ebase_2951 ebase_3153))  ; +
+(let ebase_3155 (Leaf 3155))  ; pointer_object
+(let ebase_3156 (Leaf 3156))  ; object_size
+(let ebase_3157 (Typecast ebase_2912 ebase_3156))  ; typecast
+(let ebase_3158 (Leaf 3158))  ; pointer_offset
+(let ebase_3159 (Plus ebase_2961 ebase_3158))  ; +
+(let ebase_3160 (Typecast ebase_2912 ebase_3159))  ; typecast
+(let ebase_3161 (Plus ebase_2945 ebase_3160))  ; +
+(let ebase_3162 (Plus ebase_3097 ebase_3153))  ; +
+(let ebase_3163 (Typecast ebase_2912 ebase_3158))  ; typecast
+(let ebase_3164 (Leaf 3164))  ; pointer_object
+(let ebase_3165 (Leaf 3165))  ; pointer_object
+(let ebase_3166 (Leaf 3166))  ; object_size
+(let ebase_3167 (Typecast ebase_2912 ebase_3166))  ; typecast
+(let ebase_3168 (Leaf 3168))  ; pointer_offset
+(let ebase_3169 (Plus ebase_2961 ebase_3168))  ; +
+(let ebase_3170 (Typecast ebase_2912 ebase_3169))  ; typecast
+(let ebase_3171 (Plus ebase_2945 ebase_3170))  ; +
+(let ebase_3172 (Leaf 3172))  ; pointer_object
+(let ebase_3173 (Typecast ebase_2912 ebase_3168))  ; typecast
+(let ebase_3174 (Leaf 3174))  ; pointer_object
+(let ebase_3175 (Leaf 3175))  ; pointer_object
+(let ebase_3176 (Leaf 3176))  ; object_size
+(let ebase_3177 (Typecast ebase_2912 ebase_3176))  ; typecast
+(let ebase_3178 (Leaf 3178))  ; pointer_offset
+(let ebase_3179 (Plus ebase_2961 ebase_3178))  ; +
+(let ebase_3180 (Typecast ebase_2912 ebase_3179))  ; typecast
+(let ebase_3181 (Plus ebase_2945 ebase_3180))  ; +
+(let ebase_3182 (Leaf 3182))  ; pointer_object
+(let ebase_3183 (Typecast ebase_2912 ebase_3178))  ; typecast
+(let ebase_3184 (Leaf 3184))  ; pointer_object
+(let ebase_3185 (Leaf 3185))  ; pointer_object
+(let ebase_3186 (Leaf 3186))  ; object_size
+(let ebase_3187 (Typecast ebase_2912 ebase_3186))  ; typecast
+(let ebase_3188 (Leaf 3188))  ; pointer_offset
+(let ebase_3189 (Plus ebase_2961 ebase_3188))  ; +
+(let ebase_3190 (Typecast ebase_2912 ebase_3189))  ; typecast
+(let ebase_3191 (Plus ebase_2945 ebase_3190))  ; +
+(let ebase_3192 (Leaf 3192))  ; pointer_object
+(let ebase_3193 (Typecast ebase_2912 ebase_3188))  ; typecast
+(let ebase_3194 (Leaf 3194))  ; pointer_object
+(let ebase_3195 (Leaf 3195))  ; pointer_object
+(let ebase_3196 (Leaf 3196))  ; object_size
+(let ebase_3197 (Typecast ebase_2912 ebase_3196))  ; typecast
+(let ebase_3198 (Leaf 3198))  ; pointer_offset
+(let ebase_3199 (Plus ebase_2961 ebase_3198))  ; +
+(let ebase_3200 (Typecast ebase_2912 ebase_3199))  ; typecast
+(let ebase_3201 (Plus ebase_2945 ebase_3200))  ; +
+(let ebase_3202 (Leaf 3202))  ; pointer_object
+(let ebase_3203 (Typecast ebase_2912 ebase_3198))  ; typecast
+(let ebase_3204 (Leaf 3204))  ; pointer_object
+(let ebase_3205 (Leaf 3205))  ; pointer_object
+(let ebase_3206 (Leaf 3206))  ; pointer_object
+(let ebase_3207 (Leaf 3207))  ; object_size
+(let ebase_3208 (Typecast ebase_2912 ebase_3207))  ; typecast
+(let ebase_3209 (Typecast ebase_2925 ebase_15))  ; typecast
+(let ebase_3210 (Plus ebase_2951 ebase_3209))  ; +
+(let ebase_3211 (Plus ebase_2954 ebase_3209))  ; +
+(let ebase_3212 (Leaf 3212))  ; pointer_object
+(let ebase_3213 (Leaf 3213))  ; object_size
+(let ebase_3214 (Typecast ebase_2912 ebase_3213))  ; typecast
+(let ebase_3215 (Typecast ebase_2925 ebase_1915))  ; typecast
+(let ebase_3216 (Plus ebase_3097 ebase_3215))  ; +
+(let ebase_3217 (Leaf 3217))  ; pointer_object
+(let ebase_3218 (Leaf 3218))  ; if
+(let ebase_3219 (Leaf 3219))  ; object_size
+(let ebase_3220 (Typecast ebase_2912 ebase_3219))  ; typecast
+(let ebase_3221 (Leaf 3221))  ; pointer_offset
+(let ebase_3222 (Typecast ebase_2912 ebase_3221))  ; typecast
+(let ebase_3223 (Typecast ebase_88 ebase_1915))  ; typecast
+(let ebase_3224 (Leaf 3224))  ; or  ;; [ASSUME]
+(let ebase_3225 (Leaf 3225))  ; or  ;; [ASSUME]

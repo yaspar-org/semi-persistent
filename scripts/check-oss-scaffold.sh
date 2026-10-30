@@ -41,6 +41,9 @@ while IFS= read -r source; do
         scripts/egglog-compare/programs/*) continue ;;
         # Exact upstream bytes, hashed in the corpus manifests; retain egglog's MIT license.
         scripts/egglog-examples/fixtures/*/*/upstream.egg) continue ;;
+        # Converted from CBMC's e-graph dumps; the programs they come from keep their own
+        # licences (egraph/tests/egg/cbmc/README.md).
+        egraph/tests/egg/cbmc/*.egg) continue ;;
     esac
     if [[ "$source" == *.egg ]] &&
         head -n 6 "$source" | grep -Eq "egglog (tests/|'s tests)|from egglog"; then

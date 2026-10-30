@@ -4,6 +4,10 @@
 
 ### Added
 
+- `egraph/tests/egg/cbmc/`: 214 programs converted from 107 CBMC e-graph dumps (a
+  `base` and a `cong` e-graph per dump, up to 42,120 nodes each), with the converter
+  `scripts/cbmc-egg-convert.py`. `cbmc_corpus` in `egg_tests.rs` loads and rebuilds every
+  one under naive and semi-naive evaluation.
 - `(query fact ... :limit n)` prints a query's matches, each named variable as a term
   extracted from its class, ordered by content colour so the output does not depend on
   class ids.

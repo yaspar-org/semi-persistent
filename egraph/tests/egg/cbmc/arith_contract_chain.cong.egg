@@ -1,0 +1,95 @@
+;; Converted from the CBMC e-graph dump arith_contract_chain.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Leaf 1))  ; __CPROVER_deallocated#1
+(let econg_2 (Equal econg_0 econg_1))  ; =  ;; [ASSUME]
+(let econg_3 (Leaf 3))  ; __CPROVER_max_malloc_size!0#1
+(let econg_4 (Const 36028797018963968 4))  ; const 80000000000000
+(let econg_5 (Equal econg_3 econg_4))  ; =  ;; [ASSUME]
+(let econg_6 (Leaf 6))  ; __CPROVER_memory_leak#1
+(let econg_7 (Equal econg_0 econg_6))  ; =  ;; [ASSUME]
+(let econg_8 (Leaf 8))  ; __CPROVER_rounding_mode!0#1
+(let econg_9 (Const 0 9))  ; const 0
+(let econg_10 (Equal econg_8 econg_9))  ; =  ;; [ASSUME]
+(let econg_11 (Leaf 11))  ; verify_buffer_ops::$tmp::return_value_nondet_int!0@1#2
+(let econg_12 (Leaf 12))  ; verify_buffer_ops::$tmp::return_value_nondet_int!0@1#2
+(let econg_13 (Equal econg_11 econg_12))  ; =  ;; [ASSUME]
+(let econg_14 (Leaf 14))  ; verify_buffer_ops::1::b1!0@1#2..size
+(let econg_15 (Type 15))
+(let econg_16 (Typecast econg_15 econg_11))  ; verify_buffer_ops::1::b1!0@1#2..size
+(let econg_17 (Equal econg_14 econg_16))  ; =  ;; [ASSUME]
+(let econg_18 (Leaf 18))  ; verify_buffer_ops::$tmp::return_value_nondet_int$0!0@1#2
+(let econg_19 (Leaf 19))  ; verify_buffer_ops::$tmp::return_value_nondet_int$0!0@1#2
+(let econg_20 (Equal econg_18 econg_19))  ; =  ;; [ASSUME]
+(let econg_21 (Leaf 21))  ; verify_buffer_ops::1::b1!0@1#2..capacity
+(let econg_22 (Typecast econg_15 econg_18))  ; verify_buffer_ops::1::b1!0@1#2..capacity
+(let econg_23 (Equal econg_21 econg_22))  ; =  ;; [ASSUME]
+(let econg_24 (Leaf 24))  ; verify_buffer_ops::1::b2!0@1#2..data
+(let econg_25 (Leaf 25))  ; verify_buffer_ops::1::b1!0@1#1..data
+(let econg_26 (Equal econg_24 econg_25))  ; =  ;; [ASSUME]
+(let econg_27 (Leaf 27))  ; verify_buffer_ops::1::b1!0@1#2..size
+(let econg_28 (Equal econg_14 econg_27))  ; =  ;; [ASSUME]
+(let econg_29 (Leaf 29))  ; verify_buffer_ops::1::b1!0@1#2..capacity
+(let econg_30 (Equal econg_21 econg_29))  ; =  ;; [ASSUME]
+(let econg_31 (Leaf 31))  ; verify_buffer_ops::1::b1!0@1#2..size
+(let econg_32 (Equal econg_14 econg_31))  ; =  ;; [ASSUME]
+(let econg_33 (Leaf 33))  ; verify_buffer_ops::1::b1!0@1#2..capacity
+(let econg_34 (Equal econg_21 econg_33))  ; =  ;; [ASSUME]
+(let econg_35 (Leaf 35))  ; verify_buffer_ops::1::b1!0@1#2..size
+(let econg_36 (Equal econg_14 econg_35))  ; =  ;; [ASSUME]
+(let econg_37 (Leaf 37))  ; verify_buffer_ops::1::b1!0@1#2..size
+(let econg_38 (Equal econg_14 econg_37))  ; =  ;; [ASSUME]
+(let econg_39 (Leaf 39))  ; verify_buffer_ops::1::b1!0@1#1
+(let econg_40 (Leaf 40))  ; struct
+(let econg_41 (Leaf 41))  ; verify_buffer_ops::1::b1!0@1#1..size
+(let econg_42 (Leaf 42))  ; verify_buffer_ops::1::b1!0@1#1..capacity
+(let econg_43 (Leaf 43))  ; verify_buffer_ops::1::b2!0@1#1
+(let econg_44 (Leaf 44))  ; struct
+(let econg_45 (Leaf 45))  ; verify_buffer_ops::1::b2!0@1#1..data
+(let econg_46 (Leaf 46))  ; verify_buffer_ops::1::b2!0@1#1..size
+(let econg_47 (Leaf 47))  ; verify_buffer_ops::1::b2!0@1#1..capacity
+(let econg_48 (Leaf 48))  ; verify_buffer_ops::1::b3!0@1#1
+(let econg_49 (Leaf 49))  ; struct
+(let econg_50 (Leaf 50))  ; verify_buffer_ops::1::b3!0@1#1..data
+(let econg_51 (Leaf 51))  ; verify_buffer_ops::1::b3!0@1#1..size
+(let econg_52 (Leaf 52))  ; verify_buffer_ops::1::b3!0@1#1..capacity
+(let econg_53 (Leaf 53))  ; verify_buffer_ops::1::b4!0@1#1
+(let econg_54 (Leaf 54))  ; struct
+(let econg_55 (Leaf 55))  ; verify_buffer_ops::1::b4!0@1#1..data
+(let econg_56 (Leaf 56))  ; verify_buffer_ops::1::b4!0@1#1..size
+(let econg_57 (Leaf 57))  ; verify_buffer_ops::1::b4!0@1#1..capacity
+(let econg_58 (Leaf 58))  ; verify_buffer_ops::$tmp::return_value_nondet_int!0@1#1
+(let econg_59 (Leaf 59))  ; verify_buffer_ops::$tmp::return_value_nondet_int$0!0@1#1
+(let econg_60 (Const 1 60))  ; const 1
+(let econg_61 (Const 1000 61))  ; const 3E8
+(let econg_62 (Leaf 62))  ; >=  ;; [ASSUME]
+(let econg_63 (Leaf 63))  ; >=  ;; [ASSUME]
+(let econg_64 (Leaf 64))  ; not  ;; [ASSUME]
+(let econg_65 (Leaf 65))  ; >=  ;; [ASSERT]
+(let econg_66 (Leaf 66))  ; const true  ;; [ASSUME]
+(union econg_11 econg_12)
+(union econg_14 econg_16)
+(union econg_18 econg_19)
+(union econg_21 econg_22)
+(union econg_14 econg_27)
+(union econg_21 econg_29)
+(union econg_14 econg_31)
+(union econg_21 econg_33)
+(union econg_14 econg_35)
+(union econg_14 econg_37)

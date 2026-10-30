@@ -1,0 +1,47 @@
+;; Converted from the CBMC e-graph dump regr_Malloc18.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Leaf 3))  ; init::1::buffer_size!0@1#1
+(let ebase_4 (Const 1 4))  ; const 1
+(let ebase_5 (Null 5))  ; const NULL
+(let ebase_6 (Leaf 6))  ; nondet_symbol
+(let ebase_7 (Leaf 7))  ; symex_dynamic::dynamic_object#1[[0]]
+(let ebase_8 (Leaf 8))  ; index
+(let ebase_9 (Type 9))
+(let ebase_10 (Leaf 10))  ; address_of
+(let ebase_11 (Typecast ebase_9 ebase_10))  ; typecast
+(let ebase_12 (Type 12))
+(let ebase_13 (Const 0 13))  ; const 0
+(let ebase_14 (Typecast ebase_12 ebase_13))  ; typecast
+(let ebase_15 (Const 10 15))  ; const A
+(let ebase_16 (Leaf 16))  ; if
+(let ebase_17 (Leaf 17))  ; goto_symex::return_value::init!0#3
+(let ebase_18 (Leaf 18))  ; main::$tmp::return_value_init!0@1#2
+(let ebase_19 (Leaf 19))  ; main::1::ret!0@1#2
+(let ebase_20 (Leaf 20))  ; main::1::ret!0@1#1
+(let ebase_21 (Leaf 21))  ; main::$tmp::return_value_init!0@1#1
+(let ebase_22 (Leaf 22))  ; init::1::buffer!0@1#1
+(let ebase_23 (Leaf 23))  ; init::$tmp::malloc_value!0@1#1
+(let ebase_24 (Leaf 24))  ; main::1::1::r!0@1#1
+(let ebase_25 (Type 25))
+(let ebase_26 (Leaf 26))  ; object_size
+(let ebase_27 (Typecast ebase_25 ebase_26))  ; typecast
+(let ebase_28 (Const 1 28))  ; const 1

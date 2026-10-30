@@ -1,0 +1,85 @@
+;; Converted from the CBMC e-graph dump arith_contract_chain.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Leaf 1))  ; __CPROVER_deallocated#1
+(let ebase_2 (Equal ebase_0 ebase_1))  ; =  ;; [ASSUME]
+(let ebase_3 (Leaf 3))  ; __CPROVER_max_malloc_size!0#1
+(let ebase_4 (Const 36028797018963968 4))  ; const 80000000000000
+(let ebase_5 (Equal ebase_3 ebase_4))  ; =  ;; [ASSUME]
+(let ebase_6 (Leaf 6))  ; __CPROVER_memory_leak#1
+(let ebase_7 (Equal ebase_0 ebase_6))  ; =  ;; [ASSUME]
+(let ebase_8 (Leaf 8))  ; __CPROVER_rounding_mode!0#1
+(let ebase_9 (Const 0 9))  ; const 0
+(let ebase_10 (Equal ebase_8 ebase_9))  ; =  ;; [ASSUME]
+(let ebase_11 (Leaf 11))  ; verify_buffer_ops::$tmp::return_value_nondet_int!0@1#2
+(let ebase_12 (Leaf 12))  ; nondet_symbol
+(let ebase_13 (Equal ebase_11 ebase_12))  ; =  ;; [ASSUME]
+(let ebase_14 (Leaf 14))  ; verify_buffer_ops::1::b1!0@1#2..size
+(let ebase_15 (Type 15))
+(let ebase_16 (Typecast ebase_15 ebase_11))  ; typecast
+(let ebase_17 (Equal ebase_14 ebase_16))  ; =  ;; [ASSUME]
+(let ebase_18 (Leaf 18))  ; verify_buffer_ops::$tmp::return_value_nondet_int$0!0@1#2
+(let ebase_19 (Leaf 19))  ; nondet_symbol
+(let ebase_20 (Equal ebase_18 ebase_19))  ; =  ;; [ASSUME]
+(let ebase_21 (Leaf 21))  ; verify_buffer_ops::1::b1!0@1#2..capacity
+(let ebase_22 (Typecast ebase_15 ebase_18))  ; typecast
+(let ebase_23 (Equal ebase_21 ebase_22))  ; =  ;; [ASSUME]
+(let ebase_24 (Leaf 24))  ; verify_buffer_ops::1::b2!0@1#2..data
+(let ebase_25 (Leaf 25))  ; verify_buffer_ops::1::b1!0@1#1..data
+(let ebase_26 (Equal ebase_24 ebase_25))  ; =  ;; [ASSUME]
+(let ebase_27 (Leaf 27))  ; verify_buffer_ops::1::b2!0@1#2..size
+(let ebase_28 (Equal ebase_14 ebase_27))  ; =  ;; [ASSUME]
+(let ebase_29 (Leaf 29))  ; verify_buffer_ops::1::b2!0@1#2..capacity
+(let ebase_30 (Equal ebase_21 ebase_29))  ; =  ;; [ASSUME]
+(let ebase_31 (Leaf 31))  ; verify_buffer_ops::1::b3!0@1#2..size
+(let ebase_32 (Equal ebase_27 ebase_31))  ; =  ;; [ASSUME]
+(let ebase_33 (Leaf 33))  ; verify_buffer_ops::1::b3!0@1#2..capacity
+(let ebase_34 (Equal ebase_29 ebase_33))  ; =  ;; [ASSUME]
+(let ebase_35 (Leaf 35))  ; verify_buffer_ops::1::b4!0@1#2..size
+(let ebase_36 (Equal ebase_31 ebase_35))  ; =  ;; [ASSUME]
+(let ebase_37 (Leaf 37))  ; verify_buffer_ops::1::b4!0@1#2..capacity
+(let ebase_38 (Equal ebase_31 ebase_37))  ; =  ;; [ASSUME]
+(let ebase_39 (Leaf 39))  ; verify_buffer_ops::1::b1!0@1#1
+(let ebase_40 (Leaf 40))  ; struct
+(let ebase_41 (Leaf 41))  ; verify_buffer_ops::1::b1!0@1#1..size
+(let ebase_42 (Leaf 42))  ; verify_buffer_ops::1::b1!0@1#1..capacity
+(let ebase_43 (Leaf 43))  ; verify_buffer_ops::1::b2!0@1#1
+(let ebase_44 (Leaf 44))  ; struct
+(let ebase_45 (Leaf 45))  ; verify_buffer_ops::1::b2!0@1#1..data
+(let ebase_46 (Leaf 46))  ; verify_buffer_ops::1::b2!0@1#1..size
+(let ebase_47 (Leaf 47))  ; verify_buffer_ops::1::b2!0@1#1..capacity
+(let ebase_48 (Leaf 48))  ; verify_buffer_ops::1::b3!0@1#1
+(let ebase_49 (Leaf 49))  ; struct
+(let ebase_50 (Leaf 50))  ; verify_buffer_ops::1::b3!0@1#1..data
+(let ebase_51 (Leaf 51))  ; verify_buffer_ops::1::b3!0@1#1..size
+(let ebase_52 (Leaf 52))  ; verify_buffer_ops::1::b3!0@1#1..capacity
+(let ebase_53 (Leaf 53))  ; verify_buffer_ops::1::b4!0@1#1
+(let ebase_54 (Leaf 54))  ; struct
+(let ebase_55 (Leaf 55))  ; verify_buffer_ops::1::b4!0@1#1..data
+(let ebase_56 (Leaf 56))  ; verify_buffer_ops::1::b4!0@1#1..size
+(let ebase_57 (Leaf 57))  ; verify_buffer_ops::1::b4!0@1#1..capacity
+(let ebase_58 (Leaf 58))  ; verify_buffer_ops::$tmp::return_value_nondet_int!0@1#1
+(let ebase_59 (Leaf 59))  ; verify_buffer_ops::$tmp::return_value_nondet_int$0!0@1#1
+(let ebase_60 (Const 1 60))  ; const 1
+(let ebase_61 (Const 1000 61))  ; const 3E8
+(let ebase_62 (Leaf 62))  ; >=  ;; [ASSUME]
+(let ebase_63 (Leaf 63))  ; >=  ;; [ASSUME]
+(let ebase_64 (Leaf 64))  ; not  ;; [ASSUME]
+(let ebase_65 (Leaf 65))  ; >=  ;; [ASSERT]
+(let ebase_66 (Leaf 66))  ; const true  ;; [ASSUME]

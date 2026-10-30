@@ -1,0 +1,166 @@
+;; Converted from the CBMC e-graph dump regr_Malloc8.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Leaf 0))  ; main::1::ptr_ptr_p1!0@1#2
+(let econg_1 (Leaf 1))  ; address_of
+(let econg_2 (Leaf 2))  ; main::1::ptr_p!0@1#2
+(let econg_3 (Leaf 3))  ; address_of
+(let econg_4 (Leaf 4))  ; symex_dynamic::dynamic_object#3
+(let econg_5 (Leaf 5))  ; main::1::ptr_ptr_p1$object#1
+(let econg_6 (Null 6))  ; const NULL
+(let econg_7 (Const 36028797018963968 7))  ; const 80000000000000
+(let econg_8 (Const 0 8))  ; const 0
+(let econg_9 (Const 8 9))  ; const 8
+(let econg_10 (Leaf 10))  ; nondet_symbol
+(let econg_11 (Type 11))
+(let econg_12 (Typecast econg_11 econg_1))  ; typecast
+(let econg_13 (Leaf 13))  ; if
+(let econg_14 (Leaf 14))  ; if
+(let econg_15 (Leaf 15))  ; __CPROVER_memory_leak#2
+(let econg_16 (Leaf 16))  ; if
+(let econg_17 (Leaf 17))  ; symex_dynamic::dynamic_object#1
+(let econg_18 (Leaf 18))  ; goto_symex::return_value::malloc!0#3
+(let econg_19 (Type 19))
+(let econg_20 (Leaf 20))  ; main::$tmp::return_value_malloc!0@1#2
+(let econg_21 (Typecast econg_19 econg_20))  ; typecast
+(let econg_22 (Leaf 22))  ; nondet_symbol
+(let econg_23 (Leaf 23))  ; member
+(let econg_24 (Typecast econg_11 econg_3))  ; typecast
+(let econg_25 (Leaf 25))  ; if
+(let econg_26 (Leaf 26))  ; __CPROVER_memory_leak#3
+(let econg_27 (Leaf 27))  ; if
+(let econg_28 (Leaf 28))  ; __CPROVER_memory_leak#4
+(let econg_29 (Leaf 29))  ; if
+(let econg_30 (Leaf 30))  ; symex_dynamic::dynamic_object$0#1..name
+(let econg_31 (Leaf 31))  ; goto_symex::return_value::malloc!0#6
+(let econg_32 (Leaf 32))  ; if
+(let econg_33 (Type 33))
+(let econg_34 (Leaf 34))  ; main::$tmp::return_value_malloc$0!0@1#2
+(let econg_35 (Typecast econg_33 econg_34))  ; typecast
+(let econg_36 (Leaf 36))  ; symex_dynamic::dynamic_object#2
+(let econg_37 (Leaf 37))  ; if
+(let econg_38 (Leaf 38))  ; main::1::ptr_ptr_p1$object#0
+(let econg_39 (Leaf 39))  ; if
+(let econg_40 (Leaf 40))  ; if
+(let econg_41 (Leaf 41))  ; address_of
+(let econg_42 (Const 1 42))  ; const 1
+(let econg_43 (Type 43))
+(let econg_44 (Const 0 44))  ; const 0
+(let econg_45 (Typecast econg_43 econg_44))  ; typecast
+(let econg_46 (Leaf 46))  ; symex_dynamic::dynamic_object$0#2..name
+(let econg_47 (Leaf 47))  ; if
+(let econg_48 (Leaf 48))  ; main::1::ptr_p$object#0..name
+(let econg_49 (Leaf 49))  ; address_of
+(let econg_50 (Leaf 50))  ; if
+(let econg_51 (Leaf 51))  ; symex_dynamic::dynamic_object$0#3..name
+(let econg_52 (Leaf 52))  ; main::1::ptr_p$object#1..name
+(let econg_53 (Leaf 53))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@1#2
+(let econg_54 (Leaf 54))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@1#2
+(let econg_55 (Leaf 55))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@1#2
+(let econg_56 (Leaf 56))  ; array
+(let econg_57 (Leaf 57))  ; address_of
+(let econg_58 (Typecast econg_11 econg_57))  ; typecast
+(let econg_59 (Leaf 59))  ; address_of
+(let econg_60 (Null 60))  ; const NULL
+(let econg_61 (Leaf 61))  ; if
+(let econg_62 (Leaf 62))  ; if
+(let econg_63 (Leaf 63))  ; symex::invalid_object!0#0..name
+(let econg_64 (Leaf 64))  ; if
+(let econg_65 (Leaf 65))  ; symex_dynamic::dynamic_object$0#4..name
+(let econg_66 (Leaf 66))  ; if
+(let econg_67 (Leaf 67))  ; main::1::ptr_ptr_p1$object$object#0..name
+(let econg_68 (Leaf 68))  ; if
+(let econg_69 (Leaf 69))  ; if
+(let econg_70 (Leaf 70))  ; symex_dynamic::dynamic_object$0#5..name
+(let econg_71 (Leaf 71))  ; symex::invalid_object$0!0#0..name
+(let econg_72 (Leaf 72))  ; if
+(let econg_73 (Leaf 73))  ; main::1::ptr_ptr_p1$object$object#1..name
+(let econg_74 (Leaf 74))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@2#2
+(let econg_75 (Leaf 75))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@2#2
+(let econg_76 (Leaf 76))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@2#2
+(let econg_77 (Leaf 77))  ; array
+(let econg_78 (Leaf 78))  ; address_of
+(let econg_79 (Typecast econg_11 econg_78))  ; typecast
+(let econg_80 (Leaf 80))  ; address_of
+(let econg_81 (Leaf 81))  ; address_of
+(let econg_82 (Leaf 82))  ; main::1::ptr_ptr_p1!0@1#1
+(let econg_83 (Leaf 83))  ; main::$tmp::return_value_malloc!0@1#1
+(let econg_84 (Leaf 84))  ; malloc::1::malloc_res!0@1#1
+(let econg_85 (Leaf 85))  ; malloc::$tmp::malloc_value!0@1#1
+(let econg_86 (Leaf 86))  ; main::$tmp::return_value_malloc$0!0@1#1
+(let econg_87 (Leaf 87))  ; malloc::1::malloc_res!0@2#1
+(let econg_88 (Leaf 88))  ; malloc::$tmp::malloc_value!0@2#1
+(let econg_89 (Leaf 89))  ; main::1::ptr_p!0@1#1
+(let econg_90 (Leaf 90))  ; printf::1::result!0@1#1
+(let econg_91 (Leaf 91))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@1#1
+(let econg_92 (Leaf 92))  ; printf::1::list!0@1#1
+(let econg_93 (Leaf 93))  ; printf::1::result!0@2#1
+(let econg_94 (Leaf 94))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@2#1
+(let econg_95 (Leaf 95))  ; printf::1::list!0@2#1
+(let econg_96 (Leaf 96))  ; main::1::ptr_ptr_p2!0@1#1
+(let econg_97 (Leaf 97))  ; symex::args::0
+(let econg_98 (Leaf 98))  ; symex::args::1
+(let econg_99 (Leaf 99))  ; symex::args::2
+(let econg_100 (Leaf 100))  ; symex::args::3
+(let econg_101 (Leaf 101))  ; symex::io::0
+(let econg_102 (Leaf 102))  ; symex::io::1
+(let econg_103 (Leaf 103))  ; pointer_object
+(let econg_104 (Null 104))  ; const NULL
+(let econg_105 (Leaf 105))  ; pointer_object
+(let econg_106 (Type 106))
+(let econg_107 (Leaf 107))  ; object_size
+(let econg_108 (Typecast econg_106 econg_107))  ; typecast
+(let econg_109 (Const 8 109))  ; const 8
+(let econg_110 (Leaf 110))  ; pointer_object
+(let econg_111 (Null 111))  ; const NULL
+(let econg_112 (Leaf 112))  ; pointer_object
+(let econg_113 (Leaf 113))  ; pointer_object
+(let econg_114 (Leaf 114))  ; object_size
+(let econg_115 (Typecast econg_106 econg_114))  ; typecast
+(let econg_116 (Leaf 116))  ; pointer_offset
+(let econg_117 (Typecast econg_106 econg_116))  ; typecast
+(let econg_118 (Plus econg_109 econg_117))  ; +
+(let econg_119 (Null 119))  ; const NULL
+(let econg_120 (Leaf 120))  ; pointer_object
+(let econg_121 (Leaf 121))  ; pointer_object
+(let econg_122 (Leaf 122))  ; object_size
+(let econg_123 (Typecast econg_106 econg_122))  ; typecast
+(let econg_124 (Leaf 124))  ; if
+(let econg_125 (Plus econg_109 econg_124))  ; +
+(let econg_126 (Const 0 126))  ; const 0
+(let econg_127 (Leaf 127))  ; pointer_offset
+(let econg_128 (Typecast econg_106 econg_127))  ; typecast
+(let econg_129 (Leaf 129))  ; object_size
+(let econg_130 (Typecast econg_106 econg_129))  ; typecast
+(let econg_131 (Leaf 131))  ; pointer_object
+(let econg_132 (Leaf 132))  ; object_size
+(let econg_133 (Typecast econg_106 econg_132))  ; typecast
+(let econg_134 (Leaf 134))  ; pointer_offset
+(let econg_135 (Typecast econg_106 econg_134))  ; typecast
+(let econg_136 (Plus econg_109 econg_135))  ; +
+(let econg_137 (Leaf 137))  ; pointer_object
+(let econg_138 (Leaf 138))  ; main::1::ptr_ptr_p2$object#0
+(let econg_139 (Leaf 139))  ; object_size
+(let econg_140 (Typecast econg_106 econg_139))  ; typecast
+(let econg_141 (Leaf 141))  ; pointer_offset
+(let econg_142 (Typecast econg_106 econg_141))  ; typecast
+(let econg_143 (Plus econg_109 econg_142))  ; +
+(union econg_53 econg_54)
+(union econg_53 econg_55)
+(union econg_74 econg_75)
+(union econg_74 econg_76)
