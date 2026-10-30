@@ -1286,6 +1286,9 @@ where
                 0
             }
         }
+        // TODO(abs-saturation-engine): a rule-head `(refine t v)` (a `CompiledAction` variant
+        // from #1) evaluates `t` and meets `v` into its class through the seed path; it counts as
+        // a change only if the value shrank, see egraph/doc/future/abstract-engine-task.md §2
         CompiledAction::Insert(t) => {
             eval(t, env, eg, model, globals)?;
             1

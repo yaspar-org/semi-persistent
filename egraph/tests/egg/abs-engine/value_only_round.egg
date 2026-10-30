@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; EVAL: both
+;; A value-only change reaches the next semi-naive round (eclass-analysis.md §3
+;; requirement 5, abstract-engine-task.md §4). Round 0 refines x by a rule head;
+;; the rebuild then shrinks y = (add x 1) without creating a node or merging a
+;; class. The guarded rule matches y only in round 1, under both strategies.
+(sort Int :interp int :domains (interval))
+(sort Obs)
+(function add (Int Int) Int :interp +)
+(function X () Int)
+(function In (Int) Obs)
+(function Yes () Obs)
+(let x (X))
+(let y (add x 1))
+(rule ((= r (X))) ((refine r (interval 0 9))))
+(rule ((= r (add a b)) (within r 1 10)) ((union (In r) (Yes))))
+(run 4)
+(check-eq (In y) (Yes))

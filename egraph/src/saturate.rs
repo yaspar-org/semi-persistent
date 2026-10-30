@@ -113,6 +113,8 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
+    // TODO(abs-saturation-engine): an abstract conflict met by the last rebuild stops the run
+    // here, as a width error does, see egraph/doc/future/abstract-engine-task.md §5
     match eg.take_width_error() {
         None => Ok(()),
         Some(e) => Err(crate::lit_model::EvalError {
@@ -387,6 +389,9 @@ where
     // Outside the round loop: the pool's whole purpose is to survive rounds.
     let mut pool = MatchPool::new();
     for i in 0..spec.limit {
+        // TODO(abs-saturation-engine): start a budget epoch: each class may change its value a
+        // bounded number of times per run iteration, see
+        // egraph/doc/future/abstract-engine-task.md §3
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
             eg.rebuild();
@@ -869,6 +874,9 @@ where
     // round runs one query per (rule, join atom), all of similar match count.
     let mut pool = MatchPool::new();
     for i in 0..limit {
+        // TODO(abs-saturation-engine): start a budget epoch: each class may change its value a
+        // bounded number of times per run iteration, see
+        // egraph/doc/future/abstract-engine-task.md §3
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
             eg.rebuild();
@@ -883,6 +891,9 @@ where
         };
         // delta = everything touched since the previous round's index build
         // (fresh nodes from the last round's apply + this round's recanon).
+        // TODO(abs-saturation-engine): value-only changes made by the rebuild above must be in
+        // `eg.touched()` here, or a rule guarded on `(within ...)` misses its new match, see
+        // egraph/doc/future/abstract-engine-task.md §4
         let delta = if i == 0 {
             None
         } else {

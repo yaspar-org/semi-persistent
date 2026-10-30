@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; x = x + 1 terminates within the budget (eclass-analysis.md §3 requirement 4,
+;; abstract-engine-task.md §3). The class of x contains (add x 1), so a forward
+;; step raises the lower bound by 1 and a backward step lowers the upper bound by
+;; 1. The meet empties after about 2^61 steps, since x = x + 1 has no model. The
+;; per-class budget stops the chain first, so the run ends with a sound value.
+(sort Int :interp int :domains (interval))
+(sort Obs)
+(function add (Int Int) Int :interp +)
+(function X () Int)
+(function In (Int) Obs)
+(function Yes () Obs)
+(let x (X))
+(refine x (interval 0 4611686018427387904))
+(union x (add x 1))
+(rule ((= r (X)) (within r 0 4611686018427387904)) ((union (In r) (Yes))))
+(run 10)
+(check-eq (In x) (Yes))
