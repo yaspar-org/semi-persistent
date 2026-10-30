@@ -45,6 +45,7 @@ pub mod lattice;
 pub mod nats;
 pub mod pair_mul;
 pub mod reduce;
+pub mod registry;
 pub mod semantics;
 pub mod sign;
 pub mod strided;
