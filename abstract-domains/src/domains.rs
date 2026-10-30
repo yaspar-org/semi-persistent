@@ -263,6 +263,7 @@ macro_rules! abstract_domain {
             // ============================================================
             // ExecTnum: Executable Tnum
             // ============================================================
+            // TODO(abs-domain-registry): the `bits` field of Facts<W> is the Word port of this ExecTnum (#108), not this per-width macro, see abstract-domains/doc/future/registry-task.md §2
             #[derive(Clone, Copy)]
             pub struct ExecTnum { pub val: $uint, pub mask: $uint }
 

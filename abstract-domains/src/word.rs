@@ -25,6 +25,7 @@ use vstd::std_specs::bits::*;
 
 verus! {
 
+// TODO(abs-domain-registry): add the bitwise and shift operations and their lemmas that Bitwise and Shift on Facts<W> need, see abstract-domains/doc/future/registry-task.md §4
 pub trait Word: Sized + Copy {
     /// Width in bits.
     spec fn bits() -> nat;
@@ -702,6 +703,7 @@ macro_rules! impl_word {
     };
 }
 
+// TODO(abs-domain-registry): the registry supports exactly these 5 widths; every other (bitvec N) is top until a Bits<N> Word exists, see abstract-domains/doc/future/registry-task.md §2
 impl_word!(u8, 8, 0x100, u8, tz_u8, u64, mulmod_via_u64);
 impl_word!(u16, 16, 0x1_0000, u16, tz_u16, u64, mulmod_via_u64);
 impl_word!(u32, 32, 0x1_0000_0000, u32, tz_u32, u64, mulmod_via_u64);

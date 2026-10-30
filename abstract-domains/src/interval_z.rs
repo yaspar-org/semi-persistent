@@ -137,6 +137,7 @@ fn hi_le(a: &Hi, b: &Hi) -> (r: bool)
     }
 }
 
+// TODO(abs-domain-registry): the registry entry stores these bounds as i64 with infinities, rounded outward, see abstract-domains/doc/future/registry-task.md §3
 /// `{x | lo <= x <= hi}`.
 pub struct IntervalZ {
     lo: Lo,
@@ -516,6 +517,7 @@ impl Arith<Trunc> for IntervalZ {
     }
 }
 
+// TODO(abs-domain-registry): add Mul<Euclid> and Compare<Euclid> for IntervalZ (Int `*`, `<`, `<=`, `=`), see abstract-domains/doc/future/registry-task.md §4
 impl DivRem<Euclid> for IntervalZ {
     fn contains_zero(&self) -> (b: bool) {
         self.contains_zero_int()

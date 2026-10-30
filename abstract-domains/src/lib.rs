@@ -39,6 +39,7 @@ pub mod interval_z;
 pub mod lattice;
 pub mod nats;
 pub mod reduce;
+// TODO(abs-domain-registry): add `pub mod registry;` here (src/registry.rs) and name it in the module doc above, see abstract-domains/doc/future/registry-task.md §5
 pub mod semantics;
 pub mod tbit;
 pub mod tnum;

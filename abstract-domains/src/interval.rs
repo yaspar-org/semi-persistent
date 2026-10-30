@@ -575,6 +575,7 @@ impl<W: Word> Interval<W> {
     }
 }
 
+// TODO(abs-domain-registry): add Compare<Unsigned<W>> and Compare<Signed<W>> for Interval<W>; the Facts<W> comparisons read the `u` field through them, see abstract-domains/doc/future/registry-task.md §4
 /// Signed division is sound but coarse (top): an unsigned interval straddling
 /// 2^(N-1) is two signed ranges. Precise signed transfers split at the sign
 /// boundary (Verasco's normalization, Jourdan thesis ch. 5) and are future work.

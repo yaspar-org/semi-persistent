@@ -29,6 +29,8 @@ use vstd::prelude::*;
 
 verus! {
 
+// TODO(abs-domain-registry): add the fields `s` (sbounds), `c` (congruence) and `bits` (known bits); the record keeps every field and a domain mask selects them, see abstract-domains/doc/future/registry-task.md §2
+// TODO(abs-domain-registry): give Facts<W> a fixed-width Copy encoding into the registry entry (2 words per field, W bytes with all 4 fields) with a proved decode(encode(f)) == f, see abstract-domains/doc/future/registry-task.md §3
 pub struct Facts<W> {
     /// Unsigned bounds.
     u: Interval<W>,
@@ -39,6 +41,7 @@ impl<W: Word> Facts<W> {
         self.u
     }
 
+    // TODO(abs-domain-registry): parameterize `reduced` and `normalize` by the domain mask: a disabled field stays top and its reduction steps are skipped, see abstract-domains/doc/future/registry-task.md §6
     /// The fields agree: no field can be tightened from the others. Trivially
     /// true with one field; the planned normalize steps extend it.
     pub open spec fn reduced(&self) -> bool {
@@ -57,6 +60,7 @@ impl<W: Word> Facts<W> {
         Facts { u }
     }
 
+    // TODO(abs-domain-registry): add `as_constant` here: Some(v) exactly when gamma is {v}; the registry's is_singleton calls it, see abstract-domains/doc/future/registry-task.md §5
     pub fn interval(&self) -> (r: Interval<W>)
         requires
             self.wf(),
