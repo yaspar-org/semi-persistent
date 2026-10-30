@@ -7,6 +7,11 @@
 //! are ordinary Rust: they are checked exhaustively by runtime tests, while
 //! the value and transfer layer added below them is verified in Verus.
 
+use crate::bool4::Bool4;
+use crate::facts::Facts;
+use crate::facts_z::FactsZ;
+use crate::lattice::Domain;
+
 /// Native bit-vector widths supported by `Word`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Width {
@@ -149,6 +154,51 @@ pub const fn default_domains(carrier: Carrier) -> DomainSet {
     }
 }
 
+/// An in-memory registry value.
+///
+/// This is intentionally an ergonomic Rust enum rather than the compact
+/// class-storage representation. `encode` and `decode` will be the only
+/// boundary that exposes its fixed-size byte representation to the e-graph
+/// storage layer.
+pub enum Value {
+    Bool(Bool4),
+    Int(FactsZ),
+    Bv8(Facts<u8>),
+    Bv16(Facts<u16>),
+    Bv32(Facts<u32>),
+    Bv64(Facts<u64>),
+    Bv128(Facts<u128>),
+    /// The unique value for a top-only carrier.
+    Top,
+}
+
+/// Number of bytes in the class-layer entry for one carrier.
+///
+/// The current records contain only their available interval field: two
+/// native words for a bit-vector and two `i64` bounds for integers.
+pub const fn entry_size(carrier: Carrier) -> usize {
+    match carrier {
+        Carrier::Bool => 1,
+        Carrier::Int => 16,
+        Carrier::BitVec(width) => (width.bits() / 4) as usize,
+        Carrier::TopOnly { .. } => 0,
+    }
+}
+
+/// The least precise non-bottom analysis value for a carrier.
+pub fn top(carrier: Carrier) -> Value {
+    match carrier {
+        Carrier::Bool => Value::Bool(<Bool4 as Domain>::top()),
+        Carrier::Int => Value::Int(<FactsZ as Domain>::top()),
+        Carrier::BitVec(Width::W8) => Value::Bv8(<Facts<u8> as Domain>::top()),
+        Carrier::BitVec(Width::W16) => Value::Bv16(<Facts<u16> as Domain>::top()),
+        Carrier::BitVec(Width::W32) => Value::Bv32(<Facts<u32> as Domain>::top()),
+        Carrier::BitVec(Width::W64) => Value::Bv64(<Facts<u64> as Domain>::top()),
+        Carrier::BitVec(Width::W128) => Value::Bv128(<Facts<u128> as Domain>::top()),
+        Carrier::TopOnly { .. } => Value::Top,
+    }
+}
+
 /// An SMT-LIB operator accepted by the first registry implementation.
 ///
 /// The enum keeps the textual parser out of the verified transfer layer.  A
@@ -224,6 +274,14 @@ const fn is_bv(c: Carrier) -> bool {
     matches!(c, Carrier::BitVec(_) | Carrier::TopOnly { .. })
 }
 
+const fn carrier_bits(c: Carrier) -> Option<u32> {
+    match c {
+        Carrier::BitVec(width) => Some(width.bits()),
+        Carrier::TopOnly { bits } => Some(bits),
+        Carrier::Bool | Carrier::Int => None,
+    }
+}
+
 fn binary_same(args: &[Carrier]) -> Result<Carrier, OpError> {
     if args.len() == 2 && same(args[0], args[1]) {
         Ok(args[0])
@@ -295,6 +353,10 @@ pub fn op(name: &str, args: &[Carrier]) -> Result<(Op, Carrier), OpError> {
             } else {
                 Err(OpError::Signature)
             };
+        }
+        "concat" if args.len() == 2 && is_bv(args[0]) && is_bv(args[1]) => {
+            let bits = carrier_bits(args[0]).unwrap() + carrier_bits(args[1]).unwrap();
+            return Ok((Op::Concat, carrier_of_bitvec(bits).unwrap()));
         }
         "-" if args == [Int] => return Ok((Op::Neg, Int)),
         _ => {}
@@ -384,11 +446,6 @@ pub fn op(name: &str, args: &[Carrier]) -> Result<(Op, Carrier), OpError> {
         "bvsle" => bv_binary(Op::BvSle).map(|(o, _)| (o, Bool)),
         "bvsgt" => bv_binary(Op::BvSgt).map(|(o, _)| (o, Bool)),
         "bvsge" => bv_binary(Op::BvSge).map(|(o, _)| (o, Bool)),
-        "concat" if args.len() == 2 && is_bv(args[0]) && is_bv(args[1]) => {
-            // The parser supplies the resulting width for concat; until then
-            // preserve a top-only carrier rather than guess a native width.
-            Ok((Op::Concat, Carrier::TopOnly { bits: 0 }))
-        }
         _ => Err(OpError::Unknown),
     }
 }
@@ -427,6 +484,10 @@ mod tests {
         assert_eq!(op("bvadd", &[bv, bv]), Ok((Op::BvAdd, bv)));
         assert_eq!(op("bvult", &[bv, bv]), Ok((Op::BvUlt, Carrier::Bool)));
         assert_eq!(
+            op("concat", &[bv, bv]),
+            Ok((Op::Concat, Carrier::BitVec(Width::W16)))
+        );
+        assert_eq!(
             op("+", &[Carrier::Int, Carrier::Int]),
             Ok((Op::Add, Carrier::Int))
         );
@@ -435,5 +496,15 @@ mod tests {
             Err(OpError::Signature)
         );
         assert_eq!(op("unknown", &[bv]), Err(OpError::Unknown));
+    }
+
+    #[test]
+    fn entry_table_uses_fixed_carrier_sizes() {
+        assert_eq!(entry_size(Carrier::Bool), 1);
+        assert_eq!(entry_size(Carrier::Int), 16);
+        assert_eq!(entry_size(Carrier::BitVec(Width::W8)), 2);
+        assert_eq!(entry_size(Carrier::BitVec(Width::W128)), 32);
+        assert_eq!(entry_size(Carrier::TopOnly { bits: 7 }), 0);
+        assert!(matches!(top(Carrier::TopOnly { bits: 7 }), Value::Top));
     }
 }
