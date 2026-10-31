@@ -2492,6 +2492,7 @@ pub enum ResolvedAction<O, S, L> {
     // TODO(abs-surface-syntax): add `Refine(RRhsTerm<O, S, L>, AbsValue)`, see egraph/doc/future/abstract-syntax-task.md §4
     Union(RRhsTerm<O, S, L>, RRhsTerm<O, S, L>),
     Insert(RRhsTerm<O, S, L>),
+    Refine(RRhsTerm<O, S, L>, crate::abs_syntax::AbsValueLit),
     Set {
         func: O,
         args: Vec<RRhsTerm<O, S, L>>,
@@ -2525,7 +2526,11 @@ where
             let rt = resolve_rhs(t, None, ops, sorts, model, ctx, globals)?;
             Ok(ResolvedAction::Insert(rt))
         }
-        // TODO(abs-surface-syntax): add an `Action::Refine` arm: resolve the term with `resolve_rhs`, then check the value against the domains enabled on its sort, as for the top-level refine, see egraph/doc/future/abstract-syntax-task.md §3
+        Action::Refine(term, value) => {
+            let rt = resolve_rhs(term, None, ops, sorts, model, ctx, globals)?;
+            // TODO(abs-surface-syntax): check the value against the domains enabled on its sort
+            Ok(ResolvedAction::Refine(rt, value.clone()))
+        }
         Action::Set { func, .. } => {
             // Lattice `set` parses but has no semantics yet (`apply.rs` would reach a
             // `todo!` when the rule fired). Refused here, when the rule is installed, so a

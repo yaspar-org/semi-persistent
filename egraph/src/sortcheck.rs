@@ -1361,7 +1361,7 @@ where
 {
     // Declarations: register into egraph, then wrap as Decl
     match &cmd {
-        Command::Sort(_) | Command::Function { .. } | Command::Datatype { .. } => {
+        Command::Sort { .. } | Command::Function { .. } | Command::Datatype { .. } => {
             // Use the interpreter's existing exec_function / intern_sort logic
             // by delegating to the egraph directly.
             exec_decl(&cmd, eg, model, globals)?;
@@ -1576,7 +1576,7 @@ where
 {
     match cmd {
         // TODO(abs-surface-syntax): validate `:interp` and `:domains` against the registry (or the stub list until abs-domain-registry lands), apply the carrier's default set, and record carrier and mask in `SortRegistry`, see egraph/doc/future/abstract-syntax-task.md §3
-        Command::Sort(name) => {
+        Command::Sort { name, interp: _, domains: _ } => {
             eg.intern_sort(name);
         }
         Command::Function {
@@ -1585,6 +1585,7 @@ where
             ret_sort,
             tags,
             meta,
+            ..
         } => {
             let ret = eg
                 .sorts()
