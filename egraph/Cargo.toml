@@ -38,7 +38,7 @@ slow-tests = []
 
 [dependencies]
 semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.3.0", features = ["literal-types"] }
-vstd = "=0.0.0-2026-09-20-0158"
+vstd = "=0.0.0-2026-10-18-0147"
 clap = { version = "4.6.0", features = ["derive"] }
 num-bigint.workspace = true
 num-rational.workspace = true
@@ -61,7 +61,7 @@ winnow.workspace = true
 # version once the fork is released there.
 cadical-sys = { git = "https://github.com/leeabarnett/cadical-sys.git", branch = "cadical-3.0.1" }
 rustsat = "0.7"
-roto = "0.12"
+roto = "0.13"
 serde_json = "1"
 
 [dev-dependencies]
