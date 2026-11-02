@@ -1462,8 +1462,8 @@ impl<W: Word> StridedInterval<W> {
 }
 
 impl<W: Word> Arith<Unsigned<W>> for StridedInterval<W> {
-    /// Exact on the common grid when no sum wraps or every sum wraps; Top
-    /// when only some do.
+    /// Exact (by test) when the strides are equal or one operand is a
+    /// singleton, and no sum wraps or every sum wraps; Top when only some do.
     fn add(&self, o: &Self) -> (r: Self) {
         let g = Self::common_stride(self.stride, o.stride);
         proof {
@@ -1513,8 +1513,9 @@ impl<W: Word> Arith<Unsigned<W>> for StridedInterval<W> {
         }
     }
 
-    /// Exact on the common grid when no difference wraps or every
-    /// difference wraps; Top when only some do.
+    /// Exact (by test) when the strides are equal or one operand is a
+    /// singleton, and no difference wraps or every difference wraps; Top
+    /// when only some do.
     fn sub(&self, o: &Self) -> (r: Self) {
         let g = Self::common_stride(self.stride, o.stride);
         if o.hi.le(self.lo) {
