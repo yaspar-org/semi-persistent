@@ -4,7 +4,7 @@ SPDX-License-Identifier: Apache-2.0
 -->
 # Task: saturation engine for abstract values
 
-**Status**: task specification for PR 3 of 4; nothing in it is implemented.
+**Status**: part A (the engine in `egraph.rs`) is implemented. Part B (drivers and commands) is still the `TODO(abs-saturation-engine)` comments. Nothing in the acceptance programs runs yet: they need parts B, #145, #146, and #148.
 The design is [eclass-analysis.md](eclass-analysis.md). This document says
 which code changes, in which order, and how the result is checked. It does
 not restate the design; each section links the design section it executes.
@@ -17,6 +17,41 @@ The four PRs:
 | 2 | `abs-class-storage` | an abs handle per class and per-sort pools in the `containers-verus` class layer; `MergeInfo` returns the absorbed handle |
 | 3 | `abs-saturation-engine` | this task: the engine that runs transfers, meets and derived merges |
 | 4 | `abs-domain-registry` | the transfer, meet and reduce functions in `abstract-domains`, keyed by carrier and operator |
+
+## Work split
+
+The 26 `TODO(abs-saturation-engine)` sites divide into two halves of 13. Part A is the engine inside `egraph.rs`. Part B is the drivers and the command surface. Part A is implemented on this branch. Part B's comments are still the work list.
+
+**Part A — engine core, done.** One abstract value per analysed class, kept sound when nodes are created and when classes merge, and propagated when `rebuild` drains. A program with no `AbsDomain` installed pushes nothing and behaves as before. Values sit in an engine-side table until PR 2's pool exists, so `restore` rolls back the conflict flag and the queues, not the values. Transfers come from an `AbsDomain` until PR 4's registry exists.
+
+| Site | What A does |
+|---|---|
+| `touched` | a strict value change appends the class's members and parents, under the same gate as merge tracking |
+| `take_abs_conflict` | returns and clears the sticky `abstract conflict` message |
+| `add_lit` | a fresh literal of an analysed sort starts at `encode_lit`, not at top |
+| `merge` | the meet stays in `merge_in_classes`; the six fold sites do not repeat it |
+| `merge_in_classes` | meet the absorbed class's value into the survivor, reduce, and schedule on a strict change; an empty meet records the conflict |
+| `rebuild` (plain and completion) | drain the three queues and apply derived merges; the completion loop drains before the goal poll |
+| `rebuild_congruence` | forward work reads the use list at drain time, after `splice_uses` |
+| `mark` / `restore` / `restore_and_pop` / `pop` | the token carries the conflict flag; restore puts it back; every one of these clears the queues, the derived-merge batch, and the budget counters |
+| `register_if_fresh` | make: the new class starts at top and the node goes on the forward queue |
+
+The per-class budget defaults to 64 changes per epoch (`ABS_CHANGE_BUDGET`). `abs_begin_epoch` clears the counters. Part A does not start epochs; that is part B.
+
+**Part B — drivers and commands, still open.** These 13 comments stay `TODO(abs-saturation-engine)`.
+
+| File | Function | Change |
+|---|---|---|
+| `saturate.rs` | `width_check` | stop the run when `take_abs_conflict` is set |
+| `saturate.rs` | `saturate_rules_naive`, `saturate_rules_semi` | `abs_begin_epoch` once per iteration |
+| `saturate.rs` | `saturate_rules_semi` | value changes are already in `touched` before the delta is built; keep that order |
+| `ematch.rs` | `eval_guard` | `within` and `nonzero` read the class value |
+| `apply.rs` | `apply_action` | rule-head `(refine t v)` meets `v` into `t`'s class |
+| `interpret.rs` | `lazy_txn_open`, `lazy_ac_decide` | propagation before the transaction; completion merges meet; a conflict inside the check is reported |
+| `interpret.rs` | `run_checked` | report `abstract conflict` before `lazy_txn_close` |
+| `interpret.rs` | `exec_checked` `Refine` | the top-level `(refine t v)` command, one epoch |
+| `interpret.rs` | `CheckNeq` | disequality from an empty meet, after the milestone |
+| `interpret.rs` | `Push`, `Pop` | no extra engine work; pop leaves values and the conflict where `mark` / `pop_scope` put them |
 
 ## 1. What the PR delivers
 
@@ -237,8 +272,9 @@ fn implies(c: Carrier, e: AbsEntry, t: &AbsTest) -> bool;         // guard evalu
 
 ## 8. Change sites
 
-Each site carries a comment `TODO(abs-saturation-engine)` that names the
-change and the section of this document. The comments change no behaviour.
+Each part B site carries a comment `TODO(abs-saturation-engine)` that names the
+change and the section of this document. Part A's sites are implemented and no
+longer carry that comment. The comments change no behaviour.
 
 | File:line | Function | Change | § |
 |---|---|---|---|

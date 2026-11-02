@@ -16,6 +16,9 @@ use crate::registry::{AxiomRegistry, OpKind, OpRegistry, RuleRegistry, SortRegis
 use crate::typed_routing::NodeRef;
 use crate::union_find::{Justification, ProofBuf};
 
+#[path = "abs_sched.rs"]
+mod abs_sched;
+
 /// How a completion op's monomial counts are bounded during normalization (design "three
 /// independent axes"): unbounded ℕ (MSet plain AC), clamped to {0,1} by dedup (Set idempotent =
 /// ACI), or reduced mod `order` (nilpotent, e.g. XOR at order 2 — stored MSet, the clamp is the
@@ -39,6 +42,9 @@ pub struct EGraphToken {
     /// describes exactly the state being snapshotted; `restore` puts it back so a caller
     /// can never observe an outcome from a discarded scope.
     completion_outcome: Option<CompletionOutcome>,
+    /// Whether an abstract conflict was already recorded at mark time. `restore`
+    /// puts the flag back; the message itself stays on the engine's scope stack.
+    abs_conflict: bool,
 }
 
 /// Live-node threshold under which mark/restore stay sequential (see
@@ -183,9 +189,9 @@ pub struct EGraph<
     /// Semi-naive touched log: node ids created or recanonicalized since the
     /// last `clear_touched`. Round-local scratch (cleared on `restore`);
     /// drives the per-round delta index. Not part of persistent state.
-    // TODO(abs-saturation-engine): a strict value change also enters this log (the changed
-    // class's members and its parents), so a rule guarded on an abstract fact re-fires in the
-    // next round, see egraph/doc/future/abstract-engine-task.md §4
+    /// A strict abstract-value change appends the class's members and parents
+    /// too, under the same `track_merge_members` gate, so a guard that only
+    /// saw the value shrink still re-fires next round.
     touched: Vec<Cfg::G>,
     /// When set, every class merge also records the absorbed side's member
     /// nodes in `touched` (see `merge_in_classes`). Only semi-naive saturation
@@ -282,6 +288,9 @@ pub struct EGraph<
     /// scratch, not semi-persistent state: `restore` clears it, so a rolled-back graph is
     /// always rescanned.
     repair_state: Option<(usize, usize)>,
+    /// Abstract-value queues, budget, conflict, and the stand-in value table.
+    /// Idle until an [`abs_sched::AbsDomain`] is installed.
+    abs: abs_sched::AbsSched,
 }
 
 /// Default node-growth budget for one completion-enabled `rebuild` (see
@@ -427,6 +436,7 @@ where
             completion_outcome: None,
             completion_node_budget: DEFAULT_COMPLETION_NODE_BUDGET,
             repair_state: None,
+            abs: abs_sched::AbsSched::new(),
         }
     }
 
@@ -436,9 +446,13 @@ where
         self.completion_outcome
     }
 
-    // TODO(abs-saturation-engine): add a sibling `take_abs_conflict` for an empty meet met by the
-    // last `rebuild`, cleared by the call and reported as this one is, see
-    // egraph/doc/future/abstract-engine-task.md §5
+    /// An empty abstract meet met by the last rebuild or merge, if any, cleared
+    /// by the call. The message contains `abstract conflict`. The graph is left
+    /// as it was when the meet failed.
+    pub fn take_abs_conflict(&mut self) -> Option<String> {
+        self.abs.take_conflict()
+    }
+
     /// A multiplicity past the configured width met by the last `rebuild`, if any,
     /// cleared by the call. A caller that rebuilds reports it and stops: the node that
     /// needed it was left as it was, so the graph is no longer fully canonical.
@@ -1252,11 +1266,10 @@ where
     }
 
     pub fn add_lit(&mut self, op: Cfg::O, lit: Cfg::V) -> Cfg::G {
-        // TODO(abs-saturation-engine): a fresh literal node of an analysed sort gives its class
-        // the singleton value of `lit` (the make event of a constant), see
-        // egraph/doc/future/abstract-engine-task.md §2
         let result = self.nodes.add_lit(op, lit, 0);
-        self.register_if_fresh(result, op)
+        let id = self.register_if_fresh(result, op);
+        self.abs_on_lit(id, lit);
+        id
     }
 
     /// Build a *ground* checked term (a literal or a constructor applied to ground args) into a
@@ -1580,9 +1593,6 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.merge_in_classes(a, b, None)?;
-        // TODO(abs-saturation-engine): the abs meet is not folded per call site like
-        // `fold_min_monomial`: it runs once in `merge_in_classes`, which all six fold sites go
-        // through, see egraph/doc/future/abstract-engine-task.md §2
         self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
@@ -1642,16 +1652,23 @@ where
         } else {
             None
         };
+        let pre_abs = if self.abs.has_domain() {
+            (self.abs_value_of_root(ra), self.abs_value_of_root(rb))
+        } else {
+            (None, None)
+        };
         let m = match (prefer_a, just) {
             (None, None) => self.classes.merge(a, b),
             (None, Some(j)) => self.classes.merge_justified(a, b, j),
             (Some(pa), None) => self.classes.merge_directed_with(a, b, pa),
             (Some(pa), Some(j)) => self.classes.merge_justified_directed_with(a, b, pa, j),
         }?;
-        // TODO(abs-saturation-engine): meet the survivor's value with `m.absorbed_abs` (#2),
-        // reduce, write the survivor's entry; an empty meet is a conflict, a strict change
-        // schedules forward and backward work; direct, congruence, completion and repair merges
-        // all pass here, see egraph/doc/future/abstract-engine-task.md §2, §5
+        let absorbed_value = if m.absorbed == ra {
+            pre_abs.0
+        } else {
+            pre_abs.1
+        };
+        self.abs_on_merge(m.survivor, absorbed_value);
         if let Some((r0, v0, v1)) = pre {
             let absorbed = match v1 {
                 None => v0,
@@ -2152,12 +2169,11 @@ where
             // count, and the fixpoint is bounded by the number of classes.
             loop {
                 self.rebuild_congruence();
-                // TODO(abs-saturation-engine): drain the merge, forward and backward queues, then
-                // apply the batched derived merges; repeat while either produced a merge, see
-                // egraph/doc/future/abstract-engine-task.md §3, §5
-                // A node that could not be recanonicalized stops the rebuild: the caller
-                // reports `take_width_error` and the run ends.
-                if self.has_width_error() || !self.canon_repair_round() {
+                if self.has_width_error() {
+                    break;
+                }
+                let abs_merged = self.abs_drain();
+                if self.abs.conflict.is_some() || !(self.canon_repair_round() || abs_merged) {
                     break;
                 }
             }
@@ -2208,10 +2224,13 @@ where
                 self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
                 return;
             }
-            // TODO(abs-saturation-engine): propagate values and apply derived merges here too,
-            // before the goal poll, so a goal met through a derived merge stops the closure;
-            // completion nodes enter through `register_if_fresh`, see
-            // egraph/doc/future/abstract-engine-task.md §6
+            // Values propagate here, before the goal poll, so a derived merge can
+            // be what joins the goal pair. A conflict stops the closure; the
+            // caller reads `take_abs_conflict`.
+            let _ = self.abs_drain();
+            if self.abs.conflict.is_some() {
+                return;
+            }
             // Goal-directed early stop (the lazy-check transaction): the pair
             // joined, so the question is answered — stop mid-closure. The
             // graph is plain-congruence-closed at this point, a valid state.
@@ -2387,9 +2406,8 @@ where
             let surv_repr = self.classes.repr_id(current_surv).unwrap();
             let surv_list = self.classes.use_list_id(surv_repr);
             self.classes.splice_uses(surv_list, absorbed_uses);
-            // TODO(abs-saturation-engine): the survivor's use list holds the absorbed parents
-            // only after this splice, so forward work for a changed class reads the use list at
-            // drain time, never at merge time, see egraph/doc/future/abstract-engine-task.md §3
+            // Forward work was queued as the class, not its parents: the use list
+            // contains the absorbed parents only now, and `abs_drain` reads it.
 
             // If this merge made the merged class an op's identity (unit) class, the
             // unit-drop law now applies to EVERY parent holding this class as a summand —
@@ -3555,9 +3573,7 @@ where
     /// state; the rebuild and the tiny map marks run strictly outside it.
     pub fn mark_with(&mut self, shrink: ShrinkPolicy, par: bool) -> EGraphToken {
         self.rebuild();
-        // TODO(abs-saturation-engine): this rebuild drains the abs queues, so a snapshot holds no
-        // pending propagation; the token carries the conflict flag next to `completion_outcome`,
-        // see egraph/doc/future/abstract-engine-task.md §6
+        let abs_conflict = self.abs.on_mark();
         assert!(
             self.history.depth() < u32::MAX,
             "mark: frame depth is bounded by the saturation driver"
@@ -3581,6 +3597,7 @@ where
         EGraphToken {
             group,
             completion_outcome: self.completion_outcome,
+            abs_conflict,
         }
     }
 
@@ -3618,9 +3635,7 @@ where
         // restored state (mark() rebuilds first), so a post-restore reader never sees an
         // outcome computed for the discarded scope.
         self.completion_outcome = token.completion_outcome;
-        // TODO(abs-saturation-engine): clear the three abs queues, the derived-merge batch and
-        // the budget counters with the worklist; class values roll back through #2's pool, see
-        // egraph/doc/future/abstract-engine-task.md §6
+        self.abs.on_restore(token.abs_conflict);
         self.worklist.clear();
         self.collisions.clear();
         self.touched.clear();
@@ -3664,9 +3679,7 @@ where
             restore_prof_record(0, t);
         }
         self.completion_outcome = token.completion_outcome;
-        // TODO(abs-saturation-engine): clear the abs queues, the derived-merge batch and the
-        // budget counters here as in `restore_with`, see
-        // egraph/doc/future/abstract-engine-task.md §6
+        self.abs.on_restore_and_pop(token.abs_conflict);
         self.worklist.clear();
         self.collisions.clear();
         self.touched.clear();
@@ -3693,9 +3706,7 @@ where
         };
         let ok = self.history.pop_member(&mut members);
         assert!(ok, "pop_scope: the members are in step with the history");
-        // TODO(abs-saturation-engine): clear the abs queues, the derived-merge batch and the
-        // budget counters here as in `restore_with`, see
-        // egraph/doc/future/abstract-engine-task.md §6
+        self.abs.on_pop();
         self.worklist.clear();
         self.collisions.clear();
         self.touched.clear();
@@ -3839,9 +3850,7 @@ where
         if result.is_fresh() {
             let id = result.id();
             let repr = self.classes.add_singleton(id);
-            // TODO(abs-saturation-engine): the new class gets its abs entry at top (#2's
-            // `add_singleton`) and the node goes on the forward queue: the make event, see
-            // egraph/doc/future/abstract-engine-task.md §2, §3
+            self.abs_on_make(id);
             // Seed the per-class min-monomial pool. A completion node (MSet or Set) is its
             // class's only monomial for its own op, so seed that op's column to itself. A
             // non-completion node instead makes its class `atomic`: the class has a member
