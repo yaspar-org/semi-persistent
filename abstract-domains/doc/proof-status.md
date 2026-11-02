@@ -424,8 +424,6 @@ holds for every value. `meet` of `False` and `True` returns `BotOr::Bot`.
 concrete pair's result is in the abstract result. Exactness says every value
 of the result is produced by some concrete pair (`reach1` / `reach2`).
 
-The module verifies with 21 verified and 0 errors:
-
 ```text
 cargo verus focus -p semi-persistent-abstract-domains -- --verify-only-module bool4 --rlimit 50
 ```
