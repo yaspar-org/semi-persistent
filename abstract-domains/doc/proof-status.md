@@ -1,6 +1,6 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-10-27.
+Last refreshed: 2026-11-02.
 
 ## Current result
 
@@ -21,12 +21,12 @@ Enabled legacy macro-domain widths:
 - `d16` (`u16`)
 - `d32` (`u32`)
 - `d64` (`u64`)
-
 The `d128` macro invocation remains disabled because its bitvector obligations
-exceed the current solver capacity. This is separate from generic `W: Word`
-code: `Word`, the shared GCD/CRT helpers, `Interval<W>`, and `Congruence<W>`
-support u128.
-The arithmetic helpers compute in `W`; they do not use widened intermediates.
+exceed the current solver capacity. Only generic code covers `u128`: `Word`, the
+shared GCD/CRT helpers, `Interval<W>`, `Wrapped<W>` and `Congruence<W>`; do not
+describe `ExecTnum`, `ExecAnum`, or `ExecUnum` as verified executable `u128`
+instances. The arithmetic helpers compute in `W`; they do not use widened
+intermediates.
 
 The separate Rust mirror suite can be run with:
 
@@ -381,3 +381,34 @@ binary checks cover the other eight laws. Existing full-u8 normalization,
 negation, boundary, and all-canonical-upper-bound tests remain in place.
 The oracle is exhaustive within its stated input model, not over every pair
 or triple of all 16,640 canonical u8 classes.
+
+## Wrapped widening and shared-facts refinement
+
+The moving-bound widening proves containment and the termination condition:
+the result is unchanged, Top, or has at least twice the previous cardinality.
+Public size bounds and `lemma_size_monotone` support use of that measure by
+callers. Endpoint advance/retreat lemmas and the constructor's exact size
+contract connect native wrapping operations to the cardinality proof.
+`Refine` proves preservation of the intersection with `Facts<W>` and no growth
+outside the input. Split intersections fall back to the original arc when their
+single-arc cover would grow outside it. `wrapped_refine` checks fact export,
+refinement stability, and product reduction against concrete u8 membership.
+
+## Sign over mathematical integers
+
+`Sign` is the seven nonempty sign sets over `int`; `BotOr<Sign>` supplies the
+eighth, empty state. Its representation is canonical, and `leq`, `join`, and
+`meet` are exact with respect to `gamma`. `Arith<Euclid>` and `Arith<Trunc>`
+prove universal containment for negation, addition, and subtraction; `Mul` is
+also proved for both integer semantics. The Sign domain exports bounds through
+`FactsZ` and its `Refine` implementation proves that it preserves every jointly
+represented value and never grows the Sign component.
+
+`DivRem<Euclid>` and `DivRem<Trunc>` have sound zero classification and
+universally proved containment contracts. Truncated division and remainder use
+the dividend-sign rule; Euclidean remainder is `Zero` for a zero dividend and
+`PosOrZero` otherwise; Euclidean division handles both positive and negative
+divisors. The Sign runtime suite checks all 7-by-7 abstract category
+pairs against concrete values from `[-12, 12]`, including exact quotient and
+remainder sign categories, lattice exactness, flags, and FactsZ refinement
+no-growth.
