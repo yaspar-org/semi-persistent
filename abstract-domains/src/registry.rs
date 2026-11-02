@@ -10,6 +10,9 @@
 use crate::bool4::Bool4;
 use crate::facts::Facts;
 use crate::facts_z::FactsZ;
+use crate::ibig::IBig;
+use crate::interval::Interval;
+use crate::interval_z::{Hi, IntervalZ, Lo};
 use crate::lattice::Domain;
 
 /// Native bit-vector widths supported by `Word`.
@@ -195,6 +198,146 @@ pub fn top(carrier: Carrier) -> Value {
         Carrier::BitVec(Width::W32) => Value::Bv32(<Facts<u32> as Domain>::top()),
         Carrier::BitVec(Width::W64) => Value::Bv64(<Facts<u64> as Domain>::top()),
         Carrier::BitVec(Width::W128) => Value::Bv128(<Facts<u128> as Domain>::top()),
+        Carrier::TopOnly { .. } => Value::Top,
+    }
+}
+
+fn bool_to_byte(value: &Bool4) -> u8 {
+    match value {
+        Bool4::False => 0,
+        Bool4::True => 1,
+        Bool4::Top => 2,
+    }
+}
+
+fn byte_to_bool(byte: u8) -> Bool4 {
+    match byte {
+        0 => Bool4::False,
+        1 => Bool4::True,
+        _ => Bool4::Top,
+    }
+}
+
+fn put_i64(out: &mut [u8], offset: usize, value: i64) {
+    out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn get_i64(bytes: &[u8], offset: usize) -> i64 {
+    i64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+}
+
+fn encode_lo(lo: Lo) -> i64 {
+    match lo {
+        Lo::NegInf => i64::MIN,
+        // i64::MIN is reserved for -infinity. Rounding it outward preserves
+        // every concrete value represented by the source interval.
+        Lo::Fin(value) => value.to_i64().unwrap_or(i64::MIN),
+    }
+}
+
+fn encode_hi(hi: Hi) -> i64 {
+    match hi {
+        Hi::PosInf => i64::MAX,
+        // i64::MAX is reserved for +infinity.
+        Hi::Fin(value) => value.to_i64().unwrap_or(i64::MAX),
+    }
+}
+
+fn decode_lo(value: i64) -> Lo {
+    if value == i64::MIN {
+        Lo::NegInf
+    } else {
+        Lo::Fin(IBig::from_i64(value))
+    }
+}
+
+fn decode_hi(value: i64) -> Hi {
+    if value == i64::MAX {
+        Hi::PosInf
+    } else {
+        Hi::Fin(IBig::from_i64(value))
+    }
+}
+
+fn encode_int(value: &FactsZ, out: &mut [u8]) {
+    let interval = value.interval();
+    let (lo, hi) = interval.bounds();
+    put_i64(out, 0, encode_lo(lo));
+    put_i64(out, 8, encode_hi(hi));
+}
+
+fn decode_int(bytes: &[u8]) -> FactsZ {
+    let interval = IntervalZ::new(decode_lo(get_i64(bytes, 0)), decode_hi(get_i64(bytes, 8)))
+        .unwrap_or_else(IntervalZ::top);
+    FactsZ::from_interval(interval)
+}
+
+/// Encodes a value into the fixed-size representation owned by the e-class
+/// storage layer. Invalid value/carrier combinations are programmer errors at
+/// the typed registry boundary.
+pub fn encode(carrier: Carrier, value: &Value, out: &mut [u8]) {
+    assert_eq!(out.len(), entry_size(carrier));
+    match (carrier, value) {
+        (Carrier::Bool, Value::Bool(value)) => out[0] = bool_to_byte(value),
+        (Carrier::Int, Value::Int(value)) => encode_int(value, out),
+        (Carrier::BitVec(Width::W8), Value::Bv8(value)) => {
+            let (lo, hi) = value.interval().bounds();
+            out.copy_from_slice(&[lo, hi]);
+        }
+        (Carrier::BitVec(Width::W16), Value::Bv16(value)) => {
+            let (lo, hi) = value.interval().bounds();
+            out[..2].copy_from_slice(&lo.to_le_bytes());
+            out[2..].copy_from_slice(&hi.to_le_bytes());
+        }
+        (Carrier::BitVec(Width::W32), Value::Bv32(value)) => {
+            let (lo, hi) = value.interval().bounds();
+            out[..4].copy_from_slice(&lo.to_le_bytes());
+            out[4..].copy_from_slice(&hi.to_le_bytes());
+        }
+        (Carrier::BitVec(Width::W64), Value::Bv64(value)) => {
+            let (lo, hi) = value.interval().bounds();
+            out[..8].copy_from_slice(&lo.to_le_bytes());
+            out[8..].copy_from_slice(&hi.to_le_bytes());
+        }
+        (Carrier::BitVec(Width::W128), Value::Bv128(value)) => {
+            let (lo, hi) = value.interval().bounds();
+            out[..16].copy_from_slice(&lo.to_le_bytes());
+            out[16..].copy_from_slice(&hi.to_le_bytes());
+        }
+        (Carrier::TopOnly { .. }, Value::Top) => {}
+        _ => panic!("registry value does not match its carrier"),
+    }
+}
+
+fn facts_from_bounds<W: crate::word::Word>(lo: W, hi: W) -> Facts<W> {
+    let interval = Interval::new(lo, hi).unwrap_or_else(Interval::top);
+    Facts::from_interval(interval)
+}
+
+/// Decodes an entry previously created by `encode`. Malformed byte intervals
+/// are safely widened to top rather than becoming an invalid domain value.
+pub fn decode(carrier: Carrier, bytes: &[u8]) -> Value {
+    assert_eq!(bytes.len(), entry_size(carrier));
+    match carrier {
+        Carrier::Bool => Value::Bool(byte_to_bool(bytes[0])),
+        Carrier::Int => Value::Int(decode_int(bytes)),
+        Carrier::BitVec(Width::W8) => Value::Bv8(facts_from_bounds(bytes[0], bytes[1])),
+        Carrier::BitVec(Width::W16) => Value::Bv16(facts_from_bounds(
+            u16::from_le_bytes(bytes[..2].try_into().unwrap()),
+            u16::from_le_bytes(bytes[2..].try_into().unwrap()),
+        )),
+        Carrier::BitVec(Width::W32) => Value::Bv32(facts_from_bounds(
+            u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+            u32::from_le_bytes(bytes[4..].try_into().unwrap()),
+        )),
+        Carrier::BitVec(Width::W64) => Value::Bv64(facts_from_bounds(
+            u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            u64::from_le_bytes(bytes[8..].try_into().unwrap()),
+        )),
+        Carrier::BitVec(Width::W128) => Value::Bv128(facts_from_bounds(
+            u128::from_le_bytes(bytes[..16].try_into().unwrap()),
+            u128::from_le_bytes(bytes[16..].try_into().unwrap()),
+        )),
         Carrier::TopOnly { .. } => Value::Top,
     }
 }
@@ -506,5 +649,25 @@ mod tests {
         assert_eq!(entry_size(Carrier::BitVec(Width::W128)), 32);
         assert_eq!(entry_size(Carrier::TopOnly { bits: 7 }), 0);
         assert!(matches!(top(Carrier::TopOnly { bits: 7 }), Value::Top));
+    }
+
+    #[test]
+    fn bool_and_u8_entries_round_trip() {
+        let mut bool_entry = [0_u8; 1];
+        encode(Carrier::Bool, &Value::Bool(Bool4::True), &mut bool_entry);
+        assert!(matches!(
+            decode(Carrier::Bool, &bool_entry),
+            Value::Bool(Bool4::True)
+        ));
+
+        let carrier = Carrier::BitVec(Width::W8);
+        let source = facts_from_bounds(10_u8, 42_u8);
+        let mut entry = [0_u8; 2];
+        encode(carrier, &Value::Bv8(source), &mut entry);
+        assert_eq!(entry, [10, 42]);
+        match decode(carrier, &entry) {
+            Value::Bv8(value) => assert_eq!(value.interval().bounds(), (10, 42)),
+            _ => panic!("u8 registry entry decoded to the wrong carrier"),
+        }
     }
 }
