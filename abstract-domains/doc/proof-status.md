@@ -91,6 +91,7 @@ cargo test -p semi-persistent-abstract-domains --test reduced_product
 | L2 | Tnum, Anum, Unum, and division theory | proved |
 | L3 | chopped bounded-width domains | every stated contract verifies; containment covers the explicit operation inventory in `design.md`, not every defined operation |
 | L4 | `ExecTnum<W>`, `ExecAnum<W>`, `ExecUnum<W>` for every `W: BitWord`; `Interval<W>` for every `W: Word` | every method verifies its stated contract; containment scope is listed below |
+| L4 | `ExecTnum<W>` as a domain | `Domain` (sound `leq`; `meet` returns `BotOr` and holds exactly the common members), `Canonical` (`lemma_nonempty`, `lemma_canonical` proved) and `Refine` with `Facts<W>`; reduces in a `Product` |
 | L4 | Shared GCD/CRT helpers | shared mathematical proofs, deterministic GCD, modular inverse, exact finite CRT and machine-modulus GCD verified |
 | L4 | `Congruence<W>` | generic canonical `Domain`; exact refinement/meet, LUB join, join-based widen, and sound unsigned add/sub/neg |
 | L4 | `StridedInterval<W>` (`strided.rs`), ported onto the shared `Domain`/`Word` traits from `doc/domain-traits.md` | `wf` is canonical (`lemma_canonical` proved); `leq`/`join`/`meet`/`widen` implemented; not yet in a `Product` |

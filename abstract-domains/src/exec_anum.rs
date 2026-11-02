@@ -14,6 +14,7 @@ use crate::bools::Bit;
 use crate::chopped::*;
 use crate::div::*;
 use crate::exec_tnum::*;
+use crate::lattice::BotOr;
 use crate::nats::*;
 use crate::tbit::TBit;
 use crate::tnum::*;
@@ -584,13 +585,17 @@ impl<W: BitWord> ExecAnum<W> {
         r
     }
 
-    /// Meet through Tnum. Like ExecTnum::meet it is normalized, so it has a
-    /// containment contract but no spec equality.
+    /// Meet through Tnum: the Anum of the Tnum meet, so it has a containment
+    /// contract but no spec equality. When the Tnums conflict there is no
+    /// common member, and `self` is returned.
     pub fn meet(&self, t: &Self) -> (r: Self)
         ensures forall|c: W| #![auto] self.has(c) && t.has(c) ==> r.has(c)
     {
-        let x = self.to_etn().meet(&t.to_etn());
-        Self::from_etn(&x)
+        let (x, y) = (self.to_etn(), t.to_etn());
+        match x.meet(&y) {
+            BotOr::Val(m) => Self::from_etn(&m),
+            BotOr::Bot => *self,
+        }
     }
 
     /// Multiplication, the bounded Anum::mul_anum (ChoppedAnum::mul): for each

@@ -11,7 +11,11 @@ use crate::bitword::*;
 use crate::bools::Bit;
 use crate::chopped::*;
 use crate::div::*;
+use crate::facts::Facts;
+use crate::interval::Interval;
+use crate::lattice::*;
 use crate::nats::*;
+use crate::reduce::Refine;
 use crate::tbit::TBit;
 use crate::tnum::*;
 use crate::word::*;
@@ -539,12 +543,31 @@ impl<W: BitWord> ExecTnum<W> {
         r
     }
 
-    /// Meet: known where either operand is known. Normalized, so it equals the
-    /// spec meet only when the operands share a member.
-    pub fn meet(&self, t: &Self) -> (r: Self)
+    /// Meet: known where either operand is known. `Bot` when the operands
+    /// disagree on a bit both know; otherwise exactly the common members
+    /// (`Tnum::meet_exact`).
+    pub fn meet(&self, t: &Self) -> (r: BotOr<Self>)
         requires self.wf(), t.wf()
-        ensures r.wf(), forall|c: W| #![auto] self.has(c) && t.has(c) ==> r.has(c)
+        ensures
+            match r {
+                BotOr::Bot => forall|c: W| #![auto] self.has(c) ==> !t.has(c),
+                BotOr::Val(m) => m.wf() && forall|c: W| #![auto] m.has(c) == (self.has(c) && t.has(c)),
+            },
     {
+        let k = self.val.bit_xor(t.val).bit_and(self.mask.bit_or(t.mask).bit_not());
+        proof {
+            W::lemma_xor(self.val, t.val);
+            W::lemma_or(self.mask, t.mask);
+            lemma_and_not(self.val.xor(t.val), self.mask.or(t.mask));
+        }
+        if !k.eq(W::zero()) {
+            proof {
+                assert forall|c: W| #![auto] self.has(c) implies !t.has(c) by {
+                    self.to_tn().conflict_empty(t.to_tn(), c.view());
+                };
+            }
+            return BotOr::Bot;
+        }
         let v = self.val.bit_or(t.val);
         let u = self.val.bit_xor(self.mask).bit_and(t.val.bit_xor(t.mask));
         let m = v.bit_xor(u);
@@ -556,30 +579,10 @@ impl<W: BitWord> ExecTnum<W> {
             W::lemma_and(self.val.xor(self.mask), t.val.xor(t.mask));
             W::lemma_xor(v, u);
             lemma_and_not(v, m);
-            disj_and_not(v.view(), m.view());
-            let spec = self.to_tn().meet(t.to_tn());
-            assert(spec.val == v.view() && spec.mask == m.view());
-            self.to_tn().meet_sound(t.to_tn());
-            // A common member makes the spec meet's value disjoint from its mask,
-            // so the normalization is the identity.
-            assert forall|c: W| #![auto] self.has(c) && t.has(c) implies r.has(c) by {
-                spec.has_equiv(c.view());
-                Self::and_not_idem(c.view(), m.view());
-                assert(r.to_tn() == spec);
-            };
+            self.to_tn().meet_exact(t.to_tn());
+            assert(r.to_tn() == self.to_tn().meet_n(t.to_tn()));
         }
-        r
-    }
-
-    /// Clearing the bits of m twice is clearing them once.
-    proof fn and_not_idem(c: nat, m: nat)
-        ensures bw_and_not(bw_and_not(c, m), m) == bw_and_not(c, m)
-    {
-        assert forall|i: nat| #![auto] bit(bw_and_not(bw_and_not(c, m), m), i) == bit(bw_and_not(c, m), i) by {
-            and_not_bit(bw_and_not(c, m), m, i);
-            and_not_bit(c, m, i);
-        };
-        eq_from_bits(bw_and_not(bw_and_not(c, m), m), bw_and_not(c, m));
+        BotOr::Val(r)
     }
 
     /// Multiplication by pair-join (Tnum::pair_mul on W-bit registers). Start
@@ -1065,6 +1068,118 @@ impl<W: BitWord> ExecTnum<W> {
             assert forall|c: W| #![auto] self.has(c) implies r.to_tn().has(chop(lsh(c.view()), W::bits())) by {
                 assert(lshi(c.view(), 0) == c.view());
             };
+        }
+        r
+    }
+}
+
+/// The Tnum lattice: `leq` is mask inclusion with agreeing known bits, `join`
+/// and `meet` are the operations above, and `widen` is `join` (a chain of
+/// Tnums gains at least one unknown bit per strict step, so it stabilizes
+/// within W + 1 steps).
+impl<W: BitWord> Domain for ExecTnum<W> {
+    type C = W;
+
+    open spec fn wf(&self) -> bool {
+        self.to_tn().inv()
+    }
+
+    open spec fn gamma(&self, c: W) -> bool {
+        self.has(c)
+    }
+
+    fn dup(&self) -> (r: Self) {
+        *self
+    }
+
+    fn top() -> (r: Self) {
+        ExecTnum::top()
+    }
+
+    fn leq(&self, o: &Self) -> (b: bool) {
+        let a = self.mask.bit_and(o.mask.bit_not());
+        let v = self.val.bit_and(o.mask.bit_not());
+        let b = a.eq(W::zero()) && v.eq(o.val);
+        proof {
+            lemma_and_not(self.mask, o.mask);
+            lemma_and_not(self.val, o.mask);
+            if b {
+                self.to_tn().leq_sound(o.to_tn());
+            }
+        }
+        b
+    }
+
+    fn join(&self, o: &Self) -> (r: Self) {
+        ExecTnum::join(self, o)
+    }
+
+    fn meet(&self, o: &Self) -> (r: BotOr<Self>) {
+        ExecTnum::meet(self, o)
+    }
+
+    fn widen(&self, o: &Self) -> (r: Self) {
+        ExecTnum::join(self, o)
+    }
+}
+
+/// A well-formed Tnum holds its value, and is determined by its value and its
+/// maximum `val | mask` (`Tnum::canonical`).
+impl<W: BitWord> Canonical for ExecTnum<W> {
+    proof fn lemma_nonempty(&self) {
+        self.to_tn().val_max_has();
+        assert(self.gamma(self.val));
+    }
+
+    proof fn lemma_canonical(a: &Self, b: &Self) {
+        let (am, bm) = (a.val.or(a.mask), b.val.or(b.mask));
+        W::lemma_or(a.val, a.mask);
+        W::lemma_or(b.val, b.mask);
+        a.to_tn().val_max_has();
+        b.to_tn().val_max_has();
+        assert(a.gamma(a.val) == b.gamma(a.val));
+        assert(a.gamma(am) == b.gamma(am));
+        assert(a.gamma(b.val) == b.gamma(b.val));
+        assert(a.gamma(bm) == b.gamma(bm));
+        a.to_tn().canonical(b.to_tn());
+        W::lemma_view_injective(a.val, b.val);
+        W::lemma_view_injective(a.mask, b.mask);
+    }
+}
+
+/// A Tnum writes its bounds `[val, val | mask]` to the unsigned interval
+/// field, and refines by meeting with the Tnum of the interval's range
+/// (`range_tn`: the common prefix of its bounds is known).
+impl<W: BitWord> Refine for ExecTnum<W> {
+    type F = Facts<W>;
+
+    fn to_channel(&self) -> (f: BotOr<Facts<W>>) {
+        let hi = self.max_val();
+        match Interval::new(self.val, hi) {
+            Some(iv) => {
+                let f = Facts::from_interval(iv);
+                proof {
+                    assert forall|x: W| self.gamma(x) implies #[trigger] f.gamma(x) by {
+                        self.to_tn().has_bounds(x.view());
+                    }
+                }
+                BotOr::Val(f)
+            },
+            None => BotOr::Val(Facts::top()),
+        }
+    }
+
+    fn refine(&self, f: &Facts<W>) -> (r: BotOr<Self>) {
+        let u = f.interval();
+        let (lo, hi) = u.bounds();
+        let g = Self::range_tn(lo, hi);
+        let r = ExecTnum::meet(self, &g);
+        proof {
+            assert forall|x: W| self.gamma(x) && f.gamma(x) implies #[trigger] r.gamma(x) by {
+                assert(u.gamma(x));
+                Tnum::range_tn_has(lo.view(), hi.view(), x.view());
+                assert(g.has(x));
+            }
         }
         r
     }

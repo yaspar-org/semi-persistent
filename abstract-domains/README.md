@@ -92,7 +92,10 @@ proved for every width through the `BitWord` bridges (`bitword.rs`);
 
 These domains combine through `reduce::Product` and the fact records (see
 [the reduced-product note](doc/reduced-product.md)) once they implement
-`Domain` with a `BotOr` bottom and `Refine`.
+`Domain` with a `BotOr` bottom and `Refine`. `ExecTnum<W>` does: it implements
+`Domain`, `Canonical` and `Refine` with `Facts<W>`, so
+`Product<Interval<W>, ExecTnum<W>>` reduces; `ExecAnum` and `ExecUnum` do not
+yet.
 
 Every executable method verifies its stated contract. Universal containment
 theorems, each derived from the Layer-3 theorem through `to_chopped()`, cover

@@ -191,8 +191,12 @@ non-wrapping intervals. No interval-by-interval division is implemented.
 These domains are combined through `reduce::Product` and the per-sort fact
 records, described in [`reduced-product.md`](reduced-product.md). #123 removed
 the earlier `ReducedProduct`, which combined exactly Tnum, Anum, Interval and
-Unum with a reduction written by hand for those four. Tnum, Anum and Unum join
-`Product` once they implement `Domain` with a `BotOr` bottom and `Refine`.
+Unum with a reduction written by hand for those four. `ExecTnum<W>` implements
+`Domain`, `Canonical` and `Refine` with `Facts<W>`: `leq` tests mask inclusion
+with agreeing known bits, `meet` returns `BotOr::Bot` when the operands
+disagree on a bit both know, `widen` is `join`, `to_channel` writes the bounds
+`[val, val | mask]`, and `refine` meets with `range_tn` of the interval. Anum
+and Unum join `Product` once they implement the same traits.
 
 The exact contracts implemented by the interval component are listed in
 [`interval-soundness.md`](interval-soundness.md). General division and alarms,
@@ -362,9 +366,10 @@ separate from containment, that their result equals the Layer-3 spec
 lets composite operations chain them (`neg` and `sub` through `bw_not` and
 `add`; the `mul` loop invariant through `add` and `join`), and it pins
 precision: a less precise `add` would still be sound but would break these
-proofs. `meet` does not export it: it normalizes, and equals the spec only when
-the operands share a member; neither does `ExecAnum::meet`, which is built on
-it. `ExecAnum::mul` follows `ChoppedAnum::mul_step` with the exec `add`, so its
+proofs. `meet` does not export it: it returns `BotOr::Bot` when the operands
+disagree on a bit both know, and otherwise the normalized spec meet, which
+holds exactly the common members (`Tnum::meet_exact`); neither does
+`ExecAnum::meet`, which is built on it. `ExecAnum::mul` follows `ChoppedAnum::mul_step` with the exec `add`, so its
 loop invariant is the spec equality. It is often top, because the bounds of the
 partial products sum past 2^W. `ExecAnum::mul_precise` trades time for
 precision: it also computes pair-join on the two Tnums, meets it with `mul`, and
