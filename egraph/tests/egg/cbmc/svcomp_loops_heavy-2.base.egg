@@ -1,0 +1,56 @@
+;; Converted from the CBMC e-graph dump svcomp_loops_heavy-2.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Leaf 3))  ; array
+(let ebase_4 (Const 1 4))  ; const 1
+(let ebase_5 (Const 0 5))  ; const 0
+(let ebase_6 (Leaf 6))  ; main::argc!0@1#1
+(let ebase_7 (Leaf 7))  ; argc'#0
+(let ebase_8 (Leaf 8))  ; address_of
+(let ebase_9 (Const 8 9))  ; const 8
+(let ebase_10 (Type 10))
+(let ebase_11 (Const 0 11))  ; const 0
+(let ebase_12 (Typecast ebase_10 ebase_11))  ; typecast
+(let ebase_13 (Const 1 13))  ; const 1
+(let ebase_14 (Const 0 14))  ; const 0
+(let ebase_15 (Leaf 15))  ; array
+(let ebase_16 (Const 2 16))  ; const 2
+(let ebase_17 (Const 2 17))  ; const 2
+(let ebase_18 (Const 3 18))  ; const 3
+(let ebase_19 (Const 4 19))  ; const 4
+(let ebase_20 (Const 5 20))  ; const 5
+(let ebase_21 (Const 6 21))  ; const 6
+(let ebase_22 (Const 7 22))  ; const 7
+(let ebase_23 (Const 8 23))  ; const 8
+(let ebase_24 (Const 9 24))  ; const 9
+(let ebase_25 (Const 10 25))  ; const A
+(let ebase_26 (Leaf 26))  ; main::1::a!0@1#1
+(let ebase_27 (Leaf 27))  ; main::1::i!0@1#1
+(let ebase_28 (Leaf 28))  ; main::1::j!0@1#1
+(let ebase_29 (Leaf 29))  ; main::1::k!0@1#1
+(let ebase_30 (Leaf 30))  ; symex::args::0
+(let ebase_31 (Leaf 31))  ; symex::args::1
+(let ebase_32 (Leaf 32))  ; symex::io::0
+(let ebase_33 (Leaf 33))  ; index
+(let ebase_34 (Type 34))
+(let ebase_35 (Typecast ebase_34 ebase_7))  ; typecast
+(let ebase_36 (Null 36))  ; const NULL
+(let ebase_37 (Leaf 37))  ; index

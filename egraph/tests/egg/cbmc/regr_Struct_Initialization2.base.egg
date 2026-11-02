@@ -1,0 +1,29 @@
+;; Converted from the CBMC e-graph dump regr_Struct_Initialization2.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Leaf 3))  ; array
+(let ebase_4 (Leaf 4))  ; struct
+(let ebase_5 (Const 3 5))  ; const 3
+(let ebase_6 (Leaf 6))  ; struct
+(let ebase_7 (Const 4 7))  ; const 4
+(let ebase_8 (Const 1 8))  ; const 1
+(let ebase_9 (Leaf 9))  ; str_array#2[[0]]..c
+(let ebase_10 (Leaf 10))  ; main::1::x!0@1#1

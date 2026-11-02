@@ -1,0 +1,63 @@
+;; Converted from the CBMC e-graph dump regr_Malloc13.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Leaf 3))  ; main::argc!0@1#1
+(let ebase_4 (Leaf 4))  ; argc'#0
+(let ebase_5 (Leaf 5))  ; address_of
+(let ebase_6 (Const 8 6))  ; const 8
+(let ebase_7 (Type 7))
+(let ebase_8 (Const 0 8))  ; const 0
+(let ebase_9 (Typecast ebase_7 ebase_8))  ; typecast
+(let ebase_10 (Leaf 10))  ; malloc::malloc_size!0@1#1
+(let ebase_11 (Leaf 11))  ; main::1::len!0@1#1
+(let ebase_12 (Typecast ebase_7 ebase_11))  ; typecast
+(let ebase_13 (Const 36028797018963969 13))  ; const 80000000000001
+(let ebase_14 (Leaf 14))  ; symex_dynamic::dynamic_object_size!0#1
+(let ebase_15 (Type 15))
+(let ebase_16 (Leaf 16))  ; address_of
+(let ebase_17 (Typecast ebase_15 ebase_16))  ; typecast
+(let ebase_18 (Const 1 18))  ; const 1
+(let ebase_19 (Leaf 19))  ; if
+(let ebase_20 (Leaf 20))  ; if
+(let ebase_21 (Leaf 21))  ; __CPROVER_memory_leak#2
+(let ebase_22 (Leaf 22))  ; if
+(let ebase_23 (Leaf 23))  ; symex_dynamic::dynamic_object_size!0#2
+(let ebase_24 (Leaf 24))  ; goto_symex::return_value::malloc!0#3
+(let ebase_25 (Type 25))
+(let ebase_26 (Leaf 26))  ; main::$tmp::return_value_malloc!0@1#2
+(let ebase_27 (Typecast ebase_25 ebase_26))  ; typecast
+(let ebase_28 (Leaf 28))  ; main::1::str!0@1#1
+(let ebase_29 (Leaf 29))  ; main::$tmp::return_value_malloc!0@1#1
+(let ebase_30 (Leaf 30))  ; malloc::1::malloc_res!0@1#1
+(let ebase_31 (Leaf 31))  ; malloc::$tmp::malloc_value!0@1#1
+(let ebase_32 (Type 32))
+(let ebase_33 (Typecast ebase_32 ebase_11))  ; typecast
+(let ebase_34 (Const 1 34))  ; const 1
+(let ebase_35 (Leaf 35))  ; symex::args::0
+(let ebase_36 (Leaf 36))  ; symex::args::1
+(let ebase_37 (Leaf 37))  ; symex::args::2
+(let ebase_38 (Leaf 38))  ; symex::io::0
+(let ebase_39 (Leaf 39))  ; buffer_size
+(let ebase_40 (Leaf 40))  ; index
+(let ebase_41 (Type 41))
+(let ebase_42 (Typecast ebase_41 ebase_4))  ; typecast
+(let ebase_43 (Null 43))  ; const NULL
+(let ebase_44 (Leaf 44))  ; index

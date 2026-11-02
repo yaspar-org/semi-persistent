@@ -1,0 +1,69 @@
+;; Converted from the CBMC e-graph dump regr_Malloc13.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let econg_2 (Const 0 2))  ; const 0
+(let econg_3 (Leaf 3))  ; main::argc!0@1#1
+(let econg_4 (Leaf 4))  ; main::argc!0@1#1
+(let econg_5 (Leaf 5))  ; address_of
+(let econg_6 (Const 8 6))  ; const 8
+(let econg_7 (Type 7))
+(let econg_8 (Const 0 8))  ; const 0
+(let econg_9 (Typecast econg_7 econg_8))  ; typecast
+(let econg_10 (Leaf 10))  ; malloc::malloc_size!0@1#1
+(let econg_11 (Leaf 11))  ; main::1::len!0@1#1
+(let econg_12 (Typecast econg_7 econg_11))  ; malloc::malloc_size!0@1#1
+(let econg_13 (Const 36028797018963969 13))  ; const 80000000000001
+(let econg_14 (Leaf 14))  ; malloc::malloc_size!0@1#1
+(let econg_15 (Type 15))
+(let econg_16 (Leaf 16))  ; address_of
+(let econg_17 (Typecast econg_15 econg_16))  ; typecast
+(let econg_18 (Const 1 18))  ; const 1
+(let econg_19 (Leaf 19))  ; if
+(let econg_20 (Leaf 20))  ; if
+(let econg_21 (Leaf 21))  ; __CPROVER_memory_leak#2
+(let econg_22 (Leaf 22))  ; if
+(let econg_23 (Leaf 23))  ; malloc::malloc_size!0@1#1
+(let econg_24 (Leaf 24))  ; goto_symex::return_value::malloc!0#3
+(let econg_25 (Type 25))
+(let econg_26 (Leaf 26))  ; main::$tmp::return_value_malloc!0@1#2
+(let econg_27 (Typecast econg_25 econg_26))  ; typecast
+(let econg_28 (Leaf 28))  ; main::1::str!0@1#1
+(let econg_29 (Leaf 29))  ; main::$tmp::return_value_malloc!0@1#1
+(let econg_30 (Leaf 30))  ; malloc::1::malloc_res!0@1#1
+(let econg_31 (Leaf 31))  ; malloc::$tmp::malloc_value!0@1#1
+(let econg_32 (Type 32))
+(let econg_33 (Typecast econg_32 econg_11))  ; typecast
+(let econg_34 (Const 1 34))  ; const 1
+(let econg_35 (Leaf 35))  ; main::argc!0@1#1
+(let econg_36 (Leaf 36))  ; symex::args::1
+(let econg_37 (Leaf 37))  ; symex::args::2
+(let econg_38 (Leaf 38))  ; main::argc!0@1#1
+(let econg_39 (Leaf 39))  ; buffer_size
+(let econg_40 (Leaf 40))  ; index
+(let econg_41 (Type 41))
+(let econg_42 (Typecast econg_41 econg_4))  ; typecast
+(let econg_43 (Null 43))  ; const NULL
+(let econg_44 (Leaf 44))  ; index
+(union econg_3 econg_4)
+(union econg_10 econg_12)
+(union econg_10 econg_14)
+(union econg_10 econg_23)
+(union econg_3 econg_35)
+(union econg_3 econg_38)

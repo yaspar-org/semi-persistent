@@ -1,0 +1,59 @@
+;; Converted from the CBMC e-graph dump regr_Malloc12.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Const 5 3))  ; const 5
+(let ebase_4 (Leaf 4))  ; nondet_symbol
+(let ebase_5 (Leaf 5))  ; symex_dynamic::dynamic_object#1[[0]]
+(let ebase_6 (Leaf 6))  ; index
+(let ebase_7 (Leaf 7))  ; symex_dynamic::dynamic_object#1[[1]]
+(let ebase_8 (Leaf 8))  ; index
+(let ebase_9 (Leaf 9))  ; symex_dynamic::dynamic_object#1[[2]]
+(let ebase_10 (Leaf 10))  ; index
+(let ebase_11 (Leaf 11))  ; symex_dynamic::dynamic_object#1[[3]]
+(let ebase_12 (Leaf 12))  ; index
+(let ebase_13 (Leaf 13))  ; symex_dynamic::dynamic_object#1[[4]]
+(let ebase_14 (Leaf 14))  ; index
+(let ebase_15 (Type 15))
+(let ebase_16 (Leaf 16))  ; address_of
+(let ebase_17 (Typecast ebase_15 ebase_16))  ; typecast
+(let ebase_18 (Const 1 18))  ; const 1
+(let ebase_19 (Type 19))
+(let ebase_20 (Const 0 20))  ; const 0
+(let ebase_21 (Typecast ebase_19 ebase_20))  ; typecast
+(let ebase_22 (Leaf 22))  ; if
+(let ebase_23 (Leaf 23))  ; if
+(let ebase_24 (Leaf 24))  ; __CPROVER_memory_leak#2
+(let ebase_25 (Leaf 25))  ; if
+(let ebase_26 (Leaf 26))  ; symex_dynamic::dynamic_object#2[[0]]
+(let ebase_27 (Leaf 27))  ; symex_dynamic::dynamic_object#2[[1]]
+(let ebase_28 (Leaf 28))  ; symex_dynamic::dynamic_object#2[[2]]
+(let ebase_29 (Leaf 29))  ; symex_dynamic::dynamic_object#2[[3]]
+(let ebase_30 (Leaf 30))  ; symex_dynamic::dynamic_object#2[[4]]
+(let ebase_31 (Leaf 31))  ; goto_symex::return_value::malloc!0#3
+(let ebase_32 (Type 32))
+(let ebase_33 (Leaf 33))  ; main::$tmp::return_value_malloc!0@1#2
+(let ebase_34 (Typecast ebase_32 ebase_33))  ; typecast
+(let ebase_35 (Leaf 35))  ; main::1::a!0@1#1
+(let ebase_36 (Leaf 36))  ; main::$tmp::return_value_malloc!0@1#1
+(let ebase_37 (Leaf 37))  ; malloc::1::malloc_res!0@1#1
+(let ebase_38 (Leaf 38))  ; malloc::$tmp::malloc_value!0@1#1
+(let ebase_39 (Leaf 39))  ; main::1::a!0@1#2
+(let ebase_40 (Null 40))  ; const NULL

@@ -1,0 +1,111 @@
+;; Converted from the CBMC e-graph dump regr_Array_Pointer3.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let econg_2 (Const 0 2))  ; const 0
+(let econg_3 (Leaf 3))  ; array
+(let econg_4 (Leaf 4))  ; f::j!0@1#1
+(let econg_5 (Leaf 5))  ; f::j!0@1#1
+(let econg_6 (Leaf 6))  ; f::k!0@1#1
+(let econg_7 (Leaf 7))  ; f::k!0@1#1
+(let econg_8 (Leaf 8))  ; f::j!0@1#2
+(let econg_9 (Neg econg_6))  ; unary-
+(let econg_10 (Plus econg_4 econg_9))  ; f::j!0@1#2
+(let econg_11 (Leaf 11))  ; f::j!0@1#2
+(let econg_12 (Leaf 12))  ; f::j!0@1#2
+(let econg_13 (Leaf 13))  ; g::w!0@1#2
+(let econg_14 (Const 4294967295 14))  ; const FFFFFFFF
+(let econg_15 (Plus econg_8 econg_14))  ; g::w!0@1#2
+(let econg_16 (Leaf 16))  ; g::w!0@1#2
+(let econg_17 (Const 1 17))  ; const 1
+(let econg_18 (Const 2 18))  ; const 2
+(let econg_19 (Const 3 19))  ; const 3
+(let econg_20 (Const 4 20))  ; const 4
+(let econg_21 (Const 5 21))  ; const 5
+(let econg_22 (Leaf 22))  ; f::1::i!0@1#1
+(let econg_23 (Leaf 23))  ; g::1::i!0@1#1
+(let econg_24 (Leaf 24))  ; g::1::local_arr!0@1#1
+(let econg_25 (Leaf 25))  ; array
+(let econg_26 (Leaf 26))  ; g::1::local_arr!0@1#1[[0]]
+(let econg_27 (Leaf 27))  ; g::1::local_arr!0@1#1[[1]]
+(let econg_28 (Leaf 28))  ; g::1::local_arr!0@1#1[[2]]
+(let econg_29 (Leaf 29))  ; g::1::local_arr!0@1#1[[3]]
+(let econg_30 (Leaf 30))  ; g::1::local_arr!0@1#1[[4]]
+(let econg_31 (Leaf 31))  ; g::1::local_arr!0@1#1[[5]]
+(let econg_32 (Leaf 32))  ; g::1::local_arr!0@1#1[[6]]
+(let econg_33 (Leaf 33))  ; g::1::local_arr!0@1#1[[7]]
+(let econg_34 (Leaf 34))  ; g::1::local_arr!0@1#1[[8]]
+(let econg_35 (Leaf 35))  ; g::1::local_arr!0@1#1[[9]]
+(let econg_36 (Leaf 36))  ; g::1::local_arr!0@1#1[[A]]
+(let econg_37 (Leaf 37))  ; g::1::local_arr!0@1#1[[B]]
+(let econg_38 (Leaf 38))  ; g::1::local_arr!0@1#1[[C]]
+(let econg_39 (Leaf 39))  ; g::1::local_arr!0@1#1[[D]]
+(let econg_40 (Leaf 40))  ; g::1::local_arr!0@1#1[[E]]
+(let econg_41 (Leaf 41))  ; g::1::local_arr!0@1#1[[F]]
+(let econg_42 (Leaf 42))  ; g::1::local_arr!0@1#1[[10]]
+(let econg_43 (Leaf 43))  ; g::1::local_arr!0@1#1[[11]]
+(let econg_44 (Leaf 44))  ; g::1::local_arr!0@1#1[[12]]
+(let econg_45 (Leaf 45))  ; g::1::local_arr!0@1#1[[13]]
+(let econg_46 (Leaf 46))  ; g::1::local_arr!0@1#1[[14]]
+(let econg_47 (Leaf 47))  ; g::1::local_arr!0@1#1[[15]]
+(let econg_48 (Leaf 48))  ; g::1::local_arr!0@1#1[[16]]
+(let econg_49 (Leaf 49))  ; g::1::local_arr!0@1#1[[17]]
+(let econg_50 (Leaf 50))  ; g::1::local_arr!0@1#1[[18]]
+(let econg_51 (Leaf 51))  ; g::1::local_arr!0@1#1[[19]]
+(let econg_52 (Leaf 52))  ; g::1::local_arr!0@1#1[[1A]]
+(let econg_53 (Leaf 53))  ; g::1::local_arr!0@1#1[[1B]]
+(let econg_54 (Leaf 54))  ; g::1::local_arr!0@1#1[[1C]]
+(let econg_55 (Leaf 55))  ; g::1::local_arr!0@1#1[[1D]]
+(let econg_56 (Leaf 56))  ; g::1::local_arr!0@1#1[[1E]]
+(let econg_57 (Leaf 57))  ; g::1::local_arr!0@1#1[[1F]]
+(let econg_58 (Leaf 58))  ; g::1::local_arr!0@1#1[[20]]
+(let econg_59 (Leaf 59))  ; g::1::local_arr!0@1#1[[21]]
+(let econg_60 (Leaf 60))  ; g::1::local_arr!0@1#1[[22]]
+(let econg_61 (Leaf 61))  ; g::1::local_arr!0@1#1[[23]]
+(let econg_62 (Leaf 62))  ; g::1::local_arr!0@1#1[[24]]
+(let econg_63 (Leaf 63))  ; g::1::local_arr!0@1#1[[25]]
+(let econg_64 (Leaf 64))  ; g::1::local_arr!0@1#1[[26]]
+(let econg_65 (Leaf 65))  ; g::1::local_arr!0@1#1[[27]]
+(let econg_66 (Leaf 66))  ; g::1::local_arr!0@1#1[[28]]
+(let econg_67 (Leaf 67))  ; g::1::local_arr!0@1#1[[29]]
+(let econg_68 (Leaf 68))  ; g::1::local_arr!0@1#1[[2A]]
+(let econg_69 (Leaf 69))  ; g::1::local_arr!0@1#1[[2B]]
+(let econg_70 (Leaf 70))  ; g::1::local_arr!0@1#1[[2C]]
+(let econg_71 (Leaf 71))  ; g::1::local_arr!0@1#1[[2D]]
+(let econg_72 (Leaf 72))  ; g::1::local_arr!0@1#1[[2E]]
+(let econg_73 (Leaf 73))  ; g::1::local_arr!0@1#1[[2F]]
+(let econg_74 (Leaf 74))  ; g::1::local_arr!0@1#1[[30]]
+(let econg_75 (Leaf 75))  ; g::1::local_arr!0@1#1[[31]]
+(let econg_76 (Const 16 76))  ; const 10
+(let econg_77 (Const 18 77))  ; const 12
+(let econg_78 (Leaf 78))  ; f::j!0@1#1
+(let econg_79 (Leaf 79))  ; f::k!0@1#1
+(let econg_80 (Leaf 80))  ; f::j!0@1#2
+(let econg_81 (Const 11 81))  ; const B
+(let econg_82 (Const 20 82))  ; const 14
+(union econg_4 econg_5)
+(union econg_6 econg_7)
+(union econg_8 econg_10)
+(union econg_8 econg_11)
+(union econg_8 econg_12)
+(union econg_13 econg_15)
+(union econg_13 econg_16)
+(union econg_4 econg_78)
+(union econg_6 econg_79)
+(union econg_8 econg_80)

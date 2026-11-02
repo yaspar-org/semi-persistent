@@ -1,0 +1,31 @@
+;; Converted from the CBMC e-graph dump regr_Float6.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Leaf 3))  ; main::1::_a!0@1#2
+(let ebase_4 (Leaf 4))  ; main::1::a!0@1#1
+(let ebase_5 (Leaf 5))  ; main::1::_b!0@1#2
+(let ebase_6 (Leaf 6))  ; main::1::b!0@1#1
+(let ebase_7 (Leaf 7))  ; main::1::_a!0@1#1
+(let ebase_8 (Leaf 8))  ; main::1::_b!0@1#1
+(let ebase_9 (Const 1065353216 9))  ; const 3F800000
+(let ebase_10 (Const 1073741824 10))  ; const 40000000
+(let ebase_11 (Neg ebase_4))  ; unary-
+(let ebase_12 (Neg ebase_6))  ; unary-

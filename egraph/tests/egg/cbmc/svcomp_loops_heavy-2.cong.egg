@@ -1,0 +1,59 @@
+;; Converted from the CBMC e-graph dump svcomp_loops_heavy-2.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let econg_2 (Const 0 2))  ; const 0
+(let econg_3 (Leaf 3))  ; array
+(let econg_4 (Const 1 4))  ; const 1
+(let econg_5 (Const 0 5))  ; const 0
+(let econg_6 (Leaf 6))  ; main::argc!0@1#1
+(let econg_7 (Leaf 7))  ; main::argc!0@1#1
+(let econg_8 (Leaf 8))  ; address_of
+(let econg_9 (Const 8 9))  ; const 8
+(let econg_10 (Type 10))
+(let econg_11 (Const 0 11))  ; const 0
+(let econg_12 (Typecast econg_10 econg_11))  ; typecast
+(let econg_13 (Const 1 13))  ; const 1
+(let econg_14 (Const 0 14))  ; const 0
+(let econg_15 (Leaf 15))  ; array
+(let econg_16 (Const 2 16))  ; const 2
+(let econg_17 (Const 2 17))  ; const 2
+(let econg_18 (Const 3 18))  ; const 3
+(let econg_19 (Const 4 19))  ; const 4
+(let econg_20 (Const 5 20))  ; const 5
+(let econg_21 (Const 6 21))  ; const 6
+(let econg_22 (Const 7 22))  ; const 7
+(let econg_23 (Const 8 23))  ; const 8
+(let econg_24 (Const 9 24))  ; const 9
+(let econg_25 (Const 10 25))  ; const A
+(let econg_26 (Leaf 26))  ; main::1::a!0@1#1
+(let econg_27 (Leaf 27))  ; main::1::i!0@1#1
+(let econg_28 (Leaf 28))  ; main::1::j!0@1#1
+(let econg_29 (Leaf 29))  ; main::1::k!0@1#1
+(let econg_30 (Leaf 30))  ; main::argc!0@1#1
+(let econg_31 (Leaf 31))  ; symex::args::1
+(let econg_32 (Leaf 32))  ; main::argc!0@1#1
+(let econg_33 (Leaf 33))  ; index
+(let econg_34 (Type 34))
+(let econg_35 (Typecast econg_34 econg_7))  ; typecast
+(let econg_36 (Null 36))  ; const NULL
+(let econg_37 (Leaf 37))  ; index
+(union econg_6 econg_7)
+(union econg_6 econg_30)
+(union econg_6 econg_32)

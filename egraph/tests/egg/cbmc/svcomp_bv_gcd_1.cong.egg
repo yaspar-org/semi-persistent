@@ -1,0 +1,224 @@
+;; Converted from the CBMC e-graph dump svcomp_bv_gcd_1.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let econg_2 (Const 0 2))  ; const 0
+(let econg_3 (Leaf 3))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let econg_4 (Leaf 4))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let econg_5 (Leaf 5))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let econg_6 (Leaf 6))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#2
+(let econg_7 (Leaf 7))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#2
+(let econg_8 (Leaf 8))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#2
+(let econg_9 (Type 9))
+(let econg_10 (Typecast econg_9 econg_8))  ; typecast
+(let econg_11 (Const 1 11))  ; const 1
+(let econg_12 (Leaf 12))  ; mod
+(let econg_13 (Typecast econg_9 econg_5))  ; typecast
+(let econg_14 (Leaf 14))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let econg_15 (Leaf 15))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#2
+(let econg_16 (Typecast econg_9 econg_14))  ; typecast
+(let econg_17 (Leaf 17))  ; gcd_test::a!0@1#2
+(let econg_18 (Neg econg_14))  ; gcd_test::a!0@1#2
+(let econg_19 (Leaf 19))  ; if
+(let econg_20 (Typecast econg_9 econg_15))  ; typecast
+(let econg_21 (Leaf 21))  ; gcd_test::b!0@1#2
+(let econg_22 (Neg econg_15))  ; gcd_test::b!0@1#2
+(let econg_23 (Leaf 23))  ; if
+(let econg_24 (Leaf 24))  ; gcd_test::1::t!0@1#2
+(let econg_25 (Typecast econg_9 econg_24))  ; typecast
+(let econg_26 (Leaf 26))  ; gcd_test::1::t!0@1#2
+(let econg_27 (Leaf 27))  ; gcd_test::b!0@1#4
+(let econg_28 (Type 28))
+(let econg_29 (Leaf 29))  ; mod
+(let econg_30 (Typecast econg_28 econg_29))  ; gcd_test::b!0@1#4
+(let econg_31 (Leaf 31))  ; gcd_test::a!0@1#3
+(let econg_32 (Typecast econg_9 econg_31))  ; typecast
+(let econg_33 (Leaf 33))  ; gcd_test::1::t!0@1#2
+(let econg_34 (Typecast econg_9 econg_27))  ; typecast
+(let econg_35 (Leaf 35))  ; gcd_test::b!0@1#4
+(let econg_36 (Leaf 36))  ; gcd_test::b!0@1#5
+(let econg_37 (Leaf 37))  ; mod
+(let econg_38 (Typecast econg_28 econg_37))  ; gcd_test::b!0@1#5
+(let econg_39 (Typecast econg_9 econg_33))  ; typecast
+(let econg_40 (Leaf 40))  ; gcd_test::b!0@1#4
+(let econg_41 (Typecast econg_9 econg_36))  ; typecast
+(let econg_42 (Leaf 42))  ; gcd_test::b!0@1#5
+(let econg_43 (Leaf 43))  ; gcd_test::b!0@1#6
+(let econg_44 (Leaf 44))  ; mod
+(let econg_45 (Typecast econg_28 econg_44))  ; gcd_test::b!0@1#6
+(let econg_46 (Typecast econg_9 econg_40))  ; typecast
+(let econg_47 (Leaf 47))  ; gcd_test::b!0@1#5
+(let econg_48 (Typecast econg_9 econg_43))  ; typecast
+(let econg_49 (Leaf 49))  ; gcd_test::b!0@1#6
+(let econg_50 (Leaf 50))  ; gcd_test::b!0@1#7
+(let econg_51 (Leaf 51))  ; mod
+(let econg_52 (Typecast econg_28 econg_51))  ; gcd_test::b!0@1#7
+(let econg_53 (Typecast econg_9 econg_47))  ; typecast
+(let econg_54 (Leaf 54))  ; gcd_test::b!0@1#6
+(let econg_55 (Typecast econg_9 econg_50))  ; typecast
+(let econg_56 (Leaf 56))  ; gcd_test::b!0@1#7
+(let econg_57 (Leaf 57))  ; gcd_test::b!0@1#8
+(let econg_58 (Leaf 58))  ; mod
+(let econg_59 (Typecast econg_28 econg_58))  ; gcd_test::b!0@1#8
+(let econg_60 (Typecast econg_9 econg_54))  ; typecast
+(let econg_61 (Leaf 61))  ; gcd_test::b!0@1#7
+(let econg_62 (Typecast econg_9 econg_57))  ; typecast
+(let econg_63 (Leaf 63))  ; gcd_test::b!0@1#8
+(let econg_64 (Leaf 64))  ; gcd_test::b!0@1#9
+(let econg_65 (Leaf 65))  ; mod
+(let econg_66 (Typecast econg_28 econg_65))  ; gcd_test::b!0@1#9
+(let econg_67 (Typecast econg_9 econg_61))  ; typecast
+(let econg_68 (Leaf 68))  ; gcd_test::b!0@1#8
+(let econg_69 (Typecast econg_9 econg_64))  ; typecast
+(let econg_70 (Leaf 70))  ; gcd_test::b!0@1#9
+(let econg_71 (Leaf 71))  ; gcd_test::b!0@1#10
+(let econg_72 (Leaf 72))  ; mod
+(let econg_73 (Typecast econg_28 econg_72))  ; gcd_test::b!0@1#10
+(let econg_74 (Typecast econg_9 econg_68))  ; typecast
+(let econg_75 (Leaf 75))  ; gcd_test::b!0@1#9
+(let econg_76 (Typecast econg_9 econg_71))  ; typecast
+(let econg_77 (Leaf 77))  ; gcd_test::b!0@1#10
+(let econg_78 (Leaf 78))  ; gcd_test::b!0@1#11
+(let econg_79 (Leaf 79))  ; mod
+(let econg_80 (Typecast econg_28 econg_79))  ; gcd_test::b!0@1#11
+(let econg_81 (Typecast econg_9 econg_75))  ; typecast
+(let econg_82 (Leaf 82))  ; gcd_test::b!0@1#10
+(let econg_83 (Typecast econg_9 econg_78))  ; typecast
+(let econg_84 (Leaf 84))  ; gcd_test::b!0@1#11
+(let econg_85 (Leaf 85))  ; gcd_test::b!0@1#12
+(let econg_86 (Leaf 86))  ; mod
+(let econg_87 (Typecast econg_28 econg_86))  ; gcd_test::b!0@1#12
+(let econg_88 (Typecast econg_9 econg_82))  ; typecast
+(let econg_89 (Leaf 89))  ; gcd_test::b!0@1#11
+(let econg_90 (Typecast econg_9 econg_85))  ; typecast
+(let econg_91 (Leaf 91))  ; gcd_test::b!0@1#12
+(let econg_92 (Leaf 92))  ; gcd_test::b!0@1#13
+(let econg_93 (Leaf 93))  ; mod
+(let econg_94 (Typecast econg_28 econg_93))  ; gcd_test::b!0@1#13
+(let econg_95 (Typecast econg_9 econg_89))  ; typecast
+(let econg_96 (Leaf 96))  ; gcd_test::b!0@1#12
+(let econg_97 (Leaf 97))  ; if
+(let econg_98 (Leaf 98))  ; if
+(let econg_99 (Leaf 99))  ; if
+(let econg_100 (Leaf 100))  ; if
+(let econg_101 (Leaf 101))  ; gcd_test::1::t!0@1#12
+(let econg_102 (Leaf 102))  ; if
+(let econg_103 (Leaf 103))  ; gcd_test::a!0@1#14
+(let econg_104 (Leaf 104))  ; if
+(let econg_105 (Leaf 105))  ; gcd_test::b!0@1#14
+(let econg_106 (Leaf 106))  ; if
+(let econg_107 (Leaf 107))  ; gcd_test::1::t!0@1#13
+(let econg_108 (Leaf 108))  ; if
+(let econg_109 (Leaf 109))  ; gcd_test::a!0@1#15
+(let econg_110 (Leaf 110))  ; if
+(let econg_111 (Leaf 111))  ; gcd_test::b!0@1#15
+(let econg_112 (Leaf 112))  ; if
+(let econg_113 (Leaf 113))  ; gcd_test::1::t!0@1#14
+(let econg_114 (Leaf 114))  ; if
+(let econg_115 (Leaf 115))  ; gcd_test::a!0@1#16
+(let econg_116 (Leaf 116))  ; if
+(let econg_117 (Leaf 117))  ; gcd_test::b!0@1#16
+(let econg_118 (Leaf 118))  ; if
+(let econg_119 (Leaf 119))  ; gcd_test::1::t!0@1#15
+(let econg_120 (Leaf 120))  ; if
+(let econg_121 (Leaf 121))  ; gcd_test::a!0@1#17
+(let econg_122 (Leaf 122))  ; if
+(let econg_123 (Leaf 123))  ; gcd_test::b!0@1#17
+(let econg_124 (Leaf 124))  ; if
+(let econg_125 (Leaf 125))  ; gcd_test::1::t!0@1#16
+(let econg_126 (Leaf 126))  ; if
+(let econg_127 (Leaf 127))  ; gcd_test::a!0@1#18
+(let econg_128 (Leaf 128))  ; if
+(let econg_129 (Leaf 129))  ; gcd_test::b!0@1#18
+(let econg_130 (Leaf 130))  ; if
+(let econg_131 (Leaf 131))  ; gcd_test::1::t!0@1#17
+(let econg_132 (Leaf 132))  ; if
+(let econg_133 (Leaf 133))  ; gcd_test::a!0@1#19
+(let econg_134 (Leaf 134))  ; if
+(let econg_135 (Leaf 135))  ; gcd_test::b!0@1#19
+(let econg_136 (Leaf 136))  ; if
+(let econg_137 (Leaf 137))  ; gcd_test::1::t!0@1#18
+(let econg_138 (Leaf 138))  ; if
+(let econg_139 (Leaf 139))  ; gcd_test::a!0@1#20
+(let econg_140 (Leaf 140))  ; if
+(let econg_141 (Leaf 141))  ; gcd_test::b!0@1#20
+(let econg_142 (Leaf 142))  ; if
+(let econg_143 (Leaf 143))  ; gcd_test::1::t!0@1#1
+(let econg_144 (Leaf 144))  ; gcd_test::1::t!0@1#19
+(let econg_145 (Leaf 145))  ; if
+(let econg_146 (Leaf 146))  ; gcd_test::a!0@1#21
+(let econg_147 (Leaf 147))  ; if
+(let econg_148 (Leaf 148))  ; gcd_test::b!0@1#21
+(let econg_149 (Leaf 149))  ; goto_symex::return_value::gcd_test!0#1
+(let econg_150 (Leaf 150))  ; goto_symex::return_value::gcd_test!0#1
+(let econg_151 (Leaf 151))  ; goto_symex::return_value::gcd_test!0#1
+(let econg_152 (Leaf 152))  ; if
+(let econg_153 (Leaf 153))  ; __VERIFIER_assert::cond!0@1#1
+(let econg_154 (Leaf 154))  ; main::1::x!0@1#1
+(let econg_155 (Leaf 155))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#1
+(let econg_156 (Leaf 156))  ; main::1::y!0@1#1
+(let econg_157 (Leaf 157))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#1
+(let econg_158 (Leaf 158))  ; main::1::g!0@1#1
+(let econg_159 (Leaf 159))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let econg_160 (Leaf 160))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#2
+(let econg_161 (Leaf 161))  ; symex::args::2
+(let econg_162 (Const 2147483648 162))  ; const 80000000
+(let econg_163 (Const 4294967295 163))  ; const FFFFFFFF
+(union econg_3 econg_4)
+(union econg_3 econg_5)
+(union econg_6 econg_7)
+(union econg_6 econg_8)
+(union econg_3 econg_14)
+(union econg_6 econg_15)
+(union econg_17 econg_18)
+(union econg_21 econg_22)
+(union econg_24 econg_26)
+(union econg_27 econg_30)
+(union econg_24 econg_33)
+(union econg_27 econg_35)
+(union econg_36 econg_38)
+(union econg_27 econg_40)
+(union econg_36 econg_42)
+(union econg_43 econg_45)
+(union econg_36 econg_47)
+(union econg_43 econg_49)
+(union econg_50 econg_52)
+(union econg_43 econg_54)
+(union econg_50 econg_56)
+(union econg_57 econg_59)
+(union econg_50 econg_61)
+(union econg_57 econg_63)
+(union econg_64 econg_66)
+(union econg_57 econg_68)
+(union econg_64 econg_70)
+(union econg_71 econg_73)
+(union econg_64 econg_75)
+(union econg_71 econg_77)
+(union econg_78 econg_80)
+(union econg_71 econg_82)
+(union econg_78 econg_84)
+(union econg_85 econg_87)
+(union econg_78 econg_89)
+(union econg_85 econg_91)
+(union econg_92 econg_94)
+(union econg_85 econg_96)
+(union econg_149 econg_150)
+(union econg_149 econg_151)
+(union econg_3 econg_159)
+(union econg_6 econg_160)

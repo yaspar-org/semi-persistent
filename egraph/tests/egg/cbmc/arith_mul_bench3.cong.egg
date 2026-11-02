@@ -1,0 +1,232 @@
+;; Converted from the CBMC e-graph dump arith_mul_bench3.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Leaf 1))  ; __CPROVER_deallocated#1
+(let econg_2 (Equal econg_0 econg_1))  ; =  ;; [ASSUME]
+(let econg_3 (Leaf 3))  ; __CPROVER_max_malloc_size!0#1
+(let econg_4 (Const 36028797018963968 4))  ; const 80000000000000
+(let econg_5 (Equal econg_3 econg_4))  ; =  ;; [ASSUME]
+(let econg_6 (Leaf 6))  ; __CPROVER_memory_leak#1
+(let econg_7 (Equal econg_0 econg_6))  ; =  ;; [ASSUME]
+(let econg_8 (Leaf 8))  ; __CPROVER_rounding_mode!0#1
+(let econg_9 (Const 0 9))  ; const 0
+(let econg_10 (Equal econg_8 econg_9))  ; =  ;; [ASSUME]
+(let econg_11 (Leaf 11))  ; main::1::1::i!0@1#2
+(let econg_12 (Equal econg_9 econg_11))  ; =  ;; [ASSUME]
+(let econg_13 (Leaf 13))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let econg_14 (Leaf 14))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let econg_15 (Equal econg_13 econg_14))  ; =  ;; [ASSUME]
+(let econg_16 (Leaf 16))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let econg_17 (Equal econg_13 econg_16))  ; =  ;; [ASSUME]
+(let econg_18 (Leaf 18))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let econg_19 (Leaf 19))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let econg_20 (Equal econg_18 econg_19))  ; =  ;; [ASSUME]
+(let econg_21 (Leaf 21))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let econg_22 (Equal econg_18 econg_21))  ; =  ;; [ASSUME]
+(let econg_23 (Leaf 23))  ; main::1::1::i!0@1#3
+(let econg_24 (Const 1 24))  ; const 1
+(let econg_25 (Equal econg_23 econg_24))  ; =  ;; [ASSUME]
+(let econg_26 (Leaf 26))  ; main::$tmp::return_value_nondet_u32!0@2#2
+(let econg_27 (Leaf 27))  ; main::$tmp::return_value_nondet_u32!0@2#2
+(let econg_28 (Equal econg_26 econg_27))  ; =  ;; [ASSUME]
+(let econg_29 (Leaf 29))  ; main::$tmp::return_value_nondet_u32!0@2#2
+(let econg_30 (Equal econg_26 econg_29))  ; =  ;; [ASSUME]
+(let econg_31 (Leaf 31))  ; main::$tmp::return_value_nondet_u32$0!0@2#2
+(let econg_32 (Leaf 32))  ; main::$tmp::return_value_nondet_u32$0!0@2#2
+(let econg_33 (Equal econg_31 econg_32))  ; =  ;; [ASSUME]
+(let econg_34 (Leaf 34))  ; main::$tmp::return_value_nondet_u32$0!0@2#2
+(let econg_35 (Equal econg_31 econg_34))  ; =  ;; [ASSUME]
+(let econg_36 (Leaf 36))  ; main::1::1::i!0@1#4
+(let econg_37 (Const 2 37))  ; const 2
+(let econg_38 (Equal econg_36 econg_37))  ; =  ;; [ASSUME]
+(let econg_39 (Leaf 39))  ; main::$tmp::return_value_nondet_u32!0@3#2
+(let econg_40 (Leaf 40))  ; main::$tmp::return_value_nondet_u32!0@3#2
+(let econg_41 (Equal econg_39 econg_40))  ; =  ;; [ASSUME]
+(let econg_42 (Leaf 42))  ; main::$tmp::return_value_nondet_u32!0@3#2
+(let econg_43 (Equal econg_39 econg_42))  ; =  ;; [ASSUME]
+(let econg_44 (Leaf 44))  ; main::$tmp::return_value_nondet_u32$0!0@3#2
+(let econg_45 (Leaf 45))  ; main::$tmp::return_value_nondet_u32$0!0@3#2
+(let econg_46 (Equal econg_44 econg_45))  ; =  ;; [ASSUME]
+(let econg_47 (Leaf 47))  ; main::$tmp::return_value_nondet_u32$0!0@3#2
+(let econg_48 (Equal econg_44 econg_47))  ; =  ;; [ASSUME]
+(let econg_49 (Leaf 49))  ; main::1::1::i!0@1#5
+(let econg_50 (Const 3 50))  ; const 3
+(let econg_51 (Equal econg_49 econg_50))  ; =  ;; [ASSUME]
+(let econg_52 (Leaf 52))  ; main::$tmp::return_value_nondet_u32!0@4#2
+(let econg_53 (Leaf 53))  ; main::$tmp::return_value_nondet_u32!0@4#2
+(let econg_54 (Equal econg_52 econg_53))  ; =  ;; [ASSUME]
+(let econg_55 (Leaf 55))  ; main::$tmp::return_value_nondet_u32!0@4#2
+(let econg_56 (Equal econg_52 econg_55))  ; =  ;; [ASSUME]
+(let econg_57 (Leaf 57))  ; main::$tmp::return_value_nondet_u32$0!0@4#2
+(let econg_58 (Leaf 58))  ; main::$tmp::return_value_nondet_u32$0!0@4#2
+(let econg_59 (Equal econg_57 econg_58))  ; =  ;; [ASSUME]
+(let econg_60 (Leaf 60))  ; main::$tmp::return_value_nondet_u32$0!0@4#2
+(let econg_61 (Equal econg_57 econg_60))  ; =  ;; [ASSUME]
+(let econg_62 (Leaf 62))  ; main::1::1::i!0@1#6
+(let econg_63 (Const 4 63))  ; const 4
+(let econg_64 (Equal econg_62 econg_63))  ; =  ;; [ASSUME]
+(let econg_65 (Leaf 65))  ; main::$tmp::return_value_nondet_u32!0@5#2
+(let econg_66 (Leaf 66))  ; main::$tmp::return_value_nondet_u32!0@5#2
+(let econg_67 (Equal econg_65 econg_66))  ; =  ;; [ASSUME]
+(let econg_68 (Leaf 68))  ; main::$tmp::return_value_nondet_u32!0@5#2
+(let econg_69 (Equal econg_65 econg_68))  ; =  ;; [ASSUME]
+(let econg_70 (Leaf 70))  ; main::$tmp::return_value_nondet_u32$0!0@5#2
+(let econg_71 (Leaf 71))  ; main::$tmp::return_value_nondet_u32$0!0@5#2
+(let econg_72 (Equal econg_70 econg_71))  ; =  ;; [ASSUME]
+(let econg_73 (Leaf 73))  ; main::$tmp::return_value_nondet_u32$0!0@5#2
+(let econg_74 (Equal econg_70 econg_73))  ; =  ;; [ASSUME]
+(let econg_75 (Leaf 75))  ; main::1::1::i!0@1#7
+(let econg_76 (Const 5 76))  ; const 5
+(let econg_77 (Equal econg_75 econg_76))  ; =  ;; [ASSUME]
+(let econg_78 (Leaf 78))  ; main::$tmp::return_value_nondet_u32!0@6#2
+(let econg_79 (Leaf 79))  ; main::$tmp::return_value_nondet_u32!0@6#2
+(let econg_80 (Equal econg_78 econg_79))  ; =  ;; [ASSUME]
+(let econg_81 (Leaf 81))  ; main::$tmp::return_value_nondet_u32!0@6#2
+(let econg_82 (Equal econg_78 econg_81))  ; =  ;; [ASSUME]
+(let econg_83 (Leaf 83))  ; main::$tmp::return_value_nondet_u32$0!0@6#2
+(let econg_84 (Leaf 84))  ; main::$tmp::return_value_nondet_u32$0!0@6#2
+(let econg_85 (Equal econg_83 econg_84))  ; =  ;; [ASSUME]
+(let econg_86 (Leaf 86))  ; main::$tmp::return_value_nondet_u32$0!0@6#2
+(let econg_87 (Equal econg_83 econg_86))  ; =  ;; [ASSUME]
+(let econg_88 (Leaf 88))  ; main::1::1::i!0@1#8
+(let econg_89 (Const 6 89))  ; const 6
+(let econg_90 (Equal econg_88 econg_89))  ; =  ;; [ASSUME]
+(let econg_91 (Leaf 91))  ; main::$tmp::return_value_nondet_u32!0@7#2
+(let econg_92 (Leaf 92))  ; main::$tmp::return_value_nondet_u32!0@7#2
+(let econg_93 (Equal econg_91 econg_92))  ; =  ;; [ASSUME]
+(let econg_94 (Leaf 94))  ; main::$tmp::return_value_nondet_u32!0@7#2
+(let econg_95 (Equal econg_91 econg_94))  ; =  ;; [ASSUME]
+(let econg_96 (Leaf 96))  ; main::$tmp::return_value_nondet_u32$0!0@7#2
+(let econg_97 (Leaf 97))  ; main::$tmp::return_value_nondet_u32$0!0@7#2
+(let econg_98 (Equal econg_96 econg_97))  ; =  ;; [ASSUME]
+(let econg_99 (Leaf 99))  ; main::$tmp::return_value_nondet_u32$0!0@7#2
+(let econg_100 (Equal econg_96 econg_99))  ; =  ;; [ASSUME]
+(let econg_101 (Leaf 101))  ; main::1::1::i!0@1#9
+(let econg_102 (Const 7 102))  ; const 7
+(let econg_103 (Equal econg_101 econg_102))  ; =  ;; [ASSUME]
+(let econg_104 (Leaf 104))  ; main::$tmp::return_value_nondet_u32!0@8#2
+(let econg_105 (Leaf 105))  ; main::$tmp::return_value_nondet_u32!0@8#2
+(let econg_106 (Equal econg_104 econg_105))  ; =  ;; [ASSUME]
+(let econg_107 (Leaf 107))  ; main::$tmp::return_value_nondet_u32!0@8#2
+(let econg_108 (Equal econg_104 econg_107))  ; =  ;; [ASSUME]
+(let econg_109 (Leaf 109))  ; main::$tmp::return_value_nondet_u32$0!0@8#2
+(let econg_110 (Leaf 110))  ; main::$tmp::return_value_nondet_u32$0!0@8#2
+(let econg_111 (Equal econg_109 econg_110))  ; =  ;; [ASSUME]
+(let econg_112 (Leaf 112))  ; main::$tmp::return_value_nondet_u32$0!0@8#2
+(let econg_113 (Equal econg_109 econg_112))  ; =  ;; [ASSUME]
+(let econg_114 (Leaf 114))  ; main::1::1::i!0@1#10
+(let econg_115 (Const 8 115))  ; const 8
+(let econg_116 (Equal econg_114 econg_115))  ; =  ;; [ASSUME]
+(let econg_117 (Leaf 117))  ; main::1::s1!0@1#2
+(let econg_118 (Leaf 118))  ; main::1::s1!0@1#2
+(let econg_119 (Equal econg_117 econg_118))  ; =  ;; [ASSUME]
+(let econg_120 (Mult econg_13 econg_18))  ; *
+(let econg_121 (Mult econg_26 econg_31))  ; *
+(let econg_122 (Mult econg_39 econg_44))  ; *
+(let econg_123 (Mult econg_52 econg_57))  ; *
+(let econg_124 (Mult econg_65 econg_70))  ; *
+(let econg_125 (Mult econg_78 econg_83))  ; *
+(let econg_126 (Mult econg_91 econg_96))  ; *
+(let econg_127 (Mult econg_104 econg_109))  ; *
+(let econg_128 (Leaf 128))  ; main::1::s2!0@1#2
+(let econg_129 (Leaf 129))  ; main::1::s2!0@1#2
+(let econg_130 (Equal econg_128 econg_129))  ; =  ;; [ASSUME]
+(let econg_131 (Mult econg_13 econg_18))  ; *
+(let econg_132 (Mult econg_26 econg_31))  ; *
+(let econg_133 (Mult econg_39 econg_44))  ; *
+(let econg_134 (Mult econg_52 econg_57))  ; *
+(let econg_135 (Mult econg_65 econg_70))  ; *
+(let econg_136 (Mult econg_78 econg_83))  ; *
+(let econg_137 (Mult econg_91 econg_96))  ; *
+(let econg_138 (Mult econg_104 econg_109))  ; *
+(let econg_139 (Leaf 139))  ; main::1::a!0@1#1
+(let econg_140 (Leaf 140))  ; array
+(let econg_141 (Leaf 141))  ; main::1::a!0@1#1[[0]]
+(let econg_142 (Leaf 142))  ; main::1::a!0@1#1[[1]]
+(let econg_143 (Leaf 143))  ; main::1::a!0@1#1[[2]]
+(let econg_144 (Leaf 144))  ; main::1::a!0@1#1[[3]]
+(let econg_145 (Leaf 145))  ; main::1::a!0@1#1[[4]]
+(let econg_146 (Leaf 146))  ; main::1::a!0@1#1[[5]]
+(let econg_147 (Leaf 147))  ; main::1::a!0@1#1[[6]]
+(let econg_148 (Leaf 148))  ; main::1::a!0@1#1[[7]]
+(let econg_149 (Leaf 149))  ; main::1::b!0@1#1
+(let econg_150 (Leaf 150))  ; array
+(let econg_151 (Leaf 151))  ; main::1::b!0@1#1[[0]]
+(let econg_152 (Leaf 152))  ; main::1::b!0@1#1[[1]]
+(let econg_153 (Leaf 153))  ; main::1::b!0@1#1[[2]]
+(let econg_154 (Leaf 154))  ; main::1::b!0@1#1[[3]]
+(let econg_155 (Leaf 155))  ; main::1::b!0@1#1[[4]]
+(let econg_156 (Leaf 156))  ; main::1::b!0@1#1[[5]]
+(let econg_157 (Leaf 157))  ; main::1::b!0@1#1[[6]]
+(let econg_158 (Leaf 158))  ; main::1::b!0@1#1[[7]]
+(let econg_159 (Leaf 159))  ; main::1::1::i!0@1#1
+(let econg_160 (Leaf 160))  ; main::$tmp::return_value_nondet_u32!0@1#1
+(let econg_161 (Leaf 161))  ; main::$tmp::return_value_nondet_u32$0!0@1#1
+(let econg_162 (Leaf 162))  ; main::$tmp::return_value_nondet_u32!0@2#1
+(let econg_163 (Leaf 163))  ; main::$tmp::return_value_nondet_u32$0!0@2#1
+(let econg_164 (Leaf 164))  ; main::$tmp::return_value_nondet_u32!0@3#1
+(let econg_165 (Leaf 165))  ; main::$tmp::return_value_nondet_u32$0!0@3#1
+(let econg_166 (Leaf 166))  ; main::$tmp::return_value_nondet_u32!0@4#1
+(let econg_167 (Leaf 167))  ; main::$tmp::return_value_nondet_u32$0!0@4#1
+(let econg_168 (Leaf 168))  ; main::$tmp::return_value_nondet_u32!0@5#1
+(let econg_169 (Leaf 169))  ; main::$tmp::return_value_nondet_u32$0!0@5#1
+(let econg_170 (Leaf 170))  ; main::$tmp::return_value_nondet_u32!0@6#1  ;; [ASSERT]
+(let econg_171 (Leaf 171))  ; main::$tmp::return_value_nondet_u32$0!0@6#1  ;; [ASSUME]
+(let econg_172 (Leaf 172))  ; main::$tmp::return_value_nondet_u32!0@7#1
+(let econg_173 (Leaf 173))  ; main::$tmp::return_value_nondet_u32$0!0@7#1
+(let econg_174 (Leaf 174))  ; main::$tmp::return_value_nondet_u32!0@8#1
+(let econg_175 (Leaf 175))  ; main::$tmp::return_value_nondet_u32$0!0@8#1
+(let econg_176 (Leaf 176))  ; main::1::s1!0@1#1
+(let econg_177 (Leaf 177))  ; main::1::s2!0@1#1
+(let econg_178 (Equal econg_117 econg_128))  ; =
+(let econg_179 (Leaf 179))  ; const true
+(union econg_13 econg_14)
+(union econg_13 econg_16)
+(union econg_18 econg_19)
+(union econg_18 econg_21)
+(union econg_26 econg_27)
+(union econg_26 econg_29)
+(union econg_31 econg_32)
+(union econg_31 econg_34)
+(union econg_39 econg_40)
+(union econg_39 econg_42)
+(union econg_44 econg_45)
+(union econg_44 econg_47)
+(union econg_52 econg_53)
+(union econg_52 econg_55)
+(union econg_57 econg_58)
+(union econg_57 econg_60)
+(union econg_65 econg_66)
+(union econg_65 econg_68)
+(union econg_70 econg_71)
+(union econg_70 econg_73)
+(union econg_78 econg_79)
+(union econg_78 econg_81)
+(union econg_83 econg_84)
+(union econg_83 econg_86)
+(union econg_91 econg_92)
+(union econg_91 econg_94)
+(union econg_96 econg_97)
+(union econg_96 econg_99)
+(union econg_104 econg_105)
+(union econg_104 econg_107)
+(union econg_109 econg_110)
+(union econg_109 econg_112)
+(union econg_117 econg_118)
+(union econg_128 econg_129)

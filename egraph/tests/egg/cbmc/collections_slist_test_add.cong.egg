@@ -1,0 +1,3337 @@
+;; Converted from the CBMC e-graph dump collections_slist_test_add.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Leaf 0))  ; slist_add_last::list!0@1#1
+(let econg_1 (Leaf 1))  ; address_of
+(let econg_2 (Leaf 2))  ; slist_add_last::list!0@2#1
+(let econg_3 (Leaf 3))  ; symex_dynamic::dynamic_object#5..tail
+(let econg_4 (Leaf 4))  ; address_of
+(let econg_5 (Leaf 5))  ; slist_add_last::list!0@3#1
+(let econg_6 (Leaf 6))  ; symex_dynamic::dynamic_object#9..tail
+(let econg_7 (Leaf 7))  ; address_of
+(let econg_8 (Leaf 8))  ; slist_add_last::list$object#8..tail
+(let econg_9 (Leaf 9))  ; slist_add_last::list!0@4#1
+(let econg_10 (Leaf 10))  ; symex_dynamic::dynamic_object#13..tail
+(let econg_11 (Leaf 11))  ; address_of
+(let econg_12 (Leaf 12))  ; slist_add_last::list$object#12..tail
+(let econg_13 (Leaf 13))  ; unlinkn_all::list!0@1#1
+(let econg_14 (Leaf 14))  ; slist_remove_all::list!0@1#1
+(let econg_15 (Leaf 15))  ; slist_remove_all::list!0@2#1
+(let econg_16 (Leaf 16))  ; address_of
+(let econg_17 (Leaf 17))  ; __CPROVER_alloca_object#1
+(let econg_18 (Null 18))  ; const NULL
+(let econg_19 (Equal econg_17 econg_18))  ; =  ;; [ASSUME]
+(let econg_20 (Leaf 20))  ; __CPROVER_dead_object#1
+(let econg_21 (Equal econg_18 econg_20))  ; =  ;; [ASSUME]
+(let econg_22 (Leaf 22))  ; __CPROVER_deallocated#1
+(let econg_23 (Equal econg_18 econg_22))  ; =  ;; [ASSUME]
+(let econg_24 (Leaf 24))  ; __CPROVER_malloc_is_new_array#1
+(let econg_25 (Leaf 25))  ; const false
+(let econg_26 (Equal econg_24 econg_25))  ; =  ;; [ASSUME]
+(let econg_27 (Leaf 27))  ; __CPROVER_max_malloc_size!0#1
+(let econg_28 (Const 36028797018963968 28))  ; const 80000000000000
+(let econg_29 (Equal econg_27 econg_28))  ; =  ;; [ASSUME]
+(let econg_30 (Leaf 30))  ; __CPROVER_memory_leak#1
+(let econg_31 (Equal econg_18 econg_30))  ; =  ;; [ASSUME]
+(let econg_32 (Leaf 32))  ; __CPROVER_new_object#1
+(let econg_33 (Equal econg_18 econg_32))  ; =  ;; [ASSUME]
+(let econg_34 (Leaf 34))  ; __CPROVER_rounding_mode!0#1
+(let econg_35 (Const 0 35))  ; const 0
+(let econg_36 (Equal econg_34 econg_35))  ; =  ;; [ASSUME]
+(let econg_37 (Leaf 37))  ; list#1
+(let econg_38 (Null 38))  ; const NULL
+(let econg_39 (Equal econg_37 econg_38))  ; =  ;; [ASSUME]
+(let econg_40 (Leaf 40))  ; list2#1
+(let econg_41 (Equal econg_38 econg_40))  ; =  ;; [ASSUME]
+(let econg_42 (Leaf 42))  ; stat#1
+(let econg_43 (Equal econg_35 econg_42))  ; =  ;; [ASSUME]
+(let econg_44 (Leaf 44))  ; slist_new::out!0@1#1
+(let econg_45 (Leaf 45))  ; address_of
+(let econg_46 (Equal econg_44 econg_45))  ; =  ;; [ASSUME]
+(let econg_47 (Leaf 47))  ; slist_conf_init::conf!0@1#1
+(let econg_48 (Leaf 48))  ; address_of
+(let econg_49 (Equal econg_47 econg_48))  ; =  ;; [ASSUME]
+(let econg_50 (Leaf 50))  ; slist_new::1::conf!0@1#2..mem_alloc
+(let econg_51 (Leaf 51))  ; address_of
+(let econg_52 (Equal econg_50 econg_51))  ; =  ;; [ASSUME]
+(let econg_53 (Leaf 53))  ; slist_new::1::conf!0@1#2..mem_calloc
+(let econg_54 (Leaf 54))  ; address_of
+(let econg_55 (Equal econg_53 econg_54))  ; =  ;; [ASSUME]
+(let econg_56 (Leaf 56))  ; slist_new::1::conf!0@1#2..mem_free
+(let econg_57 (Leaf 57))  ; address_of
+(let econg_58 (Equal econg_56 econg_57))  ; =  ;; [ASSUME]
+(let econg_59 (Leaf 59))  ; slist_new_conf::conf!0@1#1
+(let econg_60 (Equal econg_48 econg_59))  ; =  ;; [ASSUME]
+(let econg_61 (Leaf 61))  ; slist_new_conf::out!0@1#1
+(let econg_62 (Equal econg_45 econg_61))  ; =  ;; [ASSUME]
+(let econg_63 (Leaf 63))  ; calloc::nmemb!0@1#1
+(let econg_64 (Const 1 64))  ; const 1
+(let econg_65 (Equal econg_63 econg_64))  ; =  ;; [ASSUME]
+(let econg_66 (Leaf 66))  ; calloc::size!0@1#1
+(let econg_67 (Const 48 67))  ; const 30
+(let econg_68 (Equal econg_66 econg_67))  ; =  ;; [ASSUME]
+(let econg_69 (Leaf 69))  ; calloc::$tmp::tmp_overflow_result!0@1#2
+(let econg_70 (Leaf 70))  ; struct
+(let econg_71 (Equal econg_69 econg_70))  ; =  ;; [ASSUME]
+(let econg_72 (Leaf 72))  ; calloc::$tmp::tmp_overflow_result!0@1#2..value
+(let econg_73 (Equal econg_67 econg_72))  ; =  ;; [ASSUME]
+(let econg_74 (Leaf 74))  ; calloc::$tmp::tmp_overflow_result!0@1#2..overflow-*
+(let econg_75 (Equal econg_25 econg_74))  ; =  ;; [ASSUME]
+(let econg_76 (Leaf 76))  ; calloc::1::alloc_size!0@1#2
+(let econg_77 (Equal econg_67 econg_76))  ; =  ;; [ASSUME]
+(let econg_78 (Leaf 78))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@1#2
+(let econg_79 (Leaf 79))  ; nondet_symbol
+(let econg_80 (Equal econg_78 econg_79))  ; =  ;; [ASSUME]
+(let econg_81 (Leaf 81))  ; calloc::1::1::should_malloc_fail!0@1#2
+(let econg_82 (Equal econg_78 econg_81))  ; =  ;; [ASSUME]
+(let econg_83 (Leaf 83))  ; goto_symex::return_value::calloc!0#1
+(let econg_84 (Equal econg_18 econg_83))  ; =  ;; [ASSUME]
+(let econg_85 (Leaf 85))  ; __CPROVER_dead_object#2
+(let econg_86 (Leaf 86))  ; if
+(let econg_87 (Equal econg_85 econg_86))  ; =  ;; [ASSUME]
+(let econg_88 (Type 88))
+(let econg_89 (Leaf 89))  ; address_of
+(let econg_90 (Typecast econg_88 econg_89))  ; typecast
+(let econg_91 (Leaf 91))  ; symex_dynamic::dynamic_object#1..size
+(let econg_92 (Const 0 92))  ; const 0
+(let econg_93 (Equal econg_91 econg_92))  ; =  ;; [ASSUME]
+(let econg_94 (Leaf 94))  ; symex_dynamic::dynamic_object#1..head
+(let econg_95 (Null 95))  ; const NULL
+(let econg_96 (Equal econg_94 econg_95))  ; =  ;; [ASSUME]
+(let econg_97 (Leaf 97))  ; symex_dynamic::dynamic_object#1..tail
+(let econg_98 (Equal econg_95 econg_97))  ; =  ;; [ASSUME]
+(let econg_99 (Leaf 99))  ; symex_dynamic::dynamic_object#1..mem_alloc
+(let econg_100 (Null 100))  ; const NULL
+(let econg_101 (Equal econg_99 econg_100))  ; =  ;; [ASSUME]
+(let econg_102 (Leaf 102))  ; symex_dynamic::dynamic_object#1..mem_calloc
+(let econg_103 (Null 103))  ; const NULL
+(let econg_104 (Equal econg_102 econg_103))  ; =  ;; [ASSUME]
+(let econg_105 (Leaf 105))  ; symex_dynamic::dynamic_object#1..mem_free
+(let econg_106 (Null 106))  ; const NULL
+(let econg_107 (Equal econg_105 econg_106))  ; =  ;; [ASSUME]
+(let econg_108 (Leaf 108))  ; calloc::$tmp::malloc_value!0@1#2
+(let econg_109 (Typecast econg_88 econg_1))  ; typecast
+(let econg_110 (Equal econg_108 econg_109))  ; =  ;; [ASSUME]
+(let econg_111 (Leaf 111))  ; calloc::1::malloc_res!0@1#2
+(let econg_112 (Equal econg_109 econg_111))  ; =  ;; [ASSUME]
+(let econg_113 (Leaf 113))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@1#2
+(let econg_114 (Leaf 114))  ; nondet_symbol
+(let econg_115 (Equal econg_113 econg_114))  ; =  ;; [ASSUME]
+(let econg_116 (Leaf 116))  ; calloc::1::record_malloc!0@1#2
+(let econg_117 (Equal econg_113 econg_116))  ; =  ;; [ASSUME]
+(let econg_118 (Leaf 118))  ; __CPROVER_malloc_is_new_array#2
+(let econg_119 (Equal econg_25 econg_118))  ; =  ;; [ASSUME]
+(let econg_120 (Leaf 120))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@1#2
+(let econg_121 (Leaf 121))  ; nondet_symbol
+(let econg_122 (Equal econg_120 econg_121))  ; =  ;; [ASSUME]
+(let econg_123 (Leaf 123))  ; calloc::1::record_may_leak!0@1#2
+(let econg_124 (Equal econg_120 econg_123))  ; =  ;; [ASSUME]
+(let econg_125 (Leaf 125))  ; __CPROVER_memory_leak#2
+(let econg_126 (Leaf 126))  ; if
+(let econg_127 (Equal econg_125 econg_126))  ; =  ;; [ASSUME]
+(let econg_128 (Leaf 128))  ; goto_symex::return_value::calloc!0#2
+(let econg_129 (Equal econg_109 econg_128))  ; =  ;; [ASSUME]
+(let econg_130 (Leaf 130))  ; __CPROVER_dead_object#3
+(let econg_131 (Leaf 131))  ; if
+(let econg_132 (Equal econg_130 econg_131))  ; =  ;; [ASSUME]
+(let econg_133 (Leaf 133))  ; __CPROVER_dead_object#4
+(let econg_134 (Leaf 134))  ; if
+(let econg_135 (Equal econg_133 econg_134))  ; =  ;; [ASSUME]
+(let econg_136 (Leaf 136))  ; __CPROVER_malloc_is_new_array#3
+(let econg_137 (Equal econg_25 econg_136))  ; =  ;; [ASSUME]
+(let econg_138 (Leaf 138))  ; __CPROVER_memory_leak#3
+(let econg_139 (Leaf 139))  ; if
+(let econg_140 (Equal econg_138 econg_139))  ; =  ;; [ASSUME]
+(let econg_141 (Leaf 141))  ; goto_symex::return_value::calloc!0#3
+(let econg_142 (Leaf 142))  ; if
+(let econg_143 (Equal econg_141 econg_142))  ; =  ;; [ASSUME]
+(let econg_144 (Leaf 144))  ; symex_dynamic::dynamic_object#2..head
+(let econg_145 (Equal econg_95 econg_144))  ; =  ;; [ASSUME]
+(let econg_146 (Leaf 146))  ; symex_dynamic::dynamic_object#2..mem_alloc
+(let econg_147 (Equal econg_100 econg_146))  ; =  ;; [ASSUME]
+(let econg_148 (Leaf 148))  ; symex_dynamic::dynamic_object#2..mem_calloc
+(let econg_149 (Equal econg_103 econg_148))  ; =  ;; [ASSUME]
+(let econg_150 (Leaf 150))  ; symex_dynamic::dynamic_object#2..mem_free
+(let econg_151 (Equal econg_106 econg_150))  ; =  ;; [ASSUME]
+(let econg_152 (Leaf 152))  ; symex_dynamic::dynamic_object#2..size
+(let econg_153 (Equal econg_92 econg_152))  ; =  ;; [ASSUME]
+(let econg_154 (Leaf 154))  ; symex_dynamic::dynamic_object#2..tail
+(let econg_155 (Equal econg_95 econg_154))  ; =  ;; [ASSUME]
+(let econg_156 (Leaf 156))  ; slist_new_conf::$tmp::return_value!0@1#2
+(let econg_157 (Equal econg_141 econg_156))  ; =  ;; [ASSUME]
+(let econg_158 (Leaf 158))  ; slist_new_conf::1::list!0@1#2
+(let econg_159 (Type 159))
+(let econg_160 (Typecast econg_159 econg_156))  ; typecast
+(let econg_161 (Equal econg_158 econg_160))  ; =  ;; [ASSUME]
+(let econg_162 (Leaf 162))  ; goto_symex::\guard#1
+(let econg_163 (Leaf 163))  ; not
+(let econg_164 (Equal econg_162 econg_163))  ; =  ;; [ASSUME]
+(let econg_165 (Leaf 165))  ; goto_symex::return_value::slist_new_conf!0#1
+(let econg_166 (Const 1 166))  ; const 1
+(let econg_167 (Equal econg_165 econg_166))  ; =  ;; [ASSUME]
+(let econg_168 (Leaf 168))  ; symex_dynamic::dynamic_object#3..mem_alloc
+(let econg_169 (Equal econg_51 econg_168))  ; =  ;; [ASSUME]
+(let econg_170 (Leaf 170))  ; symex_dynamic::dynamic_object#3..mem_calloc
+(let econg_171 (Equal econg_54 econg_170))  ; =  ;; [ASSUME]
+(let econg_172 (Leaf 172))  ; symex_dynamic::dynamic_object#3..mem_free
+(let econg_173 (Equal econg_57 econg_172))  ; =  ;; [ASSUME]
+(let econg_174 (Leaf 174))  ; list#2
+(let econg_175 (Equal econg_158 econg_174))  ; =  ;; [ASSUME]
+(let econg_176 (Leaf 176))  ; goto_symex::return_value::slist_new_conf!0#2
+(let econg_177 (Const 0 177))  ; const 0
+(let econg_178 (Equal econg_176 econg_177))  ; =  ;; [ASSUME]
+(let econg_179 (Leaf 179))  ; goto_symex::return_value::slist_new_conf!0#3
+(let econg_180 (Leaf 180))  ; if
+(let econg_181 (Equal econg_179 econg_180))  ; =  ;; [ASSUME]
+(let econg_182 (Leaf 182))  ; list#3
+(let econg_183 (Leaf 183))  ; if
+(let econg_184 (Equal econg_182 econg_183))  ; =  ;; [ASSUME]
+(let econg_185 (Leaf 185))  ; symex_dynamic::dynamic_object#4..mem_alloc
+(let econg_186 (Leaf 186))  ; if
+(let econg_187 (Equal econg_185 econg_186))  ; =  ;; [ASSUME]
+(let econg_188 (Leaf 188))  ; symex_dynamic::dynamic_object#4..mem_calloc
+(let econg_189 (Leaf 189))  ; if
+(let econg_190 (Equal econg_188 econg_189))  ; =  ;; [ASSUME]
+(let econg_191 (Leaf 191))  ; symex_dynamic::dynamic_object#4..mem_free
+(let econg_192 (Leaf 192))  ; if
+(let econg_193 (Equal econg_191 econg_192))  ; =  ;; [ASSUME]
+(let econg_194 (Leaf 194))  ; slist_new::$tmp::return_value_slist_new_conf!0@1#2
+(let econg_195 (Equal econg_179 econg_194))  ; =  ;; [ASSUME]
+(let econg_196 (Leaf 196))  ; goto_symex::return_value::slist_new!0#1
+(let econg_197 (Equal econg_194 econg_196))  ; =  ;; [ASSUME]
+(let econg_198 (Leaf 198))  ; __CPROVER_dead_object#5
+(let econg_199 (Leaf 199))  ; if
+(let econg_200 (Equal econg_198 econg_199))  ; =  ;; [ASSUME]
+(let econg_201 (Typecast econg_88 econg_48))  ; typecast
+(let econg_202 (Leaf 202))  ; setup_test::$tmp::return_value_slist_new!0@1#2
+(let econg_203 (Equal econg_196 econg_202))  ; =  ;; [ASSUME]
+(let econg_204 (Leaf 204))  ; stat#2
+(let econg_205 (Type 205))
+(let econg_206 (Typecast econg_205 econg_202))  ; stat#2
+(let econg_207 (Equal econg_204 econg_206))  ; =  ;; [ASSUME]
+(let econg_208 (Leaf 208))  ; slist_new::out!0@2#1
+(let econg_209 (Leaf 209))  ; address_of
+(let econg_210 (Equal econg_208 econg_209))  ; =  ;; [ASSUME]
+(let econg_211 (Leaf 211))  ; slist_conf_init::conf!0@2#1
+(let econg_212 (Leaf 212))  ; address_of
+(let econg_213 (Equal econg_211 econg_212))  ; =  ;; [ASSUME]
+(let econg_214 (Leaf 214))  ; slist_new::1::conf!0@2#2..mem_alloc
+(let econg_215 (Equal econg_51 econg_214))  ; =  ;; [ASSUME]
+(let econg_216 (Leaf 216))  ; slist_new::1::conf!0@2#2..mem_calloc
+(let econg_217 (Equal econg_54 econg_216))  ; =  ;; [ASSUME]
+(let econg_218 (Leaf 218))  ; slist_new::1::conf!0@2#2..mem_free
+(let econg_219 (Equal econg_57 econg_218))  ; =  ;; [ASSUME]
+(let econg_220 (Leaf 220))  ; slist_new_conf::conf!0@2#1
+(let econg_221 (Equal econg_212 econg_220))  ; =  ;; [ASSUME]
+(let econg_222 (Leaf 222))  ; slist_new_conf::out!0@2#1
+(let econg_223 (Equal econg_209 econg_222))  ; =  ;; [ASSUME]
+(let econg_224 (Leaf 224))  ; calloc::nmemb!0@2#1
+(let econg_225 (Equal econg_64 econg_224))  ; =  ;; [ASSUME]
+(let econg_226 (Leaf 226))  ; calloc::size!0@2#1
+(let econg_227 (Equal econg_67 econg_226))  ; =  ;; [ASSUME]
+(let econg_228 (Leaf 228))  ; calloc::$tmp::tmp_overflow_result!0@2#2
+(let econg_229 (Equal econg_70 econg_228))  ; =  ;; [ASSUME]
+(let econg_230 (Leaf 230))  ; calloc::$tmp::tmp_overflow_result!0@2#2..value
+(let econg_231 (Equal econg_67 econg_230))  ; =  ;; [ASSUME]
+(let econg_232 (Leaf 232))  ; calloc::$tmp::tmp_overflow_result!0@2#2..overflow-*
+(let econg_233 (Equal econg_25 econg_232))  ; =  ;; [ASSUME]
+(let econg_234 (Leaf 234))  ; calloc::1::alloc_size!0@2#2
+(let econg_235 (Equal econg_67 econg_234))  ; =  ;; [ASSUME]
+(let econg_236 (Leaf 236))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@2#2
+(let econg_237 (Leaf 237))  ; nondet_symbol
+(let econg_238 (Equal econg_236 econg_237))  ; =  ;; [ASSUME]
+(let econg_239 (Leaf 239))  ; calloc::1::1::should_malloc_fail!0@2#2
+(let econg_240 (Equal econg_236 econg_239))  ; =  ;; [ASSUME]
+(let econg_241 (Leaf 241))  ; goto_symex::return_value::calloc!0#4
+(let econg_242 (Equal econg_18 econg_241))  ; =  ;; [ASSUME]
+(let econg_243 (Leaf 243))  ; __CPROVER_dead_object#6
+(let econg_244 (Leaf 244))  ; if
+(let econg_245 (Equal econg_243 econg_244))  ; =  ;; [ASSUME]
+(let econg_246 (Leaf 246))  ; address_of
+(let econg_247 (Typecast econg_88 econg_246))  ; typecast
+(let econg_248 (Leaf 248))  ; symex_dynamic::dynamic_object$0#1..size
+(let econg_249 (Equal econg_92 econg_248))  ; =  ;; [ASSUME]
+(let econg_250 (Leaf 250))  ; symex_dynamic::dynamic_object$0#1..head
+(let econg_251 (Equal econg_95 econg_250))  ; =  ;; [ASSUME]
+(let econg_252 (Leaf 252))  ; symex_dynamic::dynamic_object$0#1..tail
+(let econg_253 (Equal econg_95 econg_252))  ; =  ;; [ASSUME]
+(let econg_254 (Leaf 254))  ; symex_dynamic::dynamic_object$0#1..mem_alloc
+(let econg_255 (Equal econg_100 econg_254))  ; =  ;; [ASSUME]
+(let econg_256 (Leaf 256))  ; symex_dynamic::dynamic_object$0#1..mem_calloc
+(let econg_257 (Equal econg_103 econg_256))  ; =  ;; [ASSUME]
+(let econg_258 (Leaf 258))  ; symex_dynamic::dynamic_object$0#1..mem_free
+(let econg_259 (Equal econg_106 econg_258))  ; =  ;; [ASSUME]
+(let econg_260 (Leaf 260))  ; calloc::$tmp::malloc_value!0@2#2
+(let econg_261 (Typecast econg_88 econg_16))  ; typecast
+(let econg_262 (Equal econg_260 econg_261))  ; =  ;; [ASSUME]
+(let econg_263 (Leaf 263))  ; calloc::1::malloc_res!0@2#2
+(let econg_264 (Equal econg_261 econg_263))  ; =  ;; [ASSUME]
+(let econg_265 (Leaf 265))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@2#2
+(let econg_266 (Leaf 266))  ; nondet_symbol
+(let econg_267 (Equal econg_265 econg_266))  ; =  ;; [ASSUME]
+(let econg_268 (Leaf 268))  ; calloc::1::record_malloc!0@2#2
+(let econg_269 (Equal econg_265 econg_268))  ; =  ;; [ASSUME]
+(let econg_270 (Leaf 270))  ; __CPROVER_malloc_is_new_array#4
+(let econg_271 (Equal econg_25 econg_270))  ; =  ;; [ASSUME]
+(let econg_272 (Leaf 272))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@2#2
+(let econg_273 (Leaf 273))  ; nondet_symbol
+(let econg_274 (Equal econg_272 econg_273))  ; =  ;; [ASSUME]
+(let econg_275 (Leaf 275))  ; calloc::1::record_may_leak!0@2#2
+(let econg_276 (Equal econg_272 econg_275))  ; =  ;; [ASSUME]
+(let econg_277 (Leaf 277))  ; __CPROVER_memory_leak#4
+(let econg_278 (Leaf 278))  ; if
+(let econg_279 (Equal econg_277 econg_278))  ; =  ;; [ASSUME]
+(let econg_280 (Leaf 280))  ; goto_symex::return_value::calloc!0#5
+(let econg_281 (Equal econg_261 econg_280))  ; =  ;; [ASSUME]
+(let econg_282 (Leaf 282))  ; __CPROVER_dead_object#7
+(let econg_283 (Leaf 283))  ; if
+(let econg_284 (Equal econg_282 econg_283))  ; =  ;; [ASSUME]
+(let econg_285 (Leaf 285))  ; __CPROVER_dead_object#8
+(let econg_286 (Leaf 286))  ; if
+(let econg_287 (Equal econg_285 econg_286))  ; =  ;; [ASSUME]
+(let econg_288 (Leaf 288))  ; __CPROVER_malloc_is_new_array#5
+(let econg_289 (Equal econg_25 econg_288))  ; =  ;; [ASSUME]
+(let econg_290 (Leaf 290))  ; __CPROVER_memory_leak#5
+(let econg_291 (Leaf 291))  ; if
+(let econg_292 (Equal econg_290 econg_291))  ; =  ;; [ASSUME]
+(let econg_293 (Leaf 293))  ; goto_symex::return_value::calloc!0#6
+(let econg_294 (Leaf 294))  ; if
+(let econg_295 (Equal econg_293 econg_294))  ; =  ;; [ASSUME]
+(let econg_296 (Leaf 296))  ; symex_dynamic::dynamic_object$0#2..head
+(let econg_297 (Equal econg_95 econg_296))  ; =  ;; [ASSUME]
+(let econg_298 (Leaf 298))  ; symex_dynamic::dynamic_object$0#2..mem_alloc
+(let econg_299 (Equal econg_100 econg_298))  ; =  ;; [ASSUME]
+(let econg_300 (Leaf 300))  ; symex_dynamic::dynamic_object$0#2..mem_calloc
+(let econg_301 (Equal econg_103 econg_300))  ; =  ;; [ASSUME]
+(let econg_302 (Leaf 302))  ; symex_dynamic::dynamic_object$0#2..mem_free
+(let econg_303 (Equal econg_106 econg_302))  ; =  ;; [ASSUME]
+(let econg_304 (Leaf 304))  ; symex_dynamic::dynamic_object$0#2..size
+(let econg_305 (Equal econg_92 econg_304))  ; =  ;; [ASSUME]
+(let econg_306 (Leaf 306))  ; symex_dynamic::dynamic_object$0#2..tail
+(let econg_307 (Equal econg_95 econg_306))  ; =  ;; [ASSUME]
+(let econg_308 (Leaf 308))  ; slist_new_conf::$tmp::return_value!0@2#2
+(let econg_309 (Equal econg_293 econg_308))  ; =  ;; [ASSUME]
+(let econg_310 (Leaf 310))  ; slist_new_conf::1::list!0@2#2
+(let econg_311 (Typecast econg_159 econg_308))  ; typecast
+(let econg_312 (Equal econg_310 econg_311))  ; =  ;; [ASSUME]
+(let econg_313 (Leaf 313))  ; goto_symex::\guard#2
+(let econg_314 (Leaf 314))  ; not
+(let econg_315 (Equal econg_313 econg_314))  ; =  ;; [ASSUME]
+(let econg_316 (Leaf 316))  ; goto_symex::return_value::slist_new_conf!0#4
+(let econg_317 (Equal econg_166 econg_316))  ; =  ;; [ASSUME]
+(let econg_318 (Leaf 318))  ; symex_dynamic::dynamic_object$0#3..mem_alloc
+(let econg_319 (Equal econg_51 econg_318))  ; =  ;; [ASSUME]
+(let econg_320 (Leaf 320))  ; symex_dynamic::dynamic_object$0#3..mem_calloc
+(let econg_321 (Equal econg_54 econg_320))  ; =  ;; [ASSUME]
+(let econg_322 (Leaf 322))  ; symex_dynamic::dynamic_object$0#3..mem_free
+(let econg_323 (Equal econg_57 econg_322))  ; =  ;; [ASSUME]
+(let econg_324 (Leaf 324))  ; list2#2
+(let econg_325 (Equal econg_310 econg_324))  ; =  ;; [ASSUME]
+(let econg_326 (Leaf 326))  ; goto_symex::return_value::slist_new_conf!0#5
+(let econg_327 (Equal econg_177 econg_326))  ; =  ;; [ASSUME]
+(let econg_328 (Leaf 328))  ; goto_symex::return_value::slist_new_conf!0#6
+(let econg_329 (Leaf 329))  ; if
+(let econg_330 (Equal econg_328 econg_329))  ; =  ;; [ASSUME]
+(let econg_331 (Leaf 331))  ; list2#3
+(let econg_332 (Leaf 332))  ; if
+(let econg_333 (Equal econg_331 econg_332))  ; =  ;; [ASSUME]
+(let econg_334 (Leaf 334))  ; symex_dynamic::dynamic_object$0#4..mem_alloc
+(let econg_335 (Leaf 335))  ; if
+(let econg_336 (Equal econg_334 econg_335))  ; =  ;; [ASSUME]
+(let econg_337 (Leaf 337))  ; symex_dynamic::dynamic_object$0#4..mem_calloc
+(let econg_338 (Leaf 338))  ; if
+(let econg_339 (Equal econg_337 econg_338))  ; =  ;; [ASSUME]
+(let econg_340 (Leaf 340))  ; symex_dynamic::dynamic_object$0#4..mem_free
+(let econg_341 (Leaf 341))  ; if
+(let econg_342 (Equal econg_340 econg_341))  ; =  ;; [ASSUME]
+(let econg_343 (Leaf 343))  ; slist_new::$tmp::return_value_slist_new_conf!0@2#2
+(let econg_344 (Equal econg_328 econg_343))  ; =  ;; [ASSUME]
+(let econg_345 (Leaf 345))  ; __CPROVER_dead_object#9
+(let econg_346 (Leaf 346))  ; if
+(let econg_347 (Equal econg_345 econg_346))  ; =  ;; [ASSUME]
+(let econg_348 (Typecast econg_88 econg_212))  ; typecast
+(let econg_349 (Leaf 349))  ; main::$tmp::return_value___nondet_int!0@1#2
+(let econg_350 (Leaf 350))  ; main::$tmp::return_value___nondet_int!0@1#2
+(let econg_351 (Equal econg_349 econg_350))  ; =  ;; [ASSUME]
+(let econg_352 (Leaf 352))  ; main::1::s1!0@1#2
+(let econg_353 (Type 353))
+(let econg_354 (Typecast econg_353 econg_349))  ; main::1::s1!0@1#2
+(let econg_355 (Equal econg_352 econg_354))  ; =  ;; [ASSUME]
+(let econg_356 (Leaf 356))  ; main::1::str_s1!0@1#2
+(let econg_357 (Leaf 357))  ; array
+(let econg_358 (Equal econg_356 econg_357))  ; =  ;; [ASSUME]
+(let econg_359 (Const 0 359))  ; const 0
+(let econg_360 (Leaf 360))  ; main::1::s1!0@1#2
+(let econg_361 (Equal econg_352 econg_360))  ; =  ;; [ASSUME]
+(let econg_362 (Leaf 362))  ; main::1::str_s1!0@1#2[[1]]
+(let econg_363 (Equal econg_359 econg_362))  ; =  ;; [ASSUME]
+(let econg_364 (Leaf 364))  ; main::$tmp::return_value___nondet_int$0!0@1#2
+(let econg_365 (Leaf 365))  ; main::$tmp::return_value___nondet_int$0!0@1#2
+(let econg_366 (Equal econg_364 econg_365))  ; =  ;; [ASSUME]
+(let econg_367 (Leaf 367))  ; main::1::s2!0@1#2
+(let econg_368 (Typecast econg_353 econg_364))  ; main::1::s2!0@1#2
+(let econg_369 (Equal econg_367 econg_368))  ; =  ;; [ASSUME]
+(let econg_370 (Leaf 370))  ; main::1::str_s2!0@1#2
+(let econg_371 (Leaf 371))  ; array
+(let econg_372 (Equal econg_370 econg_371))  ; =  ;; [ASSUME]
+(let econg_373 (Leaf 373))  ; main::1::s2!0@1#2
+(let econg_374 (Equal econg_367 econg_373))  ; =  ;; [ASSUME]
+(let econg_375 (Leaf 375))  ; main::1::str_s2!0@1#2[[1]]
+(let econg_376 (Equal econg_359 econg_375))  ; =  ;; [ASSUME]
+(let econg_377 (Leaf 377))  ; main::$tmp::return_value___nondet_int$1!0@1#2
+(let econg_378 (Leaf 378))  ; main::$tmp::return_value___nondet_int$1!0@1#2
+(let econg_379 (Equal econg_377 econg_378))  ; =  ;; [ASSUME]
+(let econg_380 (Leaf 380))  ; main::1::s3!0@1#2
+(let econg_381 (Typecast econg_353 econg_377))  ; main::1::s3!0@1#2
+(let econg_382 (Equal econg_380 econg_381))  ; =  ;; [ASSUME]
+(let econg_383 (Leaf 383))  ; main::1::str_s3!0@1#2
+(let econg_384 (Leaf 384))  ; array
+(let econg_385 (Equal econg_383 econg_384))  ; =  ;; [ASSUME]
+(let econg_386 (Leaf 386))  ; main::1::s3!0@1#2
+(let econg_387 (Equal econg_380 econg_386))  ; =  ;; [ASSUME]
+(let econg_388 (Leaf 388))  ; main::1::str_s3!0@1#2[[1]]
+(let econg_389 (Equal econg_359 econg_388))  ; =  ;; [ASSUME]
+(let econg_390 (Leaf 390))  ; main::$tmp::return_value___nondet_int$2!0@1#2
+(let econg_391 (Leaf 391))  ; main::$tmp::return_value___nondet_int$2!0@1#2
+(let econg_392 (Equal econg_390 econg_391))  ; =  ;; [ASSUME]
+(let econg_393 (Leaf 393))  ; main::1::s4!0@1#2
+(let econg_394 (Typecast econg_353 econg_390))  ; main::1::s4!0@1#2
+(let econg_395 (Equal econg_393 econg_394))  ; =  ;; [ASSUME]
+(let econg_396 (Leaf 396))  ; main::1::str_s4!0@1#2
+(let econg_397 (Leaf 397))  ; array
+(let econg_398 (Equal econg_396 econg_397))  ; =  ;; [ASSUME]
+(let econg_399 (Leaf 399))  ; main::1::s4!0@1#2
+(let econg_400 (Equal econg_393 econg_399))  ; =  ;; [ASSUME]
+(let econg_401 (Leaf 401))  ; main::1::str_s4!0@1#2[[1]]
+(let econg_402 (Equal econg_359 econg_401))  ; =  ;; [ASSUME]
+(let econg_403 (Leaf 403))  ; slist_add::list!0@1#1
+(let econg_404 (Equal econg_182 econg_403))  ; =  ;; [ASSUME]
+(let econg_405 (Leaf 405))  ; slist_add::element!0@1#1
+(let econg_406 (Leaf 406))  ; address_of
+(let econg_407 (Typecast econg_88 econg_406))  ; typecast
+(let econg_408 (Equal econg_405 econg_407))  ; =  ;; [ASSUME]
+(let econg_409 (Type 409))
+(let econg_410 (Const 0 410))  ; const 0
+(let econg_411 (Typecast econg_409 econg_410))  ; typecast
+(let econg_412 (Equal econg_0 econg_403))  ; =  ;; [ASSUME]
+(let econg_413 (Leaf 413))  ; slist_add_last::element!0@1#1
+(let econg_414 (Equal econg_407 econg_413))  ; =  ;; [ASSUME]
+(let econg_415 (Leaf 415))  ; goto_symex::\guard#3
+(let econg_416 (Leaf 416))  ; not
+(let econg_417 (Equal econg_415 econg_416))  ; =  ;; [ASSUME]
+(let econg_418 (Leaf 418))  ; slist_add_last::list$object#0..mem_calloc
+(let econg_419 (Leaf 419))  ; calloc::nmemb!0@3#1
+(let econg_420 (Equal econg_64 econg_419))  ; =  ;; [ASSUME]
+(let econg_421 (Leaf 421))  ; calloc::size!0@3#1
+(let econg_422 (Const 16 422))  ; const 10
+(let econg_423 (Equal econg_421 econg_422))  ; =  ;; [ASSUME]
+(let econg_424 (Leaf 424))  ; calloc::$tmp::tmp_overflow_result!0@3#2
+(let econg_425 (Leaf 425))  ; struct
+(let econg_426 (Equal econg_424 econg_425))  ; =  ;; [ASSUME]
+(let econg_427 (Leaf 427))  ; calloc::$tmp::tmp_overflow_result!0@3#2..value
+(let econg_428 (Equal econg_422 econg_427))  ; =  ;; [ASSUME]
+(let econg_429 (Leaf 429))  ; calloc::$tmp::tmp_overflow_result!0@3#2..overflow-*
+(let econg_430 (Equal econg_25 econg_429))  ; =  ;; [ASSUME]
+(let econg_431 (Leaf 431))  ; calloc::1::alloc_size!0@3#2
+(let econg_432 (Equal econg_422 econg_431))  ; =  ;; [ASSUME]
+(let econg_433 (Leaf 433))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@3#2
+(let econg_434 (Leaf 434))  ; nondet_symbol
+(let econg_435 (Equal econg_433 econg_434))  ; =  ;; [ASSUME]
+(let econg_436 (Leaf 436))  ; calloc::1::1::should_malloc_fail!0@3#2
+(let econg_437 (Equal econg_433 econg_436))  ; =  ;; [ASSUME]
+(let econg_438 (Leaf 438))  ; goto_symex::return_value::calloc!0#7
+(let econg_439 (Equal econg_18 econg_438))  ; =  ;; [ASSUME]
+(let econg_440 (Leaf 440))  ; __CPROVER_dead_object#10
+(let econg_441 (Leaf 441))  ; if
+(let econg_442 (Equal econg_440 econg_441))  ; =  ;; [ASSUME]
+(let econg_443 (Leaf 443))  ; address_of
+(let econg_444 (Typecast econg_88 econg_443))  ; typecast
+(let econg_445 (Leaf 445))  ; symex_dynamic::dynamic_object$1#1..data
+(let econg_446 (Equal econg_18 econg_445))  ; =  ;; [ASSUME]
+(let econg_447 (Leaf 447))  ; symex_dynamic::dynamic_object$1#1..next
+(let econg_448 (Equal econg_95 econg_447))  ; =  ;; [ASSUME]
+(let econg_449 (Leaf 449))  ; calloc::$tmp::malloc_value!0@3#2
+(let econg_450 (Typecast econg_88 econg_4))  ; typecast
+(let econg_451 (Equal econg_449 econg_450))  ; =  ;; [ASSUME]
+(let econg_452 (Leaf 452))  ; calloc::1::malloc_res!0@3#2
+(let econg_453 (Equal econg_450 econg_452))  ; =  ;; [ASSUME]
+(let econg_454 (Leaf 454))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@3#2
+(let econg_455 (Leaf 455))  ; nondet_symbol
+(let econg_456 (Equal econg_454 econg_455))  ; =  ;; [ASSUME]
+(let econg_457 (Leaf 457))  ; calloc::1::record_malloc!0@3#2
+(let econg_458 (Equal econg_454 econg_457))  ; =  ;; [ASSUME]
+(let econg_459 (Leaf 459))  ; __CPROVER_malloc_is_new_array#6
+(let econg_460 (Equal econg_25 econg_459))  ; =  ;; [ASSUME]
+(let econg_461 (Leaf 461))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@3#2
+(let econg_462 (Leaf 462))  ; nondet_symbol
+(let econg_463 (Equal econg_461 econg_462))  ; =  ;; [ASSUME]
+(let econg_464 (Leaf 464))  ; calloc::1::record_may_leak!0@3#2
+(let econg_465 (Equal econg_461 econg_464))  ; =  ;; [ASSUME]
+(let econg_466 (Leaf 466))  ; __CPROVER_memory_leak#6
+(let econg_467 (Leaf 467))  ; if
+(let econg_468 (Equal econg_466 econg_467))  ; =  ;; [ASSUME]
+(let econg_469 (Leaf 469))  ; goto_symex::return_value::calloc!0#8
+(let econg_470 (Equal econg_450 econg_469))  ; =  ;; [ASSUME]
+(let econg_471 (Leaf 471))  ; __CPROVER_dead_object#11
+(let econg_472 (Leaf 472))  ; if
+(let econg_473 (Equal econg_471 econg_472))  ; =  ;; [ASSUME]
+(let econg_474 (Leaf 474))  ; __CPROVER_dead_object#12
+(let econg_475 (Leaf 475))  ; if
+(let econg_476 (Equal econg_474 econg_475))  ; =  ;; [ASSUME]
+(let econg_477 (Leaf 477))  ; __CPROVER_malloc_is_new_array#7
+(let econg_478 (Equal econg_25 econg_477))  ; =  ;; [ASSUME]
+(let econg_479 (Leaf 479))  ; __CPROVER_memory_leak#7
+(let econg_480 (Leaf 480))  ; if
+(let econg_481 (Equal econg_479 econg_480))  ; =  ;; [ASSUME]
+(let econg_482 (Leaf 482))  ; goto_symex::return_value::calloc!0#9
+(let econg_483 (Leaf 483))  ; if
+(let econg_484 (Equal econg_482 econg_483))  ; =  ;; [ASSUME]
+(let econg_485 (Leaf 485))  ; symex_dynamic::dynamic_object$1#2..data
+(let econg_486 (Equal econg_18 econg_485))  ; =  ;; [ASSUME]
+(let econg_487 (Leaf 487))  ; symex_dynamic::dynamic_object$1#2..next
+(let econg_488 (Equal econg_95 econg_487))  ; =  ;; [ASSUME]
+(let econg_489 (Leaf 489))  ; slist_add_last::$tmp::return_value!0@1#2
+(let econg_490 (Equal econg_482 econg_489))  ; =  ;; [ASSUME]
+(let econg_491 (Leaf 491))  ; slist_add_last::1::node!0@1#2
+(let econg_492 (Type 492))
+(let econg_493 (Typecast econg_492 econg_489))  ; typecast
+(let econg_494 (Equal econg_491 econg_493))  ; =  ;; [ASSUME]
+(let econg_495 (Leaf 495))  ; goto_symex::\guard#4
+(let econg_496 (Leaf 496))  ; not
+(let econg_497 (Equal econg_495 econg_496))  ; =  ;; [ASSUME]
+(let econg_498 (Leaf 498))  ; goto_symex::return_value::slist_add_last!0#1
+(let econg_499 (Equal econg_166 econg_498))  ; =  ;; [ASSUME]
+(let econg_500 (Leaf 500))  ; symex_dynamic::dynamic_object$1#3..data
+(let econg_501 (Equal econg_407 econg_500))  ; =  ;; [ASSUME]
+(let econg_502 (Leaf 502))  ; goto_symex::\guard#5
+(let econg_503 (Leaf 503))  ; not
+(let econg_504 (Equal econg_502 econg_503))  ; =  ;; [ASSUME]
+(let econg_505 (Leaf 505))  ; slist_add_last::list$object#0..size
+(let econg_506 (Leaf 506))  ; symex_dynamic::dynamic_object#3..head
+(let econg_507 (Leaf 507))  ; if
+(let econg_508 (Equal econg_506 econg_507))  ; =  ;; [ASSUME]
+(let econg_509 (Leaf 509))  ; slist_add_last::list$object#1..head
+(let econg_510 (Leaf 510))  ; if
+(let econg_511 (Equal econg_509 econg_510))  ; =  ;; [ASSUME]
+(let econg_512 (Leaf 512))  ; slist_add_last::list$object#0..head
+(let econg_513 (Leaf 513))  ; symex_dynamic::dynamic_object#3..tail
+(let econg_514 (Equal econg_507 econg_513))  ; =  ;; [ASSUME]
+(let econg_515 (Leaf 515))  ; slist_add_last::list$object#1..tail
+(let econg_516 (Leaf 516))  ; if
+(let econg_517 (Equal econg_515 econg_516))  ; =  ;; [ASSUME]
+(let econg_518 (Leaf 518))  ; slist_add_last::list$object#0..tail
+(let econg_519 (Leaf 519))  ; symex::invalid_object!0#1..next
+(let econg_520 (Equal econg_491 econg_519))  ; =  ;; [ASSUME]
+(let econg_521 (Leaf 521))  ; slist_add_last::list$object#2..tail
+(let econg_522 (Equal econg_491 econg_521))  ; =  ;; [ASSUME]
+(let econg_523 (Leaf 523))  ; slist_add_last::list$object#2..head
+(let econg_524 (Equal econg_509 econg_523))  ; =  ;; [ASSUME]
+(let econg_525 (Leaf 525))  ; slist_add_last::list$object#3..tail
+(let econg_526 (Leaf 526))  ; if
+(let econg_527 (Equal econg_525 econg_526))  ; =  ;; [ASSUME]
+(let econg_528 (Leaf 528))  ; symex_dynamic::dynamic_object#4..head
+(let econg_529 (Leaf 529))  ; if
+(let econg_530 (Equal econg_528 econg_529))  ; =  ;; [ASSUME]
+(let econg_531 (Leaf 531))  ; symex_dynamic::dynamic_object#4..tail
+(let econg_532 (Leaf 532))  ; if
+(let econg_533 (Equal econg_531 econg_532))  ; =  ;; [ASSUME]
+(let econg_534 (Leaf 534))  ; symex::invalid_object!0#2..next
+(let econg_535 (Equal econg_519 econg_534))  ; =  ;; [ASSUME]
+(let econg_536 (Leaf 536))  ; symex_dynamic::dynamic_object#3..size
+(let econg_537 (Leaf 537))  ; if
+(let econg_538 (Equal econg_536 econg_537))  ; =  ;; [ASSUME]
+(let econg_539 (Leaf 539))  ; if
+(let econg_540 (Plus econg_64 econg_539))  ; +
+(let econg_541 (Leaf 541))  ; slist_add_last::list$object#2..size
+(let econg_542 (Leaf 542))  ; if
+(let econg_543 (Equal econg_541 econg_542))  ; =  ;; [ASSUME]
+(let econg_544 (Leaf 544))  ; if
+(let econg_545 (Plus econg_64 econg_544))  ; +
+(let econg_546 (Leaf 546))  ; goto_symex::return_value::slist_add_last!0#2
+(let econg_547 (Equal econg_177 econg_546))  ; =  ;; [ASSUME]
+(let econg_548 (Leaf 548))  ; goto_symex::return_value::slist_add_last!0#3
+(let econg_549 (Leaf 549))  ; if
+(let econg_550 (Equal econg_548 econg_549))  ; =  ;; [ASSUME]
+(let econg_551 (Leaf 551))  ; symex_dynamic::dynamic_object$1#4..data
+(let econg_552 (Leaf 552))  ; if
+(let econg_553 (Equal econg_551 econg_552))  ; =  ;; [ASSUME]
+(let econg_554 (Leaf 554))  ; symex_dynamic::dynamic_object#5..head
+(let econg_555 (Leaf 555))  ; if
+(let econg_556 (Equal econg_554 econg_555))  ; =  ;; [ASSUME]
+(let econg_557 (Leaf 557))  ; symex_dynamic::dynamic_object#4..size
+(let econg_558 (Leaf 558))  ; if
+(let econg_559 (Equal econg_557 econg_558))  ; =  ;; [ASSUME]
+(let econg_560 (Leaf 560))  ; if
+(let econg_561 (Equal econg_3 econg_560))  ; =  ;; [ASSUME]
+(let econg_562 (Leaf 562))  ; slist_add_last::list$object#3..head
+(let econg_563 (Equal econg_523 econg_562))  ; =  ;; [ASSUME]
+(let econg_564 (Leaf 564))  ; slist_add_last::list$object#2..size
+(let econg_565 (Equal econg_541 econg_564))  ; =  ;; [ASSUME]
+(let econg_566 (Leaf 566))  ; slist_add_last::list$object#4..tail
+(let econg_567 (Equal econg_525 econg_566))  ; =  ;; [ASSUME]
+(let econg_568 (Leaf 568))  ; symex::invalid_object!0#3..next
+(let econg_569 (Equal econg_534 econg_568))  ; =  ;; [ASSUME]
+(let econg_570 (Leaf 570))  ; slist_add::$tmp::return_value_slist_add_last!0@1#2
+(let econg_571 (Equal econg_548 econg_570))  ; =  ;; [ASSUME]
+(let econg_572 (Leaf 572))  ; goto_symex::return_value::slist_add!0#1
+(let econg_573 (Equal econg_570 econg_572))  ; =  ;; [ASSUME]
+(let econg_574 (Leaf 574))  ; main::$tmp::return_value_slist_add!0@1#2
+(let econg_575 (Equal econg_572 econg_574))  ; =  ;; [ASSUME]
+(let econg_576 (Leaf 576))  ; slist_add::list!0@2#1
+(let econg_577 (Equal econg_182 econg_576))  ; =  ;; [ASSUME]
+(let econg_578 (Leaf 578))  ; slist_add::element!0@2#1
+(let econg_579 (Leaf 579))  ; address_of
+(let econg_580 (Typecast econg_88 econg_579))  ; typecast
+(let econg_581 (Equal econg_578 econg_580))  ; =  ;; [ASSUME]
+(let econg_582 (Equal econg_2 econg_576))  ; =  ;; [ASSUME]
+(let econg_583 (Leaf 583))  ; slist_add_last::element!0@2#1
+(let econg_584 (Equal econg_580 econg_583))  ; =  ;; [ASSUME]
+(let econg_585 (Leaf 585))  ; goto_symex::\guard#6
+(let econg_586 (Leaf 586))  ; not
+(let econg_587 (Equal econg_585 econg_586))  ; =  ;; [ASSUME]
+(let econg_588 (Leaf 588))  ; calloc::nmemb!0@4#1
+(let econg_589 (Equal econg_64 econg_588))  ; =  ;; [ASSUME]
+(let econg_590 (Leaf 590))  ; calloc::size!0@4#1
+(let econg_591 (Equal econg_422 econg_590))  ; =  ;; [ASSUME]
+(let econg_592 (Leaf 592))  ; calloc::$tmp::tmp_overflow_result!0@4#2
+(let econg_593 (Equal econg_425 econg_592))  ; =  ;; [ASSUME]
+(let econg_594 (Leaf 594))  ; calloc::$tmp::tmp_overflow_result!0@4#2..value
+(let econg_595 (Equal econg_422 econg_594))  ; =  ;; [ASSUME]
+(let econg_596 (Leaf 596))  ; calloc::$tmp::tmp_overflow_result!0@4#2..overflow-*
+(let econg_597 (Equal econg_25 econg_596))  ; =  ;; [ASSUME]
+(let econg_598 (Leaf 598))  ; calloc::1::alloc_size!0@4#2
+(let econg_599 (Equal econg_422 econg_598))  ; =  ;; [ASSUME]
+(let econg_600 (Leaf 600))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@4#2
+(let econg_601 (Leaf 601))  ; nondet_symbol
+(let econg_602 (Equal econg_600 econg_601))  ; =  ;; [ASSUME]
+(let econg_603 (Leaf 603))  ; calloc::1::1::should_malloc_fail!0@4#2
+(let econg_604 (Equal econg_600 econg_603))  ; =  ;; [ASSUME]
+(let econg_605 (Leaf 605))  ; goto_symex::return_value::calloc!0#10
+(let econg_606 (Equal econg_18 econg_605))  ; =  ;; [ASSUME]
+(let econg_607 (Leaf 607))  ; __CPROVER_dead_object#13
+(let econg_608 (Leaf 608))  ; if
+(let econg_609 (Equal econg_607 econg_608))  ; =  ;; [ASSUME]
+(let econg_610 (Leaf 610))  ; address_of
+(let econg_611 (Typecast econg_88 econg_610))  ; typecast
+(let econg_612 (Leaf 612))  ; symex_dynamic::dynamic_object$2#1..data
+(let econg_613 (Equal econg_18 econg_612))  ; =  ;; [ASSUME]
+(let econg_614 (Leaf 614))  ; symex_dynamic::dynamic_object$2#1..next
+(let econg_615 (Equal econg_95 econg_614))  ; =  ;; [ASSUME]
+(let econg_616 (Leaf 616))  ; calloc::$tmp::malloc_value!0@4#2
+(let econg_617 (Typecast econg_88 econg_7))  ; typecast
+(let econg_618 (Equal econg_616 econg_617))  ; =  ;; [ASSUME]
+(let econg_619 (Leaf 619))  ; calloc::1::malloc_res!0@4#2
+(let econg_620 (Equal econg_617 econg_619))  ; =  ;; [ASSUME]
+(let econg_621 (Leaf 621))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@4#2
+(let econg_622 (Leaf 622))  ; nondet_symbol
+(let econg_623 (Equal econg_621 econg_622))  ; =  ;; [ASSUME]
+(let econg_624 (Leaf 624))  ; calloc::1::record_malloc!0@4#2
+(let econg_625 (Equal econg_621 econg_624))  ; =  ;; [ASSUME]
+(let econg_626 (Leaf 626))  ; __CPROVER_malloc_is_new_array#8
+(let econg_627 (Equal econg_25 econg_626))  ; =  ;; [ASSUME]
+(let econg_628 (Leaf 628))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@4#2
+(let econg_629 (Leaf 629))  ; nondet_symbol
+(let econg_630 (Equal econg_628 econg_629))  ; =  ;; [ASSUME]
+(let econg_631 (Leaf 631))  ; calloc::1::record_may_leak!0@4#2
+(let econg_632 (Equal econg_628 econg_631))  ; =  ;; [ASSUME]
+(let econg_633 (Leaf 633))  ; __CPROVER_memory_leak#8
+(let econg_634 (Leaf 634))  ; if
+(let econg_635 (Equal econg_633 econg_634))  ; =  ;; [ASSUME]
+(let econg_636 (Leaf 636))  ; goto_symex::return_value::calloc!0#11
+(let econg_637 (Equal econg_617 econg_636))  ; =  ;; [ASSUME]
+(let econg_638 (Leaf 638))  ; __CPROVER_dead_object#14
+(let econg_639 (Leaf 639))  ; if
+(let econg_640 (Equal econg_638 econg_639))  ; =  ;; [ASSUME]
+(let econg_641 (Leaf 641))  ; __CPROVER_dead_object#15
+(let econg_642 (Leaf 642))  ; if
+(let econg_643 (Equal econg_641 econg_642))  ; =  ;; [ASSUME]
+(let econg_644 (Leaf 644))  ; __CPROVER_malloc_is_new_array#9
+(let econg_645 (Equal econg_25 econg_644))  ; =  ;; [ASSUME]
+(let econg_646 (Leaf 646))  ; __CPROVER_memory_leak#9
+(let econg_647 (Leaf 647))  ; if
+(let econg_648 (Equal econg_646 econg_647))  ; =  ;; [ASSUME]
+(let econg_649 (Leaf 649))  ; goto_symex::return_value::calloc!0#12
+(let econg_650 (Leaf 650))  ; if
+(let econg_651 (Equal econg_649 econg_650))  ; =  ;; [ASSUME]
+(let econg_652 (Leaf 652))  ; symex_dynamic::dynamic_object$2#2..data
+(let econg_653 (Equal econg_18 econg_652))  ; =  ;; [ASSUME]
+(let econg_654 (Leaf 654))  ; symex_dynamic::dynamic_object$2#2..next
+(let econg_655 (Equal econg_95 econg_654))  ; =  ;; [ASSUME]
+(let econg_656 (Leaf 656))  ; slist_add_last::$tmp::return_value!0@2#2
+(let econg_657 (Equal econg_649 econg_656))  ; =  ;; [ASSUME]
+(let econg_658 (Leaf 658))  ; slist_add_last::1::node!0@2#2
+(let econg_659 (Typecast econg_492 econg_656))  ; typecast
+(let econg_660 (Equal econg_658 econg_659))  ; =  ;; [ASSUME]
+(let econg_661 (Leaf 661))  ; goto_symex::\guard#7
+(let econg_662 (Leaf 662))  ; not
+(let econg_663 (Equal econg_661 econg_662))  ; =  ;; [ASSUME]
+(let econg_664 (Leaf 664))  ; goto_symex::return_value::slist_add_last!0#4
+(let econg_665 (Equal econg_166 econg_664))  ; =  ;; [ASSUME]
+(let econg_666 (Leaf 666))  ; symex_dynamic::dynamic_object$2#3..data
+(let econg_667 (Equal econg_580 econg_666))  ; =  ;; [ASSUME]
+(let econg_668 (Leaf 668))  ; goto_symex::\guard#8
+(let econg_669 (Leaf 669))  ; if
+(let econg_670 (Equal econg_668 econg_669))  ; =  ;; [ASSUME]
+(let econg_671 (Leaf 671))  ; symex_dynamic::dynamic_object#6..head
+(let econg_672 (Leaf 672))  ; if
+(let econg_673 (Equal econg_671 econg_672))  ; =  ;; [ASSUME]
+(let econg_674 (Leaf 674))  ; slist_add_last::list$object#4..head
+(let econg_675 (Leaf 675))  ; if
+(let econg_676 (Equal econg_674 econg_675))  ; =  ;; [ASSUME]
+(let econg_677 (Leaf 677))  ; symex_dynamic::dynamic_object#6..tail
+(let econg_678 (Leaf 678))  ; if
+(let econg_679 (Equal econg_677 econg_678))  ; =  ;; [ASSUME]
+(let econg_680 (Leaf 680))  ; slist_add_last::list$object#5..tail
+(let econg_681 (Leaf 681))  ; if
+(let econg_682 (Equal econg_680 econg_681))  ; =  ;; [ASSUME]
+(let econg_683 (Leaf 683))  ; symex_dynamic::dynamic_object$1#3..next
+(let econg_684 (Leaf 684))  ; if
+(let econg_685 (Equal econg_683 econg_684))  ; =  ;; [ASSUME]
+(let econg_686 (Leaf 686))  ; symex::invalid_object$0!0#1..next
+(let econg_687 (Leaf 687))  ; if
+(let econg_688 (Equal econg_686 econg_687))  ; =  ;; [ASSUME]
+(let econg_689 (Leaf 689))  ; symex::invalid_object$0!0#0..next
+(let econg_690 (Leaf 690))  ; symex_dynamic::dynamic_object$1#4..next
+(let econg_691 (Leaf 691))  ; if
+(let econg_692 (Equal econg_690 econg_691))  ; =  ;; [ASSUME]
+(let econg_693 (Leaf 693))  ; symex_dynamic::dynamic_object#7..tail
+(let econg_694 (Equal econg_678 econg_693))  ; =  ;; [ASSUME]
+(let econg_695 (Leaf 695))  ; slist_add_last::list$object#6..tail
+(let econg_696 (Equal econg_681 econg_695))  ; =  ;; [ASSUME]
+(let econg_697 (Leaf 697))  ; slist_add_last::list$object#5..head
+(let econg_698 (Leaf 698))  ; if
+(let econg_699 (Equal econg_697 econg_698))  ; =  ;; [ASSUME]
+(let econg_700 (Leaf 700))  ; slist_add_last::list$object#7..tail
+(let econg_701 (Leaf 701))  ; if
+(let econg_702 (Equal econg_700 econg_701))  ; =  ;; [ASSUME]
+(let econg_703 (Leaf 703))  ; symex_dynamic::dynamic_object$1#5..next
+(let econg_704 (Leaf 704))  ; if
+(let econg_705 (Equal econg_703 econg_704))  ; =  ;; [ASSUME]
+(let econg_706 (Leaf 706))  ; symex_dynamic::dynamic_object#7..head
+(let econg_707 (Leaf 707))  ; if
+(let econg_708 (Equal econg_706 econg_707))  ; =  ;; [ASSUME]
+(let econg_709 (Leaf 709))  ; symex_dynamic::dynamic_object#8..tail
+(let econg_710 (Leaf 710))  ; if
+(let econg_711 (Equal econg_709 econg_710))  ; =  ;; [ASSUME]
+(let econg_712 (Leaf 712))  ; symex::invalid_object$0!0#2..next
+(let econg_713 (Equal econg_686 econg_712))  ; =  ;; [ASSUME]
+(let econg_714 (Leaf 714))  ; symex_dynamic::dynamic_object#5..size
+(let econg_715 (Leaf 715))  ; if
+(let econg_716 (Equal econg_714 econg_715))  ; =  ;; [ASSUME]
+(let econg_717 (Leaf 717))  ; if
+(let econg_718 (Plus econg_64 econg_717))  ; +
+(let econg_719 (Leaf 719))  ; slist_add_last::list$object#3..size
+(let econg_720 (Leaf 720))  ; if
+(let econg_721 (Equal econg_719 econg_720))  ; =  ;; [ASSUME]
+(let econg_722 (Leaf 722))  ; if
+(let econg_723 (Plus econg_64 econg_722))  ; +
+(let econg_724 (Leaf 724))  ; goto_symex::return_value::slist_add_last!0#5
+(let econg_725 (Equal econg_177 econg_724))  ; =  ;; [ASSUME]
+(let econg_726 (Leaf 726))  ; goto_symex::return_value::slist_add_last!0#6
+(let econg_727 (Leaf 727))  ; if
+(let econg_728 (Equal econg_726 econg_727))  ; =  ;; [ASSUME]
+(let econg_729 (Leaf 729))  ; slist_add_last::list$object#6..head
+(let econg_730 (Leaf 730))  ; if
+(let econg_731 (Equal econg_729 econg_730))  ; =  ;; [ASSUME]
+(let econg_732 (Leaf 732))  ; slist_add_last::list$object#4..size
+(let econg_733 (Leaf 733))  ; if
+(let econg_734 (Equal econg_732 econg_733))  ; =  ;; [ASSUME]
+(let econg_735 (Leaf 735))  ; if
+(let econg_736 (Equal econg_8 econg_735))  ; =  ;; [ASSUME]
+(let econg_737 (Leaf 737))  ; symex_dynamic::dynamic_object$1#6..next
+(let econg_738 (Leaf 738))  ; if
+(let econg_739 (Equal econg_737 econg_738))  ; =  ;; [ASSUME]
+(let econg_740 (Leaf 740))  ; symex_dynamic::dynamic_object$2#4..data
+(let econg_741 (Leaf 741))  ; if
+(let econg_742 (Equal econg_740 econg_741))  ; =  ;; [ASSUME]
+(let econg_743 (Leaf 743))  ; symex_dynamic::dynamic_object#8..head
+(let econg_744 (Leaf 744))  ; if
+(let econg_745 (Equal econg_743 econg_744))  ; =  ;; [ASSUME]
+(let econg_746 (Leaf 746))  ; symex_dynamic::dynamic_object#6..size
+(let econg_747 (Leaf 747))  ; if
+(let econg_748 (Equal econg_746 econg_747))  ; =  ;; [ASSUME]
+(let econg_749 (Leaf 749))  ; if
+(let econg_750 (Equal econg_6 econg_749))  ; =  ;; [ASSUME]
+(let econg_751 (Leaf 751))  ; symex::invalid_object$0!0#3..next
+(let econg_752 (Equal econg_712 econg_751))  ; =  ;; [ASSUME]
+(let econg_753 (Leaf 753))  ; slist_add::$tmp::return_value_slist_add_last!0@2#2
+(let econg_754 (Equal econg_726 econg_753))  ; =  ;; [ASSUME]
+(let econg_755 (Leaf 755))  ; goto_symex::return_value::slist_add!0#2
+(let econg_756 (Equal econg_753 econg_755))  ; =  ;; [ASSUME]
+(let econg_757 (Leaf 757))  ; main::$tmp::return_value_slist_add$0!0@1#2
+(let econg_758 (Equal econg_755 econg_757))  ; =  ;; [ASSUME]
+(let econg_759 (Leaf 759))  ; slist_add::list!0@3#1
+(let econg_760 (Equal econg_182 econg_759))  ; =  ;; [ASSUME]
+(let econg_761 (Leaf 761))  ; slist_add::element!0@3#1
+(let econg_762 (Leaf 762))  ; address_of
+(let econg_763 (Typecast econg_88 econg_762))  ; typecast
+(let econg_764 (Equal econg_761 econg_763))  ; =  ;; [ASSUME]
+(let econg_765 (Equal econg_5 econg_759))  ; =  ;; [ASSUME]
+(let econg_766 (Leaf 766))  ; slist_add_last::element!0@3#1
+(let econg_767 (Equal econg_763 econg_766))  ; =  ;; [ASSUME]
+(let econg_768 (Leaf 768))  ; goto_symex::\guard#9
+(let econg_769 (Leaf 769))  ; not
+(let econg_770 (Equal econg_768 econg_769))  ; =  ;; [ASSUME]
+(let econg_771 (Leaf 771))  ; calloc::nmemb!0@5#1
+(let econg_772 (Equal econg_64 econg_771))  ; =  ;; [ASSUME]
+(let econg_773 (Leaf 773))  ; calloc::size!0@5#1
+(let econg_774 (Equal econg_422 econg_773))  ; =  ;; [ASSUME]
+(let econg_775 (Leaf 775))  ; calloc::$tmp::tmp_overflow_result!0@5#2
+(let econg_776 (Equal econg_425 econg_775))  ; =  ;; [ASSUME]
+(let econg_777 (Leaf 777))  ; calloc::$tmp::tmp_overflow_result!0@5#2..value
+(let econg_778 (Equal econg_422 econg_777))  ; =  ;; [ASSUME]
+(let econg_779 (Leaf 779))  ; calloc::$tmp::tmp_overflow_result!0@5#2..overflow-*
+(let econg_780 (Equal econg_25 econg_779))  ; =  ;; [ASSUME]
+(let econg_781 (Leaf 781))  ; calloc::1::alloc_size!0@5#2
+(let econg_782 (Equal econg_422 econg_781))  ; =  ;; [ASSUME]
+(let econg_783 (Leaf 783))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@5#2
+(let econg_784 (Leaf 784))  ; nondet_symbol
+(let econg_785 (Equal econg_783 econg_784))  ; =  ;; [ASSUME]
+(let econg_786 (Leaf 786))  ; calloc::1::1::should_malloc_fail!0@5#2
+(let econg_787 (Equal econg_783 econg_786))  ; =  ;; [ASSUME]
+(let econg_788 (Leaf 788))  ; goto_symex::return_value::calloc!0#13
+(let econg_789 (Equal econg_18 econg_788))  ; =  ;; [ASSUME]
+(let econg_790 (Leaf 790))  ; __CPROVER_dead_object#16
+(let econg_791 (Leaf 791))  ; if
+(let econg_792 (Equal econg_790 econg_791))  ; =  ;; [ASSUME]
+(let econg_793 (Leaf 793))  ; address_of
+(let econg_794 (Typecast econg_88 econg_793))  ; typecast
+(let econg_795 (Leaf 795))  ; symex_dynamic::dynamic_object$3#1..data
+(let econg_796 (Equal econg_18 econg_795))  ; =  ;; [ASSUME]
+(let econg_797 (Leaf 797))  ; symex_dynamic::dynamic_object$3#1..next
+(let econg_798 (Equal econg_95 econg_797))  ; =  ;; [ASSUME]
+(let econg_799 (Leaf 799))  ; calloc::$tmp::malloc_value!0@5#2
+(let econg_800 (Typecast econg_88 econg_11))  ; typecast
+(let econg_801 (Equal econg_799 econg_800))  ; =  ;; [ASSUME]
+(let econg_802 (Leaf 802))  ; calloc::1::malloc_res!0@5#2
+(let econg_803 (Equal econg_800 econg_802))  ; =  ;; [ASSUME]
+(let econg_804 (Leaf 804))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@5#2
+(let econg_805 (Leaf 805))  ; nondet_symbol
+(let econg_806 (Equal econg_804 econg_805))  ; =  ;; [ASSUME]
+(let econg_807 (Leaf 807))  ; calloc::1::record_malloc!0@5#2
+(let econg_808 (Equal econg_804 econg_807))  ; =  ;; [ASSUME]
+(let econg_809 (Leaf 809))  ; __CPROVER_malloc_is_new_array#10
+(let econg_810 (Equal econg_25 econg_809))  ; =  ;; [ASSUME]
+(let econg_811 (Leaf 811))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@5#2
+(let econg_812 (Leaf 812))  ; nondet_symbol
+(let econg_813 (Equal econg_811 econg_812))  ; =  ;; [ASSUME]
+(let econg_814 (Leaf 814))  ; calloc::1::record_may_leak!0@5#2
+(let econg_815 (Equal econg_811 econg_814))  ; =  ;; [ASSUME]
+(let econg_816 (Leaf 816))  ; __CPROVER_memory_leak#10
+(let econg_817 (Leaf 817))  ; if
+(let econg_818 (Equal econg_816 econg_817))  ; =  ;; [ASSUME]
+(let econg_819 (Leaf 819))  ; goto_symex::return_value::calloc!0#14
+(let econg_820 (Equal econg_800 econg_819))  ; =  ;; [ASSUME]
+(let econg_821 (Leaf 821))  ; __CPROVER_dead_object#17
+(let econg_822 (Leaf 822))  ; if
+(let econg_823 (Equal econg_821 econg_822))  ; =  ;; [ASSUME]
+(let econg_824 (Leaf 824))  ; __CPROVER_dead_object#18
+(let econg_825 (Leaf 825))  ; if
+(let econg_826 (Equal econg_824 econg_825))  ; =  ;; [ASSUME]
+(let econg_827 (Leaf 827))  ; __CPROVER_malloc_is_new_array#11
+(let econg_828 (Equal econg_25 econg_827))  ; =  ;; [ASSUME]
+(let econg_829 (Leaf 829))  ; __CPROVER_memory_leak#11
+(let econg_830 (Leaf 830))  ; if
+(let econg_831 (Equal econg_829 econg_830))  ; =  ;; [ASSUME]
+(let econg_832 (Leaf 832))  ; goto_symex::return_value::calloc!0#15
+(let econg_833 (Leaf 833))  ; if
+(let econg_834 (Equal econg_832 econg_833))  ; =  ;; [ASSUME]
+(let econg_835 (Leaf 835))  ; symex_dynamic::dynamic_object$3#2..data
+(let econg_836 (Equal econg_18 econg_835))  ; =  ;; [ASSUME]
+(let econg_837 (Leaf 837))  ; symex_dynamic::dynamic_object$3#2..next
+(let econg_838 (Equal econg_95 econg_837))  ; =  ;; [ASSUME]
+(let econg_839 (Leaf 839))  ; slist_add_last::$tmp::return_value!0@3#2
+(let econg_840 (Equal econg_832 econg_839))  ; =  ;; [ASSUME]
+(let econg_841 (Leaf 841))  ; slist_add_last::1::node!0@3#2
+(let econg_842 (Typecast econg_492 econg_839))  ; typecast
+(let econg_843 (Equal econg_841 econg_842))  ; =  ;; [ASSUME]
+(let econg_844 (Leaf 844))  ; goto_symex::\guard#10
+(let econg_845 (Leaf 845))  ; not
+(let econg_846 (Equal econg_844 econg_845))  ; =  ;; [ASSUME]
+(let econg_847 (Leaf 847))  ; goto_symex::return_value::slist_add_last!0#7
+(let econg_848 (Equal econg_166 econg_847))  ; =  ;; [ASSUME]
+(let econg_849 (Leaf 849))  ; symex_dynamic::dynamic_object$3#3..data
+(let econg_850 (Equal econg_763 econg_849))  ; =  ;; [ASSUME]
+(let econg_851 (Leaf 851))  ; goto_symex::\guard#11
+(let econg_852 (Leaf 852))  ; if
+(let econg_853 (Equal econg_851 econg_852))  ; =  ;; [ASSUME]
+(let econg_854 (Leaf 854))  ; symex_dynamic::dynamic_object#9..head
+(let econg_855 (Leaf 855))  ; if
+(let econg_856 (Equal econg_854 econg_855))  ; =  ;; [ASSUME]
+(let econg_857 (Leaf 857))  ; slist_add_last::list$object#7..head
+(let econg_858 (Leaf 858))  ; if
+(let econg_859 (Equal econg_857 econg_858))  ; =  ;; [ASSUME]
+(let econg_860 (Leaf 860))  ; symex_dynamic::dynamic_object#10..tail
+(let econg_861 (Leaf 861))  ; if
+(let econg_862 (Equal econg_860 econg_861))  ; =  ;; [ASSUME]
+(let econg_863 (Leaf 863))  ; slist_add_last::list$object#9..tail
+(let econg_864 (Leaf 864))  ; if
+(let econg_865 (Equal econg_863 econg_864))  ; =  ;; [ASSUME]
+(let econg_866 (Leaf 866))  ; symex_dynamic::dynamic_object$2#3..next
+(let econg_867 (Leaf 867))  ; if
+(let econg_868 (Equal econg_866 econg_867))  ; =  ;; [ASSUME]
+(let econg_869 (Leaf 869))  ; symex_dynamic::dynamic_object$1#7..next
+(let econg_870 (Leaf 870))  ; if
+(let econg_871 (Equal econg_869 econg_870))  ; =  ;; [ASSUME]
+(let econg_872 (Leaf 872))  ; symex::invalid_object$1!0#1..next
+(let econg_873 (Leaf 873))  ; if
+(let econg_874 (Equal econg_872 econg_873))  ; =  ;; [ASSUME]
+(let econg_875 (Leaf 875))  ; symex::invalid_object$1!0#0..next
+(let econg_876 (Leaf 876))  ; symex_dynamic::dynamic_object$2#4..next
+(let econg_877 (Leaf 877))  ; if
+(let econg_878 (Equal econg_876 econg_877))  ; =  ;; [ASSUME]
+(let econg_879 (Leaf 879))  ; symex_dynamic::dynamic_object$1#8..next
+(let econg_880 (Leaf 880))  ; if
+(let econg_881 (Equal econg_879 econg_880))  ; =  ;; [ASSUME]
+(let econg_882 (Leaf 882))  ; symex_dynamic::dynamic_object#11..tail
+(let econg_883 (Equal econg_861 econg_882))  ; =  ;; [ASSUME]
+(let econg_884 (Leaf 884))  ; slist_add_last::list$object#10..tail
+(let econg_885 (Equal econg_864 econg_884))  ; =  ;; [ASSUME]
+(let econg_886 (Leaf 886))  ; slist_add_last::list$object#8..head
+(let econg_887 (Leaf 887))  ; if
+(let econg_888 (Equal econg_886 econg_887))  ; =  ;; [ASSUME]
+(let econg_889 (Leaf 889))  ; slist_add_last::list$object#11..tail
+(let econg_890 (Leaf 890))  ; if
+(let econg_891 (Equal econg_889 econg_890))  ; =  ;; [ASSUME]
+(let econg_892 (Leaf 892))  ; symex_dynamic::dynamic_object$1#9..next
+(let econg_893 (Leaf 893))  ; if
+(let econg_894 (Equal econg_892 econg_893))  ; =  ;; [ASSUME]
+(let econg_895 (Leaf 895))  ; symex_dynamic::dynamic_object$2#5..next
+(let econg_896 (Leaf 896))  ; if
+(let econg_897 (Equal econg_895 econg_896))  ; =  ;; [ASSUME]
+(let econg_898 (Leaf 898))  ; symex_dynamic::dynamic_object#10..head
+(let econg_899 (Leaf 899))  ; if
+(let econg_900 (Equal econg_898 econg_899))  ; =  ;; [ASSUME]
+(let econg_901 (Leaf 901))  ; symex_dynamic::dynamic_object#12..tail
+(let econg_902 (Leaf 902))  ; if
+(let econg_903 (Equal econg_901 econg_902))  ; =  ;; [ASSUME]
+(let econg_904 (Leaf 904))  ; symex::invalid_object$1!0#2..next
+(let econg_905 (Equal econg_872 econg_904))  ; =  ;; [ASSUME]
+(let econg_906 (Leaf 906))  ; symex_dynamic::dynamic_object#7..size
+(let econg_907 (Leaf 907))  ; if
+(let econg_908 (Equal econg_906 econg_907))  ; =  ;; [ASSUME]
+(let econg_909 (Leaf 909))  ; if
+(let econg_910 (Plus econg_64 econg_909))  ; +
+(let econg_911 (Leaf 911))  ; slist_add_last::list$object#5..size
+(let econg_912 (Leaf 912))  ; if
+(let econg_913 (Equal econg_911 econg_912))  ; =  ;; [ASSUME]
+(let econg_914 (Leaf 914))  ; if
+(let econg_915 (Plus econg_64 econg_914))  ; +
+(let econg_916 (Leaf 916))  ; goto_symex::return_value::slist_add_last!0#8
+(let econg_917 (Equal econg_177 econg_916))  ; =  ;; [ASSUME]
+(let econg_918 (Leaf 918))  ; goto_symex::return_value::slist_add_last!0#9
+(let econg_919 (Leaf 919))  ; if
+(let econg_920 (Equal econg_918 econg_919))  ; =  ;; [ASSUME]
+(let econg_921 (Leaf 921))  ; slist_add_last::list$object#9..head
+(let econg_922 (Leaf 922))  ; if
+(let econg_923 (Equal econg_921 econg_922))  ; =  ;; [ASSUME]
+(let econg_924 (Leaf 924))  ; slist_add_last::list$object#6..size
+(let econg_925 (Leaf 925))  ; if
+(let econg_926 (Equal econg_924 econg_925))  ; =  ;; [ASSUME]
+(let econg_927 (Leaf 927))  ; if
+(let econg_928 (Equal econg_12 econg_927))  ; =  ;; [ASSUME]
+(let econg_929 (Leaf 929))  ; symex_dynamic::dynamic_object$1#10..next
+(let econg_930 (Leaf 930))  ; if
+(let econg_931 (Equal econg_929 econg_930))  ; =  ;; [ASSUME]
+(let econg_932 (Leaf 932))  ; symex_dynamic::dynamic_object$2#6..next
+(let econg_933 (Leaf 933))  ; if
+(let econg_934 (Equal econg_932 econg_933))  ; =  ;; [ASSUME]
+(let econg_935 (Leaf 935))  ; symex_dynamic::dynamic_object$3#4..data
+(let econg_936 (Leaf 936))  ; if
+(let econg_937 (Equal econg_935 econg_936))  ; =  ;; [ASSUME]
+(let econg_938 (Leaf 938))  ; symex_dynamic::dynamic_object#11..head
+(let econg_939 (Leaf 939))  ; if
+(let econg_940 (Equal econg_938 econg_939))  ; =  ;; [ASSUME]
+(let econg_941 (Leaf 941))  ; symex_dynamic::dynamic_object#8..size
+(let econg_942 (Leaf 942))  ; if
+(let econg_943 (Equal econg_941 econg_942))  ; =  ;; [ASSUME]
+(let econg_944 (Leaf 944))  ; if
+(let econg_945 (Equal econg_10 econg_944))  ; =  ;; [ASSUME]
+(let econg_946 (Leaf 946))  ; symex::invalid_object$1!0#3..next
+(let econg_947 (Equal econg_904 econg_946))  ; =  ;; [ASSUME]
+(let econg_948 (Leaf 948))  ; slist_add::$tmp::return_value_slist_add_last!0@3#2
+(let econg_949 (Equal econg_918 econg_948))  ; =  ;; [ASSUME]
+(let econg_950 (Leaf 950))  ; goto_symex::return_value::slist_add!0#3
+(let econg_951 (Equal econg_948 econg_950))  ; =  ;; [ASSUME]
+(let econg_952 (Leaf 952))  ; main::$tmp::return_value_slist_add$1!0@1#2
+(let econg_953 (Equal econg_950 econg_952))  ; =  ;; [ASSUME]
+(let econg_954 (Leaf 954))  ; slist_add::list!0@4#1
+(let econg_955 (Equal econg_182 econg_954))  ; =  ;; [ASSUME]
+(let econg_956 (Leaf 956))  ; slist_add::element!0@4#1
+(let econg_957 (Leaf 957))  ; address_of
+(let econg_958 (Typecast econg_88 econg_957))  ; typecast
+(let econg_959 (Equal econg_956 econg_958))  ; =  ;; [ASSUME]
+(let econg_960 (Equal econg_9 econg_954))  ; =  ;; [ASSUME]
+(let econg_961 (Leaf 961))  ; slist_add_last::element!0@4#1
+(let econg_962 (Equal econg_958 econg_961))  ; =  ;; [ASSUME]
+(let econg_963 (Leaf 963))  ; goto_symex::\guard#12
+(let econg_964 (Leaf 964))  ; not
+(let econg_965 (Equal econg_963 econg_964))  ; =  ;; [ASSUME]
+(let econg_966 (Leaf 966))  ; calloc::nmemb!0@6#1
+(let econg_967 (Equal econg_64 econg_966))  ; =  ;; [ASSUME]
+(let econg_968 (Leaf 968))  ; calloc::size!0@6#1
+(let econg_969 (Equal econg_422 econg_968))  ; =  ;; [ASSUME]
+(let econg_970 (Leaf 970))  ; calloc::$tmp::tmp_overflow_result!0@6#2
+(let econg_971 (Equal econg_425 econg_970))  ; =  ;; [ASSUME]
+(let econg_972 (Leaf 972))  ; calloc::$tmp::tmp_overflow_result!0@6#2..value
+(let econg_973 (Equal econg_422 econg_972))  ; =  ;; [ASSUME]
+(let econg_974 (Leaf 974))  ; calloc::$tmp::tmp_overflow_result!0@6#2..overflow-*
+(let econg_975 (Equal econg_25 econg_974))  ; =  ;; [ASSUME]
+(let econg_976 (Leaf 976))  ; calloc::1::alloc_size!0@6#2
+(let econg_977 (Equal econg_422 econg_976))  ; =  ;; [ASSUME]
+(let econg_978 (Leaf 978))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@6#2
+(let econg_979 (Leaf 979))  ; nondet_symbol
+(let econg_980 (Equal econg_978 econg_979))  ; =  ;; [ASSUME]
+(let econg_981 (Leaf 981))  ; calloc::1::1::should_malloc_fail!0@6#2
+(let econg_982 (Equal econg_978 econg_981))  ; =  ;; [ASSUME]
+(let econg_983 (Leaf 983))  ; goto_symex::return_value::calloc!0#16
+(let econg_984 (Equal econg_18 econg_983))  ; =  ;; [ASSUME]
+(let econg_985 (Leaf 985))  ; __CPROVER_dead_object#19
+(let econg_986 (Leaf 986))  ; if
+(let econg_987 (Equal econg_985 econg_986))  ; =  ;; [ASSUME]
+(let econg_988 (Leaf 988))  ; address_of
+(let econg_989 (Typecast econg_88 econg_988))  ; typecast
+(let econg_990 (Leaf 990))  ; symex_dynamic::dynamic_object$4#1..data
+(let econg_991 (Equal econg_18 econg_990))  ; =  ;; [ASSUME]
+(let econg_992 (Leaf 992))  ; symex_dynamic::dynamic_object$4#1..next
+(let econg_993 (Equal econg_95 econg_992))  ; =  ;; [ASSUME]
+(let econg_994 (Leaf 994))  ; calloc::$tmp::malloc_value!0@6#2
+(let econg_995 (Leaf 995))  ; address_of
+(let econg_996 (Typecast econg_88 econg_995))  ; typecast
+(let econg_997 (Equal econg_994 econg_996))  ; =  ;; [ASSUME]
+(let econg_998 (Leaf 998))  ; calloc::1::malloc_res!0@6#2
+(let econg_999 (Equal econg_996 econg_998))  ; =  ;; [ASSUME]
+(let econg_1000 (Leaf 1000))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@6#2
+(let econg_1001 (Leaf 1001))  ; nondet_symbol
+(let econg_1002 (Equal econg_1000 econg_1001))  ; =  ;; [ASSUME]
+(let econg_1003 (Leaf 1003))  ; calloc::1::record_malloc!0@6#2
+(let econg_1004 (Equal econg_1000 econg_1003))  ; =  ;; [ASSUME]
+(let econg_1005 (Leaf 1005))  ; __CPROVER_malloc_is_new_array#12
+(let econg_1006 (Equal econg_25 econg_1005))  ; =  ;; [ASSUME]
+(let econg_1007 (Leaf 1007))  ; calloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@6#2
+(let econg_1008 (Leaf 1008))  ; nondet_symbol
+(let econg_1009 (Equal econg_1007 econg_1008))  ; =  ;; [ASSUME]
+(let econg_1010 (Leaf 1010))  ; calloc::1::record_may_leak!0@6#2
+(let econg_1011 (Equal econg_1007 econg_1010))  ; =  ;; [ASSUME]
+(let econg_1012 (Leaf 1012))  ; __CPROVER_memory_leak#12
+(let econg_1013 (Leaf 1013))  ; if
+(let econg_1014 (Equal econg_1012 econg_1013))  ; =  ;; [ASSUME]
+(let econg_1015 (Leaf 1015))  ; goto_symex::return_value::calloc!0#17
+(let econg_1016 (Equal econg_996 econg_1015))  ; =  ;; [ASSUME]
+(let econg_1017 (Leaf 1017))  ; __CPROVER_dead_object#20
+(let econg_1018 (Leaf 1018))  ; if
+(let econg_1019 (Equal econg_1017 econg_1018))  ; =  ;; [ASSUME]
+(let econg_1020 (Leaf 1020))  ; __CPROVER_dead_object#21
+(let econg_1021 (Leaf 1021))  ; if
+(let econg_1022 (Equal econg_1020 econg_1021))  ; =  ;; [ASSUME]
+(let econg_1023 (Leaf 1023))  ; __CPROVER_malloc_is_new_array#13
+(let econg_1024 (Equal econg_25 econg_1023))  ; =  ;; [ASSUME]
+(let econg_1025 (Leaf 1025))  ; __CPROVER_memory_leak#13
+(let econg_1026 (Leaf 1026))  ; if
+(let econg_1027 (Equal econg_1025 econg_1026))  ; =  ;; [ASSUME]
+(let econg_1028 (Leaf 1028))  ; goto_symex::return_value::calloc!0#18
+(let econg_1029 (Leaf 1029))  ; if
+(let econg_1030 (Equal econg_1028 econg_1029))  ; =  ;; [ASSUME]
+(let econg_1031 (Leaf 1031))  ; symex_dynamic::dynamic_object$4#2..data
+(let econg_1032 (Equal econg_18 econg_1031))  ; =  ;; [ASSUME]
+(let econg_1033 (Leaf 1033))  ; symex_dynamic::dynamic_object$4#2..next
+(let econg_1034 (Equal econg_95 econg_1033))  ; =  ;; [ASSUME]
+(let econg_1035 (Leaf 1035))  ; slist_add_last::$tmp::return_value!0@4#2
+(let econg_1036 (Equal econg_1028 econg_1035))  ; =  ;; [ASSUME]
+(let econg_1037 (Leaf 1037))  ; slist_add_last::1::node!0@4#2
+(let econg_1038 (Typecast econg_492 econg_1035))  ; typecast
+(let econg_1039 (Equal econg_1037 econg_1038))  ; =  ;; [ASSUME]
+(let econg_1040 (Leaf 1040))  ; goto_symex::\guard#13
+(let econg_1041 (Leaf 1041))  ; not
+(let econg_1042 (Equal econg_1040 econg_1041))  ; =  ;; [ASSUME]
+(let econg_1043 (Leaf 1043))  ; goto_symex::return_value::slist_add_last!0#10
+(let econg_1044 (Equal econg_166 econg_1043))  ; =  ;; [ASSUME]
+(let econg_1045 (Leaf 1045))  ; symex_dynamic::dynamic_object$4#3..data
+(let econg_1046 (Equal econg_958 econg_1045))  ; =  ;; [ASSUME]
+(let econg_1047 (Leaf 1047))  ; goto_symex::\guard#14
+(let econg_1048 (Leaf 1048))  ; if
+(let econg_1049 (Equal econg_1047 econg_1048))  ; =  ;; [ASSUME]
+(let econg_1050 (Leaf 1050))  ; symex_dynamic::dynamic_object#12..head
+(let econg_1051 (Leaf 1051))  ; if
+(let econg_1052 (Equal econg_1050 econg_1051))  ; =  ;; [ASSUME]
+(let econg_1053 (Leaf 1053))  ; slist_add_last::list$object#10..head
+(let econg_1054 (Leaf 1054))  ; if
+(let econg_1055 (Equal econg_1053 econg_1054))  ; =  ;; [ASSUME]
+(let econg_1056 (Leaf 1056))  ; symex_dynamic::dynamic_object#14..tail
+(let econg_1057 (Leaf 1057))  ; if
+(let econg_1058 (Equal econg_1056 econg_1057))  ; =  ;; [ASSUME]
+(let econg_1059 (Leaf 1059))  ; slist_add_last::list$object#13..tail
+(let econg_1060 (Leaf 1060))  ; if
+(let econg_1061 (Equal econg_1059 econg_1060))  ; =  ;; [ASSUME]
+(let econg_1062 (Leaf 1062))  ; symex_dynamic::dynamic_object$3#3..next
+(let econg_1063 (Leaf 1063))  ; if
+(let econg_1064 (Equal econg_1062 econg_1063))  ; =  ;; [ASSUME]
+(let econg_1065 (Leaf 1065))  ; symex_dynamic::dynamic_object$2#7..next
+(let econg_1066 (Leaf 1066))  ; if
+(let econg_1067 (Equal econg_1065 econg_1066))  ; =  ;; [ASSUME]
+(let econg_1068 (Leaf 1068))  ; symex_dynamic::dynamic_object$1#11..next
+(let econg_1069 (Leaf 1069))  ; if
+(let econg_1070 (Equal econg_1068 econg_1069))  ; =  ;; [ASSUME]
+(let econg_1071 (Leaf 1071))  ; symex::invalid_object$2!0#1..next
+(let econg_1072 (Leaf 1072))  ; if
+(let econg_1073 (Equal econg_1071 econg_1072))  ; =  ;; [ASSUME]
+(let econg_1074 (Leaf 1074))  ; symex::invalid_object$2!0#0..next
+(let econg_1075 (Leaf 1075))  ; symex_dynamic::dynamic_object$3#4..next
+(let econg_1076 (Leaf 1076))  ; if
+(let econg_1077 (Equal econg_1075 econg_1076))  ; =  ;; [ASSUME]
+(let econg_1078 (Leaf 1078))  ; symex_dynamic::dynamic_object$2#8..next
+(let econg_1079 (Leaf 1079))  ; if
+(let econg_1080 (Equal econg_1078 econg_1079))  ; =  ;; [ASSUME]
+(let econg_1081 (Leaf 1081))  ; symex_dynamic::dynamic_object$1#12..next
+(let econg_1082 (Leaf 1082))  ; if
+(let econg_1083 (Equal econg_1081 econg_1082))  ; =  ;; [ASSUME]
+(let econg_1084 (Leaf 1084))  ; symex_dynamic::dynamic_object#15..tail
+(let econg_1085 (Equal econg_1057 econg_1084))  ; =  ;; [ASSUME]
+(let econg_1086 (Leaf 1086))  ; slist_add_last::list$object#14..tail
+(let econg_1087 (Equal econg_1060 econg_1086))  ; =  ;; [ASSUME]
+(let econg_1088 (Leaf 1088))  ; slist_add_last::list$object#11..head
+(let econg_1089 (Leaf 1089))  ; if
+(let econg_1090 (Equal econg_1088 econg_1089))  ; =  ;; [ASSUME]
+(let econg_1091 (Leaf 1091))  ; slist_add_last::list$object#15..tail
+(let econg_1092 (Leaf 1092))  ; if
+(let econg_1093 (Equal econg_1091 econg_1092))  ; =  ;; [ASSUME]
+(let econg_1094 (Leaf 1094))  ; symex_dynamic::dynamic_object$1#13..next
+(let econg_1095 (Leaf 1095))  ; if
+(let econg_1096 (Equal econg_1094 econg_1095))  ; =  ;; [ASSUME]
+(let econg_1097 (Leaf 1097))  ; symex_dynamic::dynamic_object$2#9..next
+(let econg_1098 (Leaf 1098))  ; if
+(let econg_1099 (Equal econg_1097 econg_1098))  ; =  ;; [ASSUME]
+(let econg_1100 (Leaf 1100))  ; symex_dynamic::dynamic_object$3#5..next
+(let econg_1101 (Leaf 1101))  ; if
+(let econg_1102 (Equal econg_1100 econg_1101))  ; =  ;; [ASSUME]
+(let econg_1103 (Leaf 1103))  ; symex_dynamic::dynamic_object#13..head
+(let econg_1104 (Leaf 1104))  ; if
+(let econg_1105 (Equal econg_1103 econg_1104))  ; =  ;; [ASSUME]
+(let econg_1106 (Leaf 1106))  ; symex_dynamic::dynamic_object#16..tail
+(let econg_1107 (Leaf 1107))  ; if
+(let econg_1108 (Equal econg_1106 econg_1107))  ; =  ;; [ASSUME]
+(let econg_1109 (Leaf 1109))  ; symex::invalid_object$2!0#2..next
+(let econg_1110 (Equal econg_1071 econg_1109))  ; =  ;; [ASSUME]
+(let econg_1111 (Leaf 1111))  ; symex_dynamic::dynamic_object#9..size
+(let econg_1112 (Leaf 1112))  ; if
+(let econg_1113 (Equal econg_1111 econg_1112))  ; =  ;; [ASSUME]
+(let econg_1114 (Leaf 1114))  ; if
+(let econg_1115 (Plus econg_64 econg_1114))  ; +
+(let econg_1116 (Leaf 1116))  ; slist_add_last::list$object#7..size
+(let econg_1117 (Leaf 1117))  ; if
+(let econg_1118 (Equal econg_1116 econg_1117))  ; =  ;; [ASSUME]
+(let econg_1119 (Leaf 1119))  ; if
+(let econg_1120 (Plus econg_64 econg_1119))  ; +
+(let econg_1121 (Leaf 1121))  ; goto_symex::return_value::slist_add_last!0#11
+(let econg_1122 (Equal econg_177 econg_1121))  ; =  ;; [ASSUME]
+(let econg_1123 (Leaf 1123))  ; goto_symex::return_value::slist_add_last!0#12
+(let econg_1124 (Leaf 1124))  ; if
+(let econg_1125 (Equal econg_1123 econg_1124))  ; =  ;; [ASSUME]
+(let econg_1126 (Leaf 1126))  ; slist_add_last::list$object#12..head
+(let econg_1127 (Leaf 1127))  ; if
+(let econg_1128 (Equal econg_1126 econg_1127))  ; =  ;; [ASSUME]
+(let econg_1129 (Leaf 1129))  ; slist_add_last::list$object#8..size
+(let econg_1130 (Leaf 1130))  ; if
+(let econg_1131 (Equal econg_1129 econg_1130))  ; =  ;; [ASSUME]
+(let econg_1132 (Leaf 1132))  ; slist_add_last::list$object#16..tail
+(let econg_1133 (Leaf 1133))  ; if
+(let econg_1134 (Equal econg_1132 econg_1133))  ; =  ;; [ASSUME]
+(let econg_1135 (Leaf 1135))  ; symex_dynamic::dynamic_object$1#14..next
+(let econg_1136 (Leaf 1136))  ; if
+(let econg_1137 (Equal econg_1135 econg_1136))  ; =  ;; [ASSUME]
+(let econg_1138 (Leaf 1138))  ; symex_dynamic::dynamic_object$2#10..next
+(let econg_1139 (Leaf 1139))  ; if
+(let econg_1140 (Equal econg_1138 econg_1139))  ; =  ;; [ASSUME]
+(let econg_1141 (Leaf 1141))  ; symex_dynamic::dynamic_object$3#6..next
+(let econg_1142 (Leaf 1142))  ; if
+(let econg_1143 (Equal econg_1141 econg_1142))  ; =  ;; [ASSUME]
+(let econg_1144 (Leaf 1144))  ; symex_dynamic::dynamic_object$4#4..data
+(let econg_1145 (Leaf 1145))  ; if
+(let econg_1146 (Equal econg_1144 econg_1145))  ; =  ;; [ASSUME]
+(let econg_1147 (Leaf 1147))  ; symex_dynamic::dynamic_object#14..head
+(let econg_1148 (Leaf 1148))  ; if
+(let econg_1149 (Equal econg_1147 econg_1148))  ; =  ;; [ASSUME]
+(let econg_1150 (Leaf 1150))  ; symex_dynamic::dynamic_object#10..size
+(let econg_1151 (Leaf 1151))  ; if
+(let econg_1152 (Equal econg_1150 econg_1151))  ; =  ;; [ASSUME]
+(let econg_1153 (Leaf 1153))  ; symex_dynamic::dynamic_object#17..tail
+(let econg_1154 (Leaf 1154))  ; if
+(let econg_1155 (Equal econg_1153 econg_1154))  ; =  ;; [ASSUME]
+(let econg_1156 (Leaf 1156))  ; symex::invalid_object$2!0#3..next
+(let econg_1157 (Equal econg_1109 econg_1156))  ; =  ;; [ASSUME]
+(let econg_1158 (Leaf 1158))  ; slist_add::$tmp::return_value_slist_add_last!0@4#2
+(let econg_1159 (Equal econg_1123 econg_1158))  ; =  ;; [ASSUME]
+(let econg_1160 (Leaf 1160))  ; goto_symex::return_value::slist_add!0#4
+(let econg_1161 (Equal econg_1158 econg_1160))  ; =  ;; [ASSUME]
+(let econg_1162 (Leaf 1162))  ; main::$tmp::return_value_slist_add$2!0@1#2
+(let econg_1163 (Equal econg_1160 econg_1162))  ; =  ;; [ASSUME]
+(let econg_1164 (Leaf 1164))  ; slist_get_first::list!0@1#1
+(let econg_1165 (Equal econg_182 econg_1164))  ; =  ;; [ASSUME]
+(let econg_1166 (Leaf 1166))  ; slist_get_first::out!0@1#1
+(let econg_1167 (Leaf 1167))  ; address_of
+(let econg_1168 (Equal econg_1166 econg_1167))  ; =  ;; [ASSUME]
+(let econg_1169 (Leaf 1169))  ; goto_symex::\guard#15
+(let econg_1170 (Leaf 1170))  ; if
+(let econg_1171 (Equal econg_1169 econg_1170))  ; =  ;; [ASSUME]
+(let econg_1172 (Leaf 1172))  ; slist_get_first::list$object#0..size
+(let econg_1173 (Leaf 1173))  ; main::1::e!0@1#2
+(let econg_1174 (Leaf 1174))  ; if
+(let econg_1175 (Equal econg_1173 econg_1174))  ; =  ;; [ASSUME]
+(let econg_1176 (Leaf 1176))  ; if
+(let econg_1177 (Leaf 1177))  ; if
+(let econg_1178 (Leaf 1178))  ; if
+(let econg_1179 (Leaf 1179))  ; if
+(let econg_1180 (Leaf 1180))  ; symex::invalid_object$3!0#0..data
+(let econg_1181 (Leaf 1181))  ; symex::invalid_object$4!0#0..data
+(let econg_1182 (Leaf 1182))  ; main::1::e!0@1#3
+(let econg_1183 (Leaf 1183))  ; if
+(let econg_1184 (Equal econg_1182 econg_1183))  ; =  ;; [ASSUME]
+(let econg_1185 (Leaf 1185))  ; main::1::e!0@1#1
+(let econg_1186 (Leaf 1186))  ; slist_get_last::list!0@1#1
+(let econg_1187 (Equal econg_182 econg_1186))  ; =  ;; [ASSUME]
+(let econg_1188 (Leaf 1188))  ; slist_get_last::out!0@1#1
+(let econg_1189 (Equal econg_1167 econg_1188))  ; =  ;; [ASSUME]
+(let econg_1190 (Leaf 1190))  ; goto_symex::\guard#16
+(let econg_1191 (Leaf 1191))  ; if
+(let econg_1192 (Equal econg_1190 econg_1191))  ; =  ;; [ASSUME]
+(let econg_1193 (Leaf 1193))  ; slist_get_last::list$object#0..size
+(let econg_1194 (Leaf 1194))  ; main::1::e!0@1#4
+(let econg_1195 (Leaf 1195))  ; if
+(let econg_1196 (Equal econg_1194 econg_1195))  ; =  ;; [ASSUME]
+(let econg_1197 (Leaf 1197))  ; if
+(let econg_1198 (Leaf 1198))  ; if
+(let econg_1199 (Leaf 1199))  ; if
+(let econg_1200 (Leaf 1200))  ; if
+(let econg_1201 (Leaf 1201))  ; symex::invalid_object$5!0#0..data
+(let econg_1202 (Leaf 1202))  ; symex::invalid_object$6!0#0..data
+(let econg_1203 (Leaf 1203))  ; main::1::e!0@1#5
+(let econg_1204 (Leaf 1204))  ; if
+(let econg_1205 (Equal econg_1203 econg_1204))  ; =  ;; [ASSUME]
+(let econg_1206 (Leaf 1206))  ; slist_destroy::list!0@1#1
+(let econg_1207 (Equal econg_182 econg_1206))  ; =  ;; [ASSUME]
+(let econg_1208 (Equal econg_14 econg_1206))  ; =  ;; [ASSUME]
+(let econg_1209 (Equal econg_13 econg_14))  ; =  ;; [ASSUME]
+(let econg_1210 (Leaf 1210))  ; unlinkn_all::cb!0@1#1
+(let econg_1211 (Equal econg_106 econg_1210))  ; =  ;; [ASSUME]
+(let econg_1212 (Leaf 1212))  ; goto_symex::\guard#17
+(let econg_1213 (Leaf 1213))  ; if
+(let econg_1214 (Equal econg_1212 econg_1213))  ; =  ;; [ASSUME]
+(let econg_1215 (Leaf 1215))  ; unlinkn_all::list$object#0..size
+(let econg_1216 (Leaf 1216))  ; goto_symex::return_value::unlinkn_all!0#1
+(let econg_1217 (Const 0 1217))  ; const 0
+(let econg_1218 (Equal econg_1216 econg_1217))  ; =  ;; [ASSUME]
+(let econg_1219 (Leaf 1219))  ; unlinkn_all::1::n!0@1#2
+(let econg_1220 (Leaf 1220))  ; if
+(let econg_1221 (Equal econg_1219 econg_1220))  ; =  ;; [ASSUME]
+(let econg_1222 (Leaf 1222))  ; unlinkn_all::list$object#0..head
+(let econg_1223 (Leaf 1223))  ; goto_symex::\guard#18
+(let econg_1224 (Leaf 1224))  ; not
+(let econg_1225 (Equal econg_1223 econg_1224))  ; =  ;; [ASSUME]
+(let econg_1226 (Leaf 1226))  ; unlinkn_all::1::1::tmp!0@1#2
+(let econg_1227 (Leaf 1227))  ; if
+(let econg_1228 (Equal econg_1226 econg_1227))  ; =  ;; [ASSUME]
+(let econg_1229 (Leaf 1229))  ; if
+(let econg_1230 (Leaf 1230))  ; if
+(let econg_1231 (Leaf 1231))  ; goto_symex::\guard#19
+(let econg_1232 (Leaf 1232))  ; not
+(let econg_1233 (Equal econg_1231 econg_1232))  ; =  ;; [ASSUME]
+(let econg_1234 (Leaf 1234))  ; unlinkn_all::list$object#0..mem_free
+(let econg_1235 (Leaf 1235))  ; goto_symex::\guard#20
+(let econg_1236 (Leaf 1236))  ; not
+(let econg_1237 (Equal econg_1235 econg_1236))  ; =  ;; [ASSUME]
+(let econg_1238 (Type 1238))
+(let econg_1239 (Typecast econg_1238 econg_51))  ; typecast
+(let econg_1240 (Leaf 1240))  ; free::ptr!0@1#1
+(let econg_1241 (Typecast econg_88 econg_1219))  ; typecast
+(let econg_1242 (Equal econg_1240 econg_1241))  ; =  ;; [ASSUME]
+(let econg_1243 (Leaf 1243))  ; goto_symex::\guard#21
+(let econg_1244 (Leaf 1244))  ; not
+(let econg_1245 (Equal econg_1243 econg_1244))  ; =  ;; [ASSUME]
+(let econg_1246 (Leaf 1246))  ; __CPROVER_deallocate::ptr!0@1#1
+(let econg_1247 (Equal econg_1240 econg_1246))  ; =  ;; [ASSUME]
+(let econg_1248 (Leaf 1248))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@1#2
+(let econg_1249 (Leaf 1249))  ; nondet_symbol
+(let econg_1250 (Equal econg_1248 econg_1249))  ; =  ;; [ASSUME]
+(let econg_1251 (Leaf 1251))  ; __CPROVER_deallocated#2
+(let econg_1252 (Equal econg_1246 econg_1251))  ; =  ;; [ASSUME]
+(let econg_1253 (Leaf 1253))  ; __CPROVER_deallocated#3
+(let econg_1254 (Leaf 1254))  ; if
+(let econg_1255 (Equal econg_1253 econg_1254))  ; =  ;; [ASSUME]
+(let econg_1256 (Leaf 1256))  ; goto_symex::\guard#22
+(let econg_1257 (Equal econg_1025 econg_1240))  ; =
+(let econg_1258 (Equal econg_1256 econg_1257))  ; =  ;; [ASSUME]
+(let econg_1259 (Leaf 1259))  ; __CPROVER_memory_leak#14
+(let econg_1260 (Equal econg_18 econg_1259))  ; =  ;; [ASSUME]
+(let econg_1261 (Leaf 1261))  ; __CPROVER_memory_leak#15
+(let econg_1262 (Leaf 1262))  ; if
+(let econg_1263 (Equal econg_1261 econg_1262))  ; =  ;; [ASSUME]
+(let econg_1264 (Leaf 1264))  ; __CPROVER_deallocated#4
+(let econg_1265 (Leaf 1265))  ; if
+(let econg_1266 (Equal econg_1264 econg_1265))  ; =  ;; [ASSUME]
+(let econg_1267 (Leaf 1267))  ; __CPROVER_memory_leak#16
+(let econg_1268 (Leaf 1268))  ; if
+(let econg_1269 (Equal econg_1267 econg_1268))  ; =  ;; [ASSUME]
+(let econg_1270 (Leaf 1270))  ; free::ptr!0@1#3
+(let econg_1271 (Leaf 1271))  ; if
+(let econg_1272 (Equal econg_1270 econg_1271))  ; =  ;; [ASSUME]
+(let econg_1273 (Leaf 1273))  ; malloc::malloc_size!0@1#1
+(let econg_1274 (Leaf 1274))  ; malloc::malloc_size!0@1#1
+(let econg_1275 (Equal econg_1273 econg_1274))  ; =  ;; [ASSUME]
+(let econg_1276 (Leaf 1276))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@1#2
+(let econg_1277 (Leaf 1277))  ; nondet_symbol
+(let econg_1278 (Equal econg_1276 econg_1277))  ; =  ;; [ASSUME]
+(let econg_1279 (Leaf 1279))  ; malloc::1::1::should_malloc_fail!0@1#2
+(let econg_1280 (Equal econg_1276 econg_1279))  ; =  ;; [ASSUME]
+(let econg_1281 (Leaf 1281))  ; goto_symex::\guard#23
+(let econg_1282 (Leaf 1282))  ; not
+(let econg_1283 (Equal econg_1281 econg_1282))  ; =  ;; [ASSUME]
+(let econg_1284 (Const 36028797018963969 1284))  ; const 80000000000001
+(let econg_1285 (Leaf 1285))  ; malloc::malloc_size!0@1#1
+(let econg_1286 (Equal econg_1273 econg_1285))  ; =  ;; [ASSUME]
+(let econg_1287 (Leaf 1287))  ; symex_dynamic::dynamic_object$5#1
+(let econg_1288 (Leaf 1288))  ; nondet_symbol
+(let econg_1289 (Equal econg_1287 econg_1288))  ; =  ;; [ASSUME]
+(let econg_1290 (Leaf 1290))  ; malloc::$tmp::malloc_value!0@1#2
+(let econg_1291 (Leaf 1291))  ; address_of
+(let econg_1292 (Typecast econg_88 econg_1291))  ; typecast
+(let econg_1293 (Equal econg_1290 econg_1292))  ; =  ;; [ASSUME]
+(let econg_1294 (Leaf 1294))  ; malloc::1::malloc_res!0@1#2
+(let econg_1295 (Equal econg_1292 econg_1294))  ; =  ;; [ASSUME]
+(let econg_1296 (Leaf 1296))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@1#2
+(let econg_1297 (Leaf 1297))  ; nondet_symbol
+(let econg_1298 (Equal econg_1296 econg_1297))  ; =  ;; [ASSUME]
+(let econg_1299 (Leaf 1299))  ; malloc::1::record_malloc!0@1#2
+(let econg_1300 (Equal econg_1296 econg_1299))  ; =  ;; [ASSUME]
+(let econg_1301 (Leaf 1301))  ; __CPROVER_malloc_is_new_array#14
+(let econg_1302 (Equal econg_25 econg_1301))  ; =  ;; [ASSUME]
+(let econg_1303 (Leaf 1303))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@1#2
+(let econg_1304 (Leaf 1304))  ; nondet_symbol
+(let econg_1305 (Equal econg_1303 econg_1304))  ; =  ;; [ASSUME]
+(let econg_1306 (Leaf 1306))  ; malloc::1::record_may_leak!0@1#2
+(let econg_1307 (Equal econg_1303 econg_1306))  ; =  ;; [ASSUME]
+(let econg_1308 (Leaf 1308))  ; __CPROVER_memory_leak#17
+(let econg_1309 (Leaf 1309))  ; if
+(let econg_1310 (Equal econg_1308 econg_1309))  ; =  ;; [ASSUME]
+(let econg_1311 (Leaf 1311))  ; __CPROVER_malloc_is_new_array#15
+(let econg_1312 (Equal econg_25 econg_1311))  ; =  ;; [ASSUME]
+(let econg_1313 (Leaf 1313))  ; __CPROVER_memory_leak#18
+(let econg_1314 (Leaf 1314))  ; if
+(let econg_1315 (Equal econg_1313 econg_1314))  ; =  ;; [ASSUME]
+(let econg_1316 (Leaf 1316))  ; symex_dynamic::dynamic_object$5#2
+(let econg_1317 (Equal econg_1287 econg_1316))  ; =  ;; [ASSUME]
+(let econg_1318 (Leaf 1318))  ; malloc::malloc_size!0@1#1
+(let econg_1319 (Equal econg_1273 econg_1318))  ; =  ;; [ASSUME]
+(let econg_1320 (Leaf 1320))  ; __CPROVER_deallocated#5
+(let econg_1321 (Leaf 1321))  ; if
+(let econg_1322 (Equal econg_1320 econg_1321))  ; =  ;; [ASSUME]
+(let econg_1323 (Leaf 1323))  ; __CPROVER_malloc_is_new_array#16
+(let econg_1324 (Equal econg_25 econg_1323))  ; =  ;; [ASSUME]
+(let econg_1325 (Leaf 1325))  ; __CPROVER_memory_leak#19
+(let econg_1326 (Leaf 1326))  ; if
+(let econg_1327 (Equal econg_1325 econg_1326))  ; =  ;; [ASSUME]
+(let econg_1328 (Leaf 1328))  ; symex_dynamic::dynamic_object$5#3
+(let econg_1329 (Equal econg_1316 econg_1328))  ; =  ;; [ASSUME]
+(let econg_1330 (Leaf 1330))  ; malloc::malloc_size!0@1#1
+(let econg_1331 (Equal econg_1273 econg_1330))  ; =  ;; [ASSUME]
+(let econg_1332 (Leaf 1332))  ; unlinkn_all::1::n!0@1#4
+(let econg_1333 (Equal econg_1226 econg_1332))  ; =  ;; [ASSUME]
+(let econg_1334 (Leaf 1334))  ; symex_dynamic::dynamic_object#11..size
+(let econg_1335 (Leaf 1335))  ; if
+(let econg_1336 (Equal econg_1334 econg_1335))  ; =  ;; [ASSUME]
+(let econg_1337 (Leaf 1337))  ; if
+(let econg_1338 (Const 18446744073709551615 1338))  ; const FFFFFFFFFFFFFFFF
+(let econg_1339 (Plus econg_1337 econg_1338))  ; +
+(let econg_1340 (Leaf 1340))  ; unlinkn_all::list$object#1..size
+(let econg_1341 (Leaf 1341))  ; if
+(let econg_1342 (Equal econg_1340 econg_1341))  ; =  ;; [ASSUME]
+(let econg_1343 (Leaf 1343))  ; if
+(let econg_1344 (Plus econg_1338 econg_1343))  ; +
+(let econg_1345 (Leaf 1345))  ; goto_symex::\guard#24
+(let econg_1346 (Leaf 1346))  ; not
+(let econg_1347 (Equal econg_1345 econg_1346))  ; =  ;; [ASSUME]
+(let econg_1348 (Leaf 1348))  ; unlinkn_all::1::1::tmp!0@2#2
+(let econg_1349 (Leaf 1349))  ; if
+(let econg_1350 (Equal econg_1348 econg_1349))  ; =  ;; [ASSUME]
+(let econg_1351 (Leaf 1351))  ; if
+(let econg_1352 (Leaf 1352))  ; goto_symex::\guard#25
+(let econg_1353 (Equal econg_1232 econg_1352))  ; =  ;; [ASSUME]
+(let econg_1354 (Leaf 1354))  ; goto_symex::\guard#26
+(let econg_1355 (Equal econg_1236 econg_1354))  ; =  ;; [ASSUME]
+(let econg_1356 (Leaf 1356))  ; free::ptr!0@2#1
+(let econg_1357 (Typecast econg_88 econg_1332))  ; typecast
+(let econg_1358 (Equal econg_1356 econg_1357))  ; =  ;; [ASSUME]
+(let econg_1359 (Leaf 1359))  ; __CPROVER_deallocate::ptr!0@2#1
+(let econg_1360 (Equal econg_1356 econg_1359))  ; =  ;; [ASSUME]
+(let econg_1361 (Leaf 1361))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@2#2
+(let econg_1362 (Leaf 1362))  ; nondet_symbol
+(let econg_1363 (Equal econg_1361 econg_1362))  ; =  ;; [ASSUME]
+(let econg_1364 (Leaf 1364))  ; __CPROVER_deallocated#6
+(let econg_1365 (Equal econg_1359 econg_1364))  ; =  ;; [ASSUME]
+(let econg_1366 (Leaf 1366))  ; __CPROVER_deallocated#7
+(let econg_1367 (Leaf 1367))  ; if
+(let econg_1368 (Equal econg_1366 econg_1367))  ; =  ;; [ASSUME]
+(let econg_1369 (Leaf 1369))  ; goto_symex::\guard#27
+(let econg_1370 (Equal econg_1325 econg_1356))  ; =
+(let econg_1371 (Equal econg_1369 econg_1370))  ; =  ;; [ASSUME]
+(let econg_1372 (Leaf 1372))  ; __CPROVER_memory_leak#20
+(let econg_1373 (Equal econg_18 econg_1372))  ; =  ;; [ASSUME]
+(let econg_1374 (Leaf 1374))  ; __CPROVER_memory_leak#21
+(let econg_1375 (Leaf 1375))  ; if
+(let econg_1376 (Equal econg_1374 econg_1375))  ; =  ;; [ASSUME]
+(let econg_1377 (Leaf 1377))  ; malloc::malloc_size!0@2#1
+(let econg_1378 (Leaf 1378))  ; malloc::malloc_size!0@2#1
+(let econg_1379 (Equal econg_1377 econg_1378))  ; =  ;; [ASSUME]
+(let econg_1380 (Leaf 1380))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@2#2
+(let econg_1381 (Leaf 1381))  ; nondet_symbol
+(let econg_1382 (Equal econg_1380 econg_1381))  ; =  ;; [ASSUME]
+(let econg_1383 (Leaf 1383))  ; malloc::1::1::should_malloc_fail!0@2#2
+(let econg_1384 (Equal econg_1380 econg_1383))  ; =  ;; [ASSUME]
+(let econg_1385 (Leaf 1385))  ; goto_symex::\guard#28
+(let econg_1386 (Leaf 1386))  ; not
+(let econg_1387 (Equal econg_1385 econg_1386))  ; =  ;; [ASSUME]
+(let econg_1388 (Leaf 1388))  ; malloc::malloc_size!0@2#1
+(let econg_1389 (Equal econg_1377 econg_1388))  ; =  ;; [ASSUME]
+(let econg_1390 (Leaf 1390))  ; symex_dynamic::dynamic_object$6#1
+(let econg_1391 (Leaf 1391))  ; nondet_symbol
+(let econg_1392 (Equal econg_1390 econg_1391))  ; =  ;; [ASSUME]
+(let econg_1393 (Leaf 1393))  ; malloc::$tmp::malloc_value!0@2#2
+(let econg_1394 (Leaf 1394))  ; address_of
+(let econg_1395 (Typecast econg_88 econg_1394))  ; typecast
+(let econg_1396 (Equal econg_1393 econg_1395))  ; =  ;; [ASSUME]
+(let econg_1397 (Leaf 1397))  ; malloc::1::malloc_res!0@2#2
+(let econg_1398 (Equal econg_1395 econg_1397))  ; =  ;; [ASSUME]
+(let econg_1399 (Leaf 1399))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@2#2
+(let econg_1400 (Leaf 1400))  ; nondet_symbol
+(let econg_1401 (Equal econg_1399 econg_1400))  ; =  ;; [ASSUME]
+(let econg_1402 (Leaf 1402))  ; malloc::1::record_malloc!0@2#2
+(let econg_1403 (Equal econg_1399 econg_1402))  ; =  ;; [ASSUME]
+(let econg_1404 (Leaf 1404))  ; __CPROVER_malloc_is_new_array#17
+(let econg_1405 (Equal econg_25 econg_1404))  ; =  ;; [ASSUME]
+(let econg_1406 (Leaf 1406))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@2#2
+(let econg_1407 (Leaf 1407))  ; nondet_symbol
+(let econg_1408 (Equal econg_1406 econg_1407))  ; =  ;; [ASSUME]
+(let econg_1409 (Leaf 1409))  ; malloc::1::record_may_leak!0@2#2
+(let econg_1410 (Equal econg_1406 econg_1409))  ; =  ;; [ASSUME]
+(let econg_1411 (Leaf 1411))  ; __CPROVER_memory_leak#22
+(let econg_1412 (Leaf 1412))  ; if
+(let econg_1413 (Equal econg_1411 econg_1412))  ; =  ;; [ASSUME]
+(let econg_1414 (Leaf 1414))  ; __CPROVER_malloc_is_new_array#18
+(let econg_1415 (Equal econg_25 econg_1414))  ; =  ;; [ASSUME]
+(let econg_1416 (Leaf 1416))  ; __CPROVER_memory_leak#23
+(let econg_1417 (Leaf 1417))  ; if
+(let econg_1418 (Equal econg_1416 econg_1417))  ; =  ;; [ASSUME]
+(let econg_1419 (Leaf 1419))  ; symex_dynamic::dynamic_object$6#2
+(let econg_1420 (Equal econg_1390 econg_1419))  ; =  ;; [ASSUME]
+(let econg_1421 (Leaf 1421))  ; malloc::malloc_size!0@2#1
+(let econg_1422 (Equal econg_1377 econg_1421))  ; =  ;; [ASSUME]
+(let econg_1423 (Leaf 1423))  ; __CPROVER_deallocated#8
+(let econg_1424 (Leaf 1424))  ; if
+(let econg_1425 (Equal econg_1423 econg_1424))  ; =  ;; [ASSUME]
+(let econg_1426 (Leaf 1426))  ; __CPROVER_malloc_is_new_array#19
+(let econg_1427 (Equal econg_25 econg_1426))  ; =  ;; [ASSUME]
+(let econg_1428 (Leaf 1428))  ; __CPROVER_memory_leak#24
+(let econg_1429 (Leaf 1429))  ; if
+(let econg_1430 (Equal econg_1428 econg_1429))  ; =  ;; [ASSUME]
+(let econg_1431 (Leaf 1431))  ; symex_dynamic::dynamic_object$6#3
+(let econg_1432 (Equal econg_1419 econg_1431))  ; =  ;; [ASSUME]
+(let econg_1433 (Leaf 1433))  ; malloc::malloc_size!0@2#1
+(let econg_1434 (Equal econg_1377 econg_1433))  ; =  ;; [ASSUME]
+(let econg_1435 (Leaf 1435))  ; unlinkn_all::1::n!0@1#6
+(let econg_1436 (Equal econg_1348 econg_1435))  ; =  ;; [ASSUME]
+(let econg_1437 (Leaf 1437))  ; symex_dynamic::dynamic_object#12..size
+(let econg_1438 (Leaf 1438))  ; if
+(let econg_1439 (Equal econg_1437 econg_1438))  ; =  ;; [ASSUME]
+(let econg_1440 (Leaf 1440))  ; if
+(let econg_1441 (Plus econg_1338 econg_1440))  ; +
+(let econg_1442 (Leaf 1442))  ; unlinkn_all::list$object#2..size
+(let econg_1443 (Leaf 1443))  ; if
+(let econg_1444 (Equal econg_1442 econg_1443))  ; =  ;; [ASSUME]
+(let econg_1445 (Leaf 1445))  ; if
+(let econg_1446 (Plus econg_1338 econg_1445))  ; +
+(let econg_1447 (Leaf 1447))  ; goto_symex::\guard#29
+(let econg_1448 (Leaf 1448))  ; not
+(let econg_1449 (Equal econg_1447 econg_1448))  ; =  ;; [ASSUME]
+(let econg_1450 (Leaf 1450))  ; unlinkn_all::1::1::tmp!0@3#2
+(let econg_1451 (Leaf 1451))  ; if
+(let econg_1452 (Equal econg_1450 econg_1451))  ; =  ;; [ASSUME]
+(let econg_1453 (Leaf 1453))  ; goto_symex::\guard#30
+(let econg_1454 (Equal econg_1232 econg_1453))  ; =  ;; [ASSUME]
+(let econg_1455 (Leaf 1455))  ; goto_symex::\guard#31
+(let econg_1456 (Equal econg_1236 econg_1455))  ; =  ;; [ASSUME]
+(let econg_1457 (Leaf 1457))  ; free::ptr!0@3#1
+(let econg_1458 (Typecast econg_88 econg_1435))  ; typecast
+(let econg_1459 (Equal econg_1457 econg_1458))  ; =  ;; [ASSUME]
+(let econg_1460 (Leaf 1460))  ; __CPROVER_deallocate::ptr!0@3#1
+(let econg_1461 (Equal econg_1457 econg_1460))  ; =  ;; [ASSUME]
+(let econg_1462 (Leaf 1462))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@3#2
+(let econg_1463 (Leaf 1463))  ; nondet_symbol
+(let econg_1464 (Equal econg_1462 econg_1463))  ; =  ;; [ASSUME]
+(let econg_1465 (Leaf 1465))  ; __CPROVER_deallocated#9
+(let econg_1466 (Equal econg_1460 econg_1465))  ; =  ;; [ASSUME]
+(let econg_1467 (Leaf 1467))  ; __CPROVER_deallocated#10
+(let econg_1468 (Leaf 1468))  ; if
+(let econg_1469 (Equal econg_1467 econg_1468))  ; =  ;; [ASSUME]
+(let econg_1470 (Leaf 1470))  ; goto_symex::\guard#32
+(let econg_1471 (Equal econg_1428 econg_1457))  ; =
+(let econg_1472 (Equal econg_1470 econg_1471))  ; =  ;; [ASSUME]
+(let econg_1473 (Leaf 1473))  ; __CPROVER_memory_leak#25
+(let econg_1474 (Equal econg_18 econg_1473))  ; =  ;; [ASSUME]
+(let econg_1475 (Leaf 1475))  ; __CPROVER_memory_leak#26
+(let econg_1476 (Leaf 1476))  ; if
+(let econg_1477 (Equal econg_1475 econg_1476))  ; =  ;; [ASSUME]
+(let econg_1478 (Leaf 1478))  ; malloc::malloc_size!0@3#1
+(let econg_1479 (Leaf 1479))  ; malloc::malloc_size!0@3#1
+(let econg_1480 (Equal econg_1478 econg_1479))  ; =  ;; [ASSUME]
+(let econg_1481 (Leaf 1481))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@3#2
+(let econg_1482 (Leaf 1482))  ; nondet_symbol
+(let econg_1483 (Equal econg_1481 econg_1482))  ; =  ;; [ASSUME]
+(let econg_1484 (Leaf 1484))  ; malloc::1::1::should_malloc_fail!0@3#2
+(let econg_1485 (Equal econg_1481 econg_1484))  ; =  ;; [ASSUME]
+(let econg_1486 (Leaf 1486))  ; goto_symex::\guard#33
+(let econg_1487 (Leaf 1487))  ; not
+(let econg_1488 (Equal econg_1486 econg_1487))  ; =  ;; [ASSUME]
+(let econg_1489 (Leaf 1489))  ; malloc::malloc_size!0@3#1
+(let econg_1490 (Equal econg_1478 econg_1489))  ; =  ;; [ASSUME]
+(let econg_1491 (Leaf 1491))  ; symex_dynamic::dynamic_object$7#1
+(let econg_1492 (Leaf 1492))  ; nondet_symbol
+(let econg_1493 (Equal econg_1491 econg_1492))  ; =  ;; [ASSUME]
+(let econg_1494 (Leaf 1494))  ; malloc::$tmp::malloc_value!0@3#2
+(let econg_1495 (Leaf 1495))  ; address_of
+(let econg_1496 (Typecast econg_88 econg_1495))  ; typecast
+(let econg_1497 (Equal econg_1494 econg_1496))  ; =  ;; [ASSUME]
+(let econg_1498 (Leaf 1498))  ; malloc::1::malloc_res!0@3#2
+(let econg_1499 (Equal econg_1496 econg_1498))  ; =  ;; [ASSUME]
+(let econg_1500 (Leaf 1500))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@3#2
+(let econg_1501 (Leaf 1501))  ; nondet_symbol
+(let econg_1502 (Equal econg_1500 econg_1501))  ; =  ;; [ASSUME]
+(let econg_1503 (Leaf 1503))  ; malloc::1::record_malloc!0@3#2
+(let econg_1504 (Equal econg_1500 econg_1503))  ; =  ;; [ASSUME]
+(let econg_1505 (Leaf 1505))  ; __CPROVER_malloc_is_new_array#20
+(let econg_1506 (Equal econg_25 econg_1505))  ; =  ;; [ASSUME]
+(let econg_1507 (Leaf 1507))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@3#2
+(let econg_1508 (Leaf 1508))  ; nondet_symbol
+(let econg_1509 (Equal econg_1507 econg_1508))  ; =  ;; [ASSUME]
+(let econg_1510 (Leaf 1510))  ; malloc::1::record_may_leak!0@3#2
+(let econg_1511 (Equal econg_1507 econg_1510))  ; =  ;; [ASSUME]
+(let econg_1512 (Leaf 1512))  ; __CPROVER_memory_leak#27
+(let econg_1513 (Leaf 1513))  ; if
+(let econg_1514 (Equal econg_1512 econg_1513))  ; =  ;; [ASSUME]
+(let econg_1515 (Leaf 1515))  ; __CPROVER_malloc_is_new_array#21
+(let econg_1516 (Equal econg_25 econg_1515))  ; =  ;; [ASSUME]
+(let econg_1517 (Leaf 1517))  ; __CPROVER_memory_leak#28
+(let econg_1518 (Leaf 1518))  ; if
+(let econg_1519 (Equal econg_1517 econg_1518))  ; =  ;; [ASSUME]
+(let econg_1520 (Leaf 1520))  ; symex_dynamic::dynamic_object$7#2
+(let econg_1521 (Equal econg_1491 econg_1520))  ; =  ;; [ASSUME]
+(let econg_1522 (Leaf 1522))  ; malloc::malloc_size!0@3#1
+(let econg_1523 (Equal econg_1478 econg_1522))  ; =  ;; [ASSUME]
+(let econg_1524 (Leaf 1524))  ; __CPROVER_deallocated#11
+(let econg_1525 (Leaf 1525))  ; if
+(let econg_1526 (Equal econg_1524 econg_1525))  ; =  ;; [ASSUME]
+(let econg_1527 (Leaf 1527))  ; __CPROVER_malloc_is_new_array#22
+(let econg_1528 (Equal econg_25 econg_1527))  ; =  ;; [ASSUME]
+(let econg_1529 (Leaf 1529))  ; __CPROVER_memory_leak#29
+(let econg_1530 (Leaf 1530))  ; if
+(let econg_1531 (Equal econg_1529 econg_1530))  ; =  ;; [ASSUME]
+(let econg_1532 (Leaf 1532))  ; symex_dynamic::dynamic_object$7#3
+(let econg_1533 (Equal econg_1520 econg_1532))  ; =  ;; [ASSUME]
+(let econg_1534 (Leaf 1534))  ; malloc::malloc_size!0@3#1
+(let econg_1535 (Equal econg_1478 econg_1534))  ; =  ;; [ASSUME]
+(let econg_1536 (Leaf 1536))  ; unlinkn_all::1::n!0@1#8
+(let econg_1537 (Equal econg_1450 econg_1536))  ; =  ;; [ASSUME]
+(let econg_1538 (Leaf 1538))  ; symex_dynamic::dynamic_object#13..size
+(let econg_1539 (Leaf 1539))  ; if
+(let econg_1540 (Equal econg_1538 econg_1539))  ; =  ;; [ASSUME]
+(let econg_1541 (Leaf 1541))  ; if
+(let econg_1542 (Plus econg_1338 econg_1541))  ; +
+(let econg_1543 (Leaf 1543))  ; unlinkn_all::list$object#3..size
+(let econg_1544 (Leaf 1544))  ; if
+(let econg_1545 (Equal econg_1543 econg_1544))  ; =  ;; [ASSUME]
+(let econg_1546 (Leaf 1546))  ; if
+(let econg_1547 (Plus econg_1338 econg_1546))  ; +
+(let econg_1548 (Leaf 1548))  ; goto_symex::\guard#34
+(let econg_1549 (Leaf 1549))  ; not
+(let econg_1550 (Equal econg_1548 econg_1549))  ; =  ;; [ASSUME]
+(let econg_1551 (Leaf 1551))  ; unlinkn_all::1::1::tmp!0@4#2
+(let econg_1552 (Equal econg_95 econg_1551))  ; =  ;; [ASSUME]
+(let econg_1553 (Leaf 1553))  ; goto_symex::\guard#35
+(let econg_1554 (Equal econg_1232 econg_1553))  ; =  ;; [ASSUME]
+(let econg_1555 (Leaf 1555))  ; goto_symex::\guard#36
+(let econg_1556 (Equal econg_1236 econg_1555))  ; =  ;; [ASSUME]
+(let econg_1557 (Leaf 1557))  ; free::ptr!0@4#1
+(let econg_1558 (Typecast econg_88 econg_1536))  ; typecast
+(let econg_1559 (Equal econg_1557 econg_1558))  ; =  ;; [ASSUME]
+(let econg_1560 (Leaf 1560))  ; __CPROVER_deallocate::ptr!0@4#1
+(let econg_1561 (Equal econg_1557 econg_1560))  ; =  ;; [ASSUME]
+(let econg_1562 (Leaf 1562))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@4#2
+(let econg_1563 (Leaf 1563))  ; nondet_symbol
+(let econg_1564 (Equal econg_1562 econg_1563))  ; =  ;; [ASSUME]
+(let econg_1565 (Leaf 1565))  ; __CPROVER_deallocated#12
+(let econg_1566 (Equal econg_1560 econg_1565))  ; =  ;; [ASSUME]
+(let econg_1567 (Leaf 1567))  ; __CPROVER_deallocated#13
+(let econg_1568 (Leaf 1568))  ; if
+(let econg_1569 (Equal econg_1567 econg_1568))  ; =  ;; [ASSUME]
+(let econg_1570 (Leaf 1570))  ; goto_symex::\guard#37
+(let econg_1571 (Equal econg_1529 econg_1557))  ; =
+(let econg_1572 (Equal econg_1570 econg_1571))  ; =  ;; [ASSUME]
+(let econg_1573 (Leaf 1573))  ; __CPROVER_memory_leak#30
+(let econg_1574 (Equal econg_18 econg_1573))  ; =  ;; [ASSUME]
+(let econg_1575 (Leaf 1575))  ; __CPROVER_memory_leak#31
+(let econg_1576 (Leaf 1576))  ; if
+(let econg_1577 (Equal econg_1575 econg_1576))  ; =  ;; [ASSUME]
+(let econg_1578 (Leaf 1578))  ; malloc::malloc_size!0@4#1
+(let econg_1579 (Leaf 1579))  ; malloc::malloc_size!0@4#1
+(let econg_1580 (Equal econg_1578 econg_1579))  ; =  ;; [ASSUME]
+(let econg_1581 (Leaf 1581))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@4#2
+(let econg_1582 (Leaf 1582))  ; nondet_symbol
+(let econg_1583 (Equal econg_1581 econg_1582))  ; =  ;; [ASSUME]
+(let econg_1584 (Leaf 1584))  ; malloc::1::1::should_malloc_fail!0@4#2
+(let econg_1585 (Equal econg_1581 econg_1584))  ; =  ;; [ASSUME]
+(let econg_1586 (Leaf 1586))  ; goto_symex::\guard#38
+(let econg_1587 (Leaf 1587))  ; not
+(let econg_1588 (Equal econg_1586 econg_1587))  ; =  ;; [ASSUME]
+(let econg_1589 (Leaf 1589))  ; malloc::malloc_size!0@4#1
+(let econg_1590 (Equal econg_1578 econg_1589))  ; =  ;; [ASSUME]
+(let econg_1591 (Leaf 1591))  ; symex_dynamic::dynamic_object$8#1
+(let econg_1592 (Leaf 1592))  ; nondet_symbol
+(let econg_1593 (Equal econg_1591 econg_1592))  ; =  ;; [ASSUME]
+(let econg_1594 (Leaf 1594))  ; malloc::$tmp::malloc_value!0@4#2
+(let econg_1595 (Leaf 1595))  ; address_of
+(let econg_1596 (Typecast econg_88 econg_1595))  ; typecast
+(let econg_1597 (Equal econg_1594 econg_1596))  ; =  ;; [ASSUME]
+(let econg_1598 (Leaf 1598))  ; malloc::1::malloc_res!0@4#2
+(let econg_1599 (Equal econg_1596 econg_1598))  ; =  ;; [ASSUME]
+(let econg_1600 (Leaf 1600))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@4#2
+(let econg_1601 (Leaf 1601))  ; nondet_symbol
+(let econg_1602 (Equal econg_1600 econg_1601))  ; =  ;; [ASSUME]
+(let econg_1603 (Leaf 1603))  ; malloc::1::record_malloc!0@4#2
+(let econg_1604 (Equal econg_1600 econg_1603))  ; =  ;; [ASSUME]
+(let econg_1605 (Leaf 1605))  ; __CPROVER_malloc_is_new_array#23
+(let econg_1606 (Equal econg_25 econg_1605))  ; =  ;; [ASSUME]
+(let econg_1607 (Leaf 1607))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@4#2
+(let econg_1608 (Leaf 1608))  ; nondet_symbol
+(let econg_1609 (Equal econg_1607 econg_1608))  ; =  ;; [ASSUME]
+(let econg_1610 (Leaf 1610))  ; malloc::1::record_may_leak!0@4#2
+(let econg_1611 (Equal econg_1607 econg_1610))  ; =  ;; [ASSUME]
+(let econg_1612 (Leaf 1612))  ; __CPROVER_memory_leak#32
+(let econg_1613 (Leaf 1613))  ; if
+(let econg_1614 (Equal econg_1612 econg_1613))  ; =  ;; [ASSUME]
+(let econg_1615 (Leaf 1615))  ; __CPROVER_malloc_is_new_array#24
+(let econg_1616 (Equal econg_25 econg_1615))  ; =  ;; [ASSUME]
+(let econg_1617 (Leaf 1617))  ; __CPROVER_memory_leak#33
+(let econg_1618 (Leaf 1618))  ; if
+(let econg_1619 (Equal econg_1617 econg_1618))  ; =  ;; [ASSUME]
+(let econg_1620 (Leaf 1620))  ; symex_dynamic::dynamic_object$8#2
+(let econg_1621 (Equal econg_1591 econg_1620))  ; =  ;; [ASSUME]
+(let econg_1622 (Leaf 1622))  ; malloc::malloc_size!0@4#1
+(let econg_1623 (Equal econg_1578 econg_1622))  ; =  ;; [ASSUME]
+(let econg_1624 (Leaf 1624))  ; __CPROVER_deallocated#14
+(let econg_1625 (Leaf 1625))  ; if
+(let econg_1626 (Equal econg_1624 econg_1625))  ; =  ;; [ASSUME]
+(let econg_1627 (Leaf 1627))  ; __CPROVER_malloc_is_new_array#25
+(let econg_1628 (Equal econg_25 econg_1627))  ; =  ;; [ASSUME]
+(let econg_1629 (Leaf 1629))  ; __CPROVER_memory_leak#34
+(let econg_1630 (Leaf 1630))  ; if
+(let econg_1631 (Equal econg_1629 econg_1630))  ; =  ;; [ASSUME]
+(let econg_1632 (Leaf 1632))  ; symex_dynamic::dynamic_object$8#3
+(let econg_1633 (Equal econg_1620 econg_1632))  ; =  ;; [ASSUME]
+(let econg_1634 (Leaf 1634))  ; malloc::malloc_size!0@4#1
+(let econg_1635 (Equal econg_1578 econg_1634))  ; =  ;; [ASSUME]
+(let econg_1636 (Leaf 1636))  ; unlinkn_all::1::n!0@1#10
+(let econg_1637 (Equal econg_95 econg_1636))  ; =  ;; [ASSUME]
+(let econg_1638 (Leaf 1638))  ; symex_dynamic::dynamic_object#14..size
+(let econg_1639 (Leaf 1639))  ; if
+(let econg_1640 (Equal econg_1638 econg_1639))  ; =  ;; [ASSUME]
+(let econg_1641 (Leaf 1641))  ; if
+(let econg_1642 (Plus econg_1338 econg_1641))  ; +
+(let econg_1643 (Leaf 1643))  ; unlinkn_all::list$object#4..size
+(let econg_1644 (Leaf 1644))  ; if
+(let econg_1645 (Equal econg_1643 econg_1644))  ; =  ;; [ASSUME]
+(let econg_1646 (Leaf 1646))  ; if
+(let econg_1647 (Plus econg_1338 econg_1646))  ; +
+(let econg_1648 (Leaf 1648))  ; __CPROVER_deallocated#15
+(let econg_1649 (Leaf 1649))  ; if
+(let econg_1650 (Equal econg_1648 econg_1649))  ; =  ;; [ASSUME]
+(let econg_1651 (Leaf 1651))  ; __CPROVER_malloc_is_new_array#26
+(let econg_1652 (Equal econg_25 econg_1651))  ; =  ;; [ASSUME]
+(let econg_1653 (Leaf 1653))  ; __CPROVER_memory_leak#35
+(let econg_1654 (Leaf 1654))  ; if
+(let econg_1655 (Equal econg_1653 econg_1654))  ; =  ;; [ASSUME]
+(let econg_1656 (Leaf 1656))  ; symex_dynamic::dynamic_object#15..size
+(let econg_1657 (Leaf 1657))  ; if
+(let econg_1658 (Equal econg_1656 econg_1657))  ; =  ;; [ASSUME]
+(let econg_1659 (Leaf 1659))  ; unlinkn_all::1::n!0@1#11
+(let econg_1660 (Equal econg_95 econg_1659))  ; =  ;; [ASSUME]
+(let econg_1661 (Leaf 1661))  ; unlinkn_all::list$object#5..size
+(let econg_1662 (Leaf 1662))  ; if
+(let econg_1663 (Equal econg_1661 econg_1662))  ; =  ;; [ASSUME]
+(let econg_1664 (Leaf 1664))  ; symex_dynamic::dynamic_object$8#4
+(let econg_1665 (Equal econg_1632 econg_1664))  ; =  ;; [ASSUME]
+(let econg_1666 (Leaf 1666))  ; malloc::malloc_size!0@4#1
+(let econg_1667 (Equal econg_1578 econg_1666))  ; =  ;; [ASSUME]
+(let econg_1668 (Leaf 1668))  ; __CPROVER_deallocated#16
+(let econg_1669 (Leaf 1669))  ; if
+(let econg_1670 (Equal econg_1668 econg_1669))  ; =  ;; [ASSUME]
+(let econg_1671 (Leaf 1671))  ; __CPROVER_malloc_is_new_array#27
+(let econg_1672 (Equal econg_25 econg_1671))  ; =  ;; [ASSUME]
+(let econg_1673 (Leaf 1673))  ; __CPROVER_memory_leak#36
+(let econg_1674 (Leaf 1674))  ; if
+(let econg_1675 (Equal econg_1673 econg_1674))  ; =  ;; [ASSUME]
+(let econg_1676 (Leaf 1676))  ; symex_dynamic::dynamic_object#16..size
+(let econg_1677 (Leaf 1677))  ; if
+(let econg_1678 (Equal econg_1676 econg_1677))  ; =  ;; [ASSUME]
+(let econg_1679 (Leaf 1679))  ; unlinkn_all::1::n!0@1#12
+(let econg_1680 (Equal econg_95 econg_1679))  ; =  ;; [ASSUME]
+(let econg_1681 (Leaf 1681))  ; unlinkn_all::list$object#6..size
+(let econg_1682 (Leaf 1682))  ; if
+(let econg_1683 (Equal econg_1681 econg_1682))  ; =  ;; [ASSUME]
+(let econg_1684 (Leaf 1684))  ; symex_dynamic::dynamic_object$7#4
+(let econg_1685 (Equal econg_1532 econg_1684))  ; =  ;; [ASSUME]
+(let econg_1686 (Leaf 1686))  ; symex_dynamic::dynamic_object$8#5
+(let econg_1687 (Equal econg_1664 econg_1686))  ; =  ;; [ASSUME]
+(let econg_1688 (Leaf 1688))  ; malloc::malloc_size!0@3#1
+(let econg_1689 (Equal econg_1478 econg_1688))  ; =  ;; [ASSUME]
+(let econg_1690 (Leaf 1690))  ; malloc::malloc_size!0@4#1
+(let econg_1691 (Equal econg_1578 econg_1690))  ; =  ;; [ASSUME]
+(let econg_1692 (Leaf 1692))  ; __CPROVER_deallocated#17
+(let econg_1693 (Leaf 1693))  ; if
+(let econg_1694 (Equal econg_1692 econg_1693))  ; =  ;; [ASSUME]
+(let econg_1695 (Leaf 1695))  ; __CPROVER_malloc_is_new_array#28
+(let econg_1696 (Equal econg_25 econg_1695))  ; =  ;; [ASSUME]
+(let econg_1697 (Leaf 1697))  ; __CPROVER_memory_leak#37
+(let econg_1698 (Leaf 1698))  ; if
+(let econg_1699 (Equal econg_1697 econg_1698))  ; =  ;; [ASSUME]
+(let econg_1700 (Leaf 1700))  ; symex_dynamic::dynamic_object#17..size
+(let econg_1701 (Leaf 1701))  ; if
+(let econg_1702 (Equal econg_1700 econg_1701))  ; =  ;; [ASSUME]
+(let econg_1703 (Leaf 1703))  ; unlinkn_all::1::n!0@1#13
+(let econg_1704 (Equal econg_95 econg_1703))  ; =  ;; [ASSUME]
+(let econg_1705 (Leaf 1705))  ; unlinkn_all::list$object#8..size
+(let econg_1706 (Leaf 1706))  ; if
+(let econg_1707 (Equal econg_1705 econg_1706))  ; =  ;; [ASSUME]
+(let econg_1708 (Leaf 1708))  ; symex_dynamic::dynamic_object$6#4
+(let econg_1709 (Equal econg_1431 econg_1708))  ; =  ;; [ASSUME]
+(let econg_1710 (Leaf 1710))  ; symex_dynamic::dynamic_object$7#5
+(let econg_1711 (Equal econg_1684 econg_1710))  ; =  ;; [ASSUME]
+(let econg_1712 (Leaf 1712))  ; symex_dynamic::dynamic_object$8#6
+(let econg_1713 (Equal econg_1686 econg_1712))  ; =  ;; [ASSUME]
+(let econg_1714 (Leaf 1714))  ; malloc::malloc_size!0@2#1
+(let econg_1715 (Equal econg_1377 econg_1714))  ; =  ;; [ASSUME]
+(let econg_1716 (Leaf 1716))  ; malloc::malloc_size!0@3#1
+(let econg_1717 (Equal econg_1478 econg_1716))  ; =  ;; [ASSUME]
+(let econg_1718 (Leaf 1718))  ; malloc::malloc_size!0@4#1
+(let econg_1719 (Equal econg_1578 econg_1718))  ; =  ;; [ASSUME]
+(let econg_1720 (Leaf 1720))  ; __CPROVER_deallocated#18
+(let econg_1721 (Leaf 1721))  ; if
+(let econg_1722 (Equal econg_1720 econg_1721))  ; =  ;; [ASSUME]
+(let econg_1723 (Leaf 1723))  ; __CPROVER_malloc_is_new_array#29
+(let econg_1724 (Equal econg_25 econg_1723))  ; =  ;; [ASSUME]
+(let econg_1725 (Leaf 1725))  ; __CPROVER_memory_leak#38
+(let econg_1726 (Leaf 1726))  ; if
+(let econg_1727 (Equal econg_1725 econg_1726))  ; =  ;; [ASSUME]
+(let econg_1728 (Leaf 1728))  ; symex_dynamic::dynamic_object#18..size
+(let econg_1729 (Leaf 1729))  ; if
+(let econg_1730 (Equal econg_1728 econg_1729))  ; =  ;; [ASSUME]
+(let econg_1731 (Leaf 1731))  ; unlinkn_all::1::n!0@1#14
+(let econg_1732 (Equal econg_95 econg_1731))  ; =  ;; [ASSUME]
+(let econg_1733 (Leaf 1733))  ; symex_dynamic::dynamic_object$5#4
+(let econg_1734 (Equal econg_1328 econg_1733))  ; =  ;; [ASSUME]
+(let econg_1735 (Leaf 1735))  ; symex_dynamic::dynamic_object$6#5
+(let econg_1736 (Equal econg_1708 econg_1735))  ; =  ;; [ASSUME]
+(let econg_1737 (Leaf 1737))  ; symex_dynamic::dynamic_object$7#6
+(let econg_1738 (Equal econg_1710 econg_1737))  ; =  ;; [ASSUME]
+(let econg_1739 (Leaf 1739))  ; symex_dynamic::dynamic_object$8#7
+(let econg_1740 (Equal econg_1712 econg_1739))  ; =  ;; [ASSUME]
+(let econg_1741 (Leaf 1741))  ; malloc::malloc_size!0@1#1
+(let econg_1742 (Equal econg_1273 econg_1741))  ; =  ;; [ASSUME]
+(let econg_1743 (Leaf 1743))  ; malloc::malloc_size!0@2#1
+(let econg_1744 (Equal econg_1377 econg_1743))  ; =  ;; [ASSUME]
+(let econg_1745 (Leaf 1745))  ; malloc::malloc_size!0@3#1
+(let econg_1746 (Equal econg_1478 econg_1745))  ; =  ;; [ASSUME]
+(let econg_1747 (Leaf 1747))  ; malloc::malloc_size!0@4#1
+(let econg_1748 (Equal econg_1578 econg_1747))  ; =  ;; [ASSUME]
+(let econg_1749 (Leaf 1749))  ; unlinkn_all::list$object#8..size
+(let econg_1750 (Equal econg_1705 econg_1749))  ; =  ;; [ASSUME]
+(let econg_1751 (Leaf 1751))  ; goto_symex::return_value::unlinkn_all!0#2
+(let econg_1752 (Const 1 1752))  ; const 1
+(let econg_1753 (Equal econg_1751 econg_1752))  ; =  ;; [ASSUME]
+(let econg_1754 (Leaf 1754))  ; __CPROVER_deallocated#19
+(let econg_1755 (Leaf 1755))  ; if
+(let econg_1756 (Equal econg_1754 econg_1755))  ; =  ;; [ASSUME]
+(let econg_1757 (Leaf 1757))  ; __CPROVER_malloc_is_new_array#30
+(let econg_1758 (Equal econg_25 econg_1757))  ; =  ;; [ASSUME]
+(let econg_1759 (Leaf 1759))  ; __CPROVER_memory_leak#39
+(let econg_1760 (Leaf 1760))  ; if
+(let econg_1761 (Equal econg_1759 econg_1760))  ; =  ;; [ASSUME]
+(let econg_1762 (Leaf 1762))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@1#2
+(let econg_1763 (Leaf 1763))  ; if
+(let econg_1764 (Equal econg_1762 econg_1763))  ; =  ;; [ASSUME]
+(let econg_1765 (Leaf 1765))  ; symex_dynamic::dynamic_object#19..size
+(let econg_1766 (Leaf 1766))  ; if
+(let econg_1767 (Equal econg_1765 econg_1766))  ; =  ;; [ASSUME]
+(let econg_1768 (Leaf 1768))  ; symex_dynamic::dynamic_object$5#5
+(let econg_1769 (Equal econg_1733 econg_1768))  ; =  ;; [ASSUME]
+(let econg_1770 (Leaf 1770))  ; symex_dynamic::dynamic_object$6#6
+(let econg_1771 (Equal econg_1735 econg_1770))  ; =  ;; [ASSUME]
+(let econg_1772 (Leaf 1772))  ; symex_dynamic::dynamic_object$7#7
+(let econg_1773 (Equal econg_1737 econg_1772))  ; =  ;; [ASSUME]
+(let econg_1774 (Leaf 1774))  ; symex_dynamic::dynamic_object$8#8
+(let econg_1775 (Equal econg_1739 econg_1774))  ; =  ;; [ASSUME]
+(let econg_1776 (Leaf 1776))  ; malloc::malloc_size!0@1#1
+(let econg_1777 (Equal econg_1273 econg_1776))  ; =  ;; [ASSUME]
+(let econg_1778 (Leaf 1778))  ; malloc::malloc_size!0@2#1
+(let econg_1779 (Equal econg_1377 econg_1778))  ; =  ;; [ASSUME]
+(let econg_1780 (Leaf 1780))  ; malloc::malloc_size!0@3#1
+(let econg_1781 (Equal econg_1478 econg_1780))  ; =  ;; [ASSUME]
+(let econg_1782 (Leaf 1782))  ; malloc::malloc_size!0@4#1
+(let econg_1783 (Equal econg_1578 econg_1782))  ; =  ;; [ASSUME]
+(let econg_1784 (Leaf 1784))  ; unlinkn_all::list$object#8..size
+(let econg_1785 (Equal econg_1749 econg_1784))  ; =  ;; [ASSUME]
+(let econg_1786 (Leaf 1786))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@1#2
+(let econg_1787 (Equal econg_1762 econg_1786))  ; =  ;; [ASSUME]
+(let econg_1788 (Leaf 1788))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@1#2
+(let econg_1789 (Equal econg_1786 econg_1788))  ; =  ;; [ASSUME]
+(let econg_1790 (Leaf 1790))  ; goto_symex::\guard#39
+(let econg_1791 (Leaf 1791))  ; not
+(let econg_1792 (Equal econg_1790 econg_1791))  ; =  ;; [ASSUME]
+(let econg_1793 (Leaf 1793))  ; symex_dynamic::dynamic_object#15..head
+(let econg_1794 (Leaf 1794))  ; if
+(let econg_1795 (Equal econg_1793 econg_1794))  ; =  ;; [ASSUME]
+(let econg_1796 (Leaf 1796))  ; slist_remove_all::list$object#1..head
+(let econg_1797 (Leaf 1797))  ; if
+(let econg_1798 (Equal econg_1796 econg_1797))  ; =  ;; [ASSUME]
+(let econg_1799 (Leaf 1799))  ; slist_remove_all::list$object#0..head
+(let econg_1800 (Leaf 1800))  ; symex_dynamic::dynamic_object#18..tail
+(let econg_1801 (Leaf 1801))  ; if
+(let econg_1802 (Equal econg_1800 econg_1801))  ; =  ;; [ASSUME]
+(let econg_1803 (Leaf 1803))  ; slist_remove_all::list$object#1..tail
+(let econg_1804 (Leaf 1804))  ; if
+(let econg_1805 (Equal econg_1803 econg_1804))  ; =  ;; [ASSUME]
+(let econg_1806 (Leaf 1806))  ; slist_remove_all::list$object#0..tail
+(let econg_1807 (Leaf 1807))  ; slist_remove_all::list$object#2..head
+(let econg_1808 (Equal econg_1796 econg_1807))  ; =  ;; [ASSUME]
+(let econg_1809 (Leaf 1809))  ; slist_remove_all::list$object#2..tail
+(let econg_1810 (Equal econg_1803 econg_1809))  ; =  ;; [ASSUME]
+(let econg_1811 (Leaf 1811))  ; symex_dynamic::dynamic_object#16..head
+(let econg_1812 (Leaf 1812))  ; if
+(let econg_1813 (Equal econg_1811 econg_1812))  ; =  ;; [ASSUME]
+(let econg_1814 (Leaf 1814))  ; symex_dynamic::dynamic_object#19..tail
+(let econg_1815 (Leaf 1815))  ; if
+(let econg_1816 (Equal econg_1814 econg_1815))  ; =  ;; [ASSUME]
+(let econg_1817 (Leaf 1817))  ; goto_symex::\guard#40
+(let econg_1818 (Leaf 1818))  ; not
+(let econg_1819 (Equal econg_1817 econg_1818))  ; =  ;; [ASSUME]
+(let econg_1820 (Leaf 1820))  ; slist_destroy::list$object#0..mem_free
+(let econg_1821 (Leaf 1821))  ; goto_symex::\guard#41
+(let econg_1822 (Leaf 1822))  ; not
+(let econg_1823 (Equal econg_1821 econg_1822))  ; =  ;; [ASSUME]
+(let econg_1824 (Leaf 1824))  ; free::ptr!0@5#1
+(let econg_1825 (Typecast econg_88 econg_1206))  ; typecast
+(let econg_1826 (Equal econg_1824 econg_1825))  ; =  ;; [ASSUME]
+(let econg_1827 (Leaf 1827))  ; goto_symex::\guard#42
+(let econg_1828 (Leaf 1828))  ; not
+(let econg_1829 (Equal econg_1827 econg_1828))  ; =  ;; [ASSUME]
+(let econg_1830 (Leaf 1830))  ; __CPROVER_deallocate::ptr!0@5#1
+(let econg_1831 (Equal econg_1824 econg_1830))  ; =  ;; [ASSUME]
+(let econg_1832 (Leaf 1832))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@5#2
+(let econg_1833 (Leaf 1833))  ; nondet_symbol
+(let econg_1834 (Equal econg_1832 econg_1833))  ; =  ;; [ASSUME]
+(let econg_1835 (Leaf 1835))  ; __CPROVER_deallocated#20
+(let econg_1836 (Equal econg_1830 econg_1835))  ; =  ;; [ASSUME]
+(let econg_1837 (Leaf 1837))  ; __CPROVER_deallocated#21
+(let econg_1838 (Leaf 1838))  ; if
+(let econg_1839 (Equal econg_1837 econg_1838))  ; =  ;; [ASSUME]
+(let econg_1840 (Leaf 1840))  ; goto_symex::\guard#43
+(let econg_1841 (Equal econg_1759 econg_1824))  ; =
+(let econg_1842 (Equal econg_1840 econg_1841))  ; =  ;; [ASSUME]
+(let econg_1843 (Leaf 1843))  ; __CPROVER_memory_leak#40
+(let econg_1844 (Equal econg_18 econg_1843))  ; =  ;; [ASSUME]
+(let econg_1845 (Leaf 1845))  ; __CPROVER_memory_leak#41
+(let econg_1846 (Leaf 1846))  ; if
+(let econg_1847 (Equal econg_1845 econg_1846))  ; =  ;; [ASSUME]
+(let econg_1848 (Leaf 1848))  ; __CPROVER_deallocated#22
+(let econg_1849 (Leaf 1849))  ; if
+(let econg_1850 (Equal econg_1848 econg_1849))  ; =  ;; [ASSUME]
+(let econg_1851 (Leaf 1851))  ; __CPROVER_memory_leak#42
+(let econg_1852 (Leaf 1852))  ; if
+(let econg_1853 (Equal econg_1851 econg_1852))  ; =  ;; [ASSUME]
+(let econg_1854 (Leaf 1854))  ; free::ptr!0@5#3
+(let econg_1855 (Leaf 1855))  ; if
+(let econg_1856 (Equal econg_1854 econg_1855))  ; =  ;; [ASSUME]
+(let econg_1857 (Leaf 1857))  ; malloc::malloc_size!0@5#1
+(let econg_1858 (Leaf 1858))  ; malloc::malloc_size!0@5#1
+(let econg_1859 (Equal econg_1857 econg_1858))  ; =  ;; [ASSUME]
+(let econg_1860 (Leaf 1860))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@5#2
+(let econg_1861 (Leaf 1861))  ; nondet_symbol
+(let econg_1862 (Equal econg_1860 econg_1861))  ; =  ;; [ASSUME]
+(let econg_1863 (Leaf 1863))  ; malloc::1::1::should_malloc_fail!0@5#2
+(let econg_1864 (Equal econg_1860 econg_1863))  ; =  ;; [ASSUME]
+(let econg_1865 (Leaf 1865))  ; goto_symex::\guard#44
+(let econg_1866 (Leaf 1866))  ; not
+(let econg_1867 (Equal econg_1865 econg_1866))  ; =  ;; [ASSUME]
+(let econg_1868 (Leaf 1868))  ; malloc::malloc_size!0@5#1
+(let econg_1869 (Equal econg_1857 econg_1868))  ; =  ;; [ASSUME]
+(let econg_1870 (Leaf 1870))  ; symex_dynamic::dynamic_object$9#1
+(let econg_1871 (Leaf 1871))  ; nondet_symbol
+(let econg_1872 (Equal econg_1870 econg_1871))  ; =  ;; [ASSUME]
+(let econg_1873 (Leaf 1873))  ; malloc::$tmp::malloc_value!0@5#2
+(let econg_1874 (Leaf 1874))  ; address_of
+(let econg_1875 (Typecast econg_88 econg_1874))  ; typecast
+(let econg_1876 (Equal econg_1873 econg_1875))  ; =  ;; [ASSUME]
+(let econg_1877 (Leaf 1877))  ; malloc::1::malloc_res!0@5#2
+(let econg_1878 (Equal econg_1875 econg_1877))  ; =  ;; [ASSUME]
+(let econg_1879 (Leaf 1879))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@5#2
+(let econg_1880 (Leaf 1880))  ; nondet_symbol
+(let econg_1881 (Equal econg_1879 econg_1880))  ; =  ;; [ASSUME]
+(let econg_1882 (Leaf 1882))  ; malloc::1::record_malloc!0@5#2
+(let econg_1883 (Equal econg_1879 econg_1882))  ; =  ;; [ASSUME]
+(let econg_1884 (Leaf 1884))  ; __CPROVER_malloc_is_new_array#31
+(let econg_1885 (Equal econg_25 econg_1884))  ; =  ;; [ASSUME]
+(let econg_1886 (Leaf 1886))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@5#2
+(let econg_1887 (Leaf 1887))  ; nondet_symbol
+(let econg_1888 (Equal econg_1886 econg_1887))  ; =  ;; [ASSUME]
+(let econg_1889 (Leaf 1889))  ; malloc::1::record_may_leak!0@5#2
+(let econg_1890 (Equal econg_1886 econg_1889))  ; =  ;; [ASSUME]
+(let econg_1891 (Leaf 1891))  ; __CPROVER_memory_leak#43
+(let econg_1892 (Leaf 1892))  ; if
+(let econg_1893 (Equal econg_1891 econg_1892))  ; =  ;; [ASSUME]
+(let econg_1894 (Leaf 1894))  ; __CPROVER_malloc_is_new_array#32
+(let econg_1895 (Equal econg_25 econg_1894))  ; =  ;; [ASSUME]
+(let econg_1896 (Leaf 1896))  ; __CPROVER_memory_leak#44
+(let econg_1897 (Leaf 1897))  ; if
+(let econg_1898 (Equal econg_1896 econg_1897))  ; =  ;; [ASSUME]
+(let econg_1899 (Leaf 1899))  ; symex_dynamic::dynamic_object$9#2
+(let econg_1900 (Equal econg_1870 econg_1899))  ; =  ;; [ASSUME]
+(let econg_1901 (Leaf 1901))  ; malloc::malloc_size!0@5#1
+(let econg_1902 (Equal econg_1857 econg_1901))  ; =  ;; [ASSUME]
+(let econg_1903 (Leaf 1903))  ; __CPROVER_deallocated#23
+(let econg_1904 (Leaf 1904))  ; if
+(let econg_1905 (Equal econg_1903 econg_1904))  ; =  ;; [ASSUME]
+(let econg_1906 (Leaf 1906))  ; __CPROVER_malloc_is_new_array#33
+(let econg_1907 (Equal econg_25 econg_1906))  ; =  ;; [ASSUME]
+(let econg_1908 (Leaf 1908))  ; __CPROVER_memory_leak#45
+(let econg_1909 (Leaf 1909))  ; if
+(let econg_1910 (Equal econg_1908 econg_1909))  ; =  ;; [ASSUME]
+(let econg_1911 (Leaf 1911))  ; symex_dynamic::dynamic_object$9#3
+(let econg_1912 (Equal econg_1899 econg_1911))  ; =  ;; [ASSUME]
+(let econg_1913 (Leaf 1913))  ; malloc::malloc_size!0@5#1
+(let econg_1914 (Equal econg_1857 econg_1913))  ; =  ;; [ASSUME]
+(let econg_1915 (Leaf 1915))  ; slist_destroy::list!0@2#1
+(let econg_1916 (Equal econg_331 econg_1915))  ; =  ;; [ASSUME]
+(let econg_1917 (Equal econg_15 econg_1915))  ; =  ;; [ASSUME]
+(let econg_1918 (Leaf 1918))  ; unlinkn_all::list!0@2#1
+(let econg_1919 (Equal econg_15 econg_1918))  ; =  ;; [ASSUME]
+(let econg_1920 (Leaf 1920))  ; unlinkn_all::cb!0@2#1
+(let econg_1921 (Equal econg_106 econg_1920))  ; =  ;; [ASSUME]
+(let econg_1922 (Leaf 1922))  ; goto_symex::\guard#45
+(let econg_1923 (Leaf 1923))  ; not
+(let econg_1924 (Equal econg_1922 econg_1923))  ; =  ;; [ASSUME]
+(let econg_1925 (Leaf 1925))  ; goto_symex::return_value::unlinkn_all!0#4
+(let econg_1926 (Equal econg_1217 econg_1925))  ; =  ;; [ASSUME]
+(let econg_1927 (Leaf 1927))  ; unlinkn_all::1::n!0@2#2
+(let econg_1928 (Equal econg_1222 econg_1927))  ; =  ;; [ASSUME]
+(let econg_1929 (Leaf 1929))  ; goto_symex::\guard#46
+(let econg_1930 (Leaf 1930))  ; not
+(let econg_1931 (Equal econg_1929 econg_1930))  ; =  ;; [ASSUME]
+(let econg_1932 (Leaf 1932))  ; unlinkn_all::1::1::tmp!0@5#2
+(let econg_1933 (Leaf 1933))  ; unlinkn_all::1::n$object#0..next
+(let econg_1934 (Equal econg_1932 econg_1933))  ; =  ;; [ASSUME]
+(let econg_1935 (Leaf 1935))  ; goto_symex::\guard#47
+(let econg_1936 (Leaf 1936))  ; not
+(let econg_1937 (Equal econg_1935 econg_1936))  ; =  ;; [ASSUME]
+(let econg_1938 (Leaf 1938))  ; goto_symex::\guard#48
+(let econg_1939 (Leaf 1939))  ; not
+(let econg_1940 (Equal econg_1938 econg_1939))  ; =  ;; [ASSUME]
+(let econg_1941 (Leaf 1941))  ; free::ptr!0@6#1
+(let econg_1942 (Typecast econg_88 econg_1927))  ; typecast
+(let econg_1943 (Equal econg_1941 econg_1942))  ; =  ;; [ASSUME]
+(let econg_1944 (Leaf 1944))  ; goto_symex::\guard#49
+(let econg_1945 (Leaf 1945))  ; not
+(let econg_1946 (Equal econg_1944 econg_1945))  ; =  ;; [ASSUME]
+(let econg_1947 (Leaf 1947))  ; __CPROVER_deallocate::ptr!0@6#1
+(let econg_1948 (Equal econg_1941 econg_1947))  ; =  ;; [ASSUME]
+(let econg_1949 (Leaf 1949))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@6#2
+(let econg_1950 (Leaf 1950))  ; nondet_symbol
+(let econg_1951 (Equal econg_1949 econg_1950))  ; =  ;; [ASSUME]
+(let econg_1952 (Leaf 1952))  ; __CPROVER_deallocated#24
+(let econg_1953 (Equal econg_1947 econg_1952))  ; =  ;; [ASSUME]
+(let econg_1954 (Leaf 1954))  ; __CPROVER_deallocated#25
+(let econg_1955 (Leaf 1955))  ; if
+(let econg_1956 (Equal econg_1954 econg_1955))  ; =  ;; [ASSUME]
+(let econg_1957 (Leaf 1957))  ; goto_symex::\guard#50
+(let econg_1958 (Equal econg_1908 econg_1941))  ; =
+(let econg_1959 (Equal econg_1957 econg_1958))  ; =  ;; [ASSUME]
+(let econg_1960 (Leaf 1960))  ; __CPROVER_memory_leak#46
+(let econg_1961 (Equal econg_18 econg_1960))  ; =  ;; [ASSUME]
+(let econg_1962 (Leaf 1962))  ; __CPROVER_memory_leak#47
+(let econg_1963 (Leaf 1963))  ; if
+(let econg_1964 (Equal econg_1962 econg_1963))  ; =  ;; [ASSUME]
+(let econg_1965 (Leaf 1965))  ; __CPROVER_deallocated#26
+(let econg_1966 (Leaf 1966))  ; if
+(let econg_1967 (Equal econg_1965 econg_1966))  ; =  ;; [ASSUME]
+(let econg_1968 (Leaf 1968))  ; __CPROVER_memory_leak#48
+(let econg_1969 (Leaf 1969))  ; if
+(let econg_1970 (Equal econg_1968 econg_1969))  ; =  ;; [ASSUME]
+(let econg_1971 (Leaf 1971))  ; free::ptr!0@6#3
+(let econg_1972 (Leaf 1972))  ; if
+(let econg_1973 (Equal econg_1971 econg_1972))  ; =  ;; [ASSUME]
+(let econg_1974 (Leaf 1974))  ; malloc::malloc_size!0@6#1
+(let econg_1975 (Leaf 1975))  ; malloc::malloc_size!0@6#1
+(let econg_1976 (Equal econg_1974 econg_1975))  ; =  ;; [ASSUME]
+(let econg_1977 (Leaf 1977))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@6#2
+(let econg_1978 (Leaf 1978))  ; nondet_symbol
+(let econg_1979 (Equal econg_1977 econg_1978))  ; =  ;; [ASSUME]
+(let econg_1980 (Leaf 1980))  ; malloc::1::1::should_malloc_fail!0@6#2
+(let econg_1981 (Equal econg_1977 econg_1980))  ; =  ;; [ASSUME]
+(let econg_1982 (Leaf 1982))  ; goto_symex::\guard#51
+(let econg_1983 (Leaf 1983))  ; not
+(let econg_1984 (Equal econg_1982 econg_1983))  ; =  ;; [ASSUME]
+(let econg_1985 (Leaf 1985))  ; malloc::malloc_size!0@6#1
+(let econg_1986 (Equal econg_1974 econg_1985))  ; =  ;; [ASSUME]
+(let econg_1987 (Leaf 1987))  ; symex_dynamic::dynamic_object$10#1
+(let econg_1988 (Leaf 1988))  ; nondet_symbol
+(let econg_1989 (Equal econg_1987 econg_1988))  ; =  ;; [ASSUME]
+(let econg_1990 (Leaf 1990))  ; malloc::$tmp::malloc_value!0@6#2
+(let econg_1991 (Leaf 1991))  ; address_of
+(let econg_1992 (Typecast econg_88 econg_1991))  ; typecast
+(let econg_1993 (Equal econg_1990 econg_1992))  ; =  ;; [ASSUME]
+(let econg_1994 (Leaf 1994))  ; malloc::1::malloc_res!0@6#2
+(let econg_1995 (Equal econg_1992 econg_1994))  ; =  ;; [ASSUME]
+(let econg_1996 (Leaf 1996))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@6#2
+(let econg_1997 (Leaf 1997))  ; nondet_symbol
+(let econg_1998 (Equal econg_1996 econg_1997))  ; =  ;; [ASSUME]
+(let econg_1999 (Leaf 1999))  ; malloc::1::record_malloc!0@6#2
+(let econg_2000 (Equal econg_1996 econg_1999))  ; =  ;; [ASSUME]
+(let econg_2001 (Leaf 2001))  ; __CPROVER_malloc_is_new_array#34
+(let econg_2002 (Equal econg_25 econg_2001))  ; =  ;; [ASSUME]
+(let econg_2003 (Leaf 2003))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@6#2
+(let econg_2004 (Leaf 2004))  ; nondet_symbol
+(let econg_2005 (Equal econg_2003 econg_2004))  ; =  ;; [ASSUME]
+(let econg_2006 (Leaf 2006))  ; malloc::1::record_may_leak!0@6#2
+(let econg_2007 (Equal econg_2003 econg_2006))  ; =  ;; [ASSUME]
+(let econg_2008 (Leaf 2008))  ; __CPROVER_memory_leak#49
+(let econg_2009 (Leaf 2009))  ; if
+(let econg_2010 (Equal econg_2008 econg_2009))  ; =  ;; [ASSUME]
+(let econg_2011 (Leaf 2011))  ; __CPROVER_malloc_is_new_array#35
+(let econg_2012 (Equal econg_25 econg_2011))  ; =  ;; [ASSUME]
+(let econg_2013 (Leaf 2013))  ; __CPROVER_memory_leak#50
+(let econg_2014 (Leaf 2014))  ; if
+(let econg_2015 (Equal econg_2013 econg_2014))  ; =  ;; [ASSUME]
+(let econg_2016 (Leaf 2016))  ; symex_dynamic::dynamic_object$10#2
+(let econg_2017 (Equal econg_1987 econg_2016))  ; =  ;; [ASSUME]
+(let econg_2018 (Leaf 2018))  ; malloc::malloc_size!0@6#1
+(let econg_2019 (Equal econg_1974 econg_2018))  ; =  ;; [ASSUME]
+(let econg_2020 (Leaf 2020))  ; __CPROVER_deallocated#27
+(let econg_2021 (Leaf 2021))  ; if
+(let econg_2022 (Equal econg_2020 econg_2021))  ; =  ;; [ASSUME]
+(let econg_2023 (Leaf 2023))  ; __CPROVER_malloc_is_new_array#36
+(let econg_2024 (Equal econg_25 econg_2023))  ; =  ;; [ASSUME]
+(let econg_2025 (Leaf 2025))  ; __CPROVER_memory_leak#51
+(let econg_2026 (Leaf 2026))  ; if
+(let econg_2027 (Equal econg_2025 econg_2026))  ; =  ;; [ASSUME]
+(let econg_2028 (Leaf 2028))  ; unlinkn_all::list$object#3..mem_free
+(let econg_2029 (Leaf 2029))  ; if
+(let econg_2030 (Equal econg_2028 econg_2029))  ; =  ;; [ASSUME]
+(let econg_2031 (Leaf 2031))  ; symex_dynamic::dynamic_object$10#3
+(let econg_2032 (Equal econg_2016 econg_2031))  ; =  ;; [ASSUME]
+(let econg_2033 (Leaf 2033))  ; malloc::malloc_size!0@6#1
+(let econg_2034 (Equal econg_1974 econg_2033))  ; =  ;; [ASSUME]
+(let econg_2035 (Leaf 2035))  ; unlinkn_all::1::n!0@2#4
+(let econg_2036 (Equal econg_1932 econg_2035))  ; =  ;; [ASSUME]
+(let econg_2037 (Leaf 2037))  ; unlinkn_all::list$object#10..size
+(let econg_2038 (Plus econg_1338 econg_1749))  ; unlinkn_all::list$object#10..size
+(let econg_2039 (Equal econg_2037 econg_2038))  ; =  ;; [ASSUME]
+(let econg_2040 (Leaf 2040))  ; goto_symex::\guard#52
+(let econg_2041 (Leaf 2041))  ; not
+(let econg_2042 (Equal econg_2040 econg_2041))  ; =  ;; [ASSUME]
+(let econg_2043 (Leaf 2043))  ; unlinkn_all::1::1::tmp!0@6#2
+(let econg_2044 (Equal econg_1933 econg_2043))  ; =  ;; [ASSUME]
+(let econg_2045 (Leaf 2045))  ; goto_symex::\guard#53
+(let econg_2046 (Leaf 2046))  ; not
+(let econg_2047 (Equal econg_2045 econg_2046))  ; =  ;; [ASSUME]
+(let econg_2048 (Leaf 2048))  ; goto_symex::\guard#54
+(let econg_2049 (Leaf 2049))  ; not
+(let econg_2050 (Equal econg_2048 econg_2049))  ; =  ;; [ASSUME]
+(let econg_2051 (Leaf 2051))  ; free::ptr!0@7#1
+(let econg_2052 (Typecast econg_88 econg_2035))  ; typecast
+(let econg_2053 (Equal econg_2051 econg_2052))  ; =  ;; [ASSUME]
+(let econg_2054 (Leaf 2054))  ; goto_symex::\guard#55
+(let econg_2055 (Leaf 2055))  ; not
+(let econg_2056 (Equal econg_2054 econg_2055))  ; =  ;; [ASSUME]
+(let econg_2057 (Leaf 2057))  ; __CPROVER_deallocate::ptr!0@7#1
+(let econg_2058 (Equal econg_2051 econg_2057))  ; =  ;; [ASSUME]
+(let econg_2059 (Leaf 2059))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@7#2
+(let econg_2060 (Leaf 2060))  ; nondet_symbol
+(let econg_2061 (Equal econg_2059 econg_2060))  ; =  ;; [ASSUME]
+(let econg_2062 (Leaf 2062))  ; __CPROVER_deallocated#28
+(let econg_2063 (Equal econg_2057 econg_2062))  ; =  ;; [ASSUME]
+(let econg_2064 (Leaf 2064))  ; __CPROVER_deallocated#29
+(let econg_2065 (Leaf 2065))  ; if
+(let econg_2066 (Equal econg_2064 econg_2065))  ; =  ;; [ASSUME]
+(let econg_2067 (Leaf 2067))  ; goto_symex::\guard#56
+(let econg_2068 (Equal econg_2025 econg_2051))  ; =
+(let econg_2069 (Equal econg_2067 econg_2068))  ; =  ;; [ASSUME]
+(let econg_2070 (Leaf 2070))  ; __CPROVER_memory_leak#52
+(let econg_2071 (Equal econg_18 econg_2070))  ; =  ;; [ASSUME]
+(let econg_2072 (Leaf 2072))  ; __CPROVER_memory_leak#53
+(let econg_2073 (Leaf 2073))  ; if
+(let econg_2074 (Equal econg_2072 econg_2073))  ; =  ;; [ASSUME]
+(let econg_2075 (Leaf 2075))  ; __CPROVER_deallocated#30
+(let econg_2076 (Leaf 2076))  ; if
+(let econg_2077 (Equal econg_2075 econg_2076))  ; =  ;; [ASSUME]
+(let econg_2078 (Leaf 2078))  ; __CPROVER_memory_leak#54
+(let econg_2079 (Leaf 2079))  ; if
+(let econg_2080 (Equal econg_2078 econg_2079))  ; =  ;; [ASSUME]
+(let econg_2081 (Leaf 2081))  ; free::ptr!0@7#3
+(let econg_2082 (Leaf 2082))  ; if
+(let econg_2083 (Equal econg_2081 econg_2082))  ; =  ;; [ASSUME]
+(let econg_2084 (Leaf 2084))  ; malloc::malloc_size!0@7#1
+(let econg_2085 (Leaf 2085))  ; malloc::malloc_size!0@7#1
+(let econg_2086 (Equal econg_2084 econg_2085))  ; =  ;; [ASSUME]
+(let econg_2087 (Leaf 2087))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@7#2
+(let econg_2088 (Leaf 2088))  ; nondet_symbol
+(let econg_2089 (Equal econg_2087 econg_2088))  ; =  ;; [ASSUME]
+(let econg_2090 (Leaf 2090))  ; malloc::1::1::should_malloc_fail!0@7#2
+(let econg_2091 (Equal econg_2087 econg_2090))  ; =  ;; [ASSUME]
+(let econg_2092 (Leaf 2092))  ; goto_symex::\guard#57
+(let econg_2093 (Leaf 2093))  ; not
+(let econg_2094 (Equal econg_2092 econg_2093))  ; =  ;; [ASSUME]
+(let econg_2095 (Leaf 2095))  ; malloc::malloc_size!0@7#1
+(let econg_2096 (Equal econg_2084 econg_2095))  ; =  ;; [ASSUME]
+(let econg_2097 (Leaf 2097))  ; symex_dynamic::dynamic_object$11#1
+(let econg_2098 (Leaf 2098))  ; nondet_symbol
+(let econg_2099 (Equal econg_2097 econg_2098))  ; =  ;; [ASSUME]
+(let econg_2100 (Leaf 2100))  ; malloc::$tmp::malloc_value!0@7#2
+(let econg_2101 (Leaf 2101))  ; address_of
+(let econg_2102 (Typecast econg_88 econg_2101))  ; typecast
+(let econg_2103 (Equal econg_2100 econg_2102))  ; =  ;; [ASSUME]
+(let econg_2104 (Leaf 2104))  ; malloc::1::malloc_res!0@7#2
+(let econg_2105 (Equal econg_2102 econg_2104))  ; =  ;; [ASSUME]
+(let econg_2106 (Leaf 2106))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@7#2
+(let econg_2107 (Leaf 2107))  ; nondet_symbol
+(let econg_2108 (Equal econg_2106 econg_2107))  ; =  ;; [ASSUME]
+(let econg_2109 (Leaf 2109))  ; malloc::1::record_malloc!0@7#2
+(let econg_2110 (Equal econg_2106 econg_2109))  ; =  ;; [ASSUME]
+(let econg_2111 (Leaf 2111))  ; __CPROVER_malloc_is_new_array#37
+(let econg_2112 (Equal econg_25 econg_2111))  ; =  ;; [ASSUME]
+(let econg_2113 (Leaf 2113))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@7#2
+(let econg_2114 (Leaf 2114))  ; nondet_symbol
+(let econg_2115 (Equal econg_2113 econg_2114))  ; =  ;; [ASSUME]
+(let econg_2116 (Leaf 2116))  ; malloc::1::record_may_leak!0@7#2
+(let econg_2117 (Equal econg_2113 econg_2116))  ; =  ;; [ASSUME]
+(let econg_2118 (Leaf 2118))  ; __CPROVER_memory_leak#55
+(let econg_2119 (Leaf 2119))  ; if
+(let econg_2120 (Equal econg_2118 econg_2119))  ; =  ;; [ASSUME]
+(let econg_2121 (Leaf 2121))  ; __CPROVER_malloc_is_new_array#38
+(let econg_2122 (Equal econg_25 econg_2121))  ; =  ;; [ASSUME]
+(let econg_2123 (Leaf 2123))  ; __CPROVER_memory_leak#56
+(let econg_2124 (Leaf 2124))  ; if
+(let econg_2125 (Equal econg_2123 econg_2124))  ; =  ;; [ASSUME]
+(let econg_2126 (Leaf 2126))  ; symex_dynamic::dynamic_object$11#2
+(let econg_2127 (Equal econg_2097 econg_2126))  ; =  ;; [ASSUME]
+(let econg_2128 (Leaf 2128))  ; malloc::malloc_size!0@7#1
+(let econg_2129 (Equal econg_2084 econg_2128))  ; =  ;; [ASSUME]
+(let econg_2130 (Leaf 2130))  ; __CPROVER_deallocated#31
+(let econg_2131 (Leaf 2131))  ; if
+(let econg_2132 (Equal econg_2130 econg_2131))  ; =  ;; [ASSUME]
+(let econg_2133 (Leaf 2133))  ; __CPROVER_malloc_is_new_array#39
+(let econg_2134 (Equal econg_25 econg_2133))  ; =  ;; [ASSUME]
+(let econg_2135 (Leaf 2135))  ; __CPROVER_memory_leak#57
+(let econg_2136 (Leaf 2136))  ; if
+(let econg_2137 (Equal econg_2135 econg_2136))  ; =  ;; [ASSUME]
+(let econg_2138 (Leaf 2138))  ; unlinkn_all::list$object#6..mem_free
+(let econg_2139 (Leaf 2139))  ; if
+(let econg_2140 (Equal econg_2138 econg_2139))  ; =  ;; [ASSUME]
+(let econg_2141 (Leaf 2141))  ; symex_dynamic::dynamic_object$11#3
+(let econg_2142 (Equal econg_2126 econg_2141))  ; =  ;; [ASSUME]
+(let econg_2143 (Leaf 2143))  ; malloc::malloc_size!0@7#1
+(let econg_2144 (Equal econg_2084 econg_2143))  ; =  ;; [ASSUME]
+(let econg_2145 (Leaf 2145))  ; unlinkn_all::1::n!0@2#6
+(let econg_2146 (Equal econg_2043 econg_2145))  ; =  ;; [ASSUME]
+(let econg_2147 (Leaf 2147))  ; unlinkn_all::list$object#11..size
+(let econg_2148 (Plus econg_1338 econg_2037))  ; unlinkn_all::list$object#11..size
+(let econg_2149 (Equal econg_2147 econg_2148))  ; =  ;; [ASSUME]
+(let econg_2150 (Leaf 2150))  ; goto_symex::\guard#58
+(let econg_2151 (Leaf 2151))  ; not
+(let econg_2152 (Equal econg_2150 econg_2151))  ; =  ;; [ASSUME]
+(let econg_2153 (Leaf 2153))  ; unlinkn_all::1::1::tmp!0@7#2
+(let econg_2154 (Equal econg_1933 econg_2153))  ; =  ;; [ASSUME]
+(let econg_2155 (Leaf 2155))  ; goto_symex::\guard#59
+(let econg_2156 (Leaf 2156))  ; not
+(let econg_2157 (Equal econg_2155 econg_2156))  ; =  ;; [ASSUME]
+(let econg_2158 (Leaf 2158))  ; goto_symex::\guard#60
+(let econg_2159 (Leaf 2159))  ; not
+(let econg_2160 (Equal econg_2158 econg_2159))  ; =  ;; [ASSUME]
+(let econg_2161 (Leaf 2161))  ; free::ptr!0@8#1
+(let econg_2162 (Typecast econg_88 econg_2145))  ; typecast
+(let econg_2163 (Equal econg_2161 econg_2162))  ; =  ;; [ASSUME]
+(let econg_2164 (Leaf 2164))  ; goto_symex::\guard#61
+(let econg_2165 (Leaf 2165))  ; not
+(let econg_2166 (Equal econg_2164 econg_2165))  ; =  ;; [ASSUME]
+(let econg_2167 (Leaf 2167))  ; __CPROVER_deallocate::ptr!0@8#1
+(let econg_2168 (Equal econg_2161 econg_2167))  ; =  ;; [ASSUME]
+(let econg_2169 (Leaf 2169))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@8#2
+(let econg_2170 (Leaf 2170))  ; nondet_symbol
+(let econg_2171 (Equal econg_2169 econg_2170))  ; =  ;; [ASSUME]
+(let econg_2172 (Leaf 2172))  ; __CPROVER_deallocated#32
+(let econg_2173 (Equal econg_2167 econg_2172))  ; =  ;; [ASSUME]
+(let econg_2174 (Leaf 2174))  ; __CPROVER_deallocated#33
+(let econg_2175 (Leaf 2175))  ; if
+(let econg_2176 (Equal econg_2174 econg_2175))  ; =  ;; [ASSUME]
+(let econg_2177 (Leaf 2177))  ; goto_symex::\guard#62
+(let econg_2178 (Equal econg_2135 econg_2161))  ; =
+(let econg_2179 (Equal econg_2177 econg_2178))  ; =  ;; [ASSUME]
+(let econg_2180 (Leaf 2180))  ; __CPROVER_memory_leak#58
+(let econg_2181 (Equal econg_18 econg_2180))  ; =  ;; [ASSUME]
+(let econg_2182 (Leaf 2182))  ; __CPROVER_memory_leak#59
+(let econg_2183 (Leaf 2183))  ; if
+(let econg_2184 (Equal econg_2182 econg_2183))  ; =  ;; [ASSUME]
+(let econg_2185 (Leaf 2185))  ; __CPROVER_deallocated#34
+(let econg_2186 (Leaf 2186))  ; if
+(let econg_2187 (Equal econg_2185 econg_2186))  ; =  ;; [ASSUME]
+(let econg_2188 (Leaf 2188))  ; __CPROVER_memory_leak#60
+(let econg_2189 (Leaf 2189))  ; if
+(let econg_2190 (Equal econg_2188 econg_2189))  ; =  ;; [ASSUME]
+(let econg_2191 (Leaf 2191))  ; free::ptr!0@8#3
+(let econg_2192 (Leaf 2192))  ; if
+(let econg_2193 (Equal econg_2191 econg_2192))  ; =  ;; [ASSUME]
+(let econg_2194 (Leaf 2194))  ; malloc::malloc_size!0@8#1
+(let econg_2195 (Leaf 2195))  ; malloc::malloc_size!0@8#1
+(let econg_2196 (Equal econg_2194 econg_2195))  ; =  ;; [ASSUME]
+(let econg_2197 (Leaf 2197))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@8#2
+(let econg_2198 (Leaf 2198))  ; nondet_symbol
+(let econg_2199 (Equal econg_2197 econg_2198))  ; =  ;; [ASSUME]
+(let econg_2200 (Leaf 2200))  ; malloc::1::1::should_malloc_fail!0@8#2
+(let econg_2201 (Equal econg_2197 econg_2200))  ; =  ;; [ASSUME]
+(let econg_2202 (Leaf 2202))  ; goto_symex::\guard#63
+(let econg_2203 (Leaf 2203))  ; not
+(let econg_2204 (Equal econg_2202 econg_2203))  ; =  ;; [ASSUME]
+(let econg_2205 (Leaf 2205))  ; malloc::malloc_size!0@8#1
+(let econg_2206 (Equal econg_2194 econg_2205))  ; =  ;; [ASSUME]
+(let econg_2207 (Leaf 2207))  ; symex_dynamic::dynamic_object$12#1
+(let econg_2208 (Leaf 2208))  ; nondet_symbol
+(let econg_2209 (Equal econg_2207 econg_2208))  ; =  ;; [ASSUME]
+(let econg_2210 (Leaf 2210))  ; malloc::$tmp::malloc_value!0@8#2
+(let econg_2211 (Leaf 2211))  ; address_of
+(let econg_2212 (Typecast econg_88 econg_2211))  ; typecast
+(let econg_2213 (Equal econg_2210 econg_2212))  ; =  ;; [ASSUME]
+(let econg_2214 (Leaf 2214))  ; malloc::1::malloc_res!0@8#2
+(let econg_2215 (Equal econg_2212 econg_2214))  ; =  ;; [ASSUME]
+(let econg_2216 (Leaf 2216))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@8#2
+(let econg_2217 (Leaf 2217))  ; nondet_symbol
+(let econg_2218 (Equal econg_2216 econg_2217))  ; =  ;; [ASSUME]
+(let econg_2219 (Leaf 2219))  ; malloc::1::record_malloc!0@8#2
+(let econg_2220 (Equal econg_2216 econg_2219))  ; =  ;; [ASSUME]
+(let econg_2221 (Leaf 2221))  ; __CPROVER_malloc_is_new_array#40
+(let econg_2222 (Equal econg_25 econg_2221))  ; =  ;; [ASSUME]
+(let econg_2223 (Leaf 2223))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@8#2
+(let econg_2224 (Leaf 2224))  ; nondet_symbol
+(let econg_2225 (Equal econg_2223 econg_2224))  ; =  ;; [ASSUME]
+(let econg_2226 (Leaf 2226))  ; malloc::1::record_may_leak!0@8#2
+(let econg_2227 (Equal econg_2223 econg_2226))  ; =  ;; [ASSUME]
+(let econg_2228 (Leaf 2228))  ; __CPROVER_memory_leak#61
+(let econg_2229 (Leaf 2229))  ; if
+(let econg_2230 (Equal econg_2228 econg_2229))  ; =  ;; [ASSUME]
+(let econg_2231 (Leaf 2231))  ; __CPROVER_malloc_is_new_array#41
+(let econg_2232 (Equal econg_25 econg_2231))  ; =  ;; [ASSUME]
+(let econg_2233 (Leaf 2233))  ; __CPROVER_memory_leak#62
+(let econg_2234 (Leaf 2234))  ; if
+(let econg_2235 (Equal econg_2233 econg_2234))  ; =  ;; [ASSUME]
+(let econg_2236 (Leaf 2236))  ; symex_dynamic::dynamic_object$12#2
+(let econg_2237 (Equal econg_2207 econg_2236))  ; =  ;; [ASSUME]
+(let econg_2238 (Leaf 2238))  ; malloc::malloc_size!0@8#1
+(let econg_2239 (Equal econg_2194 econg_2238))  ; =  ;; [ASSUME]
+(let econg_2240 (Leaf 2240))  ; __CPROVER_deallocated#35
+(let econg_2241 (Leaf 2241))  ; if
+(let econg_2242 (Equal econg_2240 econg_2241))  ; =  ;; [ASSUME]
+(let econg_2243 (Leaf 2243))  ; __CPROVER_malloc_is_new_array#42
+(let econg_2244 (Equal econg_25 econg_2243))  ; =  ;; [ASSUME]
+(let econg_2245 (Leaf 2245))  ; __CPROVER_memory_leak#63
+(let econg_2246 (Leaf 2246))  ; if
+(let econg_2247 (Equal econg_2245 econg_2246))  ; =  ;; [ASSUME]
+(let econg_2248 (Leaf 2248))  ; unlinkn_all::list$object#9..mem_free
+(let econg_2249 (Leaf 2249))  ; if
+(let econg_2250 (Equal econg_2248 econg_2249))  ; =  ;; [ASSUME]
+(let econg_2251 (Leaf 2251))  ; symex_dynamic::dynamic_object$12#3
+(let econg_2252 (Equal econg_2236 econg_2251))  ; =  ;; [ASSUME]
+(let econg_2253 (Leaf 2253))  ; malloc::malloc_size!0@8#1
+(let econg_2254 (Equal econg_2194 econg_2253))  ; =  ;; [ASSUME]
+(let econg_2255 (Leaf 2255))  ; unlinkn_all::1::n!0@2#8
+(let econg_2256 (Equal econg_2153 econg_2255))  ; =  ;; [ASSUME]
+(let econg_2257 (Leaf 2257))  ; unlinkn_all::list$object#12..size
+(let econg_2258 (Plus econg_1338 econg_2147))  ; unlinkn_all::list$object#12..size
+(let econg_2259 (Equal econg_2257 econg_2258))  ; =  ;; [ASSUME]
+(let econg_2260 (Leaf 2260))  ; goto_symex::\guard#64
+(let econg_2261 (Leaf 2261))  ; not
+(let econg_2262 (Equal econg_2260 econg_2261))  ; =  ;; [ASSUME]
+(let econg_2263 (Leaf 2263))  ; unlinkn_all::1::1::tmp!0@8#2
+(let econg_2264 (Equal econg_1933 econg_2263))  ; =  ;; [ASSUME]
+(let econg_2265 (Leaf 2265))  ; goto_symex::\guard#65
+(let econg_2266 (Leaf 2266))  ; not
+(let econg_2267 (Equal econg_2265 econg_2266))  ; =  ;; [ASSUME]
+(let econg_2268 (Leaf 2268))  ; goto_symex::\guard#66
+(let econg_2269 (Leaf 2269))  ; not
+(let econg_2270 (Equal econg_2268 econg_2269))  ; =  ;; [ASSUME]
+(let econg_2271 (Leaf 2271))  ; free::ptr!0@9#1
+(let econg_2272 (Typecast econg_88 econg_2255))  ; typecast
+(let econg_2273 (Equal econg_2271 econg_2272))  ; =  ;; [ASSUME]
+(let econg_2274 (Leaf 2274))  ; goto_symex::\guard#67
+(let econg_2275 (Leaf 2275))  ; not
+(let econg_2276 (Equal econg_2274 econg_2275))  ; =  ;; [ASSUME]
+(let econg_2277 (Leaf 2277))  ; __CPROVER_deallocate::ptr!0@9#1
+(let econg_2278 (Equal econg_2271 econg_2277))  ; =  ;; [ASSUME]
+(let econg_2279 (Leaf 2279))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@9#2
+(let econg_2280 (Leaf 2280))  ; nondet_symbol
+(let econg_2281 (Equal econg_2279 econg_2280))  ; =  ;; [ASSUME]
+(let econg_2282 (Leaf 2282))  ; __CPROVER_deallocated#36
+(let econg_2283 (Equal econg_2277 econg_2282))  ; =  ;; [ASSUME]
+(let econg_2284 (Leaf 2284))  ; __CPROVER_deallocated#37
+(let econg_2285 (Leaf 2285))  ; if
+(let econg_2286 (Equal econg_2284 econg_2285))  ; =  ;; [ASSUME]
+(let econg_2287 (Leaf 2287))  ; goto_symex::\guard#68
+(let econg_2288 (Equal econg_2245 econg_2271))  ; =
+(let econg_2289 (Equal econg_2287 econg_2288))  ; =  ;; [ASSUME]
+(let econg_2290 (Leaf 2290))  ; __CPROVER_memory_leak#64
+(let econg_2291 (Equal econg_18 econg_2290))  ; =  ;; [ASSUME]
+(let econg_2292 (Leaf 2292))  ; __CPROVER_memory_leak#65
+(let econg_2293 (Leaf 2293))  ; if
+(let econg_2294 (Equal econg_2292 econg_2293))  ; =  ;; [ASSUME]
+(let econg_2295 (Leaf 2295))  ; __CPROVER_deallocated#38
+(let econg_2296 (Leaf 2296))  ; if
+(let econg_2297 (Equal econg_2295 econg_2296))  ; =  ;; [ASSUME]
+(let econg_2298 (Leaf 2298))  ; __CPROVER_memory_leak#66
+(let econg_2299 (Leaf 2299))  ; if
+(let econg_2300 (Equal econg_2298 econg_2299))  ; =  ;; [ASSUME]
+(let econg_2301 (Leaf 2301))  ; free::ptr!0@9#3
+(let econg_2302 (Leaf 2302))  ; if
+(let econg_2303 (Equal econg_2301 econg_2302))  ; =  ;; [ASSUME]
+(let econg_2304 (Leaf 2304))  ; malloc::malloc_size!0@9#1
+(let econg_2305 (Leaf 2305))  ; malloc::malloc_size!0@9#1
+(let econg_2306 (Equal econg_2304 econg_2305))  ; =  ;; [ASSUME]
+(let econg_2307 (Leaf 2307))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@9#2
+(let econg_2308 (Leaf 2308))  ; nondet_symbol
+(let econg_2309 (Equal econg_2307 econg_2308))  ; =  ;; [ASSUME]
+(let econg_2310 (Leaf 2310))  ; malloc::1::1::should_malloc_fail!0@9#2
+(let econg_2311 (Equal econg_2307 econg_2310))  ; =  ;; [ASSUME]
+(let econg_2312 (Leaf 2312))  ; goto_symex::\guard#69
+(let econg_2313 (Leaf 2313))  ; not
+(let econg_2314 (Equal econg_2312 econg_2313))  ; =  ;; [ASSUME]
+(let econg_2315 (Leaf 2315))  ; malloc::malloc_size!0@9#1
+(let econg_2316 (Equal econg_2304 econg_2315))  ; =  ;; [ASSUME]
+(let econg_2317 (Leaf 2317))  ; symex_dynamic::dynamic_object$13#1
+(let econg_2318 (Leaf 2318))  ; nondet_symbol
+(let econg_2319 (Equal econg_2317 econg_2318))  ; =  ;; [ASSUME]
+(let econg_2320 (Leaf 2320))  ; malloc::$tmp::malloc_value!0@9#2
+(let econg_2321 (Leaf 2321))  ; address_of
+(let econg_2322 (Typecast econg_88 econg_2321))  ; typecast
+(let econg_2323 (Equal econg_2320 econg_2322))  ; =  ;; [ASSUME]
+(let econg_2324 (Leaf 2324))  ; malloc::1::malloc_res!0@9#2
+(let econg_2325 (Equal econg_2322 econg_2324))  ; =  ;; [ASSUME]
+(let econg_2326 (Leaf 2326))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@9#2
+(let econg_2327 (Leaf 2327))  ; nondet_symbol
+(let econg_2328 (Equal econg_2326 econg_2327))  ; =  ;; [ASSUME]
+(let econg_2329 (Leaf 2329))  ; malloc::1::record_malloc!0@9#2
+(let econg_2330 (Equal econg_2326 econg_2329))  ; =  ;; [ASSUME]
+(let econg_2331 (Leaf 2331))  ; __CPROVER_malloc_is_new_array#43
+(let econg_2332 (Equal econg_25 econg_2331))  ; =  ;; [ASSUME]
+(let econg_2333 (Leaf 2333))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@9#2
+(let econg_2334 (Leaf 2334))  ; nondet_symbol
+(let econg_2335 (Equal econg_2333 econg_2334))  ; =  ;; [ASSUME]
+(let econg_2336 (Leaf 2336))  ; malloc::1::record_may_leak!0@9#2
+(let econg_2337 (Equal econg_2333 econg_2336))  ; =  ;; [ASSUME]
+(let econg_2338 (Leaf 2338))  ; __CPROVER_memory_leak#67
+(let econg_2339 (Leaf 2339))  ; if
+(let econg_2340 (Equal econg_2338 econg_2339))  ; =  ;; [ASSUME]
+(let econg_2341 (Leaf 2341))  ; __CPROVER_malloc_is_new_array#44
+(let econg_2342 (Equal econg_25 econg_2341))  ; =  ;; [ASSUME]
+(let econg_2343 (Leaf 2343))  ; __CPROVER_memory_leak#68
+(let econg_2344 (Leaf 2344))  ; if
+(let econg_2345 (Equal econg_2343 econg_2344))  ; =  ;; [ASSUME]
+(let econg_2346 (Leaf 2346))  ; symex_dynamic::dynamic_object$13#2
+(let econg_2347 (Equal econg_2317 econg_2346))  ; =  ;; [ASSUME]
+(let econg_2348 (Leaf 2348))  ; malloc::malloc_size!0@9#1
+(let econg_2349 (Equal econg_2304 econg_2348))  ; =  ;; [ASSUME]
+(let econg_2350 (Leaf 2350))  ; __CPROVER_deallocated#39
+(let econg_2351 (Leaf 2351))  ; if
+(let econg_2352 (Equal econg_2350 econg_2351))  ; =  ;; [ASSUME]
+(let econg_2353 (Leaf 2353))  ; __CPROVER_malloc_is_new_array#45
+(let econg_2354 (Equal econg_25 econg_2353))  ; =  ;; [ASSUME]
+(let econg_2355 (Leaf 2355))  ; __CPROVER_memory_leak#69
+(let econg_2356 (Leaf 2356))  ; if
+(let econg_2357 (Equal econg_2355 econg_2356))  ; =  ;; [ASSUME]
+(let econg_2358 (Leaf 2358))  ; unlinkn_all::list$object#12..mem_free
+(let econg_2359 (Leaf 2359))  ; if
+(let econg_2360 (Equal econg_2358 econg_2359))  ; =  ;; [ASSUME]
+(let econg_2361 (Leaf 2361))  ; symex_dynamic::dynamic_object$13#3
+(let econg_2362 (Equal econg_2346 econg_2361))  ; =  ;; [ASSUME]
+(let econg_2363 (Leaf 2363))  ; malloc::malloc_size!0@9#1
+(let econg_2364 (Equal econg_2304 econg_2363))  ; =  ;; [ASSUME]
+(let econg_2365 (Leaf 2365))  ; unlinkn_all::1::n!0@2#10
+(let econg_2366 (Equal econg_2263 econg_2365))  ; =  ;; [ASSUME]
+(let econg_2367 (Leaf 2367))  ; unlinkn_all::list$object#13..size
+(let econg_2368 (Plus econg_1338 econg_2257))  ; unlinkn_all::list$object#13..size
+(let econg_2369 (Equal econg_2367 econg_2368))  ; =  ;; [ASSUME]
+(let econg_2370 (Leaf 2370))  ; goto_symex::\guard#70
+(let econg_2371 (Leaf 2371))  ; not
+(let econg_2372 (Equal econg_2370 econg_2371))  ; =  ;; [ASSUME]
+(let econg_2373 (Leaf 2373))  ; unlinkn_all::1::1::tmp!0@9#2
+(let econg_2374 (Equal econg_1933 econg_2373))  ; =  ;; [ASSUME]
+(let econg_2375 (Leaf 2375))  ; goto_symex::\guard#71
+(let econg_2376 (Leaf 2376))  ; not
+(let econg_2377 (Equal econg_2375 econg_2376))  ; =  ;; [ASSUME]
+(let econg_2378 (Leaf 2378))  ; goto_symex::\guard#72
+(let econg_2379 (Leaf 2379))  ; not
+(let econg_2380 (Equal econg_2378 econg_2379))  ; =  ;; [ASSUME]
+(let econg_2381 (Leaf 2381))  ; free::ptr!0@10#1
+(let econg_2382 (Typecast econg_88 econg_2365))  ; typecast
+(let econg_2383 (Equal econg_2381 econg_2382))  ; =  ;; [ASSUME]
+(let econg_2384 (Leaf 2384))  ; goto_symex::\guard#73
+(let econg_2385 (Leaf 2385))  ; not
+(let econg_2386 (Equal econg_2384 econg_2385))  ; =  ;; [ASSUME]
+(let econg_2387 (Leaf 2387))  ; __CPROVER_deallocate::ptr!0@10#1
+(let econg_2388 (Equal econg_2381 econg_2387))  ; =  ;; [ASSUME]
+(let econg_2389 (Leaf 2389))  ; __CPROVER_deallocate::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@10#2
+(let econg_2390 (Leaf 2390))  ; nondet_symbol
+(let econg_2391 (Equal econg_2389 econg_2390))  ; =  ;; [ASSUME]
+(let econg_2392 (Leaf 2392))  ; __CPROVER_deallocated#40
+(let econg_2393 (Equal econg_2387 econg_2392))  ; =  ;; [ASSUME]
+(let econg_2394 (Leaf 2394))  ; __CPROVER_deallocated#41
+(let econg_2395 (Leaf 2395))  ; if
+(let econg_2396 (Equal econg_2394 econg_2395))  ; =  ;; [ASSUME]
+(let econg_2397 (Leaf 2397))  ; goto_symex::\guard#74
+(let econg_2398 (Equal econg_2355 econg_2381))  ; =
+(let econg_2399 (Equal econg_2397 econg_2398))  ; =  ;; [ASSUME]
+(let econg_2400 (Leaf 2400))  ; __CPROVER_memory_leak#70
+(let econg_2401 (Equal econg_18 econg_2400))  ; =  ;; [ASSUME]
+(let econg_2402 (Leaf 2402))  ; __CPROVER_memory_leak#71
+(let econg_2403 (Leaf 2403))  ; if
+(let econg_2404 (Equal econg_2402 econg_2403))  ; =  ;; [ASSUME]
+(let econg_2405 (Leaf 2405))  ; __CPROVER_deallocated#42
+(let econg_2406 (Leaf 2406))  ; if
+(let econg_2407 (Equal econg_2405 econg_2406))  ; =  ;; [ASSUME]
+(let econg_2408 (Leaf 2408))  ; __CPROVER_memory_leak#72
+(let econg_2409 (Leaf 2409))  ; if
+(let econg_2410 (Equal econg_2408 econg_2409))  ; =  ;; [ASSUME]
+(let econg_2411 (Leaf 2411))  ; free::ptr!0@10#3
+(let econg_2412 (Leaf 2412))  ; if
+(let econg_2413 (Equal econg_2411 econg_2412))  ; =  ;; [ASSUME]
+(let econg_2414 (Leaf 2414))  ; malloc::malloc_size!0@10#1
+(let econg_2415 (Leaf 2415))  ; malloc::malloc_size!0@10#1
+(let econg_2416 (Equal econg_2414 econg_2415))  ; =  ;; [ASSUME]
+(let econg_2417 (Leaf 2417))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool!0@10#2
+(let econg_2418 (Leaf 2418))  ; nondet_symbol
+(let econg_2419 (Equal econg_2417 econg_2418))  ; =  ;; [ASSUME]
+(let econg_2420 (Leaf 2420))  ; malloc::1::1::should_malloc_fail!0@10#2
+(let econg_2421 (Equal econg_2417 econg_2420))  ; =  ;; [ASSUME]
+(let econg_2422 (Leaf 2422))  ; goto_symex::\guard#75
+(let econg_2423 (Leaf 2423))  ; not
+(let econg_2424 (Equal econg_2422 econg_2423))  ; =  ;; [ASSUME]
+(let econg_2425 (Leaf 2425))  ; malloc::malloc_size!0@10#1
+(let econg_2426 (Equal econg_2414 econg_2425))  ; =  ;; [ASSUME]
+(let econg_2427 (Leaf 2427))  ; symex_dynamic::dynamic_object$14#1
+(let econg_2428 (Leaf 2428))  ; nondet_symbol
+(let econg_2429 (Equal econg_2427 econg_2428))  ; =  ;; [ASSUME]
+(let econg_2430 (Leaf 2430))  ; malloc::$tmp::malloc_value!0@10#2
+(let econg_2431 (Leaf 2431))  ; address_of
+(let econg_2432 (Typecast econg_88 econg_2431))  ; typecast
+(let econg_2433 (Equal econg_2430 econg_2432))  ; =  ;; [ASSUME]
+(let econg_2434 (Leaf 2434))  ; malloc::1::malloc_res!0@10#2
+(let econg_2435 (Equal econg_2432 econg_2434))  ; =  ;; [ASSUME]
+(let econg_2436 (Leaf 2436))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$1!0@10#2
+(let econg_2437 (Leaf 2437))  ; nondet_symbol
+(let econg_2438 (Equal econg_2436 econg_2437))  ; =  ;; [ASSUME]
+(let econg_2439 (Leaf 2439))  ; malloc::1::record_malloc!0@10#2
+(let econg_2440 (Equal econg_2436 econg_2439))  ; =  ;; [ASSUME]
+(let econg_2441 (Leaf 2441))  ; __CPROVER_malloc_is_new_array#46
+(let econg_2442 (Equal econg_25 econg_2441))  ; =  ;; [ASSUME]
+(let econg_2443 (Leaf 2443))  ; malloc::$tmp::return_value___VERIFIER_nondet___CPROVER_bool$2!0@10#2
+(let econg_2444 (Leaf 2444))  ; nondet_symbol
+(let econg_2445 (Equal econg_2443 econg_2444))  ; =  ;; [ASSUME]
+(let econg_2446 (Leaf 2446))  ; malloc::1::record_may_leak!0@10#2
+(let econg_2447 (Equal econg_2443 econg_2446))  ; =  ;; [ASSUME]
+(let econg_2448 (Leaf 2448))  ; __CPROVER_memory_leak#73
+(let econg_2449 (Leaf 2449))  ; if
+(let econg_2450 (Equal econg_2448 econg_2449))  ; =  ;; [ASSUME]
+(let econg_2451 (Leaf 2451))  ; __CPROVER_malloc_is_new_array#47
+(let econg_2452 (Equal econg_25 econg_2451))  ; =  ;; [ASSUME]
+(let econg_2453 (Leaf 2453))  ; __CPROVER_memory_leak#74
+(let econg_2454 (Leaf 2454))  ; if
+(let econg_2455 (Equal econg_2453 econg_2454))  ; =  ;; [ASSUME]
+(let econg_2456 (Leaf 2456))  ; symex_dynamic::dynamic_object$14#2
+(let econg_2457 (Equal econg_2427 econg_2456))  ; =  ;; [ASSUME]
+(let econg_2458 (Leaf 2458))  ; malloc::malloc_size!0@10#1
+(let econg_2459 (Equal econg_2414 econg_2458))  ; =  ;; [ASSUME]
+(let econg_2460 (Leaf 2460))  ; __CPROVER_deallocated#43
+(let econg_2461 (Leaf 2461))  ; if
+(let econg_2462 (Equal econg_2460 econg_2461))  ; =  ;; [ASSUME]
+(let econg_2463 (Leaf 2463))  ; __CPROVER_malloc_is_new_array#48
+(let econg_2464 (Equal econg_25 econg_2463))  ; =  ;; [ASSUME]
+(let econg_2465 (Leaf 2465))  ; __CPROVER_memory_leak#75
+(let econg_2466 (Leaf 2466))  ; if
+(let econg_2467 (Equal econg_2465 econg_2466))  ; =  ;; [ASSUME]
+(let econg_2468 (Leaf 2468))  ; unlinkn_all::list$object#15..mem_free
+(let econg_2469 (Leaf 2469))  ; if
+(let econg_2470 (Equal econg_2468 econg_2469))  ; =  ;; [ASSUME]
+(let econg_2471 (Leaf 2471))  ; symex_dynamic::dynamic_object$14#3
+(let econg_2472 (Equal econg_2456 econg_2471))  ; =  ;; [ASSUME]
+(let econg_2473 (Leaf 2473))  ; malloc::malloc_size!0@10#1
+(let econg_2474 (Equal econg_2414 econg_2473))  ; =  ;; [ASSUME]
+(let econg_2475 (Leaf 2475))  ; unlinkn_all::1::n!0@2#12
+(let econg_2476 (Equal econg_2373 econg_2475))  ; =  ;; [ASSUME]
+(let econg_2477 (Leaf 2477))  ; unlinkn_all::list$object#14..size
+(let econg_2478 (Plus econg_1338 econg_2367))  ; unlinkn_all::list$object#14..size
+(let econg_2479 (Equal econg_2477 econg_2478))  ; =  ;; [ASSUME]
+(let econg_2480 (Leaf 2480))  ; __CPROVER_deallocated#44
+(let econg_2481 (Leaf 2481))  ; if
+(let econg_2482 (Equal econg_2480 econg_2481))  ; =  ;; [ASSUME]
+(let econg_2483 (Leaf 2483))  ; __CPROVER_malloc_is_new_array#49
+(let econg_2484 (Equal econg_25 econg_2483))  ; =  ;; [ASSUME]
+(let econg_2485 (Leaf 2485))  ; __CPROVER_memory_leak#76
+(let econg_2486 (Leaf 2486))  ; if
+(let econg_2487 (Equal econg_2485 econg_2486))  ; =  ;; [ASSUME]
+(let econg_2488 (Leaf 2488))  ; unlinkn_all::1::n!0@2#13
+(let econg_2489 (Equal econg_95 econg_2488))  ; =  ;; [ASSUME]
+(let econg_2490 (Leaf 2490))  ; unlinkn_all::list$object#16..mem_free
+(let econg_2491 (Leaf 2491))  ; if
+(let econg_2492 (Equal econg_2490 econg_2491))  ; =  ;; [ASSUME]
+(let econg_2493 (Leaf 2493))  ; unlinkn_all::list$object#15..size
+(let econg_2494 (Leaf 2494))  ; if
+(let econg_2495 (Equal econg_2493 econg_2494))  ; =  ;; [ASSUME]
+(let econg_2496 (Leaf 2496))  ; symex_dynamic::dynamic_object$13#4
+(let econg_2497 (Equal econg_2361 econg_2496))  ; =  ;; [ASSUME]
+(let econg_2498 (Leaf 2498))  ; malloc::malloc_size!0@9#1
+(let econg_2499 (Equal econg_2304 econg_2498))  ; =  ;; [ASSUME]
+(let econg_2500 (Leaf 2500))  ; __CPROVER_deallocated#45
+(let econg_2501 (Leaf 2501))  ; if
+(let econg_2502 (Equal econg_2500 econg_2501))  ; =  ;; [ASSUME]
+(let econg_2503 (Leaf 2503))  ; __CPROVER_malloc_is_new_array#50
+(let econg_2504 (Equal econg_25 econg_2503))  ; =  ;; [ASSUME]
+(let econg_2505 (Leaf 2505))  ; __CPROVER_memory_leak#77
+(let econg_2506 (Leaf 2506))  ; if
+(let econg_2507 (Equal econg_2505 econg_2506))  ; =  ;; [ASSUME]
+(let econg_2508 (Leaf 2508))  ; unlinkn_all::1::n!0@2#14
+(let econg_2509 (Equal econg_95 econg_2508))  ; =  ;; [ASSUME]
+(let econg_2510 (Leaf 2510))  ; unlinkn_all::list$object#17..mem_free
+(let econg_2511 (Leaf 2511))  ; if
+(let econg_2512 (Equal econg_2510 econg_2511))  ; =  ;; [ASSUME]
+(let econg_2513 (Leaf 2513))  ; unlinkn_all::list$object#16..size
+(let econg_2514 (Leaf 2514))  ; if
+(let econg_2515 (Equal econg_2513 econg_2514))  ; =  ;; [ASSUME]
+(let econg_2516 (Leaf 2516))  ; symex_dynamic::dynamic_object$12#4
+(let econg_2517 (Equal econg_2251 econg_2516))  ; =  ;; [ASSUME]
+(let econg_2518 (Leaf 2518))  ; symex_dynamic::dynamic_object$13#5
+(let econg_2519 (Equal econg_2496 econg_2518))  ; =  ;; [ASSUME]
+(let econg_2520 (Leaf 2520))  ; malloc::malloc_size!0@8#1
+(let econg_2521 (Equal econg_2194 econg_2520))  ; =  ;; [ASSUME]
+(let econg_2522 (Leaf 2522))  ; malloc::malloc_size!0@9#1
+(let econg_2523 (Equal econg_2304 econg_2522))  ; =  ;; [ASSUME]
+(let econg_2524 (Leaf 2524))  ; __CPROVER_deallocated#46
+(let econg_2525 (Leaf 2525))  ; if
+(let econg_2526 (Equal econg_2524 econg_2525))  ; =  ;; [ASSUME]
+(let econg_2527 (Leaf 2527))  ; __CPROVER_malloc_is_new_array#51
+(let econg_2528 (Equal econg_25 econg_2527))  ; =  ;; [ASSUME]
+(let econg_2529 (Leaf 2529))  ; __CPROVER_memory_leak#78
+(let econg_2530 (Leaf 2530))  ; if
+(let econg_2531 (Equal econg_2529 econg_2530))  ; =  ;; [ASSUME]
+(let econg_2532 (Leaf 2532))  ; unlinkn_all::1::n!0@2#15
+(let econg_2533 (Equal econg_95 econg_2532))  ; =  ;; [ASSUME]
+(let econg_2534 (Leaf 2534))  ; unlinkn_all::list$object#18..mem_free
+(let econg_2535 (Leaf 2535))  ; if
+(let econg_2536 (Equal econg_2534 econg_2535))  ; =  ;; [ASSUME]
+(let econg_2537 (Leaf 2537))  ; unlinkn_all::list$object#17..size
+(let econg_2538 (Leaf 2538))  ; if
+(let econg_2539 (Equal econg_2537 econg_2538))  ; =  ;; [ASSUME]
+(let econg_2540 (Leaf 2540))  ; symex_dynamic::dynamic_object$11#4
+(let econg_2541 (Equal econg_2141 econg_2540))  ; =  ;; [ASSUME]
+(let econg_2542 (Leaf 2542))  ; symex_dynamic::dynamic_object$12#5
+(let econg_2543 (Equal econg_2516 econg_2542))  ; =  ;; [ASSUME]
+(let econg_2544 (Leaf 2544))  ; symex_dynamic::dynamic_object$13#6
+(let econg_2545 (Equal econg_2518 econg_2544))  ; =  ;; [ASSUME]
+(let econg_2546 (Leaf 2546))  ; malloc::malloc_size!0@7#1
+(let econg_2547 (Equal econg_2084 econg_2546))  ; =  ;; [ASSUME]
+(let econg_2548 (Leaf 2548))  ; malloc::malloc_size!0@8#1
+(let econg_2549 (Equal econg_2194 econg_2548))  ; =  ;; [ASSUME]
+(let econg_2550 (Leaf 2550))  ; malloc::malloc_size!0@9#1
+(let econg_2551 (Equal econg_2304 econg_2550))  ; =  ;; [ASSUME]
+(let econg_2552 (Leaf 2552))  ; __CPROVER_deallocated#47
+(let econg_2553 (Leaf 2553))  ; if
+(let econg_2554 (Equal econg_2552 econg_2553))  ; =  ;; [ASSUME]
+(let econg_2555 (Leaf 2555))  ; __CPROVER_malloc_is_new_array#52
+(let econg_2556 (Equal econg_25 econg_2555))  ; =  ;; [ASSUME]
+(let econg_2557 (Leaf 2557))  ; __CPROVER_memory_leak#79
+(let econg_2558 (Leaf 2558))  ; if
+(let econg_2559 (Equal econg_2557 econg_2558))  ; =  ;; [ASSUME]
+(let econg_2560 (Leaf 2560))  ; unlinkn_all::1::n!0@2#16
+(let econg_2561 (Equal econg_95 econg_2560))  ; =  ;; [ASSUME]
+(let econg_2562 (Leaf 2562))  ; unlinkn_all::list$object#18..size
+(let econg_2563 (Leaf 2563))  ; if
+(let econg_2564 (Equal econg_2562 econg_2563))  ; =  ;; [ASSUME]
+(let econg_2565 (Leaf 2565))  ; symex_dynamic::dynamic_object$10#4
+(let econg_2566 (Equal econg_2031 econg_2565))  ; =  ;; [ASSUME]
+(let econg_2567 (Leaf 2567))  ; symex_dynamic::dynamic_object$11#5
+(let econg_2568 (Equal econg_2540 econg_2567))  ; =  ;; [ASSUME]
+(let econg_2569 (Leaf 2569))  ; symex_dynamic::dynamic_object$12#6
+(let econg_2570 (Equal econg_2542 econg_2569))  ; =  ;; [ASSUME]
+(let econg_2571 (Leaf 2571))  ; symex_dynamic::dynamic_object$13#7
+(let econg_2572 (Equal econg_2544 econg_2571))  ; =  ;; [ASSUME]
+(let econg_2573 (Leaf 2573))  ; malloc::malloc_size!0@6#1
+(let econg_2574 (Equal econg_1974 econg_2573))  ; =  ;; [ASSUME]
+(let econg_2575 (Leaf 2575))  ; malloc::malloc_size!0@7#1
+(let econg_2576 (Equal econg_2084 econg_2575))  ; =  ;; [ASSUME]
+(let econg_2577 (Leaf 2577))  ; malloc::malloc_size!0@8#1
+(let econg_2578 (Equal econg_2194 econg_2577))  ; =  ;; [ASSUME]
+(let econg_2579 (Leaf 2579))  ; malloc::malloc_size!0@9#1
+(let econg_2580 (Equal econg_2304 econg_2579))  ; =  ;; [ASSUME]
+(let econg_2581 (Leaf 2581))  ; unlinkn_all::list$object#19..mem_free
+(let econg_2582 (Equal econg_2534 econg_2581))  ; =  ;; [ASSUME]
+(let econg_2583 (Leaf 2583))  ; goto_symex::return_value::unlinkn_all!0#5
+(let econg_2584 (Equal econg_1752 econg_2583))  ; =  ;; [ASSUME]
+(let econg_2585 (Leaf 2585))  ; __CPROVER_deallocated#48
+(let econg_2586 (Leaf 2586))  ; if
+(let econg_2587 (Equal econg_2585 econg_2586))  ; =  ;; [ASSUME]
+(let econg_2588 (Leaf 2588))  ; __CPROVER_malloc_is_new_array#53
+(let econg_2589 (Equal econg_25 econg_2588))  ; =  ;; [ASSUME]
+(let econg_2590 (Leaf 2590))  ; __CPROVER_memory_leak#80
+(let econg_2591 (Leaf 2591))  ; if
+(let econg_2592 (Equal econg_2590 econg_2591))  ; =  ;; [ASSUME]
+(let econg_2593 (Leaf 2593))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@2#2
+(let econg_2594 (Leaf 2594))  ; if
+(let econg_2595 (Equal econg_2593 econg_2594))  ; =  ;; [ASSUME]
+(let econg_2596 (Leaf 2596))  ; unlinkn_all::list$object#19..size
+(let econg_2597 (Leaf 2597))  ; if
+(let econg_2598 (Equal econg_2596 econg_2597))  ; =  ;; [ASSUME]
+(let econg_2599 (Leaf 2599))  ; symex_dynamic::dynamic_object$10#5
+(let econg_2600 (Equal econg_2565 econg_2599))  ; =  ;; [ASSUME]
+(let econg_2601 (Leaf 2601))  ; symex_dynamic::dynamic_object$11#6
+(let econg_2602 (Equal econg_2567 econg_2601))  ; =  ;; [ASSUME]
+(let econg_2603 (Leaf 2603))  ; symex_dynamic::dynamic_object$12#7
+(let econg_2604 (Equal econg_2569 econg_2603))  ; =  ;; [ASSUME]
+(let econg_2605 (Leaf 2605))  ; symex_dynamic::dynamic_object$13#8
+(let econg_2606 (Equal econg_2571 econg_2605))  ; =  ;; [ASSUME]
+(let econg_2607 (Leaf 2607))  ; malloc::malloc_size!0@6#1
+(let econg_2608 (Equal econg_1974 econg_2607))  ; =  ;; [ASSUME]
+(let econg_2609 (Leaf 2609))  ; malloc::malloc_size!0@7#1
+(let econg_2610 (Equal econg_2084 econg_2609))  ; =  ;; [ASSUME]
+(let econg_2611 (Leaf 2611))  ; malloc::malloc_size!0@8#1
+(let econg_2612 (Equal econg_2194 econg_2611))  ; =  ;; [ASSUME]
+(let econg_2613 (Leaf 2613))  ; malloc::malloc_size!0@9#1
+(let econg_2614 (Equal econg_2304 econg_2613))  ; =  ;; [ASSUME]
+(let econg_2615 (Leaf 2615))  ; unlinkn_all::list$object#20..mem_free
+(let econg_2616 (Equal econg_2581 econg_2615))  ; =  ;; [ASSUME]
+(let econg_2617 (Leaf 2617))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@2#2
+(let econg_2618 (Equal econg_2593 econg_2617))  ; =  ;; [ASSUME]
+(let econg_2619 (Leaf 2619))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@2#2
+(let econg_2620 (Equal econg_2617 econg_2619))  ; =  ;; [ASSUME]
+(let econg_2621 (Leaf 2621))  ; goto_symex::\guard#76
+(let econg_2622 (Leaf 2622))  ; not
+(let econg_2623 (Equal econg_2621 econg_2622))  ; =  ;; [ASSUME]
+(let econg_2624 (Leaf 2624))  ; symex_dynamic::dynamic_object$0#3..head
+(let econg_2625 (Equal econg_95 econg_2624))  ; =  ;; [ASSUME]
+(let econg_2626 (Leaf 2626))  ; slist_remove_all::list$object#3..head
+(let econg_2627 (Leaf 2627))  ; if
+(let econg_2628 (Equal econg_2626 econg_2627))  ; =  ;; [ASSUME]
+(let econg_2629 (Leaf 2629))  ; symex_dynamic::dynamic_object$0#3..tail
+(let econg_2630 (Equal econg_95 econg_2629))  ; =  ;; [ASSUME]
+(let econg_2631 (Leaf 2631))  ; slist_remove_all::list$object#3..tail
+(let econg_2632 (Leaf 2632))  ; if
+(let econg_2633 (Equal econg_2631 econg_2632))  ; =  ;; [ASSUME]
+(let econg_2634 (Leaf 2634))  ; slist_remove_all::list$object#4..head
+(let econg_2635 (Leaf 2635))  ; if
+(let econg_2636 (Equal econg_2634 econg_2635))  ; =  ;; [ASSUME]
+(let econg_2637 (Leaf 2637))  ; slist_remove_all::list$object#4..tail
+(let econg_2638 (Leaf 2638))  ; if
+(let econg_2639 (Equal econg_2637 econg_2638))  ; =  ;; [ASSUME]
+(let econg_2640 (Leaf 2640))  ; symex_dynamic::dynamic_object$0#4..head
+(let econg_2641 (Equal econg_95 econg_2640))  ; =  ;; [ASSUME]
+(let econg_2642 (Leaf 2642))  ; symex_dynamic::dynamic_object$0#4..tail
+(let econg_2643 (Equal econg_95 econg_2642))  ; =  ;; [ASSUME]
+(let econg_2644 (Leaf 2644))  ; goto_symex::\guard#77
+(let econg_2645 (Leaf 2645))  ; not
+(let econg_2646 (Equal econg_2644 econg_2645))  ; =  ;; [ASSUME]
+(let econg_2647 (Leaf 2647))  ; goto_symex::\guard#78
+(let econg_2648 (Leaf 2648))  ; not
+(let econg_2649 (Equal econg_2647 econg_2648))  ; =  ;; [ASSUME]
+(let econg_2650 (Leaf 2650))  ; setup_test::$tmp::return_value_slist_new!0@1#1
+(let econg_2651 (Leaf 2651))  ; slist_new::1::conf!0@1#1
+(let econg_2652 (Leaf 2652))  ; struct
+(let econg_2653 (Leaf 2653))  ; slist_new::1::conf!0@1#1..mem_alloc
+(let econg_2654 (Leaf 2654))  ; slist_new::1::conf!0@1#1..mem_calloc
+(let econg_2655 (Leaf 2655))  ; slist_new::1::conf!0@1#1..mem_free
+(let econg_2656 (Leaf 2656))  ; slist_new::$tmp::return_value_slist_new_conf!0@1#1
+(let econg_2657 (Leaf 2657))  ; slist_new_conf::1::list!0@1#1
+(let econg_2658 (Leaf 2658))  ; slist_new_conf::$tmp::return_value!0@1#1
+(let econg_2659 (Leaf 2659))  ; calloc::1::alloc_size!0@1#1
+(let econg_2660 (Leaf 2660))  ; calloc::$tmp::tmp_overflow_result!0@1#1
+(let econg_2661 (Leaf 2661))  ; struct
+(let econg_2662 (Leaf 2662))  ; calloc::$tmp::tmp_overflow_result!0@1#1..value
+(let econg_2663 (Leaf 2663))  ; calloc::$tmp::tmp_overflow_result!0@1#1..overflow-*
+(let econg_2664 (Leaf 2664))  ; calloc::1::malloc_res!0@1#1
+(let econg_2665 (Leaf 2665))  ; calloc::$tmp::malloc_value!0@1#1
+(let econg_2666 (Leaf 2666))  ; slist_new::1::conf!0@2#1
+(let econg_2667 (Leaf 2667))  ; struct
+(let econg_2668 (Leaf 2668))  ; slist_new::1::conf!0@2#1..mem_alloc
+(let econg_2669 (Leaf 2669))  ; slist_new::1::conf!0@2#1..mem_calloc
+(let econg_2670 (Leaf 2670))  ; slist_new::1::conf!0@2#1..mem_free
+(let econg_2671 (Leaf 2671))  ; slist_new::$tmp::return_value_slist_new_conf!0@2#1
+(let econg_2672 (Leaf 2672))  ; slist_new_conf::1::list!0@2#1
+(let econg_2673 (Leaf 2673))  ; slist_new_conf::$tmp::return_value!0@2#1
+(let econg_2674 (Leaf 2674))  ; calloc::1::alloc_size!0@2#1
+(let econg_2675 (Leaf 2675))  ; calloc::$tmp::tmp_overflow_result!0@2#1
+(let econg_2676 (Leaf 2676))  ; struct
+(let econg_2677 (Leaf 2677))  ; calloc::$tmp::tmp_overflow_result!0@2#1..value
+(let econg_2678 (Leaf 2678))  ; calloc::$tmp::tmp_overflow_result!0@2#1..overflow-*
+(let econg_2679 (Leaf 2679))  ; calloc::1::malloc_res!0@2#1
+(let econg_2680 (Leaf 2680))  ; calloc::$tmp::malloc_value!0@2#1
+(let econg_2681 (Leaf 2681))  ; main::1::s1!0@1#1
+(let econg_2682 (Leaf 2682))  ; main::$tmp::return_value___nondet_int!0@1#1
+(let econg_2683 (Leaf 2683))  ; main::1::str_s1!0@1#1
+(let econg_2684 (Leaf 2684))  ; array
+(let econg_2685 (Leaf 2685))  ; main::1::str_s1!0@1#1[[0]]
+(let econg_2686 (Leaf 2686))  ; main::1::str_s1!0@1#1[[1]]
+(let econg_2687 (Leaf 2687))  ; main::1::s2!0@1#1
+(let econg_2688 (Leaf 2688))  ; main::$tmp::return_value___nondet_int$0!0@1#1
+(let econg_2689 (Leaf 2689))  ; main::1::str_s2!0@1#1
+(let econg_2690 (Leaf 2690))  ; array
+(let econg_2691 (Leaf 2691))  ; main::1::str_s2!0@1#1[[0]]
+(let econg_2692 (Leaf 2692))  ; main::1::str_s2!0@1#1[[1]]
+(let econg_2693 (Leaf 2693))  ; main::1::s3!0@1#1
+(let econg_2694 (Leaf 2694))  ; main::$tmp::return_value___nondet_int$1!0@1#1
+(let econg_2695 (Leaf 2695))  ; main::1::str_s3!0@1#1
+(let econg_2696 (Leaf 2696))  ; array
+(let econg_2697 (Leaf 2697))  ; main::1::str_s3!0@1#1[[0]]
+(let econg_2698 (Leaf 2698))  ; main::1::str_s3!0@1#1[[1]]
+(let econg_2699 (Leaf 2699))  ; main::1::s4!0@1#1
+(let econg_2700 (Leaf 2700))  ; main::$tmp::return_value___nondet_int$2!0@1#1
+(let econg_2701 (Leaf 2701))  ; main::1::str_s4!0@1#1
+(let econg_2702 (Leaf 2702))  ; array
+(let econg_2703 (Leaf 2703))  ; main::1::str_s4!0@1#1[[0]]
+(let econg_2704 (Leaf 2704))  ; main::1::str_s4!0@1#1[[1]]
+(let econg_2705 (Leaf 2705))  ; main::$tmp::return_value_slist_add!0@1#1
+(let econg_2706 (Leaf 2706))  ; slist_add::$tmp::return_value_slist_add_last!0@1#1
+(let econg_2707 (Leaf 2707))  ; slist_add_last::1::node!0@1#1
+(let econg_2708 (Leaf 2708))  ; slist_add_last::$tmp::return_value!0@1#1
+(let econg_2709 (Leaf 2709))  ; calloc::1::alloc_size!0@3#1
+(let econg_2710 (Leaf 2710))  ; calloc::$tmp::tmp_overflow_result!0@3#1
+(let econg_2711 (Leaf 2711))  ; struct
+(let econg_2712 (Leaf 2712))  ; calloc::$tmp::tmp_overflow_result!0@3#1..value
+(let econg_2713 (Leaf 2713))  ; calloc::$tmp::tmp_overflow_result!0@3#1..overflow-*
+(let econg_2714 (Leaf 2714))  ; calloc::1::malloc_res!0@3#1
+(let econg_2715 (Leaf 2715))  ; calloc::$tmp::malloc_value!0@3#1
+(let econg_2716 (Leaf 2716))  ; main::$tmp::return_value_slist_add$0!0@1#1
+(let econg_2717 (Leaf 2717))  ; slist_add::$tmp::return_value_slist_add_last!0@2#1
+(let econg_2718 (Leaf 2718))  ; slist_add_last::1::node!0@2#1
+(let econg_2719 (Leaf 2719))  ; slist_add_last::$tmp::return_value!0@2#1
+(let econg_2720 (Leaf 2720))  ; calloc::1::alloc_size!0@4#1
+(let econg_2721 (Leaf 2721))  ; calloc::$tmp::tmp_overflow_result!0@4#1
+(let econg_2722 (Leaf 2722))  ; struct
+(let econg_2723 (Leaf 2723))  ; calloc::$tmp::tmp_overflow_result!0@4#1..value
+(let econg_2724 (Leaf 2724))  ; calloc::$tmp::tmp_overflow_result!0@4#1..overflow-*
+(let econg_2725 (Leaf 2725))  ; calloc::1::malloc_res!0@4#1
+(let econg_2726 (Leaf 2726))  ; calloc::$tmp::malloc_value!0@4#1
+(let econg_2727 (Leaf 2727))  ; main::$tmp::return_value_slist_add$1!0@1#1
+(let econg_2728 (Leaf 2728))  ; slist_add::$tmp::return_value_slist_add_last!0@3#1
+(let econg_2729 (Leaf 2729))  ; slist_add_last::1::node!0@3#1
+(let econg_2730 (Leaf 2730))  ; slist_add_last::$tmp::return_value!0@3#1
+(let econg_2731 (Leaf 2731))  ; calloc::1::alloc_size!0@5#1
+(let econg_2732 (Leaf 2732))  ; calloc::$tmp::tmp_overflow_result!0@5#1
+(let econg_2733 (Leaf 2733))  ; struct
+(let econg_2734 (Leaf 2734))  ; calloc::$tmp::tmp_overflow_result!0@5#1..value
+(let econg_2735 (Leaf 2735))  ; calloc::$tmp::tmp_overflow_result!0@5#1..overflow-*
+(let econg_2736 (Leaf 2736))  ; calloc::1::malloc_res!0@5#1
+(let econg_2737 (Leaf 2737))  ; calloc::$tmp::malloc_value!0@5#1
+(let econg_2738 (Leaf 2738))  ; main::$tmp::return_value_slist_add$2!0@1#1
+(let econg_2739 (Leaf 2739))  ; slist_add::$tmp::return_value_slist_add_last!0@4#1
+(let econg_2740 (Leaf 2740))  ; slist_add_last::1::node!0@4#1
+(let econg_2741 (Leaf 2741))  ; slist_add_last::$tmp::return_value!0@4#1
+(let econg_2742 (Leaf 2742))  ; calloc::1::alloc_size!0@6#1
+(let econg_2743 (Leaf 2743))  ; calloc::$tmp::tmp_overflow_result!0@6#1
+(let econg_2744 (Leaf 2744))  ; struct
+(let econg_2745 (Leaf 2745))  ; calloc::$tmp::tmp_overflow_result!0@6#1..value
+(let econg_2746 (Leaf 2746))  ; calloc::$tmp::tmp_overflow_result!0@6#1..overflow-*
+(let econg_2747 (Leaf 2747))  ; calloc::1::malloc_res!0@6#1
+(let econg_2748 (Leaf 2748))  ; calloc::$tmp::malloc_value!0@6#1
+(let econg_2749 (Leaf 2749))  ; slist_remove_all::1::unlinked!0@1#1
+(let econg_2750 (Leaf 2750))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@1#1
+(let econg_2751 (Leaf 2751))  ; unlinkn_all::1::n!0@1#1
+(let econg_2752 (Leaf 2752))  ; unlinkn_all::1::1::tmp!0@1#1
+(let econg_2753 (Leaf 2753))  ; malloc::1::malloc_res!0@1#1
+(let econg_2754 (Leaf 2754))  ; malloc::$tmp::malloc_value!0@1#1
+(let econg_2755 (Leaf 2755))  ; unlinkn_all::1::1::tmp!0@2#1
+(let econg_2756 (Leaf 2756))  ; malloc::1::malloc_res!0@2#1
+(let econg_2757 (Leaf 2757))  ; malloc::$tmp::malloc_value!0@2#1
+(let econg_2758 (Leaf 2758))  ; unlinkn_all::1::1::tmp!0@3#1
+(let econg_2759 (Leaf 2759))  ; malloc::1::malloc_res!0@3#1
+(let econg_2760 (Leaf 2760))  ; malloc::$tmp::malloc_value!0@3#1
+(let econg_2761 (Leaf 2761))  ; unlinkn_all::1::1::tmp!0@4#1
+(let econg_2762 (Leaf 2762))  ; malloc::1::malloc_res!0@4#1
+(let econg_2763 (Leaf 2763))  ; malloc::$tmp::malloc_value!0@4#1
+(let econg_2764 (Leaf 2764))  ; malloc::1::malloc_res!0@5#1
+(let econg_2765 (Leaf 2765))  ; malloc::$tmp::malloc_value!0@5#1
+(let econg_2766 (Leaf 2766))  ; slist_remove_all::1::unlinked!0@2#1
+(let econg_2767 (Leaf 2767))  ; slist_remove_all::$tmp::return_value_unlinkn_all!0@2#1
+(let econg_2768 (Leaf 2768))  ; unlinkn_all::1::n!0@2#1
+(let econg_2769 (Leaf 2769))  ; unlinkn_all::1::1::tmp!0@5#1
+(let econg_2770 (Leaf 2770))  ; malloc::1::malloc_res!0@6#1
+(let econg_2771 (Leaf 2771))  ; malloc::$tmp::malloc_value!0@6#1
+(let econg_2772 (Leaf 2772))  ; unlinkn_all::1::1::tmp!0@6#1
+(let econg_2773 (Leaf 2773))  ; malloc::1::malloc_res!0@7#1
+(let econg_2774 (Leaf 2774))  ; malloc::$tmp::malloc_value!0@7#1
+(let econg_2775 (Leaf 2775))  ; unlinkn_all::1::1::tmp!0@7#1
+(let econg_2776 (Leaf 2776))  ; malloc::1::malloc_res!0@8#1
+(let econg_2777 (Leaf 2777))  ; malloc::$tmp::malloc_value!0@8#1
+(let econg_2778 (Leaf 2778))  ; unlinkn_all::1::1::tmp!0@8#1
+(let econg_2779 (Leaf 2779))  ; malloc::1::malloc_res!0@9#1
+(let econg_2780 (Leaf 2780))  ; malloc::$tmp::malloc_value!0@9#1
+(let econg_2781 (Leaf 2781))  ; unlinkn_all::1::1::tmp!0@9#1
+(let econg_2782 (Leaf 2782))  ; malloc::1::malloc_res!0@10#1
+(let econg_2783 (Leaf 2783))  ; malloc::$tmp::malloc_value!0@10#1
+(let econg_2784 (Leaf 2784))  ; symex::args::0
+(let econg_2785 (Equal econg_45 econg_2784))  ; =  ;; [ASSUME]
+(let econg_2786 (Leaf 2786))  ; symex::args::1
+(let econg_2787 (Equal econg_48 econg_2786))  ; =  ;; [ASSUME]
+(let econg_2788 (Leaf 2788))  ; symex::args::2
+(let econg_2789 (Equal econg_48 econg_2788))  ; =  ;; [ASSUME]
+(let econg_2790 (Leaf 2790))  ; symex::args::3
+(let econg_2791 (Equal econg_45 econg_2790))  ; =  ;; [ASSUME]
+(let econg_2792 (Leaf 2792))  ; symex::args::4
+(let econg_2793 (Equal econg_209 econg_2792))  ; =  ;; [ASSUME]
+(let econg_2794 (Leaf 2794))  ; symex::args::5
+(let econg_2795 (Equal econg_212 econg_2794))  ; =  ;; [ASSUME]
+(let econg_2796 (Leaf 2796))  ; symex::args::6
+(let econg_2797 (Equal econg_212 econg_2796))  ; =  ;; [ASSUME]
+(let econg_2798 (Leaf 2798))  ; symex::args::7
+(let econg_2799 (Equal econg_209 econg_2798))  ; =  ;; [ASSUME]
+(let econg_2800 (Leaf 2800))  ; symex::args::8
+(let econg_2801 (Equal econg_182 econg_2800))  ; =  ;; [ASSUME]
+(let econg_2802 (Leaf 2802))  ; symex::args::9
+(let econg_2803 (Equal econg_407 econg_2802))  ; =  ;; [ASSUME]
+(let econg_2804 (Leaf 2804))  ; symex::args::10
+(let econg_2805 (Equal econg_403 econg_2804))  ; =  ;; [ASSUME]
+(let econg_2806 (Leaf 2806))  ; symex::args::11
+(let econg_2807 (Equal econg_407 econg_2806))  ; =  ;; [ASSUME]
+(let econg_2808 (Leaf 2808))  ; symex::args::12
+(let econg_2809 (Equal econg_182 econg_2808))  ; =  ;; [ASSUME]
+(let econg_2810 (Leaf 2810))  ; symex::args::13
+(let econg_2811 (Equal econg_580 econg_2810))  ; =  ;; [ASSUME]
+(let econg_2812 (Leaf 2812))  ; symex::args::14
+(let econg_2813 (Equal econg_576 econg_2812))  ; =  ;; [ASSUME]
+(let econg_2814 (Leaf 2814))  ; symex::args::15
+(let econg_2815 (Equal econg_580 econg_2814))  ; =  ;; [ASSUME]
+(let econg_2816 (Leaf 2816))  ; symex::args::16
+(let econg_2817 (Equal econg_182 econg_2816))  ; =  ;; [ASSUME]
+(let econg_2818 (Leaf 2818))  ; symex::args::17
+(let econg_2819 (Equal econg_763 econg_2818))  ; =  ;; [ASSUME]
+(let econg_2820 (Leaf 2820))  ; symex::args::18
+(let econg_2821 (Equal econg_759 econg_2820))  ; =  ;; [ASSUME]
+(let econg_2822 (Leaf 2822))  ; symex::args::19
+(let econg_2823 (Equal econg_763 econg_2822))  ; =  ;; [ASSUME]
+(let econg_2824 (Leaf 2824))  ; symex::args::20
+(let econg_2825 (Equal econg_182 econg_2824))  ; =  ;; [ASSUME]
+(let econg_2826 (Leaf 2826))  ; symex::args::21
+(let econg_2827 (Equal econg_958 econg_2826))  ; =  ;; [ASSUME]
+(let econg_2828 (Leaf 2828))  ; symex::args::22
+(let econg_2829 (Equal econg_954 econg_2828))  ; =  ;; [ASSUME]
+(let econg_2830 (Leaf 2830))  ; symex::args::23
+(let econg_2831 (Equal econg_958 econg_2830))  ; =  ;; [ASSUME]
+(let econg_2832 (Leaf 2832))  ; symex::args::24
+(let econg_2833 (Equal econg_182 econg_2832))  ; =  ;; [ASSUME]
+(let econg_2834 (Leaf 2834))  ; symex::args::25
+(let econg_2835 (Equal econg_1167 econg_2834))  ; =  ;; [ASSUME]
+(let econg_2836 (Leaf 2836))  ; symex::args::26
+(let econg_2837 (Equal econg_182 econg_2836))  ; =  ;; [ASSUME]
+(let econg_2838 (Leaf 2838))  ; symex::args::27
+(let econg_2839 (Equal econg_1167 econg_2838))  ; =  ;; [ASSUME]
+(let econg_2840 (Leaf 2840))  ; symex::args::28
+(let econg_2841 (Equal econg_182 econg_2840))  ; =  ;; [ASSUME]
+(let econg_2842 (Leaf 2842))  ; symex::args::29
+(let econg_2843 (Equal econg_1206 econg_2842))  ; =  ;; [ASSUME]
+(let econg_2844 (Leaf 2844))  ; symex::args::30
+(let econg_2845 (Equal econg_14 econg_2844))  ; =  ;; [ASSUME]
+(let econg_2846 (Leaf 2846))  ; symex::args::31
+(let econg_2847 (Equal econg_1241 econg_2846))  ; =  ;; [ASSUME]
+(let econg_2848 (Leaf 2848))  ; symex::args::32
+(let econg_2849 (Equal econg_1240 econg_2848))  ; =  ;; [ASSUME]
+(let econg_2850 (Leaf 2850))  ; symex::args::33
+(let econg_2851 (Equal econg_1273 econg_2850))  ; =  ;; [ASSUME]
+(let econg_2852 (Leaf 2852))  ; symex::args::34
+(let econg_2853 (Equal econg_1357 econg_2852))  ; =  ;; [ASSUME]
+(let econg_2854 (Leaf 2854))  ; symex::args::35
+(let econg_2855 (Equal econg_1356 econg_2854))  ; =  ;; [ASSUME]
+(let econg_2856 (Leaf 2856))  ; symex::args::36
+(let econg_2857 (Equal econg_1377 econg_2856))  ; =  ;; [ASSUME]
+(let econg_2858 (Leaf 2858))  ; symex::args::37
+(let econg_2859 (Equal econg_1458 econg_2858))  ; =  ;; [ASSUME]
+(let econg_2860 (Leaf 2860))  ; symex::args::38
+(let econg_2861 (Equal econg_1457 econg_2860))  ; =  ;; [ASSUME]
+(let econg_2862 (Leaf 2862))  ; symex::args::39
+(let econg_2863 (Equal econg_1478 econg_2862))  ; =  ;; [ASSUME]
+(let econg_2864 (Leaf 2864))  ; symex::args::40
+(let econg_2865 (Equal econg_1558 econg_2864))  ; =  ;; [ASSUME]
+(let econg_2866 (Leaf 2866))  ; symex::args::41
+(let econg_2867 (Equal econg_1557 econg_2866))  ; =  ;; [ASSUME]
+(let econg_2868 (Leaf 2868))  ; symex::args::42
+(let econg_2869 (Equal econg_1578 econg_2868))  ; =  ;; [ASSUME]
+(let econg_2870 (Leaf 2870))  ; symex::args::43
+(let econg_2871 (Equal econg_1825 econg_2870))  ; =  ;; [ASSUME]
+(let econg_2872 (Leaf 2872))  ; symex::args::44
+(let econg_2873 (Equal econg_1824 econg_2872))  ; =  ;; [ASSUME]
+(let econg_2874 (Leaf 2874))  ; symex::args::45
+(let econg_2875 (Equal econg_1857 econg_2874))  ; =  ;; [ASSUME]
+(let econg_2876 (Leaf 2876))  ; symex::args::46
+(let econg_2877 (Equal econg_331 econg_2876))  ; =  ;; [ASSUME]
+(let econg_2878 (Leaf 2878))  ; symex::args::47
+(let econg_2879 (Equal econg_1915 econg_2878))  ; =  ;; [ASSUME]
+(let econg_2880 (Leaf 2880))  ; symex::args::48
+(let econg_2881 (Equal econg_15 econg_2880))  ; =  ;; [ASSUME]
+(let econg_2882 (Leaf 2882))  ; symex::args::49
+(let econg_2883 (Equal econg_1942 econg_2882))  ; =  ;; [ASSUME]
+(let econg_2884 (Leaf 2884))  ; symex::args::50
+(let econg_2885 (Equal econg_1941 econg_2884))  ; =  ;; [ASSUME]
+(let econg_2886 (Leaf 2886))  ; symex::args::51
+(let econg_2887 (Equal econg_1974 econg_2886))  ; =  ;; [ASSUME]
+(let econg_2888 (Leaf 2888))  ; symex::args::52
+(let econg_2889 (Equal econg_2052 econg_2888))  ; =  ;; [ASSUME]
+(let econg_2890 (Leaf 2890))  ; symex::args::53
+(let econg_2891 (Equal econg_2051 econg_2890))  ; =  ;; [ASSUME]
+(let econg_2892 (Leaf 2892))  ; symex::args::54
+(let econg_2893 (Equal econg_2084 econg_2892))  ; =  ;; [ASSUME]
+(let econg_2894 (Leaf 2894))  ; symex::args::55
+(let econg_2895 (Equal econg_2162 econg_2894))  ; =  ;; [ASSUME]
+(let econg_2896 (Leaf 2896))  ; symex::args::56
+(let econg_2897 (Equal econg_2161 econg_2896))  ; =  ;; [ASSUME]
+(let econg_2898 (Leaf 2898))  ; symex::args::57
+(let econg_2899 (Equal econg_2194 econg_2898))  ; =  ;; [ASSUME]
+(let econg_2900 (Leaf 2900))  ; symex::args::58
+(let econg_2901 (Equal econg_2272 econg_2900))  ; =  ;; [ASSUME]
+(let econg_2902 (Leaf 2902))  ; symex::args::59
+(let econg_2903 (Equal econg_2271 econg_2902))  ; =  ;; [ASSUME]
+(let econg_2904 (Leaf 2904))  ; symex::args::60
+(let econg_2905 (Equal econg_2304 econg_2904))  ; =  ;; [ASSUME]
+(let econg_2906 (Leaf 2906))  ; symex::args::61
+(let econg_2907 (Equal econg_2382 econg_2906))  ; =  ;; [ASSUME]
+(let econg_2908 (Leaf 2908))  ; symex::args::62
+(let econg_2909 (Equal econg_2381 econg_2908))  ; =  ;; [ASSUME]
+(let econg_2910 (Leaf 2910))  ; symex::args::63
+(let econg_2911 (Equal econg_2414 econg_2910))  ; =  ;; [ASSUME]
+(let econg_2912 (Type 2912))
+(let econg_2913 (Leaf 2913))  ; object_size
+(let econg_2914 (Typecast econg_2912 econg_2913))  ; typecast
+(let econg_2915 (Const 32 2915))  ; const 20
+(let econg_2916 (Const 40 2916))  ; const 28
+(let econg_2917 (Const 48 2917))  ; const 30
+(let econg_2918 (Leaf 2918))  ; object_size
+(let econg_2919 (Typecast econg_2912 econg_2918))  ; typecast
+(let econg_2920 (Leaf 2920))  ; pointer_object
+(let econg_2921 (Null 2921))  ; const NULL
+(let econg_2922 (Leaf 2922))  ; pointer_object
+(let econg_2923 (Leaf 2923))  ; object_size
+(let econg_2924 (Typecast econg_2912 econg_2923))  ; typecast
+(let econg_2925 (Type 2925))
+(let econg_2926 (Typecast econg_2925 econg_0))  ; typecast
+(let econg_2927 (Const 32 2927))  ; const 20
+(let econg_2928 (Plus econg_2926 econg_2927))  ; +
+(let econg_2929 (Null 2929))  ; const NULL
+(let econg_2930 (Leaf 2930))  ; pointer_object
+(let econg_2931 (Leaf 2931))  ; pointer_object
+(let econg_2932 (Leaf 2932))  ; pointer_object
+(let econg_2933 (Leaf 2933))  ; pointer_object
+(let econg_2934 (Leaf 2934))  ; pointer_object
+(let econg_2935 (Leaf 2935))  ; object_size
+(let econg_2936 (Typecast econg_2912 econg_2935))  ; typecast
+(let econg_2937 (Leaf 2937))  ; if
+(let econg_2938 (Typecast econg_2912 econg_92))  ; typecast
+(let econg_2939 (Leaf 2939))  ; pointer_offset
+(let econg_2940 (Typecast econg_2912 econg_2939))  ; typecast
+(let econg_2941 (Leaf 2941))  ; object_size
+(let econg_2942 (Typecast econg_2912 econg_2941))  ; typecast
+(let econg_2943 (Leaf 2943))  ; object_size
+(let econg_2944 (Typecast econg_2912 econg_2943))  ; typecast
+(let econg_2945 (Const 8 2945))  ; const 8
+(let econg_2946 (Leaf 2946))  ; pointer_object
+(let econg_2947 (Null 2947))  ; const NULL
+(let econg_2948 (Leaf 2948))  ; pointer_object
+(let econg_2949 (Null 2949))  ; const NULL
+(let econg_2950 (Const 16 2950))  ; const 10
+(let econg_2951 (Const 8 2951))  ; const 8
+(let econg_2952 (Plus econg_2926 econg_2951))  ; +
+(let econg_2953 (Const 24 2953))  ; const 18
+(let econg_2954 (Const 16 2954))  ; const 10
+(let econg_2955 (Plus econg_2926 econg_2954))  ; +
+(let econg_2956 (Leaf 2956))  ; pointer_object
+(let econg_2957 (Leaf 2957))  ; pointer_object
+(let econg_2958 (Leaf 2958))  ; object_size
+(let econg_2959 (Typecast econg_2912 econg_2958))  ; typecast
+(let econg_2960 (Leaf 2960))  ; pointer_offset
+(let econg_2961 (Const 8 2961))  ; const 8
+(let econg_2962 (Plus econg_2960 econg_2961))  ; +
+(let econg_2963 (Typecast econg_2912 econg_2962))  ; typecast
+(let econg_2964 (Plus econg_2945 econg_2963))  ; +
+(let econg_2965 (Typecast econg_2925 econg_518))  ; typecast
+(let econg_2966 (Plus econg_2951 econg_2965))  ; +
+(let econg_2967 (Typecast econg_205 econg_574))  ; typecast
+(let econg_2968 (Leaf 2968))  ; pointer_object
+(let econg_2969 (Leaf 2969))  ; object_size
+(let econg_2970 (Typecast econg_2912 econg_2969))  ; typecast
+(let econg_2971 (Typecast econg_2925 econg_2))  ; typecast
+(let econg_2972 (Plus econg_2927 econg_2971))  ; +
+(let econg_2973 (Leaf 2973))  ; if
+(let econg_2974 (Leaf 2974))  ; object_size
+(let econg_2975 (Typecast econg_2912 econg_2974))  ; typecast
+(let econg_2976 (Plus econg_2951 econg_2971))  ; +
+(let econg_2977 (Plus econg_2954 econg_2971))  ; +
+(let econg_2978 (Leaf 2978))  ; pointer_object
+(let econg_2979 (Leaf 2979))  ; pointer_object
+(let econg_2980 (Leaf 2980))  ; pointer_object
+(let econg_2981 (Leaf 2981))  ; object_size
+(let econg_2982 (Typecast econg_2912 econg_2981))  ; typecast
+(let econg_2983 (Leaf 2983))  ; if
+(let econg_2984 (Plus econg_2961 econg_2983))  ; +
+(let econg_2985 (Typecast econg_2912 econg_2984))  ; typecast
+(let econg_2986 (Plus econg_2945 econg_2985))  ; +
+(let econg_2987 (Leaf 2987))  ; pointer_offset
+(let econg_2988 (Leaf 2988))  ; object_size
+(let econg_2989 (Typecast econg_2912 econg_2988))  ; typecast
+(let econg_2990 (Leaf 2990))  ; if
+(let econg_2991 (Plus econg_2951 econg_2990))  ; +
+(let econg_2992 (Typecast econg_2925 econg_3))  ; typecast
+(let econg_2993 (Typecast econg_2925 econg_566))  ; typecast
+(let econg_2994 (Typecast econg_205 econg_757))  ; typecast
+(let econg_2995 (Leaf 2995))  ; pointer_object
+(let econg_2996 (Leaf 2996))  ; object_size
+(let econg_2997 (Typecast econg_2912 econg_2996))  ; typecast
+(let econg_2998 (Typecast econg_2925 econg_5))  ; typecast
+(let econg_2999 (Plus econg_2927 econg_2998))  ; +
+(let econg_3000 (Leaf 3000))  ; if
+(let econg_3001 (Leaf 3001))  ; object_size
+(let econg_3002 (Typecast econg_2912 econg_3001))  ; typecast
+(let econg_3003 (Plus econg_2951 econg_2998))  ; +
+(let econg_3004 (Plus econg_2954 econg_2998))  ; +
+(let econg_3005 (Leaf 3005))  ; pointer_object
+(let econg_3006 (Leaf 3006))  ; pointer_object
+(let econg_3007 (Leaf 3007))  ; pointer_object
+(let econg_3008 (Leaf 3008))  ; object_size
+(let econg_3009 (Typecast econg_2912 econg_3008))  ; typecast
+(let econg_3010 (Leaf 3010))  ; if
+(let econg_3011 (Plus econg_2961 econg_3010))  ; +
+(let econg_3012 (Typecast econg_2912 econg_3011))  ; typecast
+(let econg_3013 (Plus econg_2945 econg_3012))  ; +
+(let econg_3014 (Leaf 3014))  ; pointer_offset
+(let econg_3015 (Leaf 3015))  ; object_size
+(let econg_3016 (Typecast econg_2912 econg_3015))  ; typecast
+(let econg_3017 (Leaf 3017))  ; if
+(let econg_3018 (Plus econg_2951 econg_3017))  ; +
+(let econg_3019 (Typecast econg_2925 econg_6))  ; typecast
+(let econg_3020 (Typecast econg_2925 econg_8))  ; typecast
+(let econg_3021 (Typecast econg_205 econg_952))  ; typecast
+(let econg_3022 (Leaf 3022))  ; pointer_object
+(let econg_3023 (Leaf 3023))  ; object_size
+(let econg_3024 (Typecast econg_2912 econg_3023))  ; typecast
+(let econg_3025 (Typecast econg_2925 econg_9))  ; typecast
+(let econg_3026 (Plus econg_2927 econg_3025))  ; +
+(let econg_3027 (Leaf 3027))  ; if
+(let econg_3028 (Leaf 3028))  ; object_size
+(let econg_3029 (Typecast econg_2912 econg_3028))  ; typecast
+(let econg_3030 (Plus econg_2951 econg_3025))  ; +
+(let econg_3031 (Plus econg_2954 econg_3025))  ; +
+(let econg_3032 (Leaf 3032))  ; pointer_object
+(let econg_3033 (Leaf 3033))  ; pointer_object
+(let econg_3034 (Leaf 3034))  ; pointer_object
+(let econg_3035 (Leaf 3035))  ; object_size
+(let econg_3036 (Typecast econg_2912 econg_3035))  ; typecast
+(let econg_3037 (Leaf 3037))  ; if
+(let econg_3038 (Plus econg_2961 econg_3037))  ; +
+(let econg_3039 (Typecast econg_2912 econg_3038))  ; typecast
+(let econg_3040 (Plus econg_2945 econg_3039))  ; +
+(let econg_3041 (Leaf 3041))  ; pointer_offset
+(let econg_3042 (Leaf 3042))  ; object_size
+(let econg_3043 (Typecast econg_2912 econg_3042))  ; typecast
+(let econg_3044 (Leaf 3044))  ; if
+(let econg_3045 (Plus econg_2951 econg_3044))  ; +
+(let econg_3046 (Typecast econg_2925 econg_10))  ; typecast
+(let econg_3047 (Typecast econg_2925 econg_12))  ; typecast
+(let econg_3048 (Typecast econg_205 econg_1162))  ; typecast
+(let econg_3049 (Leaf 3049))  ; pointer_object
+(let econg_3050 (Leaf 3050))  ; object_size
+(let econg_3051 (Typecast econg_2912 econg_3050))  ; typecast
+(let econg_3052 (Typecast econg_2925 econg_1164))  ; typecast
+(let econg_3053 (Plus econg_2951 econg_3052))  ; +
+(let econg_3054 (Leaf 3054))  ; pointer_object
+(let econg_3055 (Leaf 3055))  ; slist_get_first::list$object#0..head
+(let econg_3056 (Leaf 3056))  ; pointer_object
+(let econg_3057 (Null 3057))  ; const NULL
+(let econg_3058 (Leaf 3058))  ; pointer_object
+(let econg_3059 (Leaf 3059))  ; object_size
+(let econg_3060 (Typecast econg_2912 econg_3059))  ; typecast
+(let econg_3061 (Leaf 3061))  ; if
+(let econg_3062 (Plus econg_2945 econg_3061))  ; +
+(let econg_3063 (Leaf 3063))  ; pointer_offset
+(let econg_3064 (Typecast econg_2912 econg_3063))  ; typecast
+(let econg_3065 (Leaf 3065))  ; object_size
+(let econg_3066 (Typecast econg_2912 econg_3065))  ; typecast
+(let econg_3067 (Leaf 3067))  ; pointer_object
+(let econg_3068 (Leaf 3068))  ; object_size
+(let econg_3069 (Typecast econg_2912 econg_3068))  ; typecast
+(let econg_3070 (Typecast econg_2925 econg_1186))  ; typecast
+(let econg_3071 (Plus econg_2954 econg_3070))  ; +
+(let econg_3072 (Leaf 3072))  ; pointer_object
+(let econg_3073 (Leaf 3073))  ; slist_get_last::list$object#0..tail
+(let econg_3074 (Leaf 3074))  ; pointer_object
+(let econg_3075 (Leaf 3075))  ; object_size
+(let econg_3076 (Typecast econg_2912 econg_3075))  ; typecast
+(let econg_3077 (Leaf 3077))  ; if
+(let econg_3078 (Plus econg_2945 econg_3077))  ; +
+(let econg_3079 (Leaf 3079))  ; pointer_offset
+(let econg_3080 (Typecast econg_2912 econg_3079))  ; typecast
+(let econg_3081 (Leaf 3081))  ; object_size
+(let econg_3082 (Typecast econg_2912 econg_3081))  ; typecast
+(let econg_3083 (Leaf 3083))  ; pointer_object
+(let econg_3084 (Leaf 3084))  ; object_size
+(let econg_3085 (Typecast econg_2912 econg_3084))  ; typecast
+(let econg_3086 (Typecast econg_2925 econg_13))  ; typecast
+(let econg_3087 (Plus econg_2951 econg_3086))  ; +
+(let econg_3088 (Leaf 3088))  ; pointer_object
+(let econg_3089 (Leaf 3089))  ; object_size
+(let econg_3090 (Typecast econg_2912 econg_3089))  ; typecast
+(let econg_3091 (Leaf 3091))  ; pointer_offset
+(let econg_3092 (Plus econg_2961 econg_3091))  ; +
+(let econg_3093 (Typecast econg_2912 econg_3092))  ; typecast
+(let econg_3094 (Plus econg_2945 econg_3093))  ; +
+(let econg_3095 (Leaf 3095))  ; pointer_object
+(let econg_3096 (Null 3096))  ; const NULL
+(let econg_3097 (Const 40 3097))  ; const 28
+(let econg_3098 (Plus econg_3086 econg_3097))  ; +
+(let econg_3099 (Leaf 3099))  ; pointer_object
+(let econg_3100 (Leaf 3100))  ; pointer_object
+(let econg_3101 (Leaf 3101))  ; pointer_object
+(let econg_3102 (Leaf 3102))  ; object_size
+(let econg_3103 (Typecast econg_2912 econg_3102))  ; typecast
+(let econg_3104 (Leaf 3104))  ; if
+(let econg_3105 (Leaf 3105))  ; pointer_offset
+(let econg_3106 (Typecast econg_2912 econg_3105))  ; typecast
+(let econg_3107 (Leaf 3107))  ; object_size
+(let econg_3108 (Typecast econg_2912 econg_3107))  ; typecast
+(let econg_3109 (Typecast econg_2912 econg_3091))  ; typecast
+(let econg_3110 (Leaf 3110))  ; pointer_object
+(let econg_3111 (Leaf 3111))  ; pointer_object
+(let econg_3112 (Leaf 3112))  ; object_size
+(let econg_3113 (Typecast econg_2912 econg_3112))  ; typecast
+(let econg_3114 (Leaf 3114))  ; pointer_offset
+(let econg_3115 (Typecast econg_2912 econg_3114))  ; typecast
+(let econg_3116 (Leaf 3116))  ; pointer_object
+(let econg_3117 (Leaf 3117))  ; pointer_object
+(let econg_3118 (Leaf 3118))  ; object_size
+(let econg_3119 (Typecast econg_2912 econg_3118))  ; typecast
+(let econg_3120 (Leaf 3120))  ; pointer_offset
+(let econg_3121 (Typecast econg_2912 econg_3120))  ; typecast
+(let econg_3122 (Leaf 3122))  ; pointer_object
+(let econg_3123 (Leaf 3123))  ; pointer_object
+(let econg_3124 (Leaf 3124))  ; object_size
+(let econg_3125 (Typecast econg_2912 econg_3124))  ; typecast
+(let econg_3126 (Leaf 3126))  ; pointer_offset
+(let econg_3127 (Typecast econg_2912 econg_3126))  ; typecast
+(let econg_3128 (Leaf 3128))  ; pointer_object
+(let econg_3129 (Leaf 3129))  ; pointer_object
+(let econg_3130 (Leaf 3130))  ; pointer_object
+(let econg_3131 (Leaf 3131))  ; object_size
+(let econg_3132 (Typecast econg_2912 econg_3131))  ; typecast
+(let econg_3133 (Typecast econg_2925 econg_14))  ; typecast
+(let econg_3134 (Plus econg_2951 econg_3133))  ; +
+(let econg_3135 (Plus econg_2954 econg_3133))  ; +
+(let econg_3136 (Leaf 3136))  ; pointer_object
+(let econg_3137 (Leaf 3137))  ; object_size
+(let econg_3138 (Typecast econg_2912 econg_3137))  ; typecast
+(let econg_3139 (Typecast econg_2925 econg_1206))  ; typecast
+(let econg_3140 (Plus econg_3097 econg_3139))  ; +
+(let econg_3141 (Leaf 3141))  ; pointer_object
+(let econg_3142 (Leaf 3142))  ; object_size
+(let econg_3143 (Typecast econg_2912 econg_3142))  ; typecast
+(let econg_3144 (Leaf 3144))  ; if
+(let econg_3145 (Leaf 3145))  ; pointer_offset
+(let econg_3146 (Typecast econg_2912 econg_3145))  ; typecast
+(let econg_3147 (Leaf 3147))  ; pointer_offset
+(let econg_3148 (Typecast econg_2912 econg_3147))  ; typecast
+(let econg_3149 (Leaf 3149))  ; pointer_object
+(let econg_3150 (Leaf 3150))  ; pointer_object
+(let econg_3151 (Leaf 3151))  ; object_size
+(let econg_3152 (Typecast econg_2912 econg_3151))  ; typecast
+(let econg_3153 (Typecast econg_2925 econg_1918))  ; typecast
+(let econg_3154 (Plus econg_2951 econg_3153))  ; +
+(let econg_3155 (Leaf 3155))  ; pointer_object
+(let econg_3156 (Leaf 3156))  ; object_size
+(let econg_3157 (Typecast econg_2912 econg_3156))  ; typecast
+(let econg_3158 (Leaf 3158))  ; pointer_offset
+(let econg_3159 (Plus econg_2961 econg_3158))  ; +
+(let econg_3160 (Typecast econg_2912 econg_3159))  ; typecast
+(let econg_3161 (Plus econg_2945 econg_3160))  ; +
+(let econg_3162 (Plus econg_3097 econg_3153))  ; +
+(let econg_3163 (Typecast econg_2912 econg_3158))  ; typecast
+(let econg_3164 (Leaf 3164))  ; pointer_object
+(let econg_3165 (Leaf 3165))  ; pointer_object
+(let econg_3166 (Leaf 3166))  ; object_size
+(let econg_3167 (Typecast econg_2912 econg_3166))  ; typecast
+(let econg_3168 (Leaf 3168))  ; pointer_offset
+(let econg_3169 (Plus econg_2961 econg_3168))  ; +
+(let econg_3170 (Typecast econg_2912 econg_3169))  ; typecast
+(let econg_3171 (Plus econg_2945 econg_3170))  ; +
+(let econg_3172 (Leaf 3172))  ; pointer_object
+(let econg_3173 (Typecast econg_2912 econg_3168))  ; typecast
+(let econg_3174 (Leaf 3174))  ; pointer_object
+(let econg_3175 (Leaf 3175))  ; pointer_object
+(let econg_3176 (Leaf 3176))  ; object_size
+(let econg_3177 (Typecast econg_2912 econg_3176))  ; typecast
+(let econg_3178 (Leaf 3178))  ; pointer_offset
+(let econg_3179 (Plus econg_2961 econg_3178))  ; +
+(let econg_3180 (Typecast econg_2912 econg_3179))  ; typecast
+(let econg_3181 (Plus econg_2945 econg_3180))  ; +
+(let econg_3182 (Leaf 3182))  ; pointer_object
+(let econg_3183 (Typecast econg_2912 econg_3178))  ; typecast
+(let econg_3184 (Leaf 3184))  ; pointer_object
+(let econg_3185 (Leaf 3185))  ; pointer_object
+(let econg_3186 (Leaf 3186))  ; object_size
+(let econg_3187 (Typecast econg_2912 econg_3186))  ; typecast
+(let econg_3188 (Leaf 3188))  ; pointer_offset
+(let econg_3189 (Plus econg_2961 econg_3188))  ; +
+(let econg_3190 (Typecast econg_2912 econg_3189))  ; typecast
+(let econg_3191 (Plus econg_2945 econg_3190))  ; +
+(let econg_3192 (Leaf 3192))  ; pointer_object
+(let econg_3193 (Typecast econg_2912 econg_3188))  ; typecast
+(let econg_3194 (Leaf 3194))  ; pointer_object
+(let econg_3195 (Leaf 3195))  ; pointer_object
+(let econg_3196 (Leaf 3196))  ; object_size
+(let econg_3197 (Typecast econg_2912 econg_3196))  ; typecast
+(let econg_3198 (Leaf 3198))  ; pointer_offset
+(let econg_3199 (Plus econg_2961 econg_3198))  ; +
+(let econg_3200 (Typecast econg_2912 econg_3199))  ; typecast
+(let econg_3201 (Plus econg_2945 econg_3200))  ; +
+(let econg_3202 (Leaf 3202))  ; pointer_object
+(let econg_3203 (Typecast econg_2912 econg_3198))  ; typecast
+(let econg_3204 (Leaf 3204))  ; pointer_object
+(let econg_3205 (Leaf 3205))  ; pointer_object
+(let econg_3206 (Leaf 3206))  ; pointer_object
+(let econg_3207 (Leaf 3207))  ; object_size
+(let econg_3208 (Typecast econg_2912 econg_3207))  ; typecast
+(let econg_3209 (Typecast econg_2925 econg_15))  ; typecast
+(let econg_3210 (Plus econg_2951 econg_3209))  ; +
+(let econg_3211 (Plus econg_2954 econg_3209))  ; +
+(let econg_3212 (Leaf 3212))  ; pointer_object
+(let econg_3213 (Leaf 3213))  ; object_size
+(let econg_3214 (Typecast econg_2912 econg_3213))  ; typecast
+(let econg_3215 (Typecast econg_2925 econg_1915))  ; typecast
+(let econg_3216 (Plus econg_3097 econg_3215))  ; +
+(let econg_3217 (Leaf 3217))  ; pointer_object
+(let econg_3218 (Leaf 3218))  ; if
+(let econg_3219 (Leaf 3219))  ; object_size
+(let econg_3220 (Typecast econg_2912 econg_3219))  ; typecast
+(let econg_3221 (Leaf 3221))  ; pointer_offset
+(let econg_3222 (Typecast econg_2912 econg_3221))  ; typecast
+(let econg_3223 (Typecast econg_88 econg_1915))  ; typecast
+(let econg_3224 (Leaf 3224))  ; or  ;; [ASSUME]
+(let econg_3225 (Leaf 3225))  ; or  ;; [ASSUME]
+(union econg_204 econg_206)
+(union econg_349 econg_350)
+(union econg_352 econg_354)
+(union econg_352 econg_360)
+(union econg_364 econg_365)
+(union econg_367 econg_368)
+(union econg_367 econg_373)
+(union econg_377 econg_378)
+(union econg_380 econg_381)
+(union econg_380 econg_386)
+(union econg_390 econg_391)
+(union econg_393 econg_394)
+(union econg_393 econg_399)
+(union econg_541 econg_564)
+(union econg_1273 econg_1274)
+(union econg_1273 econg_1285)
+(union econg_1273 econg_1318)
+(union econg_1273 econg_1330)
+(union econg_1377 econg_1378)
+(union econg_1377 econg_1388)
+(union econg_1377 econg_1421)
+(union econg_1377 econg_1433)
+(union econg_1478 econg_1479)
+(union econg_1478 econg_1489)
+(union econg_1478 econg_1522)
+(union econg_1478 econg_1534)
+(union econg_1578 econg_1579)
+(union econg_1578 econg_1589)
+(union econg_1578 econg_1622)
+(union econg_1578 econg_1634)
+(union econg_1578 econg_1666)
+(union econg_1478 econg_1688)
+(union econg_1578 econg_1690)
+(union econg_1377 econg_1714)
+(union econg_1478 econg_1716)
+(union econg_1578 econg_1718)
+(union econg_1273 econg_1741)
+(union econg_1377 econg_1743)
+(union econg_1478 econg_1745)
+(union econg_1578 econg_1747)
+(union econg_1705 econg_1749)
+(union econg_1273 econg_1776)
+(union econg_1377 econg_1778)
+(union econg_1478 econg_1780)
+(union econg_1578 econg_1782)
+(union econg_1705 econg_1784)
+(union econg_1762 econg_1786)
+(union econg_1762 econg_1788)
+(union econg_1857 econg_1858)
+(union econg_1857 econg_1868)
+(union econg_1857 econg_1901)
+(union econg_1857 econg_1913)
+(union econg_1974 econg_1975)
+(union econg_1974 econg_1985)
+(union econg_1974 econg_2018)
+(union econg_1974 econg_2033)
+(union econg_2037 econg_2038)
+(union econg_2084 econg_2085)
+(union econg_2084 econg_2095)
+(union econg_2084 econg_2128)
+(union econg_2084 econg_2143)
+(union econg_2147 econg_2148)
+(union econg_2194 econg_2195)
+(union econg_2194 econg_2205)
+(union econg_2194 econg_2238)
+(union econg_2194 econg_2253)
+(union econg_2257 econg_2258)
+(union econg_2304 econg_2305)
+(union econg_2304 econg_2315)
+(union econg_2304 econg_2348)
+(union econg_2304 econg_2363)
+(union econg_2367 econg_2368)
+(union econg_2414 econg_2415)
+(union econg_2414 econg_2425)
+(union econg_2414 econg_2458)
+(union econg_2414 econg_2473)
+(union econg_2477 econg_2478)
+(union econg_2304 econg_2498)
+(union econg_2194 econg_2520)
+(union econg_2304 econg_2522)
+(union econg_2084 econg_2546)
+(union econg_2194 econg_2548)
+(union econg_2304 econg_2550)
+(union econg_1974 econg_2573)
+(union econg_2084 econg_2575)
+(union econg_2194 econg_2577)
+(union econg_2304 econg_2579)
+(union econg_1974 econg_2607)
+(union econg_2084 econg_2609)
+(union econg_2194 econg_2611)
+(union econg_2304 econg_2613)
+(union econg_2593 econg_2617)
+(union econg_2593 econg_2619)

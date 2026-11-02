@@ -890,6 +890,29 @@ fn book_examples() {
     }
 }
 
+/// The CBMC e-graph corpus (`tests/egg/cbmc/`, see its README): 214 programs converted
+/// from CBMC's e-graph dumps, each a `base` or `cong` e-graph built from `let` and `union`.
+/// Every one must load, sortcheck and rebuild. The directory is walked, as for the book
+/// examples, so a regenerated corpus cannot leave a program unregistered.
+#[test]
+fn cbmc_corpus() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/egg/cbmc");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {dir}: {e}"))
+        .map(|entry| entry.expect("directory entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "egg"))
+        .collect();
+    files.sort();
+    assert_eq!(
+        files.len(),
+        214,
+        "{dir}: expected 214 programs (107 dumps, base and cong)"
+    );
+    for path in &files {
+        check(path.to_str().expect("utf-8 path"));
+    }
+}
+
 // ── Cross-engine benchmark corpus (`tests/egg/bench/`) ──
 //
 // The same programs `scripts/egglog-compare/compare.py` times against egglog and

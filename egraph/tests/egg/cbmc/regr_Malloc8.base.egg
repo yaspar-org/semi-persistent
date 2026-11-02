@@ -1,0 +1,162 @@
+;; Converted from the CBMC e-graph dump regr_Malloc8.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Leaf 0))  ; main::1::ptr_ptr_p1!0@1#2
+(let ebase_1 (Leaf 1))  ; address_of
+(let ebase_2 (Leaf 2))  ; main::1::ptr_p!0@1#2
+(let ebase_3 (Leaf 3))  ; address_of
+(let ebase_4 (Leaf 4))  ; symex_dynamic::dynamic_object#3
+(let ebase_5 (Leaf 5))  ; main::1::ptr_ptr_p1$object#1
+(let ebase_6 (Null 6))  ; const NULL
+(let ebase_7 (Const 36028797018963968 7))  ; const 80000000000000
+(let ebase_8 (Const 0 8))  ; const 0
+(let ebase_9 (Const 8 9))  ; const 8
+(let ebase_10 (Leaf 10))  ; nondet_symbol
+(let ebase_11 (Type 11))
+(let ebase_12 (Typecast ebase_11 ebase_1))  ; typecast
+(let ebase_13 (Leaf 13))  ; if
+(let ebase_14 (Leaf 14))  ; if
+(let ebase_15 (Leaf 15))  ; __CPROVER_memory_leak#2
+(let ebase_16 (Leaf 16))  ; if
+(let ebase_17 (Leaf 17))  ; symex_dynamic::dynamic_object#1
+(let ebase_18 (Leaf 18))  ; goto_symex::return_value::malloc!0#3
+(let ebase_19 (Type 19))
+(let ebase_20 (Leaf 20))  ; main::$tmp::return_value_malloc!0@1#2
+(let ebase_21 (Typecast ebase_19 ebase_20))  ; typecast
+(let ebase_22 (Leaf 22))  ; nondet_symbol
+(let ebase_23 (Leaf 23))  ; member
+(let ebase_24 (Typecast ebase_11 ebase_3))  ; typecast
+(let ebase_25 (Leaf 25))  ; if
+(let ebase_26 (Leaf 26))  ; __CPROVER_memory_leak#3
+(let ebase_27 (Leaf 27))  ; if
+(let ebase_28 (Leaf 28))  ; __CPROVER_memory_leak#4
+(let ebase_29 (Leaf 29))  ; if
+(let ebase_30 (Leaf 30))  ; symex_dynamic::dynamic_object$0#1..name
+(let ebase_31 (Leaf 31))  ; goto_symex::return_value::malloc!0#6
+(let ebase_32 (Leaf 32))  ; if
+(let ebase_33 (Type 33))
+(let ebase_34 (Leaf 34))  ; main::$tmp::return_value_malloc$0!0@1#2
+(let ebase_35 (Typecast ebase_33 ebase_34))  ; typecast
+(let ebase_36 (Leaf 36))  ; symex_dynamic::dynamic_object#2
+(let ebase_37 (Leaf 37))  ; if
+(let ebase_38 (Leaf 38))  ; main::1::ptr_ptr_p1$object#0
+(let ebase_39 (Leaf 39))  ; if
+(let ebase_40 (Leaf 40))  ; if
+(let ebase_41 (Leaf 41))  ; address_of
+(let ebase_42 (Const 1 42))  ; const 1
+(let ebase_43 (Type 43))
+(let ebase_44 (Const 0 44))  ; const 0
+(let ebase_45 (Typecast ebase_43 ebase_44))  ; typecast
+(let ebase_46 (Leaf 46))  ; symex_dynamic::dynamic_object$0#2..name
+(let ebase_47 (Leaf 47))  ; if
+(let ebase_48 (Leaf 48))  ; main::1::ptr_p$object#0..name
+(let ebase_49 (Leaf 49))  ; address_of
+(let ebase_50 (Leaf 50))  ; if
+(let ebase_51 (Leaf 51))  ; symex_dynamic::dynamic_object$0#3..name
+(let ebase_52 (Leaf 52))  ; main::1::ptr_p$object#1..name
+(let ebase_53 (Leaf 53))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@1#2
+(let ebase_54 (Leaf 54))  ; nondet_symbol
+(let ebase_55 (Leaf 55))  ; printf::1::result!0@1#2
+(let ebase_56 (Leaf 56))  ; array
+(let ebase_57 (Leaf 57))  ; address_of
+(let ebase_58 (Typecast ebase_11 ebase_57))  ; typecast
+(let ebase_59 (Leaf 59))  ; address_of
+(let ebase_60 (Null 60))  ; const NULL
+(let ebase_61 (Leaf 61))  ; if
+(let ebase_62 (Leaf 62))  ; if
+(let ebase_63 (Leaf 63))  ; symex::invalid_object!0#0..name
+(let ebase_64 (Leaf 64))  ; if
+(let ebase_65 (Leaf 65))  ; symex_dynamic::dynamic_object$0#4..name
+(let ebase_66 (Leaf 66))  ; if
+(let ebase_67 (Leaf 67))  ; main::1::ptr_ptr_p1$object$object#0..name
+(let ebase_68 (Leaf 68))  ; if
+(let ebase_69 (Leaf 69))  ; if
+(let ebase_70 (Leaf 70))  ; symex_dynamic::dynamic_object$0#5..name
+(let ebase_71 (Leaf 71))  ; symex::invalid_object$0!0#0..name
+(let ebase_72 (Leaf 72))  ; if
+(let ebase_73 (Leaf 73))  ; main::1::ptr_ptr_p1$object$object#1..name
+(let ebase_74 (Leaf 74))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@2#2
+(let ebase_75 (Leaf 75))  ; nondet_symbol
+(let ebase_76 (Leaf 76))  ; printf::1::result!0@2#2
+(let ebase_77 (Leaf 77))  ; array
+(let ebase_78 (Leaf 78))  ; address_of
+(let ebase_79 (Typecast ebase_11 ebase_78))  ; typecast
+(let ebase_80 (Leaf 80))  ; address_of
+(let ebase_81 (Leaf 81))  ; address_of
+(let ebase_82 (Leaf 82))  ; main::1::ptr_ptr_p1!0@1#1
+(let ebase_83 (Leaf 83))  ; main::$tmp::return_value_malloc!0@1#1
+(let ebase_84 (Leaf 84))  ; malloc::1::malloc_res!0@1#1
+(let ebase_85 (Leaf 85))  ; malloc::$tmp::malloc_value!0@1#1
+(let ebase_86 (Leaf 86))  ; main::$tmp::return_value_malloc$0!0@1#1
+(let ebase_87 (Leaf 87))  ; malloc::1::malloc_res!0@2#1
+(let ebase_88 (Leaf 88))  ; malloc::$tmp::malloc_value!0@2#1
+(let ebase_89 (Leaf 89))  ; main::1::ptr_p!0@1#1
+(let ebase_90 (Leaf 90))  ; printf::1::result!0@1#1
+(let ebase_91 (Leaf 91))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@1#1
+(let ebase_92 (Leaf 92))  ; printf::1::list!0@1#1
+(let ebase_93 (Leaf 93))  ; printf::1::result!0@2#1
+(let ebase_94 (Leaf 94))  ; printf::$tmp::return_value___VERIFIER_nondet_int!0@2#1
+(let ebase_95 (Leaf 95))  ; printf::1::list!0@2#1
+(let ebase_96 (Leaf 96))  ; main::1::ptr_ptr_p2!0@1#1
+(let ebase_97 (Leaf 97))  ; symex::args::0
+(let ebase_98 (Leaf 98))  ; symex::args::1
+(let ebase_99 (Leaf 99))  ; symex::args::2
+(let ebase_100 (Leaf 100))  ; symex::args::3
+(let ebase_101 (Leaf 101))  ; symex::io::0
+(let ebase_102 (Leaf 102))  ; symex::io::1
+(let ebase_103 (Leaf 103))  ; pointer_object
+(let ebase_104 (Null 104))  ; const NULL
+(let ebase_105 (Leaf 105))  ; pointer_object
+(let ebase_106 (Type 106))
+(let ebase_107 (Leaf 107))  ; object_size
+(let ebase_108 (Typecast ebase_106 ebase_107))  ; typecast
+(let ebase_109 (Const 8 109))  ; const 8
+(let ebase_110 (Leaf 110))  ; pointer_object
+(let ebase_111 (Null 111))  ; const NULL
+(let ebase_112 (Leaf 112))  ; pointer_object
+(let ebase_113 (Leaf 113))  ; pointer_object
+(let ebase_114 (Leaf 114))  ; object_size
+(let ebase_115 (Typecast ebase_106 ebase_114))  ; typecast
+(let ebase_116 (Leaf 116))  ; pointer_offset
+(let ebase_117 (Typecast ebase_106 ebase_116))  ; typecast
+(let ebase_118 (Plus ebase_109 ebase_117))  ; +
+(let ebase_119 (Null 119))  ; const NULL
+(let ebase_120 (Leaf 120))  ; pointer_object
+(let ebase_121 (Leaf 121))  ; pointer_object
+(let ebase_122 (Leaf 122))  ; object_size
+(let ebase_123 (Typecast ebase_106 ebase_122))  ; typecast
+(let ebase_124 (Leaf 124))  ; if
+(let ebase_125 (Plus ebase_109 ebase_124))  ; +
+(let ebase_126 (Const 0 126))  ; const 0
+(let ebase_127 (Leaf 127))  ; pointer_offset
+(let ebase_128 (Typecast ebase_106 ebase_127))  ; typecast
+(let ebase_129 (Leaf 129))  ; object_size
+(let ebase_130 (Typecast ebase_106 ebase_129))  ; typecast
+(let ebase_131 (Leaf 131))  ; pointer_object
+(let ebase_132 (Leaf 132))  ; object_size
+(let ebase_133 (Typecast ebase_106 ebase_132))  ; typecast
+(let ebase_134 (Leaf 134))  ; pointer_offset
+(let ebase_135 (Typecast ebase_106 ebase_134))  ; typecast
+(let ebase_136 (Plus ebase_109 ebase_135))  ; +
+(let ebase_137 (Leaf 137))  ; pointer_object
+(let ebase_138 (Leaf 138))  ; main::1::ptr_ptr_p2$object#0
+(let ebase_139 (Leaf 139))  ; object_size
+(let ebase_140 (Typecast ebase_106 ebase_139))  ; typecast
+(let ebase_141 (Leaf 141))  ; pointer_offset
+(let ebase_142 (Typecast ebase_106 ebase_141))  ; typecast
+(let ebase_143 (Plus ebase_109 ebase_142))  ; +

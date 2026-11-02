@@ -1,0 +1,182 @@
+;; Converted from the CBMC e-graph dump svcomp_bv_gcd_1.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Leaf 3))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let ebase_4 (Leaf 4))  ; nondet_symbol
+(let ebase_5 (Leaf 5))  ; main::1::x!0@1#2
+(let ebase_6 (Leaf 6))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#2
+(let ebase_7 (Leaf 7))  ; nondet_symbol
+(let ebase_8 (Leaf 8))  ; main::1::y!0@1#2
+(let ebase_9 (Type 9))
+(let ebase_10 (Typecast ebase_9 ebase_8))  ; typecast
+(let ebase_11 (Const 1 11))  ; const 1
+(let ebase_12 (Leaf 12))  ; mod
+(let ebase_13 (Typecast ebase_9 ebase_5))  ; typecast
+(let ebase_14 (Leaf 14))  ; gcd_test::a!0@1#1
+(let ebase_15 (Leaf 15))  ; gcd_test::b!0@1#1
+(let ebase_16 (Typecast ebase_9 ebase_14))  ; typecast
+(let ebase_17 (Leaf 17))  ; gcd_test::a!0@1#2
+(let ebase_18 (Neg ebase_14))  ; unary-
+(let ebase_19 (Leaf 19))  ; if
+(let ebase_20 (Typecast ebase_9 ebase_15))  ; typecast
+(let ebase_21 (Leaf 21))  ; gcd_test::b!0@1#2
+(let ebase_22 (Neg ebase_15))  ; unary-
+(let ebase_23 (Leaf 23))  ; if
+(let ebase_24 (Leaf 24))  ; gcd_test::b!0@1#3
+(let ebase_25 (Typecast ebase_9 ebase_24))  ; typecast
+(let ebase_26 (Leaf 26))  ; gcd_test::1::t!0@1#2
+(let ebase_27 (Leaf 27))  ; gcd_test::b!0@1#4
+(let ebase_28 (Type 28))
+(let ebase_29 (Leaf 29))  ; mod
+(let ebase_30 (Typecast ebase_28 ebase_29))  ; typecast
+(let ebase_31 (Leaf 31))  ; gcd_test::a!0@1#3
+(let ebase_32 (Typecast ebase_9 ebase_31))  ; typecast
+(let ebase_33 (Leaf 33))  ; gcd_test::a!0@1#4
+(let ebase_34 (Typecast ebase_9 ebase_27))  ; typecast
+(let ebase_35 (Leaf 35))  ; gcd_test::1::t!0@1#3
+(let ebase_36 (Leaf 36))  ; gcd_test::b!0@1#5
+(let ebase_37 (Leaf 37))  ; mod
+(let ebase_38 (Typecast ebase_28 ebase_37))  ; typecast
+(let ebase_39 (Typecast ebase_9 ebase_33))  ; typecast
+(let ebase_40 (Leaf 40))  ; gcd_test::a!0@1#5
+(let ebase_41 (Typecast ebase_9 ebase_36))  ; typecast
+(let ebase_42 (Leaf 42))  ; gcd_test::1::t!0@1#4
+(let ebase_43 (Leaf 43))  ; gcd_test::b!0@1#6
+(let ebase_44 (Leaf 44))  ; mod
+(let ebase_45 (Typecast ebase_28 ebase_44))  ; typecast
+(let ebase_46 (Typecast ebase_9 ebase_40))  ; typecast
+(let ebase_47 (Leaf 47))  ; gcd_test::a!0@1#6
+(let ebase_48 (Typecast ebase_9 ebase_43))  ; typecast
+(let ebase_49 (Leaf 49))  ; gcd_test::1::t!0@1#5
+(let ebase_50 (Leaf 50))  ; gcd_test::b!0@1#7
+(let ebase_51 (Leaf 51))  ; mod
+(let ebase_52 (Typecast ebase_28 ebase_51))  ; typecast
+(let ebase_53 (Typecast ebase_9 ebase_47))  ; typecast
+(let ebase_54 (Leaf 54))  ; gcd_test::a!0@1#7
+(let ebase_55 (Typecast ebase_9 ebase_50))  ; typecast
+(let ebase_56 (Leaf 56))  ; gcd_test::1::t!0@1#6
+(let ebase_57 (Leaf 57))  ; gcd_test::b!0@1#8
+(let ebase_58 (Leaf 58))  ; mod
+(let ebase_59 (Typecast ebase_28 ebase_58))  ; typecast
+(let ebase_60 (Typecast ebase_9 ebase_54))  ; typecast
+(let ebase_61 (Leaf 61))  ; gcd_test::a!0@1#8
+(let ebase_62 (Typecast ebase_9 ebase_57))  ; typecast
+(let ebase_63 (Leaf 63))  ; gcd_test::1::t!0@1#7
+(let ebase_64 (Leaf 64))  ; gcd_test::b!0@1#9
+(let ebase_65 (Leaf 65))  ; mod
+(let ebase_66 (Typecast ebase_28 ebase_65))  ; typecast
+(let ebase_67 (Typecast ebase_9 ebase_61))  ; typecast
+(let ebase_68 (Leaf 68))  ; gcd_test::a!0@1#9
+(let ebase_69 (Typecast ebase_9 ebase_64))  ; typecast
+(let ebase_70 (Leaf 70))  ; gcd_test::1::t!0@1#8
+(let ebase_71 (Leaf 71))  ; gcd_test::b!0@1#10
+(let ebase_72 (Leaf 72))  ; mod
+(let ebase_73 (Typecast ebase_28 ebase_72))  ; typecast
+(let ebase_74 (Typecast ebase_9 ebase_68))  ; typecast
+(let ebase_75 (Leaf 75))  ; gcd_test::a!0@1#10
+(let ebase_76 (Typecast ebase_9 ebase_71))  ; typecast
+(let ebase_77 (Leaf 77))  ; gcd_test::1::t!0@1#9
+(let ebase_78 (Leaf 78))  ; gcd_test::b!0@1#11
+(let ebase_79 (Leaf 79))  ; mod
+(let ebase_80 (Typecast ebase_28 ebase_79))  ; typecast
+(let ebase_81 (Typecast ebase_9 ebase_75))  ; typecast
+(let ebase_82 (Leaf 82))  ; gcd_test::a!0@1#11
+(let ebase_83 (Typecast ebase_9 ebase_78))  ; typecast
+(let ebase_84 (Leaf 84))  ; gcd_test::1::t!0@1#10
+(let ebase_85 (Leaf 85))  ; gcd_test::b!0@1#12
+(let ebase_86 (Leaf 86))  ; mod
+(let ebase_87 (Typecast ebase_28 ebase_86))  ; typecast
+(let ebase_88 (Typecast ebase_9 ebase_82))  ; typecast
+(let ebase_89 (Leaf 89))  ; gcd_test::a!0@1#12
+(let ebase_90 (Typecast ebase_9 ebase_85))  ; typecast
+(let ebase_91 (Leaf 91))  ; gcd_test::1::t!0@1#11
+(let ebase_92 (Leaf 92))  ; gcd_test::b!0@1#13
+(let ebase_93 (Leaf 93))  ; mod
+(let ebase_94 (Typecast ebase_28 ebase_93))  ; typecast
+(let ebase_95 (Typecast ebase_9 ebase_89))  ; typecast
+(let ebase_96 (Leaf 96))  ; gcd_test::a!0@1#13
+(let ebase_97 (Leaf 97))  ; if
+(let ebase_98 (Leaf 98))  ; if
+(let ebase_99 (Leaf 99))  ; if
+(let ebase_100 (Leaf 100))  ; if
+(let ebase_101 (Leaf 101))  ; gcd_test::1::t!0@1#12
+(let ebase_102 (Leaf 102))  ; if
+(let ebase_103 (Leaf 103))  ; gcd_test::a!0@1#14
+(let ebase_104 (Leaf 104))  ; if
+(let ebase_105 (Leaf 105))  ; gcd_test::b!0@1#14
+(let ebase_106 (Leaf 106))  ; if
+(let ebase_107 (Leaf 107))  ; gcd_test::1::t!0@1#13
+(let ebase_108 (Leaf 108))  ; if
+(let ebase_109 (Leaf 109))  ; gcd_test::a!0@1#15
+(let ebase_110 (Leaf 110))  ; if
+(let ebase_111 (Leaf 111))  ; gcd_test::b!0@1#15
+(let ebase_112 (Leaf 112))  ; if
+(let ebase_113 (Leaf 113))  ; gcd_test::1::t!0@1#14
+(let ebase_114 (Leaf 114))  ; if
+(let ebase_115 (Leaf 115))  ; gcd_test::a!0@1#16
+(let ebase_116 (Leaf 116))  ; if
+(let ebase_117 (Leaf 117))  ; gcd_test::b!0@1#16
+(let ebase_118 (Leaf 118))  ; if
+(let ebase_119 (Leaf 119))  ; gcd_test::1::t!0@1#15
+(let ebase_120 (Leaf 120))  ; if
+(let ebase_121 (Leaf 121))  ; gcd_test::a!0@1#17
+(let ebase_122 (Leaf 122))  ; if
+(let ebase_123 (Leaf 123))  ; gcd_test::b!0@1#17
+(let ebase_124 (Leaf 124))  ; if
+(let ebase_125 (Leaf 125))  ; gcd_test::1::t!0@1#16
+(let ebase_126 (Leaf 126))  ; if
+(let ebase_127 (Leaf 127))  ; gcd_test::a!0@1#18
+(let ebase_128 (Leaf 128))  ; if
+(let ebase_129 (Leaf 129))  ; gcd_test::b!0@1#18
+(let ebase_130 (Leaf 130))  ; if
+(let ebase_131 (Leaf 131))  ; gcd_test::1::t!0@1#17
+(let ebase_132 (Leaf 132))  ; if
+(let ebase_133 (Leaf 133))  ; gcd_test::a!0@1#19
+(let ebase_134 (Leaf 134))  ; if
+(let ebase_135 (Leaf 135))  ; gcd_test::b!0@1#19
+(let ebase_136 (Leaf 136))  ; if
+(let ebase_137 (Leaf 137))  ; gcd_test::1::t!0@1#18
+(let ebase_138 (Leaf 138))  ; if
+(let ebase_139 (Leaf 139))  ; gcd_test::a!0@1#20
+(let ebase_140 (Leaf 140))  ; if
+(let ebase_141 (Leaf 141))  ; gcd_test::b!0@1#20
+(let ebase_142 (Leaf 142))  ; if
+(let ebase_143 (Leaf 143))  ; gcd_test::1::t!0@1#1
+(let ebase_144 (Leaf 144))  ; gcd_test::1::t!0@1#19
+(let ebase_145 (Leaf 145))  ; if
+(let ebase_146 (Leaf 146))  ; gcd_test::a!0@1#21
+(let ebase_147 (Leaf 147))  ; if
+(let ebase_148 (Leaf 148))  ; gcd_test::b!0@1#21
+(let ebase_149 (Leaf 149))  ; goto_symex::return_value::gcd_test!0#1
+(let ebase_150 (Leaf 150))  ; gcd_test::a!0@1#22
+(let ebase_151 (Leaf 151))  ; main::1::g!0@1#2
+(let ebase_152 (Leaf 152))  ; if
+(let ebase_153 (Leaf 153))  ; __VERIFIER_assert::cond!0@1#1
+(let ebase_154 (Leaf 154))  ; main::1::x!0@1#1
+(let ebase_155 (Leaf 155))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#1
+(let ebase_156 (Leaf 156))  ; main::1::y!0@1#1
+(let ebase_157 (Leaf 157))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#1
+(let ebase_158 (Leaf 158))  ; main::1::g!0@1#1
+(let ebase_159 (Leaf 159))  ; symex::args::0
+(let ebase_160 (Leaf 160))  ; symex::args::1
+(let ebase_161 (Leaf 161))  ; symex::args::2
+(let ebase_162 (Const 2147483648 162))  ; const 80000000
+(let ebase_163 (Const 4294967295 163))  ; const FFFFFFFF

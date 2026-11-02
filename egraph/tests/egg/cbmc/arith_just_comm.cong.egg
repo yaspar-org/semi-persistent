@@ -1,0 +1,50 @@
+;; Converted from the CBMC e-graph dump arith_just_comm.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Leaf 1))  ; __CPROVER_deallocated#1
+(let econg_2 (Equal econg_0 econg_1))  ; =  ;; [ASSUME]
+(let econg_3 (Leaf 3))  ; __CPROVER_max_malloc_size!0#1
+(let econg_4 (Const 36028797018963968 4))  ; const 80000000000000
+(let econg_5 (Equal econg_3 econg_4))  ; =  ;; [ASSUME]
+(let econg_6 (Leaf 6))  ; __CPROVER_memory_leak#1
+(let econg_7 (Equal econg_0 econg_6))  ; =  ;; [ASSUME]
+(let econg_8 (Leaf 8))  ; __CPROVER_rounding_mode!0#1
+(let econg_9 (Const 0 9))  ; const 0
+(let econg_10 (Equal econg_8 econg_9))  ; =  ;; [ASSUME]
+(let econg_11 (Leaf 11))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let econg_12 (Leaf 12))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let econg_13 (Equal econg_11 econg_12))  ; =  ;; [ASSUME]
+(let econg_14 (Leaf 14))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let econg_15 (Equal econg_11 econg_14))  ; =  ;; [ASSUME]
+(let econg_16 (Leaf 16))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let econg_17 (Leaf 17))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let econg_18 (Equal econg_16 econg_17))  ; =  ;; [ASSUME]
+(let econg_19 (Leaf 19))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let econg_20 (Equal econg_16 econg_19))  ; =  ;; [ASSUME]
+(let econg_21 (Leaf 21))  ; main::1::a!0@1#1
+(let econg_22 (Leaf 22))  ; main::$tmp::return_value_nondet_u32!0@1#1
+(let econg_23 (Leaf 23))  ; main::1::b!0@1#1
+(let econg_24 (Leaf 24))  ; main::$tmp::return_value_nondet_u32$0!0@1#1
+(let econg_25 (Mult econg_11 econg_16))  ; *
+(let econg_26 (Equal econg_25 econg_25))  ; =  ;; [ASSERT]
+(let econg_27 (Leaf 27))  ; const true  ;; [ASSUME]
+(union econg_11 econg_12)
+(union econg_11 econg_14)
+(union econg_16 econg_17)
+(union econg_16 econg_19)
