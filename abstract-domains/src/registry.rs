@@ -13,7 +13,7 @@ use crate::facts_z::FactsZ;
 use crate::ibig::IBig;
 use crate::interval::Interval;
 use crate::interval_z::{Hi, IntervalZ, Lo};
-use crate::lattice::Domain;
+use crate::lattice::{BotOr, Domain};
 
 /// Native bit-vector widths supported by `Word`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -173,6 +173,22 @@ pub enum Value {
     Bv128(Facts<u128>),
     /// The unique value for a top-only carrier.
     Top,
+}
+
+/// A registry operation either finds a contradictory set of facts or returns
+/// one non-bottom value. It is the dynamic-carrier counterpart of
+/// `BotOr<D>`; `Value` itself cannot implement `Domain` because its concrete
+/// type depends on the carrier.
+pub enum RegistryResult {
+    Bot,
+    Val(Value),
+}
+
+/// A concrete singleton reported to the e-graph for a derived merge.
+pub enum Const {
+    Bool(bool),
+    Int(IBig),
+    Bv(u128),
 }
 
 /// Number of bytes in the class-layer entry for one carrier.
@@ -341,6 +357,117 @@ pub fn decode(carrier: Carrier, bytes: &[u8]) -> Value {
         Carrier::TopOnly { .. } => Value::Top,
     }
 }
+
+fn duplicate(value: &Value) -> Value {
+    match value {
+        Value::Bool(value) => Value::Bool(value.dup()),
+        Value::Int(value) => Value::Int(value.dup()),
+        Value::Bv8(value) => Value::Bv8(value.dup()),
+        Value::Bv16(value) => Value::Bv16(value.dup()),
+        Value::Bv32(value) => Value::Bv32(value.dup()),
+        Value::Bv64(value) => Value::Bv64(value.dup()),
+        Value::Bv128(value) => Value::Bv128(value.dup()),
+        Value::Top => Value::Top,
+    }
+}
+
+fn field_enabled(mask: DomainSet) -> bool {
+    mask.contains(0)
+}
+
+/// Meets two entries. With the currently available one-field records, an
+/// empty mask means no analysis and therefore produces top; otherwise this
+/// delegates to the verified `Domain::meet` implementation for the carrier.
+pub fn meet(carrier: Carrier, mask: DomainSet, left: &Value, right: &Value) -> RegistryResult {
+    if !field_enabled(mask) {
+        return RegistryResult::Val(top(carrier));
+    }
+    macro_rules! meet_value {
+        ($a:expr, $b:expr, $variant:ident) => {
+            match $a.meet($b) {
+                BotOr::Bot => RegistryResult::Bot,
+                BotOr::Val(value) => RegistryResult::Val(Value::$variant(value)),
+            }
+        };
+    }
+    match (carrier, left, right) {
+        (Carrier::Bool, Value::Bool(a), Value::Bool(b)) => meet_value!(a, b, Bool),
+        (Carrier::Int, Value::Int(a), Value::Int(b)) => meet_value!(a, b, Int),
+        (Carrier::BitVec(Width::W8), Value::Bv8(a), Value::Bv8(b)) => meet_value!(a, b, Bv8),
+        (Carrier::BitVec(Width::W16), Value::Bv16(a), Value::Bv16(b)) => {
+            meet_value!(a, b, Bv16)
+        }
+        (Carrier::BitVec(Width::W32), Value::Bv32(a), Value::Bv32(b)) => {
+            meet_value!(a, b, Bv32)
+        }
+        (Carrier::BitVec(Width::W64), Value::Bv64(a), Value::Bv64(b)) => {
+            meet_value!(a, b, Bv64)
+        }
+        (Carrier::BitVec(Width::W128), Value::Bv128(a), Value::Bv128(b)) => {
+            meet_value!(a, b, Bv128)
+        }
+        (Carrier::TopOnly { .. }, Value::Top, Value::Top) => RegistryResult::Val(Value::Top),
+        _ => panic!("registry value does not match its carrier"),
+    }
+}
+
+/// Reduces an entry under the supplied domain mask. The current records have
+/// exactly one available field, so their verified normalization is the
+/// identity. Keeping this function here makes the transition to multi-field
+/// reductions local when Congruence and Sign facts become available.
+pub fn reduce(carrier: Carrier, mask: DomainSet, value: &Value) -> RegistryResult {
+    if !field_enabled(mask) {
+        return RegistryResult::Val(top(carrier));
+    }
+    match (carrier, value) {
+        (Carrier::Bool, Value::Bool(_))
+        | (Carrier::Int, Value::Int(_))
+        | (Carrier::BitVec(Width::W8), Value::Bv8(_))
+        | (Carrier::BitVec(Width::W16), Value::Bv16(_))
+        | (Carrier::BitVec(Width::W32), Value::Bv32(_))
+        | (Carrier::BitVec(Width::W64), Value::Bv64(_))
+        | (Carrier::BitVec(Width::W128), Value::Bv128(_))
+        | (Carrier::TopOnly { .. }, Value::Top) => RegistryResult::Val(duplicate(value)),
+        _ => panic!("registry value does not match its carrier"),
+    }
+}
+
+/// Returns a constant only when the currently enabled available field proves
+/// that the value is a singleton.
+pub fn as_constant(carrier: Carrier, mask: DomainSet, value: &Value) -> Option<Const> {
+    if !field_enabled(mask) {
+        return None;
+    }
+    match (carrier, value) {
+        (Carrier::Bool, Value::Bool(Bool4::False)) => Some(Const::Bool(false)),
+        (Carrier::Bool, Value::Bool(Bool4::True)) => Some(Const::Bool(true)),
+        (Carrier::Int, Value::Int(facts)) => match facts.interval().bounds() {
+            (Lo::Fin(lo), Hi::Fin(hi)) if lo.le(&hi) && hi.le(&lo) => Some(Const::Int(lo)),
+            _ => None,
+        },
+        (Carrier::BitVec(Width::W8), Value::Bv8(facts)) => singleton_u8(facts),
+        (Carrier::BitVec(Width::W16), Value::Bv16(facts)) => singleton_u16(facts),
+        (Carrier::BitVec(Width::W32), Value::Bv32(facts)) => singleton_u32(facts),
+        (Carrier::BitVec(Width::W64), Value::Bv64(facts)) => singleton_u64(facts),
+        (Carrier::BitVec(Width::W128), Value::Bv128(facts)) => singleton_u128(facts),
+        _ => None,
+    }
+}
+
+macro_rules! singleton {
+    ($name:ident, $word:ty) => {
+        fn $name(facts: &Facts<$word>) -> Option<Const> {
+            let (lo, hi) = facts.interval().bounds();
+            (lo == hi).then_some(Const::Bv(lo as u128))
+        }
+    };
+}
+
+singleton!(singleton_u8, u8);
+singleton!(singleton_u16, u16);
+singleton!(singleton_u32, u32);
+singleton!(singleton_u64, u64);
+singleton!(singleton_u128, u128);
 
 /// An SMT-LIB operator accepted by the first registry implementation.
 ///
