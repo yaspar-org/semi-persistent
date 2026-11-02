@@ -1,8 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Canonical, nonempty congruences over unsigned finite-width words.
-//! This semantic core intentionally does not implement `Domain`: its lattice
-//! operations belong to the subsequent Congruence core change.
+//! `Domain` provides exact refinement/meet, least-upper-bound join, and
+//! join-based widening. `Arith<Unsigned<W>>` provides sound add/sub/neg.
+//! Empty intersections use external `BotOr`; all values remain canonical.
+use crate::arithmetic::*;
+use crate::lattice::*;
+use crate::semantics::*;
+use crate::transfer::Arith;
 use crate::word::Word;
 use vstd::prelude::*;
 
@@ -31,6 +36,27 @@ pub open spec fn raw_has<W: Word>(m: W, r: W, x: W) -> bool {
     else { x.view() % m.view() == r.view() % m.view() }
 }
 
+/// Reduce two integers from the same wrapping segment without changing their
+/// congruence. The common offset is ghost-only, including at 128 bits.
+proof fn same_segment<W: Word>(x: int, y: int, d: nat, offset: int)
+    requires d > 0, x % (d as int) == y % (d as int),
+        0 <= x + offset < W::modulus(), 0 <= y + offset < W::modulus(),
+        offset == 0 || offset == W::modulus() as int || offset == -(W::modulus() as int),
+    ensures W::from_int(x).view() % d == W::from_int(y).view() % d,
+{
+    W::lemma_modulus();
+    W::lemma_from_int(x);
+    W::lemma_from_int(y);
+    let n = W::modulus() as int;
+    let k = if offset == 0 { 0 } else if offset == n { 1 } else { -1 };
+    lemma_congruence_shift(x + offset, x, n, k);
+    lemma_congruence_shift(y + offset, y, n, k);
+    vstd::arithmetic::div_mod::lemma_small_mod((x + offset) as nat, W::modulus());
+    vstd::arithmetic::div_mod::lemma_small_mod((y + offset) as nat, W::modulus());
+    vstd::arithmetic::div_mod::lemma_add_mod_noop(x, offset, d as int);
+    vstd::arithmetic::div_mod::lemma_add_mod_noop(y, offset, d as int);
+}
+
 impl<W: Word> Congruence<W> {
     pub closed spec fn modulus(&self) -> W { self.modulus }
     pub closed spec fn residue(&self) -> W { self.residue }
@@ -54,6 +80,390 @@ impl<W: Word> Congruence<W> {
     pub fn parts(&self) -> (r: (W, W))
         ensures r.0 == self.modulus(), r.1 == self.residue(),
     { (self.modulus, self.residue) }
+
+    /// Decide exact containment over representable words.
+    pub fn refines(&self, other: &Self) -> (result: bool)
+        requires self.wf(), other.wf(),
+        ensures result == (forall|x: W| #[trigger] self.has(x) ==> other.has(x)),
+    {
+        proof { self.lemma_residue_member(); assert(self.has(self.residue)); }
+        if !other.contains(self.residue) { return false; }
+        if self.modulus.eq(W::zero()) { return true; }
+        let ghost second = self.lemma_second();
+        proof { assert(self.has(second)); }
+        if other.modulus.eq(W::zero()) {
+            proof { assert(!other.has(second)); }
+            return false;
+        }
+        let divides = self.modulus.urem(other.modulus).eq(W::zero());
+        proof {
+            if divides {
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(self.modulus.view() as int, other.modulus.view() as int);
+                assert forall|x: W| #[trigger] self.has(x) implies other.has(x) by {
+                    self.lemma_member_decomposition(x);
+                    let m = self.modulus.view() as int;
+                    let n = other.modulus.view() as int;
+                    let r = self.residue.view() as int;
+                    let q = x.view() as int / m;
+                    let d = m / n;
+                    assert(x.view() as int == r + n * (d * q)) by (nonlinear_arith)
+                        requires x.view() as int == r + m * q, m == n * d;
+                    lemma_congruence_shift(x.view() as int, r, n, d * q);
+                }
+            } else {
+                if other.has(second) {
+                    vstd::arithmetic::div_mod::lemma_mod_equivalence(second.view() as int, self.residue.view() as int,
+                        other.modulus.view() as int);
+                    assert(false);
+                }
+                assert(!other.has(second));
+            }
+        }
+        divides
+    }
+
+    /// A divisor of the canonical stride preserves every member's residue.
+    pub proof fn member_mod_divisor(&self, x: W, d: nat)
+        requires self.wf(), self.has(x), d > 0,
+            self.modulus().view() > 0 ==> self.modulus().view() % d == 0,
+        ensures x.view() % d == self.residue().view() % d,
+    {
+        if self.modulus.view() > 0 {
+            lemma_positive_exact_quotient(self.modulus.view(), d);
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(self.modulus.view() as int, d as int);
+            vstd::arithmetic::div_mod::lemma_mod_mod(x.view() as int, d as int, (self.modulus.view() / d) as int);
+        }
+    }
+
+    /// Semantic containment, including the singleton cases.
+    pub open spec fn subset_of(&self, other: &Self) -> bool {
+        forall|x: W| #[trigger] self.has(x) ==> other.has(x)
+    }
+
+    /// The first two members force every containing class to divide the stride.
+    proof fn subset_stride(&self, other: &Self)
+        requires self.wf(), other.wf(), self.subset_of(other),
+        ensures other.has(self.residue()),
+            other.modulus().view() == 0 ==> self.modulus().view() == 0,
+            other.modulus().view() > 0 ==> self.modulus().view() % other.modulus().view() == 0,
+    {
+        self.lemma_residue_member();
+        assert(self.has(self.residue));
+        assert(other.has(self.residue));
+        if self.modulus.view() > 0 {
+            let second = self.lemma_second();
+            assert(self.has(second));
+            assert(other.has(second));
+            if other.modulus.view() > 0 {
+                vstd::arithmetic::div_mod::lemma_mod_equivalence(second.view() as int, self.residue.view() as int,
+                    other.modulus.view() as int);
+                assert(self.modulus.view() % other.modulus.view() == 0);
+            }
+        } else if other.modulus.view() > 0 {
+            vstd::arithmetic::div_mod::lemma_small_mod(0, other.modulus.view());
+        }
+    }
+
+    /// Least upper bound using the GCD of strides and residue distance.
+    pub fn join(&self, other: &Self) -> (r: Self)
+        requires self.wf(), other.wf(),
+        ensures r.wf(),
+            forall|x: W| #[trigger] self.has(x) ==> r.has(x),
+            forall|x: W| #[trigger] other.has(x) ==> r.has(x),
+            forall|c: Self| #[trigger] c.wf() && self.subset_of(&c) && other.subset_of(&c)
+                ==> r.subset_of(&c),
+    {
+        let ghost a = self.residue.view();
+        let ghost b = other.residue.view();
+        let delta = if other.residue.le(self.residue) {
+            self.residue.wrapping_sub(other.residue)
+        } else {
+            other.residue.wrapping_sub(self.residue)
+        };
+        proof {
+            self.residue.lemma_view_bounded();
+            other.residue.lemma_view_bounded();
+            if a >= b {
+                W::lemma_from_int(a - b);
+                vstd::arithmetic::div_mod::lemma_small_mod((a - b) as nat, W::modulus());
+            } else {
+                W::lemma_from_int(b - a);
+                vstd::arithmetic::div_mod::lemma_small_mod((b - a) as nat, W::modulus());
+            }
+        }
+        let stride_gcd = gcd(self.modulus, other.modulus);
+        let modulus = gcd(stride_gcd, delta);
+        if modulus.eq(W::zero()) {
+            proof { W::lemma_view_injective(self.residue, other.residue); }
+            let r = Self::constant(self.residue);
+            proof {
+                assert forall|c: Self| #[trigger] c.wf() && self.subset_of(&c) && other.subset_of(&c)
+                    implies r.subset_of(&c) by {
+                    self.lemma_residue_member();
+                    assert(self.has(self.residue));
+                    assert(c.has(self.residue));
+                }
+            }
+            return r;
+        }
+        proof {
+            lemma_gcd_divisor_iff(self.modulus.view(), other.modulus.view(), modulus.view());
+            if a >= b {
+                vstd::arithmetic::div_mod::lemma_mod_equivalence(a as int, b as int, modulus.view() as int);
+            } else {
+                vstd::arithmetic::div_mod::lemma_mod_equivalence(b as int, a as int, modulus.view() as int);
+            }
+        }
+        let r = Self::new(modulus, self.residue);
+        proof {
+            assert forall|x: W| #[trigger] self.has(x) implies r.has(x) by {
+                self.member_mod_divisor(x, modulus.view());
+            }
+            assert forall|x: W| #[trigger] other.has(x) implies r.has(x) by {
+                other.member_mod_divisor(x, modulus.view());
+            }
+            assert forall|c: Self| #[trigger] c.wf() && self.subset_of(&c) && other.subset_of(&c)
+                implies r.subset_of(&c) by {
+                self.subset_stride(&c);
+                other.subset_stride(&c);
+                let d = c.modulus.view();
+                if d == 0 {
+                    assert(self.residue == c.residue && other.residue == c.residue);
+                    assert(false);
+                } else {
+                    if a >= b { vstd::arithmetic::div_mod::lemma_mod_equivalence(a as int, b as int, d as int); }
+                    else { vstd::arithmetic::div_mod::lemma_mod_equivalence(b as int, a as int, d as int); }
+                    lemma_gcd_divisor(self.modulus.view(), other.modulus.view(), d);
+                    lemma_gcd_divisor(stride_gcd.view(), delta.view(), d);
+                    assert forall|x: W| #[trigger] r.has(x) implies c.has(x) by {
+                        lemma_positive_exact_quotient(modulus.view(), d);
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(modulus.view() as int, d as int);
+                        vstd::arithmetic::div_mod::lemma_mod_mod(x.view() as int, d as int, (modulus.view() / d) as int);
+                        vstd::arithmetic::div_mod::lemma_mod_mod(self.residue.view() as int, d as int, (modulus.view() / d) as int);
+                    }
+                }
+            }
+        }
+        r
+    }
+
+    /// Greatest represented word, used to decide whether any sum can wrap.
+    pub fn max_member(&self) -> (last: W)
+        requires self.wf(),
+        ensures self.has(last),
+            forall|x: W| #[trigger] self.has(x) ==> x.view() <= last.view(),
+    {
+        if self.modulus.eq(W::zero()) { return self.residue; }
+        let max = W::max();
+        let distance = max.wrapping_sub(self.residue);
+        let remainder = distance.urem(self.modulus);
+        let last = max.wrapping_sub(remainder);
+        proof {
+            self.residue.lemma_view_bounded();
+            W::lemma_from_int(max.view() - self.residue.view());
+            vstd::arithmetic::div_mod::lemma_small_mod((max.view() - self.residue.view()) as nat, W::modulus());
+            vstd::arithmetic::div_mod::lemma_mod_decreases(distance.view(), self.modulus.view());
+            W::lemma_from_int(max.view() - remainder.view());
+            vstd::arithmetic::div_mod::lemma_small_mod((max.view() - remainder.view()) as nat, W::modulus());
+            vstd::arithmetic::div_mod::lemma_mod_bound(distance.view() as int, self.modulus.view() as int);
+            vstd::arithmetic::div_mod::lemma_mod_decreases(distance.view(), self.modulus.view());
+            vstd::arithmetic::div_mod::lemma_mod_equivalence(distance.view() as int, remainder.view() as int, self.modulus.view() as int);
+            vstd::arithmetic::div_mod::lemma_small_mod(remainder.view(), self.modulus.view());
+            vstd::arithmetic::div_mod::lemma_mod_equivalence(last.view() as int, self.residue.view() as int,
+                self.modulus.view() as int);
+            vstd::arithmetic::div_mod::lemma_small_mod(self.residue.view(), self.modulus.view());
+            assert forall|x: W| #[trigger] self.has(x) implies x.view() <= last.view() by {
+                x.lemma_view_bounded();
+                if x.view() > last.view() {
+                    vstd::arithmetic::div_mod::lemma_mod_equivalence(x.view() as int, last.view() as int,
+                        self.modulus.view() as int);
+                    vstd::arithmetic::div_mod::lemma_small_mod((x.view() - last.view()) as nat, self.modulus.view());
+                    assert(false);
+                }
+            }
+        }
+        last
+    }
+
+    /// Preserve the stride when every sum is in one wrapping segment.
+    /// Mixed wrapping conservatively includes the machine modulus in the GCD.
+    pub fn add(&self, other: &Self) -> (r: Self)
+        requires self.wf(), other.wf(),
+        ensures r.wf(),
+            forall|x: W, y: W| #[trigger] self.has(x) && #[trigger] other.has(y)
+                ==> r.has(Unsigned::<W>::add(x, y)),
+            self.modulus().view() == 0 && other.modulus().view() == 0 ==>
+                r.modulus().view() == 0 && r.residue() == Unsigned::<W>::add(self.residue(), other.residue()),
+    {
+        let stride = gcd(self.modulus, other.modulus);
+        let sum = self.residue.wrapping_add(other.residue);
+        if stride.eq(W::zero()) { return Self::constant(sum); }
+        let upper_a = self.max_member();
+        let upper_b = other.max_member();
+        let no_wrap = match upper_a.checked_add(upper_b) {
+            Some(_total) => { proof { _total.lemma_view_bounded(); } true },
+            None => false,
+        };
+        let all_wrap = self.residue.checked_add(other.residue).is_none();
+        let modulus = if no_wrap || all_wrap { stride } else { gcd_machine_modulus(stride) };
+        let r = Self::new(modulus, sum);
+        proof {
+            W::lemma_modulus();
+            upper_a.lemma_view_bounded();
+            upper_b.lemma_view_bounded();
+            self.lemma_residue_member();
+            other.lemma_residue_member();
+            lemma_gcd_divisor_iff(self.modulus.view(), other.modulus.view(), modulus.view());
+            let base = self.residue.view() as int + other.residue.view();
+            W::lemma_from_int(base);
+            assert forall|x: W, y: W| #[trigger] self.has(x) && #[trigger] other.has(y)
+                implies r.has(Unsigned::<W>::add(x, y)) by {
+                self.lemma_member_decomposition(x);
+                other.lemma_member_decomposition(y);
+                self.member_mod_divisor(x, modulus.view());
+                other.member_mod_divisor(y, modulus.view());
+                let value = x.view() as int + y.view();
+                vstd::arithmetic::div_mod::lemma_add_mod_noop(x.view() as int, y.view() as int, modulus.view() as int);
+                vstd::arithmetic::div_mod::lemma_add_mod_noop(self.residue.view() as int, other.residue.view() as int, modulus.view() as int);
+                if no_wrap || all_wrap {
+                    let offset = if no_wrap { 0 } else { -(W::modulus() as int) };
+                    same_segment::<W>(value, base, modulus.view(), offset);
+                } else {
+                    lemma_wrapping_congruence::<W>(stride.view(), base);
+                    lemma_wrapping_congruence::<W>(stride.view(), value);
+                    W::lemma_from_int(value);
+                }
+            }
+        }
+        r
+    }
+
+    /// Negation is direct subtraction from zero. In particular, a class that
+    /// excludes zero keeps its stride because all differences wrap together.
+    pub fn neg(&self) -> (r: Self)
+        requires self.wf(),
+        ensures r.wf(), forall|x: W| #[trigger] self.has(x)
+            ==> r.has(Unsigned::<W>::neg(x)),
+            self.modulus().view() == 0 ==> r.modulus().view() == 0
+                && r.residue() == Unsigned::<W>::neg(self.residue()),
+    {
+        let zero = W::zero();
+        let c = Self::constant(zero);
+        let r = c.sub(self);
+        proof {
+            assert(c.has(zero));
+            assert forall|x: W| #[trigger] self.has(x) implies r.has(Unsigned::<W>::neg(x)) by {
+                assert(r.has(Unsigned::<W>::sub(zero, x)));
+            }
+        }
+        r
+    }
+
+    /// Direct subtraction: one stride GCD and no intermediate abstract negation.
+    pub fn sub(&self, other: &Self) -> (r: Self)
+        requires self.wf(), other.wf(),
+        ensures r.wf(), forall|x: W, y: W| #[trigger] self.has(x) && #[trigger] other.has(y)
+            ==> r.has(Unsigned::<W>::sub(x, y)),
+            self.modulus().view() == 0 && other.modulus().view() == 0 ==>
+                r.modulus().view() == 0 && r.residue() == Unsigned::<W>::sub(self.residue(), other.residue()),
+    {
+        let difference = self.residue.wrapping_sub(other.residue);
+        let stride = gcd(self.modulus, other.modulus);
+        if stride.eq(W::zero()) { return Self::constant(difference); }
+        let upper_a = self.max_member();
+        let upper_b = other.max_member();
+        let no_wrap = self.residue.checked_sub(upper_b).is_some();
+        let all_wrap = upper_a.checked_sub(other.residue).is_none();
+        let modulus = if no_wrap || all_wrap { stride } else { gcd_machine_modulus(stride) };
+        let r = Self::new(modulus, difference);
+        proof {
+            W::lemma_modulus();
+            upper_a.lemma_view_bounded();
+            upper_b.lemma_view_bounded();
+            self.lemma_residue_member();
+            other.lemma_residue_member();
+            lemma_gcd_divisor_iff(self.modulus.view(), other.modulus.view(), modulus.view());
+            let base = self.residue.view() as int - other.residue.view();
+            W::lemma_from_int(base);
+            assert forall|x: W, y: W| #[trigger] self.has(x) && #[trigger] other.has(y)
+                implies r.has(Unsigned::<W>::sub(x, y)) by {
+                self.lemma_member_decomposition(x);
+                other.lemma_member_decomposition(y);
+                self.member_mod_divisor(x, modulus.view());
+                other.member_mod_divisor(y, modulus.view());
+                let value = x.view() as int - y.view();
+                vstd::arithmetic::div_mod::lemma_sub_mod_noop(x.view() as int, y.view() as int, modulus.view() as int);
+                vstd::arithmetic::div_mod::lemma_sub_mod_noop(self.residue.view() as int, other.residue.view() as int, modulus.view() as int);
+                if no_wrap || all_wrap {
+                    let offset = if no_wrap { 0 } else { W::modulus() as int };
+                    same_segment::<W>(value, base, modulus.view(), offset);
+                } else {
+                    lemma_wrapping_congruence::<W>(stride.view(), base);
+                    lemma_wrapping_congruence::<W>(stride.view(), value);
+                    W::lemma_from_int(value);
+                }
+            }
+        }
+        r
+    }
+
+    /// Exact intersection, with emptiness outside the domain.
+    pub fn meet(&self, other: &Self) -> (result: BotOr<Self>)
+        requires self.wf(), other.wf(),
+        ensures match result {
+            BotOr::Val(r) => r.wf() && (forall|x: W| #[trigger] r.has(x)
+                <==> self.has(x) && other.has(x)),
+            BotOr::Bot => forall|x: W| #[trigger] self.has(x) ==> !other.has(x),
+        },
+    {
+        if self.modulus.eq(W::zero()) {
+            return if other.contains(self.residue) {
+                BotOr::Val(*self)
+            } else { BotOr::Bot };
+        }
+        if other.modulus.eq(W::zero()) {
+            return if self.contains(other.residue) {
+                BotOr::Val(*other)
+            } else { BotOr::Bot };
+        }
+        proof {
+            vstd::arithmetic::div_mod::lemma_small_mod(self.residue.view(), self.modulus.view());
+            vstd::arithmetic::div_mod::lemma_small_mod(other.residue.view(), other.modulus.view());
+        }
+        let merged = crt_merge(self.modulus, self.residue, other.modulus, other.residue);
+        match merged {
+            CrtMergeResult::Class { modulus, residue } => {
+                let r = Self::new(modulus, residue);
+                proof {
+                    vstd::arithmetic::div_mod::lemma_small_mod(residue.view(), modulus.view());
+                    assert forall|x: W| #[trigger] r.has(x) <==> self.has(x) && other.has(x) by {
+                        assert(merged.has(x) == is_common_congruence_solution(x.view() as int,
+                            self.modulus.view(), self.residue.view(), other.modulus.view(), other.residue.view()));
+                    }
+                }
+                BotOr::Val(r)
+            },
+            CrtMergeResult::Singleton { value } => {
+                let r = Self::constant(value);
+                proof {
+                    assert forall|x: W| #[trigger] r.has(x) <==> self.has(x) && other.has(x) by {
+                        assert(merged.has(x) == is_common_congruence_solution(x.view() as int,
+                            self.modulus.view(), self.residue.view(), other.modulus.view(), other.residue.view()));
+                    }
+                }
+                BotOr::Val(r)
+            },
+            CrtMergeResult::Empty => {
+                proof {
+                    assert forall|x: W| #[trigger] self.has(x) implies !other.has(x) by {
+                        assert(merged.has(x) == is_common_congruence_solution(x.view() as int,
+                            self.modulus.view(), self.residue.view(), other.modulus.view(), other.residue.view()));
+                    }
+                }
+                BotOr::Bot
+            },
+        }
+    }
 
     pub fn contains(&self, x: W) -> (r: bool)
         ensures r == self.gamma(x), r == self.has(x),
@@ -256,4 +666,135 @@ impl<W: Word> Congruence<W> {
         W::lemma_view_injective(a.modulus, b.modulus);
     }
 }
+
+impl<W: Word> Domain for Congruence<W> {
+    type C = W;
+    open spec fn wf(&self) -> bool { Congruence::wf(self) }
+    open spec fn gamma(&self, x: W) -> bool { Congruence::gamma(self, x) }
+    fn dup(&self) -> (r: Self) { Self { modulus: self.modulus, residue: self.residue } }
+    fn top() -> (r: Self) { Congruence::top() }
+    fn leq(&self, o: &Self) -> (b: bool)
+        ensures b == self.subset_of(o),
+    {
+        let b = self.refines(o);
+        proof {
+            assert forall|x: W| #[trigger] <Self as Domain>::gamma(self, x) && b
+                implies <Self as Domain>::gamma(o, x) by {
+                assert(self.has(x));
+                assert(o.has(x));
+            }
+        }
+        b
+    }
+    fn join(&self, o: &Self) -> (r: Self)
+        ensures forall|c: Self| #[trigger] c.wf() && self.subset_of(&c) && o.subset_of(&c)
+            ==> r.subset_of(&c),
+    {
+        let r = Congruence::join(self, o);
+        proof {
+            assert forall|x: W| self.gamma(x) || o.gamma(x)
+                implies #[trigger] <Self as Domain>::gamma(&r, x) by {
+                assert(self.has(x) || o.has(x));
+                assert(r.has(x));
+            }
+        }
+        r
+    }
+    fn meet(&self, o: &Self) -> (r: BotOr<Self>)
+        ensures match r {
+            BotOr::Bot => forall|x: W| #[trigger] self.has(x) ==> !o.has(x),
+            BotOr::Val(v) => forall|x: W| #[trigger] v.has(x) <==> self.has(x) && o.has(x),
+        },
+    {
+        let r = Congruence::meet(self, o);
+        proof {
+            match &r {
+                BotOr::Bot => {
+                    assert forall|x: W| #[trigger] <Self as Domain>::gamma(self, x)
+                        implies !<Self as Domain>::gamma(o, x) by {
+                        assert(self.has(x));
+                    }
+                },
+                BotOr::Val(v) => {
+                    assert forall|x: W| self.gamma(x) && o.gamma(x)
+                        implies #[trigger] <Self as Domain>::gamma(v, x) by {
+                        assert(v.has(x));
+                    }
+                },
+            }
+        }
+        r
+    }
+    // This finite lattice needs no loss of precision to widen.
+    fn widen(&self, o: &Self) -> (r: Self) {
+        let r = Congruence::join(self, o);
+        proof {
+            assert forall|x: W| self.gamma(x) || o.gamma(x)
+                implies #[trigger] <Self as Domain>::gamma(&r, x) by {
+                assert(self.has(x) || o.has(x));
+                assert(r.has(x));
+            }
+        }
+        r
+    }
+}
+
+impl<W: Word> Canonical for Congruence<W> {
+    proof fn lemma_nonempty(&self) {
+        self.lemma_residue_member();
+        assert(<Self as Domain>::gamma(self, self.residue));
+    }
+    proof fn lemma_canonical(a: &Self, b: &Self) {
+        assert forall|x: W| #[trigger] a.gamma(x) == b.gamma(x) by {
+            assert(<Self as Domain>::gamma(a, x) == <Self as Domain>::gamma(b, x));
+        }
+        Congruence::lemma_canonical(a, b);
+    }
+}
+
+impl<W: Word> Arith<Unsigned<W>> for Congruence<W> {
+    fn add(&self, o: &Self) -> (r: Self)
+        ensures self.modulus().view() == 0 && o.modulus().view() == 0 ==>
+            r.modulus().view() == 0 && r.residue() == Unsigned::<W>::add(self.residue(), o.residue()),
+    {
+        let r = Congruence::add(self, o);
+        proof {
+            assert forall|x: W, y: W| self.gamma(x) && o.gamma(y)
+                implies #[trigger] <Self as Domain>::gamma(&r, Unsigned::<W>::add(x, y)) by {
+                assert(self.has(x) && o.has(y));
+                assert(r.has(Unsigned::<W>::add(x, y)));
+            }
+        }
+        r
+    }
+    fn sub(&self, o: &Self) -> (r: Self)
+        ensures self.modulus().view() == 0 && o.modulus().view() == 0 ==>
+            r.modulus().view() == 0 && r.residue() == Unsigned::<W>::sub(self.residue(), o.residue()),
+    {
+        let r = Congruence::sub(self, o);
+        proof {
+            assert forall|x: W, y: W| self.gamma(x) && o.gamma(y)
+                implies #[trigger] <Self as Domain>::gamma(&r, Unsigned::<W>::sub(x, y)) by {
+                assert(self.has(x) && o.has(y));
+                assert(r.has(Unsigned::<W>::sub(x, y)));
+            }
+        }
+        r
+    }
+    fn neg(&self) -> (r: Self)
+        ensures self.modulus().view() == 0 ==> r.modulus().view() == 0
+            && r.residue() == Unsigned::<W>::neg(self.residue()),
+    {
+        let r = Congruence::neg(self);
+        proof {
+            assert forall|x: W| self.gamma(x)
+                implies #[trigger] <Self as Domain>::gamma(&r, Unsigned::<W>::neg(x)) by {
+                assert(self.has(x));
+                assert(r.has(Unsigned::<W>::neg(x)));
+            }
+        }
+        r
+    }
+}
+
 } // verus!

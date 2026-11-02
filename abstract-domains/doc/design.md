@@ -3,7 +3,7 @@
 A proved abstract domains library for bitvector arithmetic. `cargo verus
 verify` reports 0 errors, and a CI source gate rejects
 project-local `admit()`/`assume()` calls. The pinned `vstd` dependency remains
-inside the trust boundary. A separate 32-test Rust mirror suite supplies finite
+inside the trust boundary. A separate Rust mirror suite supplies finite
 randomized/exhaustive evidence.
 
 ## Background
@@ -329,7 +329,21 @@ currently proved for:
 - `ExecTnum::{bw_or,bw_and,bw_xor,add,join,meet}`;
 - `ExecAnum::{add,div_const}`;
 - `ExecUnum::{top,add,from_interval,mul}`;
-- `Interval::{add,meet,join,div_const}`.
+- `Interval::{add,meet,join,div_const}`;
+- generic `Congruence<W>` exact refinement/meet, least-upper-bound join,
+  join-based widen, and unsigned add/sub/neg.
+
+Congruence uses private canonical finite-word classes and external `BotOr` for
+empty intersections. Its meet delegates positive-modulus inputs to the shared
+CRT helper. The first two members characterize stride divisibility, which
+proves the GCD join is below every common upper bound. Addition uses proved
+extreme members to preserve `gcd(s1, s2)` when all sums or differences lie
+in one wrapping segment. Only mixed wrapping includes the machine modulus.
+Subtraction is direct; negation subtracts from zero and preserves the stride
+when zero is absent. Runtime arithmetic uses `W: Word`, including u128.
+Contracts prove containment and constant exactness, not general optimality.
+Full mixed-wrap splitting remains a precision follow-up. Signed transfer instances,
+multiplication, and division are deferred.
 
 Other executable operations currently prove well-formedness only. L2/L3
 soundness and finite mirror tests do not by themselves establish the missing
@@ -340,9 +354,9 @@ See `proof-status.md` for the detailed scoreboard.
 
 ## Verification Status
 
-The current verification and test counts are recorded in
+The current verification scope and test coverage are recorded in
 [`proof-status.md`](proof-status.md), together with the commands used to
-regenerate them. The source contains no executable `admit()` or `assume()`.
+check them. The source contains no executable `admit()` or `assume()`.
 
 
 ## Summary
@@ -358,6 +372,7 @@ regenerate them. The source contains no executable `admit()` or `assume()`.
 | Division | Tnum constant and general containment proved |
 | Anum division | Positive constant-divisor containment proved |
 | Unum domain | Sound unbounded/bounded add and mul; no general exactness theorem |
+| Congruence | Generic `Domain` and `Arith<Unsigned<W>>`; exact meet/refinement and LUB join |
 | Reduced product | 4-domain (Tnum×Anum×Interval×Unum) |
-| Multi-width | u8, u16, u32, u64 (`u128` disabled) |
-| Rust mirror tests | See `proof-status.md` for the regenerated count |
+| Multi-width | Legacy macro domains: u8, u16, u32, u64 (`d128` disabled). Generic `Congruence<W>`: u8, u16, u32, u64, u128. |
+| Rust mirror tests | See `proof-status.md` for coverage and commands |
