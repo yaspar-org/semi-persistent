@@ -59,7 +59,7 @@ fn join_and_meet_on_the_three_values() {
             let ab = a.meet(&b);
             let ba = b.meet(&a);
             match (ab, ba) {
-                (BotOr::Bot, BotOr::Bot) => {},
+                (BotOr::Bot, BotOr::Bot) => {}
                 (BotOr::Val(x), BotOr::Val(y)) => assert!(same(&x, &y)),
                 _ => panic!("meet is not commutative"),
             }
