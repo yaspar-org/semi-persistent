@@ -14,6 +14,8 @@ use crate::ibig::IBig;
 use crate::interval::Interval;
 use crate::interval_z::{Hi, IntervalZ, Lo};
 use crate::lattice::{BotOr, Domain};
+use crate::semantics::{Euclid, Unsigned};
+use crate::transfer::{Arith, Mul};
 
 /// Native bit-vector widths supported by `Word`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -469,6 +471,148 @@ singleton!(singleton_u32, u32);
 singleton!(singleton_u64, u64);
 singleton!(singleton_u128, u128);
 
+fn value_carrier(value: &Value) -> Carrier {
+    match value {
+        Value::Bool(_) => Carrier::Bool,
+        Value::Int(_) => Carrier::Int,
+        Value::Bv8(_) => Carrier::BitVec(Width::W8),
+        Value::Bv16(_) => Carrier::BitVec(Width::W16),
+        Value::Bv32(_) => Carrier::BitVec(Width::W32),
+        Value::Bv64(_) => Carrier::BitVec(Width::W64),
+        Value::Bv128(_) => Carrier::BitVec(Width::W128),
+        Value::Top => Carrier::TopOnly { bits: 0 },
+    }
+}
+
+fn result_carrier(op: Op, args: &[Value]) -> Carrier {
+    match op {
+        Op::Lt
+        | Op::Le
+        | Op::Gt
+        | Op::Ge
+        | Op::Eq
+        | Op::Distinct
+        | Op::Not
+        | Op::And
+        | Op::Or
+        | Op::Xor
+        | Op::Implies
+        | Op::BvUlt
+        | Op::BvUle
+        | Op::BvUgt
+        | Op::BvUge
+        | Op::BvSlt
+        | Op::BvSle
+        | Op::BvSgt
+        | Op::BvSge => Carrier::Bool,
+        Op::Ite if args.len() >= 2 => value_carrier(&args[1]),
+        _ if !args.is_empty() => value_carrier(&args[0]),
+        _ => Carrier::TopOnly { bits: 0 },
+    }
+}
+
+/// Executes every currently available forward transfer. Operators whose
+/// backing transfer has not landed yet deliberately return `Top`; this is a
+/// sound result and makes the registry usable while the domain matrix grows.
+pub fn forward(op: Op, mask: DomainSet, args: &[Value]) -> Value {
+    let carrier = result_carrier(op, args);
+    if !field_enabled(mask) {
+        return top(carrier);
+    }
+
+    macro_rules! binary_arith {
+        ($a:expr, $b:expr, $variant:ident, $semantics:ty, $method:ident) => {
+            Value::$variant(<Facts<_> as Arith<$semantics>>::$method($a, $b))
+        };
+    }
+    macro_rules! unary_arith {
+        ($a:expr, $variant:ident, $semantics:ty) => {
+            Value::$variant(<Facts<_> as Arith<$semantics>>::neg($a))
+        };
+    }
+    macro_rules! binary_mul {
+        ($a:expr, $b:expr, $variant:ident, $semantics:ty) => {
+            Value::$variant(<Facts<_> as Mul<$semantics>>::mul($a, $b))
+        };
+    }
+
+    match (op, args) {
+        (Op::Not, [Value::Bool(a)]) => Value::Bool(a.not()),
+        (Op::And, [Value::Bool(a), Value::Bool(b)]) => Value::Bool(a.and(b)),
+        (Op::Or, [Value::Bool(a), Value::Bool(b)]) => Value::Bool(a.or(b)),
+        (Op::Xor, [Value::Bool(a), Value::Bool(b)]) => Value::Bool(a.not().eq(b)),
+        (Op::Implies, [Value::Bool(a), Value::Bool(b)]) => Value::Bool(a.not().or(b)),
+        (Op::Eq, [Value::Bool(a), Value::Bool(b)]) => Value::Bool(a.eq(b)),
+        (Op::Ite, [Value::Bool(c), then_value, else_value]) => {
+            if c.is_true() {
+                duplicate(then_value)
+            } else if c.is_false() {
+                duplicate(else_value)
+            } else {
+                join_same_carrier(carrier, then_value, else_value)
+            }
+        }
+        (Op::Add, [Value::Int(a), Value::Int(b)]) => {
+            Value::Int(<FactsZ as Arith<Euclid>>::add(a, b))
+        }
+        (Op::Sub, [Value::Int(a), Value::Int(b)]) => {
+            Value::Int(<FactsZ as Arith<Euclid>>::sub(a, b))
+        }
+        (Op::Neg, [Value::Int(a)]) => Value::Int(<FactsZ as Arith<Euclid>>::neg(a)),
+        (Op::BvAdd, [Value::Bv8(a), Value::Bv8(b)]) => binary_arith!(a, b, Bv8, Unsigned<u8>, add),
+        (Op::BvAdd, [Value::Bv16(a), Value::Bv16(b)]) => {
+            binary_arith!(a, b, Bv16, Unsigned<u16>, add)
+        }
+        (Op::BvAdd, [Value::Bv32(a), Value::Bv32(b)]) => {
+            binary_arith!(a, b, Bv32, Unsigned<u32>, add)
+        }
+        (Op::BvAdd, [Value::Bv64(a), Value::Bv64(b)]) => {
+            binary_arith!(a, b, Bv64, Unsigned<u64>, add)
+        }
+        (Op::BvAdd, [Value::Bv128(a), Value::Bv128(b)]) => {
+            binary_arith!(a, b, Bv128, Unsigned<u128>, add)
+        }
+        (Op::BvSub, [Value::Bv8(a), Value::Bv8(b)]) => binary_arith!(a, b, Bv8, Unsigned<u8>, sub),
+        (Op::BvSub, [Value::Bv16(a), Value::Bv16(b)]) => {
+            binary_arith!(a, b, Bv16, Unsigned<u16>, sub)
+        }
+        (Op::BvSub, [Value::Bv32(a), Value::Bv32(b)]) => {
+            binary_arith!(a, b, Bv32, Unsigned<u32>, sub)
+        }
+        (Op::BvSub, [Value::Bv64(a), Value::Bv64(b)]) => {
+            binary_arith!(a, b, Bv64, Unsigned<u64>, sub)
+        }
+        (Op::BvSub, [Value::Bv128(a), Value::Bv128(b)]) => {
+            binary_arith!(a, b, Bv128, Unsigned<u128>, sub)
+        }
+        (Op::BvNeg, [Value::Bv8(a)]) => unary_arith!(a, Bv8, Unsigned<u8>),
+        (Op::BvNeg, [Value::Bv16(a)]) => unary_arith!(a, Bv16, Unsigned<u16>),
+        (Op::BvNeg, [Value::Bv32(a)]) => unary_arith!(a, Bv32, Unsigned<u32>),
+        (Op::BvNeg, [Value::Bv64(a)]) => unary_arith!(a, Bv64, Unsigned<u64>),
+        (Op::BvNeg, [Value::Bv128(a)]) => unary_arith!(a, Bv128, Unsigned<u128>),
+        (Op::BvMul, [Value::Bv8(a), Value::Bv8(b)]) => binary_mul!(a, b, Bv8, Unsigned<u8>),
+        (Op::BvMul, [Value::Bv16(a), Value::Bv16(b)]) => binary_mul!(a, b, Bv16, Unsigned<u16>),
+        (Op::BvMul, [Value::Bv32(a), Value::Bv32(b)]) => binary_mul!(a, b, Bv32, Unsigned<u32>),
+        (Op::BvMul, [Value::Bv64(a), Value::Bv64(b)]) => binary_mul!(a, b, Bv64, Unsigned<u64>),
+        (Op::BvMul, [Value::Bv128(a), Value::Bv128(b)]) => binary_mul!(a, b, Bv128, Unsigned<u128>),
+        _ => top(carrier),
+    }
+}
+
+fn join_same_carrier(carrier: Carrier, left: &Value, right: &Value) -> Value {
+    match (carrier, left, right) {
+        (Carrier::Bool, Value::Bool(a), Value::Bool(b)) => Value::Bool(a.join(b)),
+        (Carrier::Int, Value::Int(a), Value::Int(b)) => Value::Int(a.join(b)),
+        (Carrier::BitVec(Width::W8), Value::Bv8(a), Value::Bv8(b)) => Value::Bv8(a.join(b)),
+        (Carrier::BitVec(Width::W16), Value::Bv16(a), Value::Bv16(b)) => Value::Bv16(a.join(b)),
+        (Carrier::BitVec(Width::W32), Value::Bv32(a), Value::Bv32(b)) => Value::Bv32(a.join(b)),
+        (Carrier::BitVec(Width::W64), Value::Bv64(a), Value::Bv64(b)) => Value::Bv64(a.join(b)),
+        (Carrier::BitVec(Width::W128), Value::Bv128(a), Value::Bv128(b)) => Value::Bv128(a.join(b)),
+        (Carrier::TopOnly { .. }, Value::Top, Value::Top) => Value::Top,
+        _ => panic!("ite branches have different carriers"),
+    }
+}
+
 /// An SMT-LIB operator accepted by the first registry implementation.
 ///
 /// The enum keeps the textual parser out of the verified transfer layer.  A
@@ -796,5 +940,47 @@ mod tests {
             Value::Bv8(value) => assert_eq!(value.interval().bounds(), (10, 42)),
             _ => panic!("u8 registry entry decoded to the wrong carrier"),
         }
+    }
+
+    #[test]
+    fn lattice_and_forward_dispatch_use_available_fields() {
+        let carrier = Carrier::BitVec(Width::W8);
+        let mask = DomainSet::from_bit(0);
+        let left = decode(carrier, &[1, 1]);
+        let right = decode(carrier, &[2, 2]);
+        match forward(Op::BvAdd, mask, &[left, right]) {
+            Value::Bv8(value) => assert_eq!(value.interval().bounds(), (3, 3)),
+            _ => panic!("bvadd did not retain its native carrier"),
+        }
+
+        let disjoint_left = decode(carrier, &[0, 1]);
+        let disjoint_right = decode(carrier, &[2, 3]);
+        assert!(matches!(
+            meet(carrier, mask, &disjoint_left, &disjoint_right),
+            RegistryResult::Bot
+        ));
+
+        let bool_value = forward(
+            Op::Ite,
+            mask,
+            &[
+                Value::Bool(Bool4::True),
+                Value::Bool(Bool4::False),
+                Value::Bool(Bool4::True),
+            ],
+        );
+        assert!(matches!(bool_value, Value::Bool(Bool4::False)));
+    }
+
+    #[test]
+    fn singleton_detection_requires_a_singleton_interval() {
+        let carrier = Carrier::BitVec(Width::W8);
+        let mask = DomainSet::from_bit(0);
+        assert!(matches!(
+            as_constant(carrier, mask, &decode(carrier, &[7, 7])),
+            Some(Const::Bv(7))
+        ));
+        assert!(as_constant(carrier, mask, &decode(carrier, &[7, 8])).is_none());
+        assert!(as_constant(carrier, DomainSet::empty(), &decode(carrier, &[7, 7])).is_none());
     }
 }
