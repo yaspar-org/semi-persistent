@@ -99,10 +99,12 @@ theorems, each derived from the Layer-3 theorem through `to_chopped()`, cover
 every `ExecTnum` operation (constant, bitwise, add, sub, neg, mul, division,
 shifts, join, meet) and every `ExecAnum` operation (constant, top, add, sub,
 neg, mul and the more precise mul_precise, division by constant, bitwise, shifts, join, meet, conversions);
-they also cover `ExecUnum` constant/top/add/from-interval/multiply and every
-`Interval<W>` operation. Generic `Congruence<W>` additionally proves exact refinement/meet,
-least-upper-bound join, and widen/add/sub/neg containment. Other Layer 4 methods (most Unum helpers)
-currently prove well-formedness only; see
+they also cover every `ExecUnum` operation (constant, top, add, neg, sub,
+multiply, conversions) and every `Interval<W>` operation. Generic
+`Congruence<W>` additionally proves exact refinement/meet, least-upper-bound
+join, and widen/add/sub/neg containment. The other Layer 4 methods are helpers
+(`min_val`, `max_val`, `is_const`, `meet_m`, `range_tn`, `chop_to`) whose
+postconditions state their exact result; see
 [the proof-status inventory](doc/proof-status.md).
 
 ### Shared domain interface (lattice.rs, word.rs, semantics.rs, transfer.rs)
@@ -133,7 +135,9 @@ The reference implementations are `Interval<W>` (`interval.rs`) and
 | `Unum::mul_sound` | unum.rs | Unbounded Unum multiplication is sound |
 | `carry_out_c_overflow` | unum.rs | Carry-out bit = low-bits overflow |
 | `Unum::add_bounded_sound` | unum.rs | Chopped addition is sound under its no-overflow preconditions |
-| `Unum::to_anum_sound` | unum.rs | Single-field (`walls == 0`) Unum-to-Anum conversion is sound |
+| `Unum::to_anum_sound` | unum.rs | Unum-to-Anum conversion is sound, for any walls |
+| `Unum::submask_admitted` | unum.rs | An offset whose bits are bits of the extent is admitted, for any walls |
+| `Unum::complement_admitted` | unum.rs | If `d` is admitted, so is `x - d`, with the same fields |
 
 ## Prerequisites
 

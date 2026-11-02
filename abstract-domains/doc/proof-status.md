@@ -102,21 +102,21 @@ The current **universal containment** contracts are:
 | --- | --- |
 | `ExecTnum` | `constant`, `bw_or`, `bw_and`, `bw_xor`, `bw_not`, `bw_and_not`, `add`, `neg`, `sub`, `mul`, `divrem_g`, `divrem`, `join`, `meet`, `rsh`, `lsh`, `rshi`, `lshi` |
 | `ExecAnum` | `constant`, `top`, `add`, `sub`, `neg`, `mul`, `mul_precise`, `div_const`, `bw_and`, `bw_or`, `bw_xor`, `bw_not`, `lshi`, `rshi`, `join`, `meet`, `from_etn`, `to_etn` |
-| `ExecUnum` | `constant`, `top`, `add`, `from_interval`, `mul` |
+| `ExecUnum` | `constant`, `top`, `add`, `neg`, `sub`, `mul`, `from_interval`, `from_ean`, `to_ean`, `to_etn` |
 | `Interval<W>` | every operation: `Domain`, `meet_exact`, `add`, `sub`, `neg`, `mul`, `div`, `rem`, `and`, `or`, `xor`, `not`, `shl`, `shr` |
 | `Congruence<W>` | exact `refines`/`leq`/`meet`, LUB `join`, `widen`, unsigned `add`/`sub`/`neg` |
 | `StridedInterval<W>` | `new`, `constant`, `leq` (sound and complete), `join`, `meet`, `widen`; precision caveats below |
 
 The `ExecUnum` proofs use the `BitWord` bridge lemmas, the L3 `ChoppedUnum`
 soundness theorems, explicit overflow-to-top cases, and interval-to-Unum range
-lemmas. #123 removed `ReducedProduct`, whose `reduce` and `add` carried
+lemmas. `neg` reflects through 2^W with the same fields, by the L2
+`Unum::complement_admitted`; the conversions use `Unum::to_anum_sound` and
+`Unum::submask_admitted`, and `to_etn` goes through `ExecAnum::to_etn`. #123 removed `ReducedProduct`, whose `reduce` and `add` carried
 containment theorems; `reduce::Product` replaces it.
 
-Other executable methods currently prove well-formedness only. In particular,
-this includes most Unum conversions/arithmetic helpers.
-Their implementations and finite mirror tests are evidence, but not universal
-containment theorems. Adding those postconditions and proofs is the remaining
-L4 soundness work.
+The other executable methods of `ExecTnum`, `ExecAnum` and `ExecUnum` are
+helpers (`min_val`, `max_val`, `is_const`, `meet_m`, `range_tn`, `chop_to`,
+`ones_mask`) whose postconditions state their exact result.
 
 ### StridedInterval
 

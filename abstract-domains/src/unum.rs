@@ -503,6 +503,40 @@ impl Unum {
         }
     }
 
+    /// An offset whose bits are all bits of the extent is admitted, whatever
+    /// the walls: subtracting it from the extent never borrows.
+    pub proof fn submask_admitted(w: nat, x: nat, d: nat, first: bool)
+        requires bw_and_not(d, x) == 0
+        ensures field_admits(w, x, d, Bit::f(), first)
+        decreases w + x + d
+    { reveal_with_fuel(field_admits, 1);
+        and_not_zero_le(d, x);
+        if !(w == 0 && x == 0) {
+            mapd_hd_tl(d, x, |p: Bit, q: Bit| p.and_not(q));
+            assert(hd(0 as nat) == Bit::f() && tl(0 as nat) == 0 as nat);
+            Self::submask_admitted(tl(w), tl(x), tl(d), false);
+        }
+    }
+
+    /// If d is admitted with borrow br, so is its complement x - d - br, with
+    /// the same borrows: within each field the complement is x_f - d_f.
+    pub proof fn complement_admitted(w: nat, x: nat, d: nat, br: Bit, first: bool)
+        requires field_admits(w, x, d, br, first), d + br.n() <= x
+        ensures field_admits(w, x, (x - d - br.n()) as nat, br, first)
+        decreases w + x + d
+    { reveal_with_fuel(field_admits, 1);
+        let e = (x - d - br.n()) as nat;
+        if !(w == 0 && x == 0) {
+            let nb = if (hd(x).n() as int - hd(d).n() as int - br.n() as int) < 0 { Bit::t() } else { Bit::f() };
+            Self::offset_bounded_carry(tl(w), tl(x), tl(d), nb);
+            Self::complement_admitted(tl(w), tl(x), tl(d), nb, false);
+            hd_tl(x); hd_tl(d); hd_tl(e);
+            assert(hd(x).n() <= 1 && hd(d).n() <= 1 && hd(e).n() <= 1 && br.n() <= 1);
+            assert(tl(e) == (tl(x) - tl(d) - nb.n()) as nat);
+            assert((hd(x).n() as int - hd(e).n() as int - br.n() as int) < 0 <==> nb.b());
+        }
+    }
+
     /// Multiplication: bilinear expansion.
     /// result = (v1*v2, w=0, x = v1*x2 + v2*x1 + x1*x2)
     /// (w=0 means single field spanning all bits)
@@ -829,12 +863,11 @@ impl Unum {
     }
 
     pub proof fn to_anum_sound(self)
-        requires self.walls == 0
         ensures forall|n: nat| #![auto] self.has(n) ==> self.to_anum().has(n)
     {
         assert forall|n: nat| #![auto] self.has(n) implies self.to_anum().has(n) by {
             if self.has(n) {
-                Self::field_admits_leq(self.extent, nat_sub(n, self.base), Bit::f(), true);
+                Self::offset_bounded(self.walls, self.extent, nat_sub(n, self.base));
                 len_bound(self.extent);
                 all_ones_has(nat_sub(n, self.base), len(self.extent));
                 Tnum::ctor(0, all_ones(len(self.extent))).has_equiv(nat_sub(n, self.base));

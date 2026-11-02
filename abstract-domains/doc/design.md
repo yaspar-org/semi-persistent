@@ -348,7 +348,8 @@ currently proved for:
   Layer-3 theorem through `lemma_ct()`;
 - `ExecAnum::{constant,top,add,sub,div_const,from_etn,to_etn,neg,lshi,join,
   bw_and,bw_or,bw_xor,bw_not,rshi,meet,mul,mul_precise}`, the same way;
-- `ExecUnum::{constant,top,add,from_interval,mul}`;
+- `ExecUnum::{constant,top,add,neg,sub,mul,from_interval,from_ean,to_ean,
+  to_etn}`;
 - every `Interval<W>` operation (`interval.rs`);
 - generic `Congruence<W>` exact refinement/meet, least-upper-bound join,
   join-based widen, and unsigned add/sub/neg.

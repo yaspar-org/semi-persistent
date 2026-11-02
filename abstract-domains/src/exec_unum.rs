@@ -192,30 +192,40 @@ impl<W: BitWord> ExecUnum<W> {
     /// contiguous ranges `[0, max]`; Anum needs per-bit independence, so the
     /// whole extent is rounded up to 2^k - 1, as one field. This is sound, but
     /// may be less precise than per-field widening for multi-field Unums.
-    pub fn to_ean(&self) -> ExecAnum<W> {
-        ExecAnum { base: self.base, span: ExecAnum::<W>::ones_mask(self.extent) }
+    pub fn to_ean(&self) -> (r: ExecAnum<W>)
+        ensures
+            forall|c: W| #![auto] self.has(c) ==> r.has(c),
+            r.to_an() == self.to_un().to_anum(),
+    {
+        let r = ExecAnum { base: self.base, span: ExecAnum::<W>::ones_mask(self.extent) };
+        proof { self.to_un().to_anum_sound(); }
+        r
     }
 
-    /// Convert to a Tnum: the bits that differ between the Anum's bounds, and
-    /// its span, are unknown.
+    /// Convert to a Tnum through the Anum: `ExecAnum::to_etn` leaves unknown
+    /// the bits that differ between the Anum's bounds, and its span.
     pub fn to_etn(&self) -> (r: ExecTnum<W>)
-        ensures r.wf()
+        ensures
+            r.wf(),
+            forall|c: W| #![auto] self.has(c) ==> r.has(c),
     {
-        let an = self.to_ean();
-        let (lbv, lbm) = (an.base, an.span);
-        let ub = lbv.wrapping_add(lbm);
-        let mask = ub.bit_xor(lbv).bit_or(an.span);
-        proof {
-            lemma_and_not(lbv, mask);
-            disj_and_not(lbv.view(), mask.view());
-        }
-        ExecTnum { val: lbv.bit_and(mask.bit_not()), mask }
+        self.to_ean().to_etn()
     }
 
     /// Build from an Anum: each uncertain bit becomes its own 1-wide bitfield,
     /// so walls is all ones and extent is the span.
-    pub fn from_ean(a: &ExecAnum<W>) -> Self {
-        ExecUnum { base: a.base, walls: W::max(), extent: a.span }
+    pub fn from_ean(a: &ExecAnum<W>) -> (r: Self)
+        ensures forall|c: W| #![auto] a.has(c) ==> r.has(c)
+    {
+        let r = ExecUnum { base: a.base, walls: W::max(), extent: a.span };
+        proof {
+            assert forall|c: W| #![auto] a.has(c) implies r.has(c) by {
+                let d = nat_sub(c.view(), a.base.view());
+                a.to_an().mask_tnum().has_equiv(d);
+                Unum::submask_admitted(r.walls.view(), a.span.view(), d, true);
+            };
+        }
+        r
     }
 
     /// Build from an Interval: a single bitfield covering the range.
@@ -234,24 +244,83 @@ impl<W: BitWord> ExecUnum<W> {
         r
     }
 
-    /// Negation: -(v + d) = -v - d, where d ranges over [0, max] per field, so
-    /// the result's base is -v - extent with the same uncertainty structure.
-    /// The negated range wraps when the input range does, or when it holds 0
-    /// and something else: -[0, e] = {0} u [-e, MAX].
-    pub fn neg(&self) -> Self {
+    /// Negation: -(v + d) = (-v - x) + (x - d), and x - d is admitted with the
+    /// same fields (`Unum::complement_admitted`), so the result's base is
+    /// -v - x with the same walls and extent. The negated range wraps when the
+    /// input range does, or when it holds 0 and something else:
+    /// -[0, e] = {0} u [-e, MAX]; both give top.
+    pub fn neg(&self) -> (r: Self)
+        ensures forall|c: W| #![auto] self.has(c) ==> r.has(W::from_int(0 - c.view() as int))
+    {
         let (b, x) = (self.base, self.extent);
-        match b.checked_add(x) {
-            None => Self::top(),
-            Some(_) => if b.eq(W::zero()) && !x.eq(W::zero()) {
-                Self::top()
-            } else {
-                ExecUnum { base: W::zero().wrapping_sub(b).wrapping_sub(x), walls: self.walls, extent: x }
-            },
+        let max = match b.checked_add(x) {
+            None => return Self::top(),
+            Some(max) => max,
+        };
+        if max.eq(W::zero()) {
+            proof {
+                W::lemma_modulus();
+                assert forall|c: W| #![auto] self.has(c) implies self.has(W::from_int(0 - c.view() as int)) by {
+                    Unum::offset_bounded(self.walls.view(), x.view(), nat_sub(c.view(), b.view()));
+                    assert(c.view() == 0);
+                    W::lemma_from_int(0);
+                    vstd::arithmetic::div_mod::lemma_small_mod(0, W::modulus());
+                    W::lemma_view_injective(W::from_int(0), c);
+                    assert(0 - c.view() as int == 0);
+                };
+            }
+            return *self;
         }
+        if b.eq(W::zero()) {
+            return Self::top();
+        }
+        let r = ExecUnum { base: max.neg_nonzero(), walls: self.walls, extent: x };
+        proof {
+            W::lemma_modulus();
+            let m = W::modulus() as int;
+            assert forall|c: W| #![auto] self.has(c) implies r.has(W::from_int(0 - c.view() as int)) by {
+                let (xv, cv) = (x.view(), c.view());
+                let d = nat_sub(cv, b.view());
+                let n = W::from_int(0 - cv as int);
+                Unum::offset_bounded(self.walls.view(), xv, d);
+                assert(cv >= b.view() && d == cv - b.view() && d <= xv);
+                assert(r.base.view() == m - (b.view() + xv));
+                c.lemma_view_bounded();
+                W::lemma_from_int(0 - cv as int);
+                vstd::arithmetic::div_mod::lemma_mod_add_multiples_vanish(0 - cv as int, m);
+                vstd::arithmetic::div_mod::lemma_small_mod((m - cv) as nat, m as nat);
+                assert(n.view() == m - cv) by {
+                    assert(m + (0 - cv as int) == (m - cv) as nat as int);
+                };
+                Unum::complement_admitted(self.walls.view(), xv, d, Bit::f(), true);
+                assert(nat_sub(n.view(), r.base.view()) == (xv - d - Bit::f().n()) as nat);
+            };
+        }
+        r
     }
 
-    pub fn sub(&self, t: &Self) -> Self {
-        self.add(&t.neg())
+    /// Subtraction: add the negation.
+    pub fn sub(&self, t: &Self) -> (r: Self)
+        ensures forall|c1: W, c2: W| #![auto] self.has(c1) && t.has(c2) ==> r.has(W::from_int(c1.view() as int - c2.view() as int))
+    {
+        let nt = t.neg();
+        let r = self.add(&nt);
+        proof {
+            W::lemma_modulus();
+            assert forall|c1: W, c2: W| #![auto] self.has(c1) && t.has(c2) implies r.has(W::from_int(c1.view() as int - c2.view() as int)) by {
+                let (v1, v2) = (c1.view() as int, c2.view() as int);
+                let n2 = W::from_int(0 - v2);
+                assert(nt.has(n2));
+                let s = W::from_int(v1 + n2.view() as int);
+                assert(r.has(s));
+                W::lemma_from_int(0 - v2);
+                W::lemma_from_int(v1 + n2.view() as int);
+                W::lemma_from_int(v1 - v2);
+                vstd::arithmetic::div_mod::lemma_add_mod_noop_right(v1, 0 - v2, W::modulus() as int);
+                W::lemma_view_injective(s, W::from_int(v1 - v2));
+            };
+        }
+        r
     }
 
     /// Multiplication: bilinear expansion.
