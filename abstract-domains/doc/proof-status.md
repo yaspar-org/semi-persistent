@@ -415,19 +415,17 @@ no-growth.
 
 ## Bool4 lattice
 
-`abstract-domains/src/bool4.rs` is the four-point lattice
-`Bottom | False | True | Top`. `Bottom` is the one empty value. `wf` rejects
-it, so every well-formed value is nonempty and the `Canonical` lemmas apply to
-those values. `Domain::meet` returns `BotOr::Bot` for an empty intersection.
-The lattice `meet` still returns `Bottom`.
+`abstract-domains/src/bool4.rs` is the boolean lattice. The four points are
+`BotOr::Bot` plus `False`, `True`, and `Top`. The enum has no `Bottom`
+variant: every value is nonempty, `wf` is true, and `Canonical::lemma_nonempty`
+holds for every value. `meet` of `False` and `True` returns `BotOr::Bot`.
 
-`not`, `and`, and `or` are exact in both directions. Quantifiers name `has`
-as their trigger. The module command does not pass `--rlimit`. This base has
-no `ReducedProduct`, so the forward comparisons that were written on that type
-are not in this branch. Main's interface `IntervalZ` is unchanged.
+`not`, `and`, `or`, and `eq` are exact in both directions. Soundness says a
+concrete pair's result is in the abstract result. Exactness says every value
+of the result is produced by some concrete pair (`reach1` / `reach2`).
 
-The lattice module verifies at the default resource limit:
+The module verifies with 21 verified and 0 errors:
 
 ```text
-cargo verus focus -p semi-persistent-abstract-domains -- --verify-only-module bool4
+cargo verus focus -p semi-persistent-abstract-domains -- --verify-only-module bool4 --rlimit 50
 ```

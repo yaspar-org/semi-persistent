@@ -6,27 +6,22 @@ Task 1's four-point boolean, from `interval-extensions.md` §2. Two people, two 
 
 Owner: implementation owner. Files: `src/bool4.rs`, `tests/bool4.rs`.
 
-`Bool4 = Bottom | False | True | Top`.
+A boolean lattice has four points. The empty set is `BotOr::Bot`, outside the enum. `Bool4` itself is only the nonempty values:
 
 | Value | Concrete booleans | Running example |
 | --- | --- | --- |
-| `Bottom` | none | impossible |
+| `BotOr::Bot` | none | impossible |
 | `False` | `{false}` | false |
 | `True` | `{true}` | true |
 | `Top` | `{false, true}` | unknown |
 
-Implement and prove:
+There is no `Bottom` variant and no eight-point boolean. Every `Bool4` value contains `false` or `true`.
 
-- canonical `bottom`, `top`, and concrete-boolean `constant` constructors
-- `has`, and `refines` as subset of `has`
-- `join`, `meet`, `not`, `and`, `or`, each with containment: every concrete input's concrete result is in the abstract result
-- §3.5 for `meet` and `join`: idempotent, commutative, associative, units, zeros
-- monotonicity of `not`, `and`, and `or` in the refined argument
-
-`meet(Top, True) = True` is the running example's `(union c (True))`. `meet(True, False) = Bottom`. Bottom contains neither boolean.
+`not`, `and`, `or`, and `eq` are exact in both directions: every concrete input's result is in the abstract result, and every value of the result is produced by some concrete pair. `eq` is boolean equality. `meet(Top, True)` is `BotOr::Val(True)`. `meet(True, False)` is `BotOr::Bot`.
 
 ## Piece B — comparisons and backward narrowing
 
 The forward comparisons were written on `ReducedProduct`. This base does not
 have that type, so those comparisons are not part of this branch. Backward
-narrowing remains future work.
+narrowing remains future work. Piece B does not add a variant to `Bool4` and
+does not change `join`, `meet`, `not`, `and`, `or`, or `eq`.
