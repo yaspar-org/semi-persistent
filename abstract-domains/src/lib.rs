@@ -27,6 +27,7 @@ pub mod bitword;
 pub mod bool4;
 pub mod bools;
 pub mod chopped;
+pub mod congruence;
 pub mod div;
 pub mod domains;
 pub mod exec_anum;
