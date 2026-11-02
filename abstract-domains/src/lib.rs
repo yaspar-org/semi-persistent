@@ -40,11 +40,11 @@ pub mod lattice;
 pub mod nats;
 pub mod reduce;
 pub mod semantics;
+pub mod sign;
 pub mod strided;
 pub mod tbit;
 pub mod tnum;
 pub mod transfer;
 pub mod unum;
 pub mod word;
-
-pub mod sign;
+pub mod wrapped;
