@@ -6,7 +6,8 @@ written in [Verus](https://github.com/verus-lang/verus) (verified Rust).
 ## What this is
 
 This crate provides **tristate numbers (Tnums)**, **additive tristate numbers (Anums)**,
-**intervals**, **Unums (horizontally composable additive tristate numbers)**, and their
+**intervals**, **congruences**, **Unums (horizontally composable additive tristate
+numbers)**, and their
 **reduced product TAIU** -- abstract domains for reasoning about bitvector arithmetic
 with bitwise uncertainty.
 
@@ -83,6 +84,11 @@ proved for every width through the `BitWord` bridges (`bitword.rs`);
 - **ExecUnum<W>**: Executable Unum. Proved-sound addition via the carry-out formula,
   widening to top when represented bounds or result ranges wrap.
 - **Interval<W>** (`interval.rs`): `[lo, hi]` bounds tracking.
+- **Congruence<W>** (`congruence.rs`): generic canonical finite-word classes,
+  exact refinement/meet, least-upper-bound join, join-based widen, and
+  `Arith<Unsigned<W>>` add/sub/neg for u8 through u128. Uniform-wrap arithmetic
+  retains the stride GCD; mixed wrapping uses the machine-modulus GCD.
+  Constants have proved exactness contracts. Empty meet is `BotOr::Bot`.
 
 These domains combine through `reduce::Product` and the fact records (see
 [the reduced-product note](doc/reduced-product.md)) once they implement
@@ -94,7 +100,8 @@ every `ExecTnum` operation (constant, bitwise, add, sub, neg, mul, division,
 shifts, join, meet) and every `ExecAnum` operation (constant, top, add, sub,
 neg, mul and the more precise mul_precise, division by constant, bitwise, shifts, join, meet, conversions);
 they also cover `ExecUnum` constant/top/add/from-interval/multiply and every
-`Interval<W>` operation. Other Layer 4 methods (most Unum helpers)
+`Interval<W>` operation. Generic `Congruence<W>` additionally proves exact refinement/meet,
+least-upper-bound join, and widen/add/sub/neg containment. Other Layer 4 methods (most Unum helpers)
 currently prove well-formedness only; see
 [the proof-status inventory](doc/proof-status.md).
 
@@ -160,8 +167,10 @@ cargo run --features bin
 - pinned `vstd` admitted specifications remain in the trust boundary
 - `IBig` (`num-bigint` wrapper): 7 `external_body` functions and 1 axiom, listed in the
   [trust ledger](doc/domain-traits.md#7-trust); machine-word domains do not use it
-- Rust mirror tests, reference-domain tests, and Congruence tests, all passing
-- 4 enabled bit-widths: u8, u16, u32, u64
+- Runtime suites cover mirror domains, generic reference domains, Congruence
+  semantics, reduction, and shared arithmetic (including the exhaustive CRT oracle)
+- Generic `Word` and shared arithmetic support u8 through u128; `domains.rs`
+  names the executable domains at u8, u16, u32, and u64
 
 ## Design documents
 

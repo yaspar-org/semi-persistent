@@ -23,11 +23,13 @@
 //!   (Bool4). See doc/reduced-product.md.
 
 pub mod anum;
+pub mod arithmetic;
 pub mod bitword;
 pub mod bool4;
 pub mod bools;
 pub mod chopped;
 pub mod congruence;
+pub mod congruence_laws;
 pub mod div;
 pub mod domains;
 pub mod exec_anum;
@@ -44,8 +46,11 @@ pub mod nats;
 pub mod pair_mul;
 pub mod reduce;
 pub mod semantics;
+pub mod sign;
+pub mod strided;
 pub mod tbit;
 pub mod tnum;
 pub mod transfer;
 pub mod unum;
 pub mod word;
+pub mod wrapped;
