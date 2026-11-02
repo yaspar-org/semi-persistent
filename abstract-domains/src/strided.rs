@@ -796,10 +796,11 @@ impl<W: Word> StridedInterval<W> {
         BotOr::Val(m)
     }
 
-    /// Exact meet of two non-singletons with any strides. Every point of
-    /// `a` has residue `a.lo % a.stride`, and likewise for `b`, so the
-    /// intersection is the CRT class of the two residues (`crt_merge`, #112)
-    /// clipped to the common bounds.
+    /// Meet of two non-singletons with any strides. Every point of `a` has
+    /// residue `a.lo % a.stride`, and likewise for `b`, so the intersection
+    /// is the CRT class of the two residues (`crt_merge`) clipped to the
+    /// common bounds. The contract states containment; the tests check
+    /// exactness (`strided_meet_is_exact`).
     fn meet_crt(a: &Self, b: &Self) -> (r: BotOr<Self>)
         requires
             a.wf(),
