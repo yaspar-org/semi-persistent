@@ -188,12 +188,30 @@ fn reduce_preserves_the_concretization() {
 }
 
 #[test]
-#[ignore = "abs-domain-registry: not implemented yet"]
 fn disabled_fields_stay_top() {
     // For every mask, the decoded result of top, meet, reduce and every
     // forward and backward transfer has every disabled field equal to the
     // field's top.
-    return;
+    let carrier = Carrier::BitVec(Width::W8);
+    let mask = DomainSet::empty();
+    let left = decode(carrier, &[7, 7]);
+    let right = decode(carrier, &[9, 9]);
+    for value in [
+        top(carrier),
+        match meet(carrier, mask, &left, &right) {
+            RegistryResult::Val(value) => value,
+            RegistryResult::Bot => panic!("disabled analysis cannot create a conflict"),
+        },
+        match reduce(carrier, mask, &left) {
+            RegistryResult::Val(value) => value,
+            RegistryResult::Bot => panic!("disabled analysis cannot create a conflict"),
+        },
+        forward(Op::BvAdd, mask, &[left, right]),
+    ] {
+        let mut bytes = [0; 2];
+        encode(carrier, &value, &mut bytes);
+        assert_eq!(bytes, [0, u8::MAX]);
+    }
 }
 
 #[test]
@@ -210,14 +228,25 @@ fn is_singleton_is_exact() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "abs-domain-registry: not implemented yet"]
 fn operator_names_resolve_with_their_signature() {
     // Every operator of §4 resolves by name to its carrier signature
     // (`bvadd`: (BV N, BV N) -> BV N; `bvult`: (BV N, BV N) -> Bool; `<`:
     // (Int, Int) -> Bool; `ite`: (Bool, S, S) -> S; `=`: (S, S) -> Bool).
     // A signature mismatch (`bvadd` on Int, `+` on BV 8) and an unknown name
     // are rejected.
-    return;
+    let bv = Carrier::BitVec(Width::W8);
+    assert_eq!(op("bvadd", &[bv, bv]), Ok((Op::BvAdd, bv)));
+    assert_eq!(op("bvult", &[bv, bv]), Ok((Op::BvUlt, Carrier::Bool)));
+    assert_eq!(
+        op("+", &[Carrier::Int, Carrier::Int]),
+        Ok((Op::Add, Carrier::Int))
+    );
+    assert_eq!(op("ite", &[Carrier::Bool, bv, bv]), Ok((Op::Ite, bv)));
+    assert_eq!(
+        op("bvadd", &[Carrier::Int, Carrier::Int]),
+        Err(OpError::Signature)
+    );
+    assert_eq!(op("not-an-op", &[bv]), Err(OpError::Unknown));
 }
 
 #[test]
@@ -302,9 +331,17 @@ fn u128_instance_is_exercised() {
 }
 
 #[test]
-#[ignore = "abs-domain-registry: not implemented yet"]
 fn non_native_width_is_top() {
     // At BitVec(7) every registry function returns top and lookup of every
     // bitvec domain name reports it unavailable; no function panics.
-    return;
+    let carrier = Carrier::TopOnly { bits: 7 };
+    assert!(!domain_available(
+        carrier,
+        domain_bit(carrier, "ubounds").unwrap()
+    ));
+    assert_eq!(entry_size(carrier), 0);
+    assert!(matches!(top(carrier), Value::Top));
+    let mut bytes = [];
+    encode(carrier, &Value::Top, &mut bytes);
+    assert!(matches!(decode(carrier, &bytes), Value::Top));
 }
