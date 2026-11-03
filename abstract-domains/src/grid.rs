@@ -3,7 +3,7 @@
 //! Rounding a machine word onto a congruence grid.
 //!
 //! The grid of `(r, m)` is `{x | x % m == r}` when `m > 0` and `{r}` when
-//! `m == 0`, the congruence encoding (`m == 0` is a singleton, `(1, 0)` is
+//! `m == 0`, the congruence encoding (`m == 0` is a singleton, `(0, 1)` is
 //! every word). `round_up` and `round_down` find the nearest grid point on
 //! each side of a word. They are the interval/congruence grid step of
 //! `Facts::normalize` (doc/reduced-product.md), and give the smallest and
@@ -11,9 +11,10 @@
 //!
 //! Both compute in `W` with `urem`, `checked_add` and `checked_sub` only, and
 //! return `None` instead of wrapping when no grid point lies on that side.
-#![allow(unused_imports)]
 
 use crate::word::*;
+// Proof-only lemmas, erased outside Verus.
+#[allow(unused_imports)]
 use vstd::arithmetic::div_mod::*;
 use vstd::prelude::*;
 
