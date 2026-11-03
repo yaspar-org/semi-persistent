@@ -15,7 +15,8 @@ use crate::interval::Interval;
 use crate::interval_z::{Hi, IntervalZ, Lo};
 use crate::lattice::{BotOr, Domain};
 use crate::semantics::{Euclid, Unsigned};
-use crate::transfer::{Arith, Mul};
+use crate::transfer::{Arith, DivRem, Mul};
+use crate::word::Word;
 
 /// Native bit-vector widths supported by `Word`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -603,6 +604,16 @@ pub fn forward(op: Op, mask: DomainSet, args: &[Value]) -> Value {
         (Op::BvMul, [Value::Bv32(a), Value::Bv32(b)]) => binary_mul!(a, b, Bv32, Unsigned<u32>),
         (Op::BvMul, [Value::Bv64(a), Value::Bv64(b)]) => binary_mul!(a, b, Bv64, Unsigned<u64>),
         (Op::BvMul, [Value::Bv128(a), Value::Bv128(b)]) => binary_mul!(a, b, Bv128, Unsigned<u128>),
+        (Op::BvUdiv, [Value::Bv8(a), Value::Bv8(b)]) => Value::Bv8(unsigned_div(a, b)),
+        (Op::BvUdiv, [Value::Bv16(a), Value::Bv16(b)]) => Value::Bv16(unsigned_div(a, b)),
+        (Op::BvUdiv, [Value::Bv32(a), Value::Bv32(b)]) => Value::Bv32(unsigned_div(a, b)),
+        (Op::BvUdiv, [Value::Bv64(a), Value::Bv64(b)]) => Value::Bv64(unsigned_div(a, b)),
+        (Op::BvUdiv, [Value::Bv128(a), Value::Bv128(b)]) => Value::Bv128(unsigned_div(a, b)),
+        (Op::BvUrem, [Value::Bv8(a), Value::Bv8(b)]) => Value::Bv8(unsigned_rem(a, b)),
+        (Op::BvUrem, [Value::Bv16(a), Value::Bv16(b)]) => Value::Bv16(unsigned_rem(a, b)),
+        (Op::BvUrem, [Value::Bv32(a), Value::Bv32(b)]) => Value::Bv32(unsigned_rem(a, b)),
+        (Op::BvUrem, [Value::Bv64(a), Value::Bv64(b)]) => Value::Bv64(unsigned_rem(a, b)),
+        (Op::BvUrem, [Value::Bv128(a), Value::Bv128(b)]) => Value::Bv128(unsigned_rem(a, b)),
         _ => top(carrier),
     }
 }
@@ -644,6 +655,44 @@ fn join_same_carrier(carrier: Carrier, left: &Value, right: &Value) -> Value {
         (Carrier::BitVec(Width::W128), Value::Bv128(a), Value::Bv128(b)) => Value::Bv128(a.join(b)),
         (Carrier::TopOnly { .. }, Value::Top, Value::Top) => Value::Top,
         _ => panic!("ite branches have different carriers"),
+    }
+}
+
+/// Adds the SMT-LIB `bvudiv x 0 = all-ones` case to the verified transfer
+/// over nonzero divisors.  `DivRem` deliberately leaves zero divisors out of
+/// its contract, so the registry is the one layer that makes this total.
+fn unsigned_div<W: Word>(dividend: &Facts<W>, divisor: &Facts<W>) -> Facts<W> {
+    let (nonzero, _) = <Facts<W> as DivRem<Unsigned<W>>>::div(dividend, divisor);
+    let zero_case = Facts::from_interval(Interval::constant(W::max()));
+    if <Facts<W> as DivRem<Unsigned<W>>>::contains_zero(divisor) {
+        match nonzero {
+            BotOr::Bot => zero_case,
+            BotOr::Val(value) => value.join(&zero_case),
+        }
+    } else {
+        match nonzero {
+            BotOr::Val(value) => value,
+            // A well-formed nonzero divisor cannot produce Bot.  Top keeps
+            // this dispatcher total if a future domain weakens that result.
+            BotOr::Bot => <Facts<W> as Domain>::top(),
+        }
+    }
+}
+
+/// Adds the SMT-LIB `bvurem x 0 = x` case to the verified transfer over
+/// nonzero divisors.
+fn unsigned_rem<W: Word>(dividend: &Facts<W>, divisor: &Facts<W>) -> Facts<W> {
+    let (nonzero, _) = <Facts<W> as DivRem<Unsigned<W>>>::rem(dividend, divisor);
+    if <Facts<W> as DivRem<Unsigned<W>>>::contains_zero(divisor) {
+        match nonzero {
+            BotOr::Bot => dividend.dup(),
+            BotOr::Val(value) => value.join(dividend),
+        }
+    } else {
+        match nonzero {
+            BotOr::Val(value) => value,
+            BotOr::Bot => <Facts<W> as Domain>::top(),
+        }
     }
 }
 

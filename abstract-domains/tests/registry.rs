@@ -409,9 +409,9 @@ fn division_by_zero_follows_smtlib() {
         let dividend = u8_value(x, x);
         let zero = u8_value(0, 0);
         let quotient = forward(Op::BvUdiv, mask, &[dividend, zero]);
-        assert!(u8_contains_ref(&quotient, u8::MAX));
+        assert_eq!(u8_bounds(&quotient), (u8::MAX, u8::MAX));
         let remainder = forward(Op::BvUrem, mask, &[u8_value(x, x), u8_value(0, 0)]);
-        assert!(u8_contains_ref(&remainder, x));
+        assert_eq!(u8_bounds(&remainder), (x, x));
     }
 }
 
