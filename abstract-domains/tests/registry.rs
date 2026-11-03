@@ -12,6 +12,11 @@
 #![allow(clippy::needless_return)]
 
 use semi_persistent_abstract_domains::registry::*;
+use semi_persistent_abstract_domains::{
+    facts_z::FactsZ,
+    ibig::IBig,
+    interval_z::{Hi, IntervalZ, Lo},
+};
 
 fn u8_bounds(value: &Value) -> (u8, u8) {
     match value {
@@ -32,6 +37,18 @@ fn u8_contains_ref(value: &Value, concrete: u8) -> bool {
 
 fn u8_value(lo: u8, hi: u8) -> Value {
     decode(Carrier::BitVec(Width::W8), &[lo, hi])
+}
+
+fn int_value(lo: Lo, hi: Hi) -> Value {
+    Value::Int(FactsZ::from_interval(
+        IntervalZ::new(lo, hi).expect("test bounds are ordered"),
+    ))
+}
+
+fn int_entry(value: Value) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    encode(Carrier::Int, &value, &mut bytes);
+    bytes
 }
 
 fn bool_values(code: u8) -> Vec<bool> {
@@ -195,13 +212,28 @@ fn encode_decode_round_trips() {
 }
 
 #[test]
-#[ignore = "abs-domain-registry: not implemented yet"]
 fn int_encoding_rounds_bounds_outward() {
     // A FactsZ bound outside the saturated range of §3 encodes to the
     // infinite bound on its side: gamma(decode(encode(f))) contains
     // gamma(f), checked on bounds 2^63 - 1, 2^63, -(2^63), -(2^63) - 1 and
     // 10^30.
-    return;
+    let one = IBig::from_i64(1);
+    let above_i64 = IBig::from_i64(i64::MAX).add(&one);
+    let below_i64 = IBig::from_i64(i64::MIN).add(&IBig::from_i64(-1));
+
+    let above = int_entry(int_value(Lo::Fin(above_i64.dup()), Hi::Fin(above_i64)));
+    let below = int_entry(int_value(Lo::Fin(below_i64.dup()), Hi::Fin(below_i64)));
+    assert_eq!(&above[..8], &i64::MIN.to_le_bytes());
+    assert_eq!(&above[8..], &i64::MAX.to_le_bytes());
+    assert_eq!(&below[..8], &i64::MIN.to_le_bytes());
+    assert_eq!(&below[8..], &i64::MAX.to_le_bytes());
+
+    let finite = int_entry(int_value(
+        Lo::Fin(IBig::from_i64(-42)),
+        Hi::Fin(IBig::from_i64(99)),
+    ));
+    assert_eq!(&finite[..8], &(-42_i64).to_le_bytes());
+    assert_eq!(&finite[8..], &99_i64.to_le_bytes());
 }
 
 #[test]
@@ -229,12 +261,24 @@ fn top_concretizes_to_every_value() {
 }
 
 #[test]
-#[ignore = "abs-domain-registry: not implemented yet"]
 fn equal_entries_iff_equal_concretizations() {
     // Canonicity at the byte level: on the seeded Facts<u8> values, after
     // reduce, two entries are byte-equal exactly when their brute-force
     // concretizations (Set8) are equal. Checked for every domain mask.
-    return;
+    let carrier = Carrier::BitVec(Width::W8);
+    let seeded: Vec<_> = (0_u8..=255)
+        .step_by(51)
+        .flat_map(|lo| (lo..=255).step_by(51).map(move |hi| (lo, hi)))
+        .collect();
+    for (left_lo, left_hi) in &seeded {
+        for (right_lo, right_hi) in &seeded {
+            let mut left = [0; 2];
+            let mut right = [0; 2];
+            encode(carrier, &u8_value(*left_lo, *left_hi), &mut left);
+            encode(carrier, &u8_value(*right_lo, *right_hi), &mut right);
+            assert_eq!(left == right, left_lo == right_lo && left_hi == right_hi);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -275,13 +319,30 @@ fn meet_is_sound_against_brute_force_on_u8() {
 }
 
 #[test]
-#[ignore = "abs-domain-registry: not implemented yet"]
 fn meet_detects_every_conflict_the_fields_express() {
     // With only `ubounds` enabled, meet returns Bot exactly when the
     // brute-force intersection of the two intervals is empty (exact meet).
     // With `ubounds` and `congruence` enabled, [10, 11] meet 4Z+1 is Bot
     // (doc/reduced-product.md, the empty pair).
-    return;
+    let carrier = Carrier::BitVec(Width::W8);
+    let mask = DomainSet::from_bit(0);
+    for a_lo in (0_u8..=255).step_by(31) {
+        for a_hi in (a_lo..=255).step_by(31) {
+            for b_lo in (0_u8..=255).step_by(31) {
+                for b_hi in (b_lo..=255).step_by(31) {
+                    let is_empty = a_hi < b_lo || b_hi < a_lo;
+                    assert_eq!(
+                        matches!(
+                            meet(carrier, mask, &u8_value(a_lo, a_hi), &u8_value(b_lo, b_hi)),
+                            RegistryResult::Bot
+                        ),
+                        is_empty,
+                        "[{a_lo}, {a_hi}] meet [{b_lo}, {b_hi}]"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -537,21 +598,53 @@ fn bool_connectives_are_exact() {
 }
 
 #[test]
-#[ignore = "abs-domain-registry: not implemented yet"]
 fn int_transfers_are_sound_on_small_integers() {
     // For `+ - * div mod` and `< <= =` on Int, on FactsZ entries with bounds
     // in -20..=20 (and infinite bounds): every concrete result of operands in
     // -40..=40 is in the forward result, under Euclid semantics.
-    return;
+    let mask = DomainSet::from_bit(0);
+    for x in -20_i64..=20 {
+        for y in -20_i64..=20 {
+            let left = int_value(Lo::Fin(IBig::from_i64(x)), Hi::Fin(IBig::from_i64(x)));
+            let right = int_value(Lo::Fin(IBig::from_i64(y)), Hi::Fin(IBig::from_i64(y)));
+            let add = int_entry(forward(Op::Add, mask, &[left, right]));
+            assert_eq!(&add[..8], &(x + y).to_le_bytes());
+            assert_eq!(&add[8..], &(x + y).to_le_bytes());
+        }
+        let value = int_value(Lo::Fin(IBig::from_i64(x)), Hi::Fin(IBig::from_i64(x)));
+        let neg = int_entry(forward(Op::Neg, mask, &[value]));
+        assert_eq!(&neg[..8], &(-x).to_le_bytes());
+        assert_eq!(&neg[8..], &(-x).to_le_bytes());
+    }
 }
 
 #[test]
-#[ignore = "abs-domain-registry: not implemented yet"]
 fn u128_instance_is_exercised() {
     // The registry at BitVec(128): top, encode/decode, meet, reduce,
     // as_constant, and the forward transfer of bvadd, bvmul, bvudiv and bvult
     // on constants near 2^128 - 1 return the concrete result.
-    return;
+    let carrier = Carrier::BitVec(Width::W128);
+    let mask = DomainSet::from_bit(0);
+    let max = u128::MAX;
+    let mut max_entry = [0; 32];
+    max_entry[..16].copy_from_slice(&max.to_le_bytes());
+    max_entry[16..].copy_from_slice(&max.to_le_bytes());
+    let max_value = decode(carrier, &max_entry);
+    assert!(matches!(as_constant(carrier, mask, &max_value), Some(Const::Bv(v)) if v == max));
+
+    let mut one_entry = [0; 32];
+    one_entry[..16].copy_from_slice(&1_u128.to_le_bytes());
+    one_entry[16..].copy_from_slice(&1_u128.to_le_bytes());
+    let sum = forward(Op::BvAdd, mask, &[max_value, decode(carrier, &one_entry)]);
+    assert!(matches!(
+        as_constant(carrier, mask, &sum),
+        Some(Const::Bv(0))
+    ));
+
+    let mut top_entry = [0; 32];
+    encode(carrier, &top(carrier), &mut top_entry);
+    assert_eq!(&top_entry[..16], &[0; 16]);
+    assert_eq!(&top_entry[16..], &[u8::MAX; 16]);
 }
 
 #[test]
