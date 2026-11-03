@@ -186,6 +186,14 @@ pub enum RegistryResult {
     Val(Value),
 }
 
+/// The operands retained by a backward transfer. `arity` identifies the
+/// meaningful prefix of `values`; unused positions contain a top value and
+/// keep the engine-facing representation fixed-size.
+pub struct BackwardResult {
+    pub values: [Value; 3],
+    pub arity: usize,
+}
+
 /// A concrete singleton reported to the e-graph for a derived merge.
 pub enum Const {
     Bool(bool),
@@ -599,6 +607,32 @@ pub fn forward(op: Op, mask: DomainSet, args: &[Value]) -> Value {
     }
 }
 
+/// Applies a backward transfer from a result fact to its operands.
+///
+/// The first registry slice deliberately preserves the operands for transfers
+/// that have no domain-specific backward implementation yet. This is sound:
+/// every satisfying concrete tuple remains represented and no operand grows.
+/// It gives the saturation engine one stable API now; comparison and `ite`
+/// refinements can replace the corresponding cases as they land.
+pub fn backward(_op: Op, mask: DomainSet, _result: &Value, args: &[Value]) -> BackwardResult {
+    assert!(
+        args.len() <= 3,
+        "registry operators have arity at most three"
+    );
+    let mut values = [Value::Top, Value::Top, Value::Top];
+    for (index, argument) in args.iter().enumerate() {
+        values[index] = if field_enabled(mask) {
+            duplicate(argument)
+        } else {
+            top(value_carrier(argument))
+        };
+    }
+    BackwardResult {
+        values,
+        arity: args.len(),
+    }
+}
+
 fn join_same_carrier(carrier: Carrier, left: &Value, right: &Value) -> Value {
     match (carrier, left, right) {
         (Carrier::Bool, Value::Bool(a), Value::Bool(b)) => Value::Bool(a.join(b)),
@@ -982,5 +1016,23 @@ mod tests {
         ));
         assert!(as_constant(carrier, mask, &decode(carrier, &[7, 8])).is_none());
         assert!(as_constant(carrier, DomainSet::empty(), &decode(carrier, &[7, 7])).is_none());
+    }
+
+    #[test]
+    fn disabled_masks_and_backward_stubs_are_safe() {
+        let carrier = Carrier::BitVec(Width::W8);
+        let original = decode(carrier, &[7, 7]);
+        assert!(matches!(
+            reduce(carrier, DomainSet::empty(), &original),
+            RegistryResult::Val(Value::Bv8(value)) if value.interval().bounds() == (0, u8::MAX)
+        ));
+
+        let argument = decode(carrier, &[7, 7]);
+        let refined = backward(Op::BvAdd, DomainSet::from_bit(0), &original, &[argument]);
+        assert_eq!(refined.arity, 1);
+        match &refined.values[0] {
+            Value::Bv8(value) => assert_eq!(value.interval().bounds(), (7, 7)),
+            _ => panic!("backward transfer changed the argument carrier"),
+        }
     }
 }
