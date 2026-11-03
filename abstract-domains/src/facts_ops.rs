@@ -103,7 +103,13 @@ impl<W: Word> Mul<Unsigned<W>> for Facts<W> {
 impl<W: Word> DivRem<Unsigned<W>> for Facts<W> {
     fn contains_zero(&self) -> (b: bool) {
         let u = self.interval();
-        <Interval<W> as DivRem<Unsigned<W>>>::contains_zero(&u)
+        let z = W::zero();
+        proof {
+            W::lemma_modulus();
+            W::lemma_from_int(0);
+            W::lemma_view_injective(z, W::from_int(0));
+        }
+        <Interval<W> as DivRem<Unsigned<W>>>::contains_zero(&u) && self.congruence().contains(z)
     }
 
     fn div(&self, d: &Self) -> (r: (BotOr<Self>, DivZero)) {
@@ -120,7 +126,13 @@ impl<W: Word> DivRem<Unsigned<W>> for Facts<W> {
 impl<W: Word> DivRem<Signed<W>> for Facts<W> {
     fn contains_zero(&self) -> (b: bool) {
         let u = self.interval();
-        <Interval<W> as DivRem<Signed<W>>>::contains_zero(&u)
+        let z = W::zero();
+        proof {
+            W::lemma_modulus();
+            W::lemma_from_int(0);
+            W::lemma_view_injective(z, W::from_int(0));
+        }
+        <Interval<W> as DivRem<Signed<W>>>::contains_zero(&u) && self.congruence().contains(z)
     }
 
     fn div(&self, d: &Self) -> (r: (BotOr<Self>, DivZero)) {
