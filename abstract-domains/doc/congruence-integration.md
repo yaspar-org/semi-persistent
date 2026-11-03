@@ -53,11 +53,14 @@ bounds. Additional tests cover incoming grid compatibility, two Congruence
 leaves, nested products, reduction fuel, existing componentwise arithmetic,
 and u128 boundary cases. Facts membership checks include both fields.
 
-## Remaining arithmetic integration
+## Arithmetic integration
 
-A4 remains separate: `facts_ops.rs` add/sub/neg still compute only the interval
-transfer. The public `Facts::congruence` and `Facts::from_parts` APIs are now
-available for combining those results with verified Congruence transfers.
-Normalization bottom must be handled according to the transfer return
-contracts. Multiplication, division, comparisons, and other operations require
-separate transfer support before claiming additional congruence precision.
+A4 is implemented: `facts_ops.rs` unsigned add/sub/neg compute both interval
+and Congruence results and combine them through `Facts::from_parts`.
+The private `lift_parts` helper returns well-formed Top if normalization
+returns bottom, with a proof that the field intersection is empty. The
+contracts prove sound arithmetic and well-formedness, not general optimality.
+The existing mixed-wrap GCD fallback is unchanged; further mixed-wrap
+precision improvements remain separate work. Multiplication, division,
+comparisons, and other operations require separate transfer support before
+claiming additional congruence precision.

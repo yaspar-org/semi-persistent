@@ -231,9 +231,10 @@ removed widened products were retired. Public ghost/spec Bézout and CRT lemmas,
 including `is_extended_gcd` and `lemma_crt_solution_class_exact`, remain available.
 
 The shared-helper change adds no multiplication transfer or reduced-product
-integration. Unit A integration, `Refine` for Congruence with `Facts.c`, and
-grid reduction remain follow-up work outside this domain. No proof bypasses or new
-trusted items were introduced.
+integration. Congruence `Refine` with `Facts.c` and grid reduction are now
+implemented separately, with export soundness, refinement preservation,
+no growth, and well-formedness proved. No proof bypasses or new trusted items
+were introduced.
 
 ### Congruence
 
@@ -417,8 +418,12 @@ constant, also in `from_interval`. So `from_interval` sets `c` to top only
 when `u` has two or more values. `join`, `widen` and `meet` apply the grid
 step after the field-wise operation; `leq` is field-wise. `from_parts(u, c)`
 builds the reduced record of two facts. `contains_zero` now checks both
-fields, because its contract is exact; the other transfers in
-`facts_ops.rs` still compute `u` only and leave `c` to the grid step.
+fields, because its contract is exact. Unsigned add/sub/neg in `facts_ops.rs`
+now compute both `u` and `c`, combined by `lift_parts` through `from_parts`.
+The contracts prove sound arithmetic and well-formedness; an empty field
+intersection permits the helper's Top fallback. The existing mixed-wrap GCD
+fallback is unchanged, with no general arithmetic optimality claim.
+Multiplication, division, and remainder retain their interval transfers.
 
 The tests check `from_parts` and `normalize` against concrete sets on u8
 intervals with bounds near the ends of the range, small moduli and the sign
