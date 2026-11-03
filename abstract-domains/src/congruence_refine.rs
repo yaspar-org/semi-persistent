@@ -1,11 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Congruence participation in the unsigned-bounds fact channel.
+//! Congruence participation in the interval/congruence fact channel.
 //!
-//! This exports the unsigned hull and consumes disjoint or singleton bounds.
-//! General grid clipping belongs to Facts normalization. Once Facts has a
-//! congruence field, export and meet that field as well.
-#![allow(unused_variables)]
+//! Exports the unsigned hull and congruence, and consumes both fields through
+//! exact congruence meet and grid-aware Facts normalization.
 use crate::congruence::Congruence;
 use crate::facts::Facts;
 use crate::interval::Interval;
@@ -28,7 +26,7 @@ impl<W: Word> Refine for Congruence<W> {
             }
         }
         let result = match Interval::new(lo, hi) {
-            Some(u) => BotOr::Val(Facts::from_interval(u)),
+            Some(u) => Facts::from_parts(u, self.dup()),
             None => BotOr::Bot,
         };
         proof {
@@ -39,73 +37,61 @@ impl<W: Word> Refine for Congruence<W> {
         result
     }
 
-    /// Bounds can reject the hull or identify a constant without grid clipping.
-    /// Other intervals retain the congruence; the product retains their bounds.
+    /// Meet the incoming grid and normalize it against the incoming bounds.
+    /// Singleton feedback strengthens the leaf; products retain snapped bounds.
     fn refine(&self, f: &Facts<W>) -> (r: BotOr<Self>) {
         let u = f.interval();
-        let hull = self.to_channel();
-        let h = match hull {
-            BotOr::Bot => {
-                proof {
-                    assert forall|x: W| #[trigger] <Self as Domain>::gamma(self, x) implies false by {
-                        assert(hull.gamma(x));
-                    }
-                }
-                return BotOr::Bot;
-            },
-            BotOr::Val(h) => h.interval(),
-        };
-        proof {
-            assert forall|x: W| #[trigger] self.has(x) implies h.gamma(x) by {
-                assert(<Self as Domain>::gamma(self, x));
-                assert(hull.gamma(x));
-            }
-        }
-        let overlap = h.meet_exact(&u);
-        let result = match overlap {
+        let incoming = f.congruence();
+        let merged = self.meet(&incoming);
+        let result = match merged {
             BotOr::Bot => BotOr::Bot,
-            BotOr::Val(i) => {
-                let (lo, hi) = i.bounds();
-                if lo.eq(hi) {
-                    proof {
-                        assert forall|x: W| self.has(x) && f.gamma(x) implies x == lo by {
-                            assert(hull.gamma(x));
-                            assert(h.gamma(x) && u.gamma(x));
-                            assert(overlap.gamma(x));
-                            W::lemma_view_injective(x, lo);
-                        }
-                    }
-                    let c = Congruence::constant(lo);
-                    let r = self.meet(&c);
-                    proof {
-                        assert forall|x: W| self.has(x) && f.gamma(x) implies #[trigger] r.gamma(x) by {
-                            assert(x == lo);
-                            assert(c.has(x));
-                            match r {
-                                BotOr::Val(v) => { assert(v.has(x)); },
-                                BotOr::Bot => {},
+            BotOr::Val(c) => {
+                let normalized = Facts::from_parts(u, c.dup());
+                match normalized {
+                    BotOr::Bot => {
+                        proof {
+                            assert forall|x: W| self.has(x) && f.gamma(x) implies false by {
+                                assert(incoming.has(x));
+                                assert(c.has(x) && u.gamma(x));
+                                assert(normalized.gamma(x));
                             }
                         }
-                    }
-                    r
-                } else {
-                    BotOr::Val(self.dup())
+                        BotOr::Bot
+                    },
+                    BotOr::Val(n) => {
+                        let nc = n.congruence();
+                        let r = c.meet(&nc);
+                        proof {
+                            assert forall|x: W| self.has(x) && f.gamma(x)
+                                implies #[trigger] r.gamma(x) by {
+                                assert(incoming.has(x));
+                                assert(c.has(x) && u.gamma(x));
+                                assert(normalized.gamma(x));
+                                assert(n.gamma(x) && nc.has(x));
+                                match r {
+                                    BotOr::Val(v) => { assert(v.has(x)); },
+                                    BotOr::Bot => {},
+                                }
+                            }
+                            assert forall|x: W| #[trigger] r.gamma(x) implies self.has(x) by {
+                                match r {
+                                    BotOr::Val(v) => {
+                                        assert(v.has(x));
+                                        assert(c.has(x));
+                                    },
+                                    BotOr::Bot => {},
+                                }
+                            }
+                        }
+                        r
+                    },
                 }
             },
         };
         proof {
             assert forall|x: W| <Self as Domain>::gamma(self, x) && f.gamma(x)
                 implies #[trigger] result.gamma(x) by {
-                assert(self.has(x));
-                assert(h.gamma(x) && u.gamma(x));
-                assert(overlap.gamma(x));
-            }
-            assert forall|x: W| #[trigger] result.gamma(x)
-                implies <Self as Domain>::gamma(self, x) by {
-                match result {
-                    BotOr::Val(c) => { assert(c.has(x)); },
-                    BotOr::Bot => {},
-                }
+                assert(self.has(x) && incoming.has(x));
             }
         }
         result

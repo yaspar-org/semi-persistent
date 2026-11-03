@@ -1,62 +1,63 @@
 # Congruence channel integration
 
 `congruence_refine.rs` implements `Refine<F = Facts<W>>` for every `W: Word`,
-including u128. It uses the existing verified Congruence implementation;
-no Word migration or Congruence arithmetic changes are needed.
+including u128, using the existing verified Congruence operations.
 
-## Current protocol
+## Protocol and fact extraction
 
-`Channel` extends `Canonical`. Its exact meet produces field-wise valid
-(`pre_wf`) records, and normalization preserves their concretization while
-establishing `wf`. `Refine::to_channel` exports implied facts;
-`Refine::refine` preserves the intersection with those facts and never grows
-the component. `Product::reduce` already proves preservation for every fuel
-and nesting depth. A product is not itself canonical.
+`Facts<W>` contains unsigned bounds `u` and congruence `c`; its concretization
+is their intersection. `Channel` extends `Canonical`. Its exact meet produces
+field-wise valid (`pre_wf`) records, and normalization preserves their
+concretization while establishing `wf`. Use `meet_normalize` when a normalized
+intersection is needed. `Facts::from_parts(u, c)` directly constructs that
+normalized intersection and returns `BotOr::Bot` when it is empty.
+
+Congruence's `to_channel` exports the interval from its residue to its verified
+`max_member`, together with the congruence itself, through `Facts::from_parts`.
+The exported record denotes exactly the source class; the trait contract
+proves export soundness and well-formedness.
 
 The inherent `Congruence::refines(&other) -> bool` decides containment and
 backs `Domain::leq`. It is distinct from `Refine::refine(&facts)`, which
 returns `BotOr<Congruence<W>>` and participates in reduction.
 
-The current record has only `u`. Congruence exports the interval from its
-residue to its verified `max_member`. Refinement intersects that hull with
-the record's interval: disjoint bounds yield bottom, singleton overlap uses
-the existing exact Congruence meet with a constant, and other overlaps keep
-the original congruence. All returned leaves retain their canonical form.
-The two trait contracts prove export soundness, intersection preservation,
-and no growth. These suffice for the existing product preservation theorem.
+## Grid-aware refinement
 
-This is useful independently: products can propagate congruence bounds,
-learn constants, detect bounds conflicts, and use the existing componentwise
-unsigned add/sub/neg transfers. Tests exhaust all u8 constructor inputs for
-exported hulls, check sampled refinements and reductions against every u8
-value, exercise wrapping transfers, and cover high u128 values.
+`refine` first meets the source congruence with `f.congruence()`. Incompatible
+grids return bottom. It then normalizes the merged grid against `f.interval()`
+using `Facts::from_parts`: lower bounds round up, upper bounds round down,
+and an empty intersection returns bottom. A single remaining value becomes a
+constant congruence. A final meet with the merged grid establishes no growth
+using the public contracts, without relying on normalization internals.
 
-## Dependency on the congruence field
+For example, `[8, 9]` intersected with `4Z+3` returns bottom, while `[5, 9]`
+leaves only the constant `7`. The interval `[3, 10]` snaps to `[3, 7]`.
+A Congruence leaf cannot retain arbitrary interval bounds: the normalized
+channel carries those bounds to interval or Facts components during product
+reduction. The leaf retains the merged class or learns a constant.
 
-Grid clipping, `Facts.c`, `Facts::normalize`, and canonicality are owned by
-Yuning and are unchanged here. General interval/grid emptiness is not detected
-by this implementation. For example, `[8, 9]` and `4Z+3` have overlapping
-hulls but an empty intersection; reduction through unsigned bounds alone
-need not report bottom. Products must not be used as canonical e-class records.
+The refinement contract proves preservation of every common concrete value,
+no growth, and well-formedness. `Product::reduce` preserves concretization
+for every fuel and nesting depth. Positive fuel propagates normalized facts;
+zero fuel leaves the original product unchanged, even if its components
+jointly denote an empty set. A product is not itself canonical and must not
+be used as a canonical e-class record.
 
-Congruence-related transfers in `facts_ops.rs` require these public interfaces:
+## Regression coverage
 
-- A spec accessor and executable accessor for `c`, with well-formedness and
-  the implication from record membership to congruence membership.
-- A way to build a field-wise valid record from independently computed `u`
-  and `c`, then normalize it to `BotOr<Facts<W>>` with exact preservation.
-- An export constructor that embeds a congruence with sound unsigned bounds
-  and returns a normalized record.
+`tests/congruence_refine.rs` checks all u8 constructor inputs for exported
+hulls, congruence retention, and concrete membership. It exhausts every u8
+interval for representative grids against enumerated concrete members,
+checking bottom detection, singleton feedback, no growth, and snapped product
+bounds. Additional tests cover incoming grid compatibility, two Congruence
+leaves, nested products, reduction fuel, existing componentwise arithmetic,
+and u128 boundary cases. Facts membership checks include both fields.
 
-After those interfaces land, export `c` in `to_channel` and meet the incoming
-`c` in `refine`. Extend the existing add/sub/neg fact transfers with the
-verified Congruence operations and normalize the combined fields. Handle
-normalization bottom according to the existing transfer return contracts;
-do not assume independently sound fields form a nonempty record. Multiplication,
-division, and comparisons need separately verified Congruence transfer support
-before claiming additional precision; Congruence currently exposes unsigned
-`Arith`, not those transfer traits.
+## Remaining arithmetic integration
 
-Then add interval/grid conflict and precision regressions, including
-`[8, 9]` with `4Z+3`, and rerun full pinned verification and runtime checks.
-No temporary congruence encoding in the unsigned field is needed.
+A4 remains separate: `facts_ops.rs` add/sub/neg still compute only the interval
+transfer. The public `Facts::congruence` and `Facts::from_parts` APIs are now
+available for combining those results with verified Congruence transfers.
+Normalization bottom must be handled according to the transfer return
+contracts. Multiplication, division, comparisons, and other operations require
+separate transfer support before claiming additional congruence precision.
