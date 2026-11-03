@@ -57,7 +57,7 @@ sort instead talks to one shared **fact record**. For bit-vectors, that record
 is `Facts<W>`:
 
 - `u`: unsigned bounds, today
-- `c`: congruence, planned
+- `c`: congruence, today
 - `bits`: known bits, `nonzero`, and the other planned fields
 
 Each field is a canonical domain. The record's `normalize` reduces the fields
