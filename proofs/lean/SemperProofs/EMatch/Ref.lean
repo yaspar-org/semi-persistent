@@ -204,6 +204,9 @@ inductive Step where
   | extractChild (node : Var) (pos : Nat) (out : Var)
   | checkChildEq (node : Var) (pos : Nat) (x : Var)
   | checkEq (x y : Var)
+  /-- `CopyBinding{target, other}` (`schedule.rs`, eager `Eq` lowering):
+  bind the class of `target` to the class of `other`. -/
+  | copyBinding (target other : Var)
   | decomposeAC (node : Var) (elems : List (Var × Mult)) (rest : Option Var)
   | decomposeACI (node : Var) (elems : List Var) (rest : Option Var)
   | expandA (node : Var) (pre : Option Var) (elems : List Var) (suf : Option Var)
@@ -216,10 +219,21 @@ abbrev Plan := List Step
 def Binding.nodeOf (σ : Binding) (G : Graph) (v : Var) : Option Node :=
   (σ.node v).bind G.lookupNode
 
+/-- The write of a `Join` (`ematch.rs:2972`, spec §0): the engine's one
+slot holds the node id, and its class is `canon(id) = G.find id`; in the
+model the join writes both `node t` and `cls t`. -/
+def joinBind (G : Graph) (σ : Binding) (t : Var) (id : NodeId) : Binding :=
+  (σ.setNode t id).setCls t (G.find id)
+
+/-- `NodeCls G σ`: every bound node variable has its class bound to the
+representative of its node (spec §0). Preserved by every step. -/
+def NodeCls (G : Graph) (σ : Binding) : Prop :=
+  ∀ v id, σ.node v = some id → σ.cls v = some (G.find id)
+
 /-- One step: enumerate candidates for an unbound variable or check a
 condition on bound ones (`ematch.rs`, `run_step`). -/
 def runStep (G : Graph) : Step → Binding → List Binding
-  | .join t ls, σ => (candidates G σ ls).map (σ.setNode t)
+  | .join t ls, σ => (candidates G σ ls).map (joinBind G σ t)
   | .extractChild v pos out, σ =>
       match σ.nodeOf G v with
       | some n =>
@@ -238,6 +252,13 @@ def runStep (G : Graph) : Step → Binding → List Binding
       match σ.cls x, σ.cls y with
       | some a, some b => if a = b then [σ] else []
       | _, _ => []
+  | .copyBinding t o, σ =>
+      match σ.cls o with
+      | some c =>
+          match σ.cls t with
+          | some c' => if c' = c then [σ] else []
+          | none => [σ.setCls t c]
+      | none => []
   | .decomposeAC v elems rest, σ =>
       match σ.nodeOf G v with
       | some ⟨_, .mset m⟩ => decomposeAC elems rest (Multiset.entries m) σ
@@ -282,6 +303,8 @@ inductive PlanWF : List Var → Plan → Prop
       v ∈ B → x ∈ B → PlanWF B ss → PlanWF B (.checkChildEq v pos x :: ss)
   | checkEq {B : List Var} {x y : Var} {ss : Plan} :
       x ∈ B → y ∈ B → PlanWF B ss → PlanWF B (.checkEq x y :: ss)
+  | copyBinding {B : List Var} {t o : Var} {ss : Plan} :
+      o ∈ B → PlanWF (t :: B) ss → PlanWF B (.copyBinding t o :: ss)
   | decomposeAC {B : List Var} {v : Var} {elems : List (Var × Mult)}
       {rest : Option Var} {ss : Plan} :
       v ∈ B → PlanWF (acBinds elems rest ++ B) ss →

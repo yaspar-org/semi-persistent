@@ -1,0 +1,17 @@
+;; n = Plus{Y, Z}, Z ∋ Plus{Y, d}, Y ∋ Plus{X, c}.
+;; Fully flattened, n = Plus{X, c, Y, d}. The pattern (Plus (Yc) (Dc) ..rest)
+;; matches it with rest = {X, c}; the demand rule rejects that match on the
+;; opened view (leaf [X, c] untaken) and the less-opened view {Y:2, d} has Y
+;; with count 2, which the unannotated item cannot take.
+(sort E)
+(function Xc () E) (function Cc () E) (function Yc () E) (function Dc () E) (function Zc () E)
+(function Plus (E) E :assoc-comm)
+(function Pick (E) E)
+(let y (Yc))
+(let z (Zc))
+(union y (Plus (Xc) (Cc)))
+(union z (Plus y (Dc)))
+(let n (Plus y z))
+(rewrite (Plus (Xc) (Dc) ..rest) (Pick (Plus ..rest)) :flatten)
+(run 1)
+(check-eq n (Pick (Plus (Cc) y)))

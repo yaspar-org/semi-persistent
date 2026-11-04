@@ -170,6 +170,49 @@ theorem extends_setNode_of_none {σ : Binding} {t : Var} {id : NodeId}
     (σ.setNode t id).node t = some id := by
   simp [Binding.setNode]
 
+@[simp] theorem joinBind_node_self (G : Graph) (σ : Binding) (t : Var) (id : NodeId) :
+    (joinBind G σ t id).node t = some id := by
+  simp [joinBind, Binding.setNode, Binding.setCls]
+
+@[simp] theorem joinBind_node_of_ne (G : Graph) (σ : Binding) (t : Var) (id : NodeId) (v : Var)
+    (h : v ≠ t) : (joinBind G σ t id).node v = σ.node v := by
+  simp [joinBind, Binding.setNode, Binding.setCls, Function.update_of_ne h]
+
+@[simp] theorem joinBind_cls_self (G : Graph) (σ : Binding) (t : Var) (id : NodeId) :
+    (joinBind G σ t id).cls t = some (G.find id) := by
+  simp [joinBind, Binding.setNode, Binding.setCls]
+
+@[simp] theorem joinBind_cls_of_ne (G : Graph) (σ : Binding) (t : Var) (id : NodeId) (w : Var)
+    (h : w ≠ t) : (joinBind G σ t id).cls w = σ.cls w := by
+  simp [joinBind, Binding.setNode, Binding.setCls, Function.update_of_ne h]
+
+@[simp] theorem joinBind_mult (G : Graph) (σ : Binding) (t : Var) (id : NodeId) :
+    (joinBind G σ t id).mult = σ.mult := rfl
+@[simp] theorem joinBind_rest (G : Graph) (σ : Binding) (t : Var) (id : NodeId) :
+    (joinBind G σ t id).rest = σ.rest := rfl
+@[simp] theorem joinBind_seqRest (G : Graph) (σ : Binding) (t : Var) (id : NodeId) :
+    (joinBind G σ t id).seqRest = σ.seqRest := rfl
+@[simp] theorem joinBind_finRest (G : Graph) (σ : Binding) (t : Var) (id : NodeId) :
+    (joinBind G σ t id).finRest = σ.finRest := rfl
+
+theorem extends_joinBind_of_none {G : Graph} {σ : Binding} {t : Var} {id : NodeId}
+    (h : σ.node t = none) (hc : σ.cls t = none) : Extends σ (joinBind G σ t id) := by
+  refine ⟨?_, ?_, fun _ _ h => h, fun _ _ h => h, fun _ _ h => h, fun _ _ h => h⟩
+  · intro w c hw
+    have hne : w ≠ t := by
+      rintro rfl
+      rw [hc] at hw
+      cases hw
+    rw [joinBind_cls_of_ne _ _ _ _ _ hne]
+    exact hw
+  · intro v i hv
+    have hne : v ≠ t := by
+      rintro rfl
+      rw [h] at hv
+      cases hv
+    rw [joinBind_node_of_ne _ _ _ _ _ hne]
+    exact hv
+
 @[simp] theorem setCls_cls_of_ne (σ : Binding) (x : Var) (c : C) (w : Var)
     (h : w ≠ x) : (σ.setCls x c).cls w = σ.cls w := by
   simp [Binding.setCls, Function.update_of_ne h]
@@ -694,7 +737,8 @@ theorem elemVarsAC_spec : ∀ (es : List (Pat × Mult)) (fresh : Nat) {vs : List
 /-! ## The frame of a compiled plan -/
 
 /-- Node variables at or above `k` are unbound. -/
-def NodeFree (k : Nat) (σ : Binding) : Prop := ∀ v, k ≤ v → σ.node v = none
+def NodeFree (k : Nat) (σ : Binding) : Prop :=
+  ∀ v, k ≤ v → σ.node v = none ∧ σ.cls v = none
 
 /-- The rest variables in `R` are unbound in all three rest maps. -/
 def RestFree (R : List Var) (σ : Binding) : Prop :=
@@ -705,6 +749,66 @@ theorem NodeFree.mono {k k' : Nat} {σ : Binding} (h : NodeFree k σ) (hk : k �
 
 theorem RestFree.mono {R R' : List Var} {σ : Binding} (h : RestFree R σ) (hR : R' ⊆ R) :
     RestFree R' σ := fun r hr => h r (hR hr)
+
+theorem forall₂_exists_left {α β : Type} {R : α → β → Prop} :
+    ∀ {l₁ : List α} {l₂ : List β}, List.Forall₂ R l₁ l₂ → ∀ b ∈ l₂, ∃ a ∈ l₁, R a b := by
+  intro l₁ l₂ h
+  induction h with
+  | nil => intro b hb; simp at hb
+  | cons hab hs ih =>
+      intro b hb
+      rw [List.mem_cons] at hb
+      rcases hb with rfl | hb
+      · exact ⟨_, List.mem_cons_self .., hab⟩
+      · obtain ⟨a, ha, h'⟩ := ih b hb
+        exact ⟨a, List.mem_cons_of_mem _ ha, h'⟩
+
+theorem ElemRel.mem_or_range {lo hi : Nat} {p : Pat} {v : Var} (h : ElemRel lo hi p v) :
+    v ∈ p.vars ∨ (lo ≤ v ∧ v < hi) := by
+  rcases h with ⟨x, rfl, rfl⟩ | ⟨-, hlo, hhi⟩
+  · exact Or.inl (by simp)
+  · exact Or.inr ⟨hlo, hhi⟩
+
+theorem RestFree.joinBind {R : List Var} {σ : Binding} (h : RestFree R σ) (G : Graph) (t : Var)
+    (id : NodeId) : RestFree R (joinBind G σ t id) := h
+
+theorem NodeFree.joinBind {k : Nat} {σ : Binding} (h : NodeFree k σ) (G : Graph) (t : Var)
+    (ht : t < k) (id : NodeId) : NodeFree k (joinBind G σ t id) := by
+  intro w hw
+  have hne : w ≠ t := by vomega
+  rw [joinBind_node_of_ne _ _ _ _ _ hne, joinBind_cls_of_ne _ _ _ _ _ hne]
+  exact h w hw
+
+/-- `NodeFree` across a step frame: the node map is untouched and the
+class variables written are all below the new bound. -/
+theorem NodeFree.ofFrame {cs ks rs ss fs : List Var} {σ σ' : Binding} {k k' : Nat}
+    (hfr : Frame cs ks rs ss fs σ σ') (hnf : NodeFree k σ) (hk : k ≤ k')
+    (hcs : ∀ w ∈ cs, w < k') : NodeFree k' σ' := by
+  intro w hw
+  rw [hfr.node, hfr.cls w (fun h => by have := hcs w h; vomega)]
+  exact hnf w (by vomega)
+
+theorem ElemRel.lt_of_lt {lo hi : Nat} {p : Pat} {v : Var} (h : ElemRel lo hi p v)
+    (hlt : ∀ x ∈ p.vars, x < lo) (hle : lo ≤ hi) : v < hi := by
+  rcases h.mem_or_range with h | h
+  · have := hlt v h; vomega
+  · exact h.2
+
+theorem forall₂_elemRel_lt {lo hi : Nat} {ps : List Pat} {vs : List Var}
+    (hrel : List.Forall₂ (ElemRel lo hi) ps vs) (hlt : ∀ x ∈ Pat.varsList ps, x < lo)
+    (hle : lo ≤ hi) : ∀ v ∈ vs, v < hi := by
+  intro v hv
+  obtain ⟨p, hp, hpv⟩ := forall₂_exists_left hrel v hv
+  exact hpv.lt_of_lt (fun x hx => hlt x (mem_varsList_of_mem hp hx)) hle
+
+theorem forall₂_elemRel_lt_ac {lo hi : Nat} {es : List (Pat × Mult)} {vs : List (Var × Mult)}
+    (hrel : List.Forall₂ (fun e v => e.2 = v.2 ∧ ElemRel lo hi e.1 v.1) es vs)
+    (hlt : ∀ x ∈ Pat.varsElems es, x < lo) (hle : lo ≤ hi) : ∀ v ∈ vs.map (·.1), v < hi := by
+  intro v hv
+  rw [List.mem_map] at hv
+  obtain ⟨v', hv', rfl⟩ := hv
+  obtain ⟨e, he, -, hpv⟩ := forall₂_exists_left hrel v' hv'
+  exact hpv.lt_of_lt (fun x hx => hlt x (mem_varsElems_of_mem he hx)) hle
 
 /-- A run of a compiled plan for a pattern with variables `V` and rest
 variables `R`, allocating fresh variables in `[fresh, fr)`: it extends the
@@ -784,14 +888,16 @@ theorem ofFrame {cs ks rs ss fs V R : List Var} {fresh fr : Nat} {σ σ' : Bindi
   seqRest r hr' := hf.seqRest r (fun h => hr' (hs h))
   finRest r hr' := hf.finRest r (fun h => hr' (hfs h))
 
-theorem join {V R : List Var} {fresh fr : Nat} {σ : Binding} {t : Var} {id : NodeId}
-    (h : σ.node t = none) (h₁ : fresh ≤ t) (h₂ : t < fr) :
-    PlanFrame V R fresh fr σ (σ.setNode t id) where
-  ext := extends_setNode_of_none h
+theorem join {G : Graph} {V R : List Var} {fresh fr : Nat} {σ : Binding} {t : Var} {id : NodeId}
+    (h : σ.node t = none ∧ σ.cls t = none) (h₁ : fresh ≤ t) (h₂ : t < fr) :
+    PlanFrame V R fresh fr σ (joinBind G σ t id) where
+  ext := extends_joinBind_of_none h.1 h.2
   node v hv := by
     have : v ≠ t := by rcases hv with hv | hv <;> vomega
-    simp [Binding.setNode, Function.update_of_ne this]
-  cls _ _ _ := rfl
+    simp [this]
+  cls w _ hw := by
+    have : w ≠ t := by rcases hw with hw | hw <;> vomega
+    simp [this]
   mult _ _ := rfl
   rest _ _ := rfl
   seqRest _ _ := rfl
@@ -800,7 +906,7 @@ theorem join {V R : List Var} {fresh fr : Nat} {σ : Binding} {t : Var} {id : No
 end PlanFrame
 
 theorem runStep_join_mem {G : Graph} {t : Var} {ls : List Lookup} {σ σ' : Binding} :
-    σ' ∈ runStep G (.join t ls) σ ↔ ∃ id ∈ candidates G σ ls, σ.setNode t id = σ' := by
+    σ' ∈ runStep G (.join t ls) σ ↔ ∃ id ∈ candidates G σ ls, joinBind G σ t id = σ' := by
   simp [runStep]
 
 /-- The lookups of a `joinStep` hold exactly for the nodes with head `f`
@@ -834,7 +940,7 @@ theorem joinStep_pred (G : Graph) (σ : Binding) (f : Sym) (cv : Option Var) (id
 theorem mem_joinStep {G : Graph} {nv : Var} {f : Sym} {cv : Option Var} {σ σ' : Binding} :
     σ' ∈ runStep G (joinStep nv f cv) σ ↔
       ∃ id n, (id, n) ∈ G.nodes ∧ n.op = f ∧ (∀ z, cv = some z → σ.cls z = some (G.find id)) ∧
-        σ.setNode nv id = σ' := by
+        joinBind G σ nv id = σ' := by
   unfold joinStep
   rw [runStep_join_mem]
   constructor
@@ -892,13 +998,13 @@ theorem runStep_extractChild_complete {G : Graph} {v out : Var} {pos : Nat} {σ 
 /-- The main invariant on a compiled sub-plan. -/
 def StructAt (G : Graph) (P : Pat) : Prop :=
   ∀ (cv : Option Var) (fresh : Nat) (σ σ' : Binding),
-    NodeFree fresh σ → RestFree P.restVars σ → P.restVars.Nodup →
+    (∀ x ∈ P.vars, x < fresh) → NodeFree fresh σ → RestFree P.restVars σ → P.restVars.Nodup →
     σ' ∈ run G (compileAt P cv fresh).1 σ →
     PlanFrame P.vars P.restVars fresh (compileAt P cv fresh).2 σ σ' ∧
       NodeFree (compileAt P cv fresh).2 σ' ∧ fresh ≤ (compileAt P cv fresh).2
 
 theorem structNested {G : Graph} {p : Pat} (hp : StructAt G p) (v : Var) (fresh : Nat)
-    (σ σ' : Binding) (hnf : NodeFree fresh σ) (hrf : RestFree p.restVars σ)
+    (σ σ' : Binding) (hlt : ∀ x ∈ p.vars, x < fresh) (hnf : NodeFree fresh σ) (hrf : RestFree p.restVars σ)
     (hnd : p.restVars.Nodup) (h : σ' ∈ run G (compileNested p v fresh).1 σ) :
     PlanFrame p.vars p.restVars fresh (compileNested p v fresh).2 σ σ' ∧
       NodeFree (compileNested p v fresh).2 σ' ∧ fresh ≤ (compileNested p v fresh).2 := by
@@ -914,10 +1020,11 @@ theorem structNested {G : Graph} {p : Pat} (hp : StructAt G p) (v : Var) (fresh 
     | ac f elems rest => simp [Pat.head] at hh
     | aci f elems rest => simp [Pat.head] at hh
   · rw [compileNested_app p hh] at h ⊢
-    exact hp (some v) fresh σ σ' hnf hrf hnd h
+    exact hp (some v) fresh σ σ' hlt hnf hrf hnd h
 
 theorem structNestedList {G : Graph} : ∀ (ps : List Pat), (∀ p ∈ ps, StructAt G p) →
     ∀ (vs : List Var) (fresh : Nat) (σ σ' : Binding),
+    (∀ x ∈ Pat.varsList ps, x < fresh) →
     NodeFree fresh σ → RestFree (Pat.restVarsList ps) σ → (Pat.restVarsList ps).Nodup →
     σ' ∈ run G (compileNestedList ps vs fresh).1 σ →
     PlanFrame (Pat.varsList ps) (Pat.restVarsList ps) fresh (compileNestedList ps vs fresh).2 σ σ' ∧
@@ -925,12 +1032,12 @@ theorem structNestedList {G : Graph} : ∀ (ps : List Pat), (∀ p ∈ ps, Struc
   intro ps
   induction ps with
   | nil =>
-      intro _ vs fresh σ σ' hnf _ _ h
+      intro _ vs fresh σ σ' _ hnf _ _ h
       rw [compileNestedList_nil_left] at h ⊢
       simp at h; subst h
       exact ⟨PlanFrame.refl _ _ _ _ _, hnf, le_refl _⟩
   | cons p ps ih =>
-      intro hall vs fresh σ σ' hnf hrf hnd h
+      intro hall vs fresh σ σ' hlt hnf hrf hnd h
       cases vs with
       | nil =>
           rw [compileNestedList_nil_right] at h ⊢
@@ -945,7 +1052,8 @@ theorem structNestedList {G : Graph} : ∀ (ps : List Pat), (∀ p ∈ ps, Struc
           obtain ⟨σ₁, hσ₁, hσ'⟩ := h
           rw [restVarsList_cons] at hrf hnd
           have hnd' := List.nodup_append.1 hnd
-          obtain ⟨hf₁, hnf₁, hle₁⟩ := structNested (hall p (List.mem_cons_self ..)) v fresh σ σ₁ hnf
+          obtain ⟨hf₁, hnf₁, hle₁⟩ := structNested (hall p (List.mem_cons_self ..)) v fresh σ σ₁
+            (fun x hx => hlt x (by simp [hx])) hnf
             (hrf.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₁]; exact hσ₁)
           rw [h₁] at hf₁ hnf₁ hle₁
           simp only at hf₁ hnf₁ hle₁
@@ -955,13 +1063,15 @@ theorem structNestedList {G : Graph} : ∀ (ps : List Pat), (∀ p ∈ ps, Struc
             rw [hf₁.rest r hnot, hf₁.seqRest r hnot, hf₁.finRest r hnot]
             exact hrf r (List.mem_append_right _ hr)
           obtain ⟨hf₂, hnf₂, hle₂⟩ := ih (fun q hq => hall q (List.mem_cons_of_mem _ hq)) vs fr₁ σ₁ σ'
-            hnf₁ hrf₂ hnd'.2.1 (by rw [h₂]; exact hσ')
+            (fun x hx => by have := hlt x (by simp [varsElems_cons, hx]); vomega) hnf₁ hrf₂ hnd'.2.1
+            (by rw [h₂]; exact hσ')
           rw [h₂] at hf₂ hnf₂ hle₂
           simp only at hf₂ hnf₂ hle₂
           exact ⟨by simpa using hf₁.trans hf₂ hle₁ hle₂, hnf₂, by vomega⟩
 
 theorem structNestedAC {G : Graph} : ∀ (es : List (Pat × Mult)), (∀ e ∈ es, StructAt G e.1) →
     ∀ (vs : List Var) (fresh : Nat) (σ σ' : Binding),
+    (∀ x ∈ Pat.varsElems es, x < fresh) →
     NodeFree fresh σ → RestFree (Pat.restVarsElems es) σ → (Pat.restVarsElems es).Nodup →
     σ' ∈ run G (compileNestedAC es vs fresh).1 σ →
     PlanFrame (Pat.varsElems es) (Pat.restVarsElems es) fresh (compileNestedAC es vs fresh).2 σ σ' ∧
@@ -969,12 +1079,12 @@ theorem structNestedAC {G : Graph} : ∀ (es : List (Pat × Mult)), (∀ e ∈ e
   intro es
   induction es with
   | nil =>
-      intro _ vs fresh σ σ' hnf _ _ h
+      intro _ vs fresh σ σ' _ hnf _ _ h
       rw [compileNestedAC_nil_left] at h ⊢
       simp at h; subst h
       exact ⟨PlanFrame.refl _ _ _ _ _, hnf, le_refl _⟩
   | cons e es ih =>
-      intro hall vs fresh σ σ' hnf hrf hnd h
+      intro hall vs fresh σ σ' hlt hnf hrf hnd h
       obtain ⟨p, μ⟩ := e
       cases vs with
       | nil =>
@@ -990,7 +1100,8 @@ theorem structNestedAC {G : Graph} : ∀ (es : List (Pat × Mult)), (∀ e ∈ e
           obtain ⟨σ₁, hσ₁, hσ'⟩ := h
           rw [restVarsElems_cons] at hrf hnd
           have hnd' := List.nodup_append.1 hnd
-          obtain ⟨hf₁, hnf₁, hle₁⟩ := structNested (hall (p, μ) (List.mem_cons_self ..)) v fresh σ σ₁ hnf
+          obtain ⟨hf₁, hnf₁, hle₁⟩ := structNested (hall (p, μ) (List.mem_cons_self ..)) v fresh σ σ₁
+            (fun x hx => hlt x (by simp [varsElems_cons, hx])) hnf
             (hrf.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₁]; exact hσ₁)
           rw [h₁] at hf₁ hnf₁ hle₁
           simp only at hf₁ hnf₁ hle₁
@@ -1000,7 +1111,8 @@ theorem structNestedAC {G : Graph} : ∀ (es : List (Pat × Mult)), (∀ e ∈ e
             rw [hf₁.rest r hnot, hf₁.seqRest r hnot, hf₁.finRest r hnot]
             exact hrf r (List.mem_append_right _ hr)
           obtain ⟨hf₂, hnf₂, hle₂⟩ := ih (fun q hq => hall q (List.mem_cons_of_mem _ hq)) vs fr₁ σ₁ σ'
-            hnf₁ hrf₂ hnd'.2.1 (by rw [h₂]; exact hσ')
+            (fun x hx => by have := hlt x (by simp [varsElems_cons, hx]); vomega) hnf₁ hrf₂ hnd'.2.1
+            (by rw [h₂]; exact hσ')
           rw [h₂] at hf₂ hnf₂ hle₂
           simp only at hf₂ hnf₂ hle₂
           refine ⟨?_, hnf₂, by vomega⟩
@@ -1011,6 +1123,7 @@ theorem structNestedAC {G : Graph} : ∀ (es : List (Pat × Mult)), (∀ e ∈ e
 
 theorem structArgs {G : Graph} : ∀ (args : List Pat), (∀ p ∈ args, StructAt G p) →
     ∀ (nv : Var) (i fresh : Nat) (σ σ' : Binding),
+    (∀ x ∈ Pat.varsList args, x < fresh) →
     NodeFree fresh σ → RestFree (Pat.restVarsList args) σ → (Pat.restVarsList args).Nodup →
     σ' ∈ run G (compilePlainArgs args nv i fresh).1 σ →
     PlanFrame (Pat.varsList args) (Pat.restVarsList args) fresh
@@ -1020,12 +1133,12 @@ theorem structArgs {G : Graph} : ∀ (args : List Pat), (∀ p ∈ args, StructA
   intro args
   induction args with
   | nil =>
-      intro _ nv i fresh σ σ' hnf _ _ h
+      intro _ nv i fresh σ σ' _ hnf _ _ h
       rw [compilePlainArgs_nil] at h ⊢
       simp at h; subst h
       exact ⟨PlanFrame.refl _ _ _ _ _, hnf, le_refl _⟩
   | cons p ps ih =>
-      intro hall nv i fresh σ σ' hnf hrf hnd h
+      intro hall nv i fresh σ σ' hlt hnf hrf hnd h
       rcases h₁ : elemVar p fresh with ⟨v, fr₁⟩
       rcases h₂ : compileNested p v fr₁ with ⟨sp, fr₂⟩
       rcases h₃ : compilePlainArgs ps nv (i + 1) fr₂ with ⟨s, fr₃⟩
@@ -1039,13 +1152,16 @@ theorem structArgs {G : Graph} : ∀ (args : List Pat), (∀ p ∈ args, StructA
       obtain ⟨hle₁, hrel⟩ := elemVar_rel p fresh h₁
       rw [restVarsList_cons] at hrf hnd
       have hnd' := List.nodup_append.1 hnd
-      have hnf₀ : NodeFree fr₁ σ₀ := by
-        intro w hw; rw [hfr₀.node]; exact hnf w (by vomega)
+      have hnf₀ : NodeFree fr₁ σ₀ :=
+        NodeFree.ofFrame hfr₀ hnf hle₁ (by
+          intro w hw; simp only [List.mem_singleton] at hw; subst hw
+          exact hrel.lt_of_lt (fun x hx => hlt x (by simp [hx])) hle₁)
       have hrf₀ : RestFree (p.restVars ++ Pat.restVarsList ps) σ₀ := by
         intro r hr
         rw [hfr₀.rest r (by simp), hfr₀.seqRest r (by simp), hfr₀.finRest r (by simp)]
         exact hrf r hr
-      obtain ⟨hf₁, hnf₁, hle₂⟩ := structNested (hall p (List.mem_cons_self ..)) v fr₁ σ₀ σ₁ hnf₀
+      obtain ⟨hf₁, hnf₁, hle₂⟩ := structNested (hall p (List.mem_cons_self ..)) v fr₁ σ₀ σ₁
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₀
         (hrf₀.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₂]; exact hσ₁)
       rw [h₂] at hf₁ hnf₁ hle₂
       simp only at hf₁ hnf₁ hle₂
@@ -1055,7 +1171,8 @@ theorem structArgs {G : Graph} : ∀ (args : List Pat), (∀ p ∈ args, StructA
         rw [hf₁.rest r hnot, hf₁.seqRest r hnot, hf₁.finRest r hnot]
         exact hrf₀ r (List.mem_append_right _ hr)
       obtain ⟨hf₂, hnf₂, hle₃⟩ := ih (fun q hq => hall q (List.mem_cons_of_mem _ hq)) nv (i + 1) fr₂
-        σ₁ σ' hnf₁ hrf₂ hnd'.2.1 (by rw [h₃]; exact hσ')
+        σ₁ σ' (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₁ hrf₂ hnd'.2.1
+        (by rw [h₃]; exact hσ')
       rw [h₃] at hf₂ hnf₂ hle₃
       simp only at hf₂ hnf₂ hle₃
       refine ⟨?_, hnf₂, by vomega⟩
@@ -1105,25 +1222,6 @@ theorem sizeOf_lt_aci {p : Pat} {elems : List Pat} (hp : p ∈ elems) (f : Sym)
   vomega
 
 /-! ## Decomposition steps, unpacked -/
-
-theorem forall₂_exists_left {α β : Type} {R : α → β → Prop} :
-    ∀ {l₁ : List α} {l₂ : List β}, List.Forall₂ R l₁ l₂ → ∀ b ∈ l₂, ∃ a ∈ l₁, R a b := by
-  intro l₁ l₂ h
-  induction h with
-  | nil => intro b hb; simp at hb
-  | cons hab hs ih =>
-      intro b hb
-      rw [List.mem_cons] at hb
-      rcases hb with rfl | hb
-      · exact ⟨_, List.mem_cons_self .., hab⟩
-      · obtain ⟨a, ha, h'⟩ := ih b hb
-        exact ⟨a, List.mem_cons_of_mem _ ha, h'⟩
-
-theorem ElemRel.mem_or_range {lo hi : Nat} {p : Pat} {v : Var} (h : ElemRel lo hi p v) :
-    v ∈ p.vars ∨ (lo ≤ v ∧ v < hi) := by
-  rcases h with ⟨x, rfl, rfl⟩ | ⟨-, hlo, hhi⟩
-  · exact Or.inl (by simp)
-  · exact Or.inr ⟨hlo, hhi⟩
 
 theorem runStep_checkEq_mem {G : Graph} {x y : Var} {σ σ' : Binding}
     (h : σ' ∈ runStep G (.checkEq x y) σ) : σ' = σ := by
@@ -1210,18 +1308,9 @@ theorem mem_multVars {es : List (Var × Mult)} {k : Var} :
 
 /-! ## The invariant, by strong induction on the pattern -/
 
-theorem RestFree.setNode {R : List Var} {σ : Binding} (h : RestFree R σ) (t : Var) (id : NodeId) :
-    RestFree R (σ.setNode t id) := h
-
-theorem NodeFree.setNode {k : Nat} {σ : Binding} (h : NodeFree k σ) (t : Var) (ht : t < k) (id : NodeId) :
-    NodeFree k (σ.setNode t id) := by
-  intro w hw
-  rw [setNode_node_of_ne _ _ _ _ (by vomega)]
-  exact h w hw
-
 theorem structAt_of_sub {G : Graph} (P : Pat)
     (ih : ∀ p, sizeOf p < sizeOf P → StructAt G p) : StructAt G P := by
-  intro cv fresh σ σ' hnf hrf hnd h
+  intro cv fresh σ σ' hlt hnf hrf hnd h
   cases P with
   | var x =>
       rw [compileAt_var] at h ⊢
@@ -1244,15 +1333,15 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
       rw [mem_run_cons] at h
       obtain ⟨σ₁, hσ₁, hσ'⟩ := h
       obtain ⟨id, n, hmem, hop, hz, rfl⟩ := mem_joinStep.1 hσ₁
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
       obtain ⟨hf, hnf', hle⟩ := structArgs args (fun p hp => ih p (sizeOf_lt_plain hp f)) fresh 0
-        (fresh + 1) _ σ' hnf₁ (hrf.setNode fresh id) hnd (by rw [h₁]; exact hσ')
+        (fresh + 1) _ σ' (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₁ (hrf.joinBind G fresh id) hnd (by rw [h₁]; exact hσ')
       rw [h₁] at hf hnf' hle
       simp only at hf hnf' hle
       refine ⟨?_, hnf', by vomega⟩
       have hj : PlanFrame (Pat.varsList args) (Pat.restVarsList args) fresh (fresh + 1) σ
-          (σ.setNode fresh id) :=
+          (joinBind G σ fresh id) :=
         PlanFrame.join (hnf fresh (le_refl _)) (le_refl _) (by vomega)
       have := hj.trans hf (by vomega) hle
       exact this.mono (by simp) (by simp) (le_refl _) (le_refl _)
@@ -1277,15 +1366,21 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
       obtain ⟨hle₂, hrel₂⟩ := elemVar_rel q fr₁ h₂
       rw [restVars_comm] at hrf hnd
       have hnd' := List.nodup_append.1 hnd
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
-      have hnf₂ : NodeFree fr₂ σ₂ := by
-        intro w hw; rw [hfr₂.node]; exact hnf₁ w (by vomega)
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
+      have hnf₂ : NodeFree fr₂ σ₂ :=
+        NodeFree.ofFrame hfr₂ hnf₁ (by vomega) (by
+          intro w hw
+          simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hw
+          rcases hw with rfl | rfl
+          · have := hrel₁.lt_of_lt (fun x hx => by have := hlt x (by simp [hx]); vomega) hle₁; vomega
+          · exact hrel₂.lt_of_lt (fun x hx => by have := hlt x (by simp [hx]); vomega) hle₂)
       have hrf₂ : RestFree (p.restVars ++ q.restVars) σ₂ := by
         intro r hr
         rw [hfr₂.rest r (by simp), hfr₂.seqRest r (by simp), hfr₂.finRest r (by simp)]
         exact hrf r hr
-      obtain ⟨hf₃, hnf₃, hle₃⟩ := structNested (ih p (sizeOf_lt_comm_left f p q)) vp fr₂ σ₂ σ₃ hnf₂
+      obtain ⟨hf₃, hnf₃, hle₃⟩ := structNested (ih p (sizeOf_lt_comm_left f p q)) vp fr₂ σ₂ σ₃
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂
         (hrf₂.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₃]; exact hσ₃)
       rw [h₃] at hf₃ hnf₃ hle₃
       simp only at hf₃ hnf₃ hle₃
@@ -1294,16 +1389,17 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
         have hnot : r ∉ p.restVars := fun hr' => hnd'.2.2 r hr' r hr rfl
         rw [hf₃.rest r hnot, hf₃.seqRest r hnot, hf₃.finRest r hnot]
         exact hrf₂ r (List.mem_append_right _ hr)
-      obtain ⟨hf₄, hnf₄, hle₄⟩ := structNested (ih q (sizeOf_lt_comm_right f p q)) vq fr₃ σ₃ σ' hnf₃
+      obtain ⟨hf₄, hnf₄, hle₄⟩ := structNested (ih q (sizeOf_lt_comm_right f p q)) vq fr₃ σ₃ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₃
         hrf₃ hnd'.2.1 (by rw [h₄]; exact hσ')
       rw [h₄] at hf₄ hnf₄ hle₄
       simp only at hf₄ hnf₄ hle₄
       refine ⟨?_, hnf₄, by vomega⟩
       have hj : PlanFrame (p.vars ++ q.vars) (p.restVars ++ q.restVars) fresh (fresh + 1) σ
-          (σ.setNode fresh id) :=
+          (joinBind G σ fresh id) :=
         PlanFrame.join (hnf fresh (le_refl _)) (le_refl _) (by vomega)
       have hd' : PlanFrame (p.vars ++ q.vars) (p.restVars ++ q.restVars) (fresh + 1) fr₂
-          (σ.setNode fresh id) σ₂ := by
+          (joinBind G σ fresh id) σ₂ := by
         refine PlanFrame.ofFrame hfr₂ hext₂ ?_ (by simp) (by simp) (by simp) (by simp)
         intro w hw
         simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hw
@@ -1331,9 +1427,9 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
       obtain ⟨id, n, hmem, hop, hz, rfl⟩ := mem_joinStep.1 hσ₁
       obtain ⟨g, cs, hn, hd⟩ := runStep_expandA_mem hσ₂
       rw [restVars_assoc] at hrf hnd
-      have hpre₀ : ∀ r, pre = some r → (σ.setNode fresh id).seqRest r = none := by
+      have hpre₀ : ∀ r, pre = some r → (joinBind G σ fresh id).seqRest r = none := by
         intro r hr; subst hr; exact (hrf r (by simp)).2.1
-      have hsuf₀ : ∀ r, suf = some r → (σ.setNode fresh id).seqRest r = none := by
+      have hsuf₀ : ∀ r, suf = some r → (joinBind G σ fresh id).seqRest r = none := by
         intro r hr; subst hr; exact (hrf r (by simp)).2.1
       have hdist : ∀ r, pre = some r → suf ≠ some r := by
         intro r hr hs; subst hr; subst hs
@@ -1341,10 +1437,11 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
       obtain ⟨hext₂, -⟩ := expand_a_sound' pre suf vs cs _ σ₂ hpre₀ hsuf₀ hdist hd
       have hfr₂ := frame_expandA hd
       obtain ⟨hle₁, hrel⟩ := elemVars_spec args (fresh + 1) h₁
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
-      have hnf₂ : NodeFree fr₁ σ₂ := by
-        intro w hw; rw [hfr₂.node]; exact hnf₁ w (by vomega)
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
+      have hnf₂ : NodeFree fr₁ σ₂ :=
+        NodeFree.ofFrame hfr₂ hnf₁ hle₁
+          (forall₂_elemRel_lt hrel (fun x hx => by have := hlt x (by simp [hx]); vomega) hle₁)
       have hnd' := List.nodup_append.1 hnd
       have hrf₂ : RestFree (Pat.restVarsList args) σ₂ := by
         intro r hr
@@ -1352,18 +1449,19 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
         rw [hfr₂.rest r (by simp), hfr₂.seqRest r hnot, hfr₂.finRest r (by simp)]
         exact hrf r (List.mem_append_right _ hr)
       obtain ⟨hf₃, hnf₃, hle₃⟩ := structNestedList args
-        (fun p hp => ih p (sizeOf_lt_assoc hp f pre suf)) vs fr₁ σ₂ σ' hnf₂ hrf₂ hnd'.2.1
+        (fun p hp => ih p (sizeOf_lt_assoc hp f pre suf)) vs fr₁ σ₂ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂ hrf₂ hnd'.2.1
         (by rw [h₂]; exact hσ')
       rw [h₂] at hf₃ hnf₃ hle₃
       simp only at hf₃ hnf₃ hle₃
       refine ⟨?_, hnf₃, by vomega⟩
       have hj : PlanFrame (pre.toList ++ Pat.varsList args ++ suf.toList)
           (pre.toList ++ suf.toList ++ Pat.restVarsList args) fresh (fresh + 1) σ
-          (σ.setNode fresh id) :=
+          (joinBind G σ fresh id) :=
         PlanFrame.join (hnf fresh (le_refl _)) (le_refl _) (by vomega)
       have hd' : PlanFrame (pre.toList ++ Pat.varsList args ++ suf.toList)
           (pre.toList ++ suf.toList ++ Pat.restVarsList args) (fresh + 1) fr₁
-          (σ.setNode fresh id) σ₂ := by
+          (joinBind G σ fresh id) σ₂ := by
         refine PlanFrame.ofFrame hfr₂ hext₂ ?_ (by simp) (by simp)
           (List.subset_append_left _ _) (by simp)
         intro w hw
@@ -1387,15 +1485,16 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
       obtain ⟨id, n, hmem, hop, hz, rfl⟩ := mem_joinStep.1 hσ₁
       obtain ⟨g, m, hn, hd⟩ := runStep_decomposeAC_mem hσ₂
       rw [restVars_ac] at hrf hnd
-      have hfresh : ∀ r ∈ rest, (σ.setNode fresh id).rest r = none := by
+      have hfresh : ∀ r ∈ rest, (joinBind G σ fresh id).rest r = none := by
         intro r hr; exact (hrf r (List.mem_append_left _ (Option.mem_toList.2 hr))).1
       obtain ⟨hext₂, -⟩ := decompose_ac_sound' vs rest m _ σ₂ hfresh hd
       have hfr₂ := frame_decomposeAC vs rest _ _ _ hd
       obtain ⟨hle₁, hrel⟩ := elemVarsAC_spec elems (fresh + 1) h₁
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
-      have hnf₂ : NodeFree fr₁ σ₂ := by
-        intro w hw; rw [hfr₂.node]; exact hnf₁ w (by vomega)
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
+      have hnf₂ : NodeFree fr₁ σ₂ :=
+        NodeFree.ofFrame hfr₂ hnf₁ hle₁
+          (forall₂_elemRel_lt_ac hrel (fun x hx => by have := hlt x (by simp [varsElems_cons, hx]); vomega) hle₁)
       have hnd' := List.nodup_append.1 hnd
       have hrf₂ : RestFree (Pat.restVarsElems elems) σ₂ := by
         intro r hr
@@ -1403,16 +1502,17 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
         rw [hfr₂.rest r hnot, hfr₂.seqRest r (by simp), hfr₂.finRest r (by simp)]
         exact hrf r (List.mem_append_right _ hr)
       obtain ⟨hf₃, hnf₃, hle₃⟩ := structNestedAC elems
-        (fun e he => ih e.1 (sizeOf_lt_ac he f rest)) (vs.map (·.1)) fr₁ σ₂ σ' hnf₂ hrf₂ hnd'.2.1
+        (fun e he => ih e.1 (sizeOf_lt_ac he f rest)) (vs.map (·.1)) fr₁ σ₂ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂ hrf₂ hnd'.2.1
         (by rw [h₂]; exact hσ')
       rw [h₂] at hf₃ hnf₃ hle₃
       simp only at hf₃ hnf₃ hle₃
       refine ⟨?_, hnf₃, by vomega⟩
       have hj : PlanFrame (Pat.varsElems elems ++ rest.toList)
-          (rest.toList ++ Pat.restVarsElems elems) fresh (fresh + 1) σ (σ.setNode fresh id) :=
+          (rest.toList ++ Pat.restVarsElems elems) fresh (fresh + 1) σ (joinBind G σ fresh id) :=
         PlanFrame.join (hnf fresh (le_refl _)) (le_refl _) (by vomega)
       have hd' : PlanFrame (Pat.varsElems elems ++ rest.toList)
-          (rest.toList ++ Pat.restVarsElems elems) (fresh + 1) fr₁ (σ.setNode fresh id) σ₂ := by
+          (rest.toList ++ Pat.restVarsElems elems) (fresh + 1) fr₁ (joinBind G σ fresh id) σ₂ := by
         refine PlanFrame.ofFrame hfr₂ hext₂ ?_ ?_ (List.subset_append_left _ _) (by simp) (by simp)
         · intro w hw
           rw [List.mem_map] at hw
@@ -1443,15 +1543,16 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
       obtain ⟨id, n, hmem, hop, hz, rfl⟩ := mem_joinStep.1 hσ₁
       obtain ⟨g, st, hn, hd⟩ := runStep_decomposeACI_mem hσ₂
       rw [restVars_aci] at hrf hnd
-      have hfresh : ∀ r ∈ rest, (σ.setNode fresh id).finRest r = none := by
+      have hfresh : ∀ r ∈ rest, (joinBind G σ fresh id).finRest r = none := by
         intro r hr; exact (hrf r (List.mem_append_left _ (Option.mem_toList.2 hr))).2.2
       obtain ⟨hext₂, -⟩ := decompose_aci_sound' vs rest st _ σ₂ hfresh hd
       have hfr₂ := frame_decomposeACI vs rest _ _ _ hd
       obtain ⟨hle₁, hrel⟩ := elemVars_spec elems (fresh + 1) h₁
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
-      have hnf₂ : NodeFree fr₁ σ₂ := by
-        intro w hw; rw [hfr₂.node]; exact hnf₁ w (by vomega)
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
+      have hnf₂ : NodeFree fr₁ σ₂ :=
+        NodeFree.ofFrame hfr₂ hnf₁ hle₁
+          (forall₂_elemRel_lt hrel (fun x hx => by have := hlt x (by simp [hx]); vomega) hle₁)
       have hnd' := List.nodup_append.1 hnd
       have hrf₂ : RestFree (Pat.restVarsList elems) σ₂ := by
         intro r hr
@@ -1459,16 +1560,17 @@ theorem structAt_of_sub {G : Graph} (P : Pat)
         rw [hfr₂.rest r (by simp), hfr₂.seqRest r (by simp), hfr₂.finRest r hnot]
         exact hrf r (List.mem_append_right _ hr)
       obtain ⟨hf₃, hnf₃, hle₃⟩ := structNestedList elems
-        (fun p hp => ih p (sizeOf_lt_aci hp f rest)) vs fr₁ σ₂ σ' hnf₂ hrf₂ hnd'.2.1
+        (fun p hp => ih p (sizeOf_lt_aci hp f rest)) vs fr₁ σ₂ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂ hrf₂ hnd'.2.1
         (by rw [h₂]; exact hσ')
       rw [h₂] at hf₃ hnf₃ hle₃
       simp only at hf₃ hnf₃ hle₃
       refine ⟨?_, hnf₃, by vomega⟩
       have hj : PlanFrame (Pat.varsList elems ++ rest.toList)
-          (rest.toList ++ Pat.restVarsList elems) fresh (fresh + 1) σ (σ.setNode fresh id) :=
+          (rest.toList ++ Pat.restVarsList elems) fresh (fresh + 1) σ (joinBind G σ fresh id) :=
         PlanFrame.join (hnf fresh (le_refl _)) (le_refl _) (by vomega)
       have hd' : PlanFrame (Pat.varsList elems ++ rest.toList)
-          (rest.toList ++ Pat.restVarsList elems) (fresh + 1) fr₁ (σ.setNode fresh id) σ₂ := by
+          (rest.toList ++ Pat.restVarsList elems) (fresh + 1) fr₁ (joinBind G σ fresh id) σ₂ := by
         refine PlanFrame.ofFrame hfr₂ hext₂ ?_ (by simp) (by simp) (by simp)
           (List.subset_append_left _ _)
         intro w hw
@@ -1580,7 +1682,7 @@ theorem ElemRel.var_eq {lo hi : Nat} {p : Pat} {v : Var} (h : ElemRel lo hi p v)
 def SoundAt (G : Graph) (sig : Sym → Kind) (P : Pat) : Prop :=
   ∀ (cv : Option Var) (fresh : Nat) (σ σ' : Binding),
     G.KeysNodup → G.Conforms sig → PatWK sig P → P.head.isSome = true →
-    NodeFree fresh σ → RestFree P.restVars σ → P.restVars.Nodup →
+    (∀ x ∈ P.vars, x < fresh) → NodeFree fresh σ → RestFree P.restVars σ → P.restVars.Nodup →
     σ' ∈ run G (compileAt P cv fresh).1 σ →
     ∃ id n, σ'.node fresh = some id ∧ (id, n) ∈ G.nodes ∧ P.head = some n.op ∧
       (∀ z, cv = some z → σ'.cls z = some (G.find id)) ∧ MatchN G P n σ'
@@ -1588,6 +1690,7 @@ def SoundAt (G : Graph) (sig : Sym → Kind) (P : Pat) : Prop :=
 theorem soundNested {G : Graph} {sig : Sym → Kind} {p : Pat} (hp : SoundAt G sig p)
     (v : Var) (fresh : Nat) (σ σ' : Binding) (c : C)
     (hk : G.KeysNodup) (hconf : G.Conforms sig) (hwk : PatWK sig p)
+    (hlt : ∀ x ∈ p.vars, x < fresh)
     (hnf : NodeFree fresh σ) (hrf : RestFree p.restVars σ) (hnd : p.restVars.Nodup)
     (hv : σ.cls v = some c) (hvar : ∀ x, p = .var x → v = x)
     (h : σ' ∈ run G (compileNested p v fresh).1 σ) : MatchC G p c σ' := by
@@ -1604,8 +1707,8 @@ theorem soundNested {G : Graph} {sig : Sym → Kind} {p : Pat} (hp : SoundAt G s
     | ac f elems rest => simp [Pat.head] at hh
     | aci f elems rest => simp [Pat.head] at hh
   · rw [compileNested_app p hh] at h
-    obtain ⟨id, n, -, hmem, hhead, hz, hm⟩ := hp (some v) fresh σ σ' hk hconf hwk hh hnf hrf hnd h
-    have hext := (structAt p (some v) fresh σ σ' hnf hrf hnd h).1.ext
+    obtain ⟨id, n, -, hmem, hhead, hz, hm⟩ := hp (some v) fresh σ σ' hk hconf hwk hh hlt hnf hrf hnd h
+    have hext := (structAt p (some v) fresh σ σ' hlt hnf hrf hnd h).1.ext
     have h₁ := hz v rfl
     have h₂ := hext.1 v c hv
     rw [h₁] at h₂
@@ -1616,6 +1719,7 @@ theorem soundNestedList {G : Graph} {sig : Sym → Kind} : ∀ (ps : List Pat),
     (∀ p ∈ ps, SoundAt G sig p) →
     ∀ (vs : List Var) (cs : List C) (fresh : Nat) (σ σ' : Binding),
     G.KeysNodup → G.Conforms sig → (∀ p ∈ ps, PatWK sig p) →
+    (∀ x ∈ Pat.varsList ps, x < fresh) →
     NodeFree fresh σ → RestFree (Pat.restVarsList ps) σ → (Pat.restVarsList ps).Nodup →
     List.Forall₂ (fun p v => ∀ x, p = .var x → v = x) ps vs →
     List.Forall₂ (fun v c => σ.cls v = some c) vs cs →
@@ -1624,12 +1728,12 @@ theorem soundNestedList {G : Graph} {sig : Sym → Kind} : ∀ (ps : List Pat),
   intro ps
   induction ps with
   | nil =>
-      intro _ vs cs fresh σ σ' _ _ _ _ _ _ hvs hcs _
+      intro _ vs cs fresh σ σ' _ _ _ _ _ _ _ hvs hcs _
       rw [List.forall₂_nil_left_iff] at hvs; subst hvs
       rw [List.forall₂_nil_left_iff] at hcs; subst hcs
       exact List.Forall₂.nil
   | cons p ps ih =>
-      intro hall vs cs fresh σ σ' hk hconf hwk hnf hrf hnd hvs hcs h
+      intro hall vs cs fresh σ σ' hk hconf hwk hlt hnf hrf hnd hvs hcs h
       rw [List.forall₂_cons_left_iff] at hvs
       obtain ⟨v, vs, hpv, hvs, rfl⟩ := hvs
       rw [List.forall₂_cons_left_iff] at hcs
@@ -1643,9 +1747,11 @@ theorem soundNestedList {G : Graph} {sig : Sym → Kind} : ∀ (ps : List Pat),
       rw [restVarsList_cons] at hrf hnd
       have hnd' := List.nodup_append.1 hnd
       have hp := hall p (List.mem_cons_self ..)
-      have hm₁ := soundNested hp v fresh σ σ₁ c hk hconf (hwk p (List.mem_cons_self ..)) hnf
+      have hm₁ := soundNested hp v fresh σ σ₁ c hk hconf (hwk p (List.mem_cons_self ..))
+        (fun x hx => hlt x (by simp [hx])) hnf
         (hrf.mono (List.subset_append_left _ _)) hnd'.1 hvc hpv (by rw [h₁]; exact hσ₁)
-      obtain ⟨hf₁, hnf₁, hle₁⟩ := structNested (structAt p) v fresh σ σ₁ hnf
+      obtain ⟨hf₁, hnf₁, hle₁⟩ := structNested (structAt p) v fresh σ σ₁
+        (fun x hx => hlt x (by simp [hx])) hnf
         (hrf.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₁]; exact hσ₁)
       rw [h₁] at hf₁ hnf₁ hle₁
       simp only at hf₁ hnf₁ hle₁
@@ -1657,9 +1763,11 @@ theorem soundNestedList {G : Graph} {sig : Sym → Kind} : ∀ (ps : List Pat),
       have hcs₁ : List.Forall₂ (fun v c => σ₁.cls v = some c) vs cs :=
         hcs.imp (fun v c hvc => hf₁.ext.1 v c hvc)
       have hrest := ih (fun q hq => hall q (List.mem_cons_of_mem _ hq)) vs cs fr₁ σ₁ σ' hk hconf
-        (fun q hq => hwk q (List.mem_cons_of_mem _ hq)) hnf₁ hrf₂ hnd'.2.1 hvs hcs₁
+        (fun q hq => hwk q (List.mem_cons_of_mem _ hq))
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₁ hrf₂ hnd'.2.1 hvs hcs₁
         (by rw [h₂]; exact hσ')
-      obtain ⟨hf₂, -, -⟩ := structNestedList ps (fun q _ => structAt q) vs fr₁ σ₁ σ' hnf₁ hrf₂
+      obtain ⟨hf₂, -, -⟩ := structNestedList ps (fun q _ => structAt q) vs fr₁ σ₁ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₁ hrf₂
         hnd'.2.1 (by rw [h₂]; exact hσ')
       rw [h₂] at hf₂
       simp only at hf₂
@@ -1669,6 +1777,7 @@ theorem soundNestedAC {G : Graph} {sig : Sym → Kind} : ∀ (es : List (Pat × 
     (∀ e ∈ es, SoundAt G sig e.1) →
     ∀ (vs : List Var) (cs : List C) (fresh : Nat) (σ σ' : Binding),
     G.KeysNodup → G.Conforms sig → (∀ e ∈ es, PatWK sig e.1) →
+    (∀ x ∈ Pat.varsElems es, x < fresh) →
     NodeFree fresh σ → RestFree (Pat.restVarsElems es) σ → (Pat.restVarsElems es).Nodup →
     List.Forall₂ (fun e v => ∀ x, e.1 = .var x → v = x) es vs →
     List.Forall₂ (fun v c => σ.cls v = some c) vs cs →
@@ -1677,12 +1786,12 @@ theorem soundNestedAC {G : Graph} {sig : Sym → Kind} : ∀ (es : List (Pat × 
   intro es
   induction es with
   | nil =>
-      intro _ vs cs fresh σ σ' _ _ _ _ _ _ hvs hcs _
+      intro _ vs cs fresh σ σ' _ _ _ _ _ _ _ hvs hcs _
       rw [List.forall₂_nil_left_iff] at hvs; subst hvs
       rw [List.forall₂_nil_left_iff] at hcs; subst hcs
       exact List.Forall₂.nil
   | cons e es ih =>
-      intro hall vs cs fresh σ σ' hk hconf hwk hnf hrf hnd hvs hcs h
+      intro hall vs cs fresh σ σ' hk hconf hwk hlt hnf hrf hnd hvs hcs h
       obtain ⟨p, μ⟩ := e
       rw [List.forall₂_cons_left_iff] at hvs
       obtain ⟨v, vs, hpv, hvs, rfl⟩ := hvs
@@ -1697,9 +1806,11 @@ theorem soundNestedAC {G : Graph} {sig : Sym → Kind} : ∀ (es : List (Pat × 
       rw [restVarsElems_cons] at hrf hnd
       have hnd' := List.nodup_append.1 hnd
       have hp := hall (p, μ) (List.mem_cons_self ..)
-      have hm₁ := soundNested hp v fresh σ σ₁ c hk hconf (hwk (p, μ) (List.mem_cons_self ..)) hnf
+      have hm₁ := soundNested hp v fresh σ σ₁ c hk hconf (hwk (p, μ) (List.mem_cons_self ..))
+        (fun x hx => hlt x (by simp [varsElems_cons, hx])) hnf
         (hrf.mono (List.subset_append_left _ _)) hnd'.1 hvc hpv (by rw [h₁]; exact hσ₁)
-      obtain ⟨hf₁, hnf₁, hle₁⟩ := structNested (structAt p) v fresh σ σ₁ hnf
+      obtain ⟨hf₁, hnf₁, hle₁⟩ := structNested (structAt p) v fresh σ σ₁
+        (fun x hx => hlt x (by simp [varsElems_cons, hx])) hnf
         (hrf.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₁]; exact hσ₁)
       rw [h₁] at hf₁ hnf₁ hle₁
       simp only at hf₁ hnf₁ hle₁
@@ -1711,9 +1822,11 @@ theorem soundNestedAC {G : Graph} {sig : Sym → Kind} : ∀ (es : List (Pat × 
       have hcs₁ : List.Forall₂ (fun v c => σ₁.cls v = some c) vs cs :=
         hcs.imp (fun v c hvc => hf₁.ext.1 v c hvc)
       have hrest := ih (fun q hq => hall q (List.mem_cons_of_mem _ hq)) vs cs fr₁ σ₁ σ' hk hconf
-        (fun q hq => hwk q (List.mem_cons_of_mem _ hq)) hnf₁ hrf₂ hnd'.2.1 hvs hcs₁
+        (fun q hq => hwk q (List.mem_cons_of_mem _ hq))
+        (fun x hx => by have := hlt x (by simp [varsElems_cons, hx]); vomega) hnf₁ hrf₂ hnd'.2.1 hvs hcs₁
         (by rw [h₂]; exact hσ')
-      obtain ⟨hf₂, -, -⟩ := structNestedAC es (fun q _ => structAt q.1) vs fr₁ σ₁ σ' hnf₁ hrf₂
+      obtain ⟨hf₂, -, -⟩ := structNestedAC es (fun q _ => structAt q.1) vs fr₁ σ₁ σ'
+        (fun x hx => by have := hlt x (by simp [varsElems_cons, hx]); vomega) hnf₁ hrf₂
         hnd'.2.1 (by rw [h₂]; exact hσ')
       rw [h₂] at hf₂
       simp only at hf₂
@@ -1723,6 +1836,7 @@ theorem soundArgs {G : Graph} {sig : Sym → Kind} : ∀ (args : List Pat),
     (∀ p ∈ args, SoundAt G sig p) →
     ∀ (nv : Var) (i fresh : Nat) (σ σ' : Binding) (id : NodeId) (n : Node) (cs : List C),
     G.KeysNodup → G.Conforms sig → (∀ p ∈ args, PatWK sig p) →
+    (∀ x ∈ Pat.varsList args, x < fresh) →
     NodeFree fresh σ → RestFree (Pat.restVarsList args) σ → (Pat.restVarsList args).Nodup →
     σ.node nv = some id → (id, n) ∈ G.nodes → n.children = .tuple cs →
     i + args.length = cs.length →
@@ -1731,12 +1845,12 @@ theorem soundArgs {G : Graph} {sig : Sym → Kind} : ∀ (args : List Pat),
   intro args
   induction args with
   | nil =>
-      intro _ nv i fresh σ σ' id n cs _ _ _ _ _ _ _ _ _ hlen _
+      intro _ nv i fresh σ σ' id n cs _ _ _ _ _ _ _ _ _ _ hlen _
       simp at hlen
       rw [List.drop_eq_nil_of_le (by omega)]
       exact List.Forall₂.nil
   | cons p ps ih =>
-      intro hall nv i fresh σ σ' id n cs hk hconf hwk hnf hrf hnd hnv hmem hch hlen h
+      intro hall nv i fresh σ σ' id n cs hk hconf hwk hlt hnf hrf hnd hnv hmem hch hlen h
       rcases h₁ : elemVar p fresh with ⟨v, fr₁⟩
       rcases h₂ : compileNested p v fr₁ with ⟨sp, fr₂⟩
       rcases h₃ : compilePlainArgs ps nv (i + 1) fr₂ with ⟨s, fr₃⟩
@@ -1758,16 +1872,20 @@ theorem soundArgs {G : Graph} {sig : Sym → Kind} : ∀ (args : List Pat),
       obtain ⟨hle₁, hrel⟩ := elemVar_rel p fresh h₁
       rw [restVarsList_cons] at hrf hnd
       have hnd' := List.nodup_append.1 hnd
-      have hnf₀ : NodeFree fr₁ σ₀ := by
-        intro w hw; rw [hfr₀.node]; exact hnf w (by vomega)
+      have hnf₀ : NodeFree fr₁ σ₀ :=
+        NodeFree.ofFrame hfr₀ hnf hle₁ (by
+          intro w hw; simp only [List.mem_singleton] at hw; subst hw
+          exact hrel.lt_of_lt (fun x hx => hlt x (by simp [hx])) hle₁)
       have hrf₀ : RestFree (p.restVars ++ Pat.restVarsList ps) σ₀ := by
         intro r hr
         rw [hfr₀.rest r (by simp), hfr₀.seqRest r (by simp), hfr₀.finRest r (by simp)]
         exact hrf r hr
       have hm₁ := soundNested (hall p (List.mem_cons_self ..)) v fr₁ σ₀ σ₁ _ hk hconf
-        (hwk p (List.mem_cons_self ..)) hnf₀ (hrf₀.mono (List.subset_append_left _ _)) hnd'.1 hcls₀
+        (hwk p (List.mem_cons_self ..)) (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₀
+        (hrf₀.mono (List.subset_append_left _ _)) hnd'.1 hcls₀
         hrel.var_eq (by rw [h₂]; exact hσ₁)
-      obtain ⟨hf₁, hnf₁, hle₂⟩ := structNested (structAt p) v fr₁ σ₀ σ₁ hnf₀
+      obtain ⟨hf₁, hnf₁, hle₂⟩ := structNested (structAt p) v fr₁ σ₀ σ₁
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₀
         (hrf₀.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₂]; exact hσ₁)
       rw [h₂] at hf₁ hnf₁ hle₂
       simp only at hf₁ hnf₁ hle₂
@@ -1778,9 +1896,11 @@ theorem soundArgs {G : Graph} {sig : Sym → Kind} : ∀ (args : List Pat),
         exact hrf₀ r (List.mem_append_right _ hr)
       have hnv₁ : σ₁.node nv = some id := hf₁.ext.2.1 nv id (by rw [hfr₀.node]; exact hnv)
       have hrest := ih (fun q hq => hall q (List.mem_cons_of_mem _ hq)) nv (i + 1) fr₂ σ₁ σ' id n cs
-        hk hconf (fun q hq => hwk q (List.mem_cons_of_mem _ hq)) hnf₁ hrf₂ hnd'.2.1 hnv₁ hmem hch
+        hk hconf (fun q hq => hwk q (List.mem_cons_of_mem _ hq))
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₁ hrf₂ hnd'.2.1 hnv₁ hmem hch
         (by simp at hlen ⊢; omega) (by rw [h₃]; exact hσ')
-      obtain ⟨hf₂, -, -⟩ := structArgs ps (fun q _ => structAt q) nv (i + 1) fr₂ σ₁ σ' hnf₁ hrf₂
+      obtain ⟨hf₂, -, -⟩ := structArgs ps (fun q _ => structAt q) nv (i + 1) fr₂ σ₁ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₁ hrf₂
         hnd'.2.1 (by rw [h₃]; exact hσ')
       rw [h₃] at hf₂
       simp only at hf₂
@@ -1789,8 +1909,8 @@ theorem soundArgs {G : Graph} {sig : Sym → Kind} : ∀ (args : List Pat),
 
 theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
     (ih : ∀ p, sizeOf p < sizeOf P → SoundAt G sig p) : SoundAt G sig P := by
-  intro cv fresh σ σ' hk hconf hwk hh hnf hrf hnd h
-  have hst := structAt P cv fresh σ σ' hnf hrf hnd h
+  intro cv fresh σ σ' hk hconf hwk hh hlt hnf hrf hnd h
+  have hst := structAt P cv fresh σ σ' hlt hnf hrf hnd h
   cases P with
   | var x => simp [Pat.head] at hh
   | plain f args =>
@@ -1806,17 +1926,18 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
       simp only at hkind
       rw [hop, hsig] at hkind
       obtain ⟨cs, hch, hlen⟩ := Children.kind_plain hkind
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
       have hall := soundArgs args (fun p hp => ih p (sizeOf_lt_plain hp f)) fresh 0 (fresh + 1)
-        _ σ' id n cs hk hconf hwk' hnf₁ (hrf.setNode fresh id) hnd (setNode_node_self _ _ _) hmem hch
+        _ σ' id n cs hk hconf hwk' (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₁ (hrf.joinBind G fresh id) hnd (joinBind_node_self _ _ _ _) hmem hch
         (by omega) (by rw [h₁]; exact hσ')
       simp only [List.drop_zero] at hall
-      obtain ⟨hf, -, -⟩ := structArgs args (fun q _ => structAt q) fresh 0 (fresh + 1) _ σ' hnf₁
-        (hrf.setNode fresh id) hnd (by rw [h₁]; exact hσ')
+      obtain ⟨hf, -, -⟩ := structArgs args (fun q _ => structAt q) fresh 0 (fresh + 1) _ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₁
+        (hrf.joinBind G fresh id) hnd (by rw [h₁]; exact hσ')
       rw [h₁] at hf
       simp only at hf
-      refine ⟨id, n, hf.ext.2.1 fresh id (setNode_node_self _ _ _), hmem, by simp [Pat.head, hop],
+      refine ⟨id, n, hf.ext.2.1 fresh id (joinBind_node_self _ _ _ _), hmem, by simp [Pat.head, hop],
         fun z hz' => hst.1.ext.1 z _ (hz z hz'), ?_⟩
       obtain ⟨f', ch⟩ := n
       simp only at hop hch
@@ -1837,7 +1958,7 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
       obtain ⟨σ₃, hσ₃, hσ'⟩ := h
       obtain ⟨id, n, hmem, hop, hz, rfl⟩ := mem_joinStep.1 hσ₁
       obtain ⟨g, a, b, hn, hd⟩ := runStep_decomposeComm_mem hσ₂
-      rw [nodeOf_of_node hk (setNode_node_self _ _ _) hmem] at hn
+      rw [nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem] at hn
       obtain rfl := Option.some.inj hn
       simp only at hop
       obtain rfl := hop.symm
@@ -1849,15 +1970,21 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
       | comm _ hwp hwq =>
       rw [restVars_comm] at hrf hnd
       have hnd' := List.nodup_append.1 hnd
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
-      have hnf₂ : NodeFree fr₂ σ₂ := by
-        intro w hw; rw [hfr₂.node]; exact hnf₁ w (by vomega)
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
+      have hnf₂ : NodeFree fr₂ σ₂ :=
+        NodeFree.ofFrame hfr₂ hnf₁ (by vomega) (by
+          intro w hw
+          simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hw
+          rcases hw with rfl | rfl
+          · have := hrel₁.lt_of_lt (fun x hx => by have := hlt x (by simp [hx]); vomega) hle₁; vomega
+          · exact hrel₂.lt_of_lt (fun x hx => by have := hlt x (by simp [hx]); vomega) hle₂)
       have hrf₂ : RestFree (p.restVars ++ q.restVars) σ₂ := by
         intro r hr
         rw [hfr₂.rest r (by simp), hfr₂.seqRest r (by simp), hfr₂.finRest r (by simp)]
         exact hrf r hr
-      obtain ⟨hf₃, hnf₃, hle₃⟩ := structNested (structAt p) vp fr₂ σ₂ σ₃ hnf₂
+      obtain ⟨hf₃, hnf₃, hle₃⟩ := structNested (structAt p) vp fr₂ σ₂ σ₃
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂
         (hrf₂.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₃]; exact hσ₃)
       rw [h₃] at hf₃ hnf₃ hle₃
       simp only at hf₃ hnf₃ hle₃
@@ -1866,22 +1993,27 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
         have hnot : r ∉ p.restVars := fun hr' => hnd'.2.2 r hr' r hr rfl
         rw [hf₃.rest r hnot, hf₃.seqRest r hnot, hf₃.finRest r hnot]
         exact hrf₂ r (List.mem_append_right _ hr)
-      obtain ⟨hf₄, -, -⟩ := structNested (structAt q) vq fr₃ σ₃ σ' hnf₃ hrf₃ hnd'.2.1
+      obtain ⟨hf₄, -, -⟩ := structNested (structAt q) vq fr₃ σ₃ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₃ hrf₃ hnd'.2.1
         (by rw [h₄]; exact hσ')
       rw [h₄] at hf₄
       simp only at hf₄
       refine ⟨id, ⟨f, .spair a b⟩, hf₄.ext.2.1 fresh id (hf₃.ext.2.1 fresh id
-        (by rw [hfr₂.node]; exact setNode_node_self _ _ _)), hmem,
+        (by rw [hfr₂.node]; exact joinBind_node_self _ _ _ _)), hmem,
         by simp [Pat.head], fun z hz' => hst.1.ext.1 z _ (hz z hz'), ?_⟩
       rcases hab with ⟨hpa, hqb⟩ | ⟨hpb, hqa⟩
-      · have hmp := soundNested (ih p (sizeOf_lt_comm_left f p q)) vp fr₂ σ₂ σ₃ a hk hconf hwp hnf₂
+      · have hmp := soundNested (ih p (sizeOf_lt_comm_left f p q)) vp fr₂ σ₂ σ₃ a hk hconf hwp
+          (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂
           (hrf₂.mono (List.subset_append_left _ _)) hnd'.1 hpa hrel₁.var_eq (by rw [h₃]; exact hσ₃)
-        have hmq := soundNested (ih q (sizeOf_lt_comm_right f p q)) vq fr₃ σ₃ σ' b hk hconf hwq hnf₃
+        have hmq := soundNested (ih q (sizeOf_lt_comm_right f p q)) vq fr₃ σ₃ σ' b hk hconf hwq
+          (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₃
           hrf₃ hnd'.2.1 (hf₃.ext.1 vq b hqb) hrel₂.var_eq (by rw [h₄]; exact hσ')
         exact MatchN.comm₁ (hmp.mono hf₄.ext) hmq
-      · have hmp := soundNested (ih p (sizeOf_lt_comm_left f p q)) vp fr₂ σ₂ σ₃ b hk hconf hwp hnf₂
+      · have hmp := soundNested (ih p (sizeOf_lt_comm_left f p q)) vp fr₂ σ₂ σ₃ b hk hconf hwp
+          (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂
           (hrf₂.mono (List.subset_append_left _ _)) hnd'.1 hpb hrel₁.var_eq (by rw [h₃]; exact hσ₃)
-        have hmq := soundNested (ih q (sizeOf_lt_comm_right f p q)) vq fr₃ σ₃ σ' a hk hconf hwq hnf₃
+        have hmq := soundNested (ih q (sizeOf_lt_comm_right f p q)) vq fr₃ σ₃ σ' a hk hconf hwq
+          (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₃
           hrf₃ hnd'.2.1 (hf₃.ext.1 vq a hqa) hrel₂.var_eq (by rw [h₄]; exact hσ')
         exact MatchN.comm₂ (hmp.mono hf₄.ext) hmq
   | assoc f pre args suf =>
@@ -1895,16 +2027,16 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
       obtain ⟨σ₂, hσ₂, hσ'⟩ := h
       obtain ⟨id, n, hmem, hop, hz, rfl⟩ := mem_joinStep.1 hσ₁
       obtain ⟨g, cs, hn, hd⟩ := runStep_expandA_mem hσ₂
-      rw [nodeOf_of_node hk (setNode_node_self _ _ _) hmem] at hn
+      rw [nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem] at hn
       obtain rfl := Option.some.inj hn
       simp only at hop
       obtain rfl := hop.symm
       cases hwk with
       | assoc _ hwk' =>
       rw [restVars_assoc] at hrf hnd
-      have hpre₀ : ∀ r, pre = some r → (σ.setNode fresh id).seqRest r = none := by
+      have hpre₀ : ∀ r, pre = some r → (joinBind G σ fresh id).seqRest r = none := by
         intro r hr; subst hr; exact (hrf r (by simp)).2.1
-      have hsuf₀ : ∀ r, suf = some r → (σ.setNode fresh id).seqRest r = none := by
+      have hsuf₀ : ∀ r, suf = some r → (joinBind G σ fresh id).seqRest r = none := by
         intro r hr; subst hr; exact (hrf r (by simp)).2.1
       have hdist : ∀ r, pre = some r → suf ≠ some r := by
         intro r hr hs; subst hr; subst hs
@@ -1913,10 +2045,11 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
         expand_a_sound' pre suf vs cs _ σ₂ hpre₀ hsuf₀ hdist hd
       have hfr₂ := frame_expandA hd
       obtain ⟨hle₁, hrel⟩ := elemVars_spec args (fresh + 1) h₁
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
-      have hnf₂ : NodeFree fr₁ σ₂ := by
-        intro w hw; rw [hfr₂.node]; exact hnf₁ w (by vomega)
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
+      have hnf₂ : NodeFree fr₁ σ₂ :=
+        NodeFree.ofFrame hfr₂ hnf₁ hle₁
+          (forall₂_elemRel_lt hrel (fun x hx => by have := hlt x (by simp [hx]); vomega) hle₁)
       have hnd' := List.nodup_append.1 hnd
       have hrf₂ : RestFree (Pat.restVarsList args) σ₂ := by
         intro r hr
@@ -1928,13 +2061,13 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
       have hmid : List.Forall₂ (fun v c => σ₂.cls v = some c) vs mid :=
         forall₂_cls_of_zip hlen.symm hcls
       have hall := soundNestedList args (fun p hp => ih p (sizeOf_lt_assoc hp f pre suf)) vs mid fr₁
-        σ₂ σ' hk hconf hwk' hnf₂ hrf₂ hnd'.2.1 hvs hmid (by rw [h₂]; exact hσ')
-      obtain ⟨hf₃, -, -⟩ := structNestedList args (fun q _ => structAt q) vs fr₁ σ₂ σ' hnf₂ hrf₂
+        σ₂ σ' hk hconf hwk' (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂ hrf₂ hnd'.2.1 hvs hmid (by rw [h₂]; exact hσ')
+      obtain ⟨hf₃, -, -⟩ := structNestedList args (fun q _ => structAt q) vs fr₁ σ₂ σ' (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂ hrf₂
         hnd'.2.1 (by rw [h₂]; exact hσ')
       rw [h₂] at hf₃
       simp only at hf₃
       refine ⟨id, ⟨f, .seq cs⟩, hf₃.ext.2.1 fresh id
-        (by rw [hfr₂.node]; exact setNode_node_self _ _ _), hmem,
+        (by rw [hfr₂.node]; exact joinBind_node_self _ _ _ _), hmem,
         by simp [Pat.head], fun z hz' => hst.1.ext.1 z _ (hz z hz'), ?_⟩
       subst hcs
       exact MatchN.assoc hall.length_eq (hpre.mono hf₃.ext) (hsuf.mono hf₃.ext)
@@ -1950,23 +2083,24 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
       obtain ⟨σ₂, hσ₂, hσ'⟩ := h
       obtain ⟨id, n, hmem, hop, hz, rfl⟩ := mem_joinStep.1 hσ₁
       obtain ⟨g, m, hn, hd⟩ := runStep_decomposeAC_mem hσ₂
-      rw [nodeOf_of_node hk (setNode_node_self _ _ _) hmem] at hn
+      rw [nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem] at hn
       obtain rfl := Option.some.inj hn
       simp only at hop
       obtain rfl := hop.symm
       cases hwk with
       | ac _ hwk' =>
       rw [restVars_ac] at hrf hnd
-      have hfresh : ∀ r ∈ rest, (σ.setNode fresh id).rest r = none := by
+      have hfresh : ∀ r ∈ rest, (joinBind G σ fresh id).rest r = none := by
         intro r hr; exact (hrf r (List.mem_append_left _ (Option.mem_toList.2 hr))).1
       obtain ⟨hext₂, taken, hnd_t, hlen_t, hmem_t, hcls, hmult, hrest⟩ :=
         decompose_ac_sound' vs rest m _ σ₂ hfresh hd
       have hfr₂ := frame_decomposeAC vs rest _ _ _ hd
       obtain ⟨hle₁, hrel⟩ := elemVarsAC_spec elems (fresh + 1) h₁
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
-      have hnf₂ : NodeFree fr₁ σ₂ := by
-        intro w hw; rw [hfr₂.node]; exact hnf₁ w (by vomega)
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
+      have hnf₂ : NodeFree fr₁ σ₂ :=
+        NodeFree.ofFrame hfr₂ hnf₁ hle₁
+          (forall₂_elemRel_lt_ac hrel (fun x hx => by have := hlt x (by simp [varsElems_cons, hx]); vomega) hle₁)
       have hnd' := List.nodup_append.1 hnd
       have hrf₂ : RestFree (Pat.restVarsElems elems) σ₂ := by
         intro r hr
@@ -1979,13 +2113,13 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
       have htk : List.Forall₂ (fun v c => σ₂.cls v = some c) (vs.map (·.1)) taken :=
         forall₂_cls_of_zip_fst hlen_t hcls
       have hall := soundNestedAC elems (fun e he => ih e.1 (sizeOf_lt_ac he f rest)) (vs.map (·.1))
-        taken fr₁ σ₂ σ' hk hconf hwk' hnf₂ hrf₂ hnd'.2.1 hvs htk (by rw [h₂]; exact hσ')
+        taken fr₁ σ₂ σ' hk hconf hwk' (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂ hrf₂ hnd'.2.1 hvs htk (by rw [h₂]; exact hσ')
       obtain ⟨hf₃, -, -⟩ := structNestedAC elems (fun q _ => structAt q.1) (vs.map (·.1)) fr₁ σ₂ σ'
-        hnf₂ hrf₂ hnd'.2.1 (by rw [h₂]; exact hσ')
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂ hrf₂ hnd'.2.1 (by rw [h₂]; exact hσ')
       rw [h₂] at hf₃
       simp only at hf₃
       refine ⟨id, ⟨f, .mset m⟩, hf₃.ext.2.1 fresh id
-        (by rw [hfr₂.node]; exact setNode_node_self _ _ _), hmem,
+        (by rw [hfr₂.node]; exact joinBind_node_self _ _ _ _), hmem,
         by simp [Pat.head], fun z hz' => hst.1.ext.1 z _ (hz z hz'), ?_⟩
       refine MatchN.ac hnd_t hall.length_eq hmem_t (fun et het => (List.forall₂_iff_zip.1 hall).2 het)
         ?_ (hrest.mono hf₃.ext)
@@ -2004,23 +2138,24 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
       obtain ⟨σ₂, hσ₂, hσ'⟩ := h
       obtain ⟨id, n, hmem, hop, hz, rfl⟩ := mem_joinStep.1 hσ₁
       obtain ⟨g, st, hn, hd⟩ := runStep_decomposeACI_mem hσ₂
-      rw [nodeOf_of_node hk (setNode_node_self _ _ _) hmem] at hn
+      rw [nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem] at hn
       obtain rfl := Option.some.inj hn
       simp only at hop
       obtain rfl := hop.symm
       cases hwk with
       | aci _ hwk' =>
       rw [restVars_aci] at hrf hnd
-      have hfresh : ∀ r ∈ rest, (σ.setNode fresh id).finRest r = none := by
+      have hfresh : ∀ r ∈ rest, (joinBind G σ fresh id).finRest r = none := by
         intro r hr; exact (hrf r (List.mem_append_left _ (Option.mem_toList.2 hr))).2.2
       obtain ⟨hext₂, taken, hnd_t, hlen_t, hmem_t, hcls, hrest⟩ :=
         decompose_aci_sound' vs rest st _ σ₂ hfresh hd
       have hfr₂ := frame_decomposeACI vs rest _ _ _ hd
       obtain ⟨hle₁, hrel⟩ := elemVars_spec elems (fresh + 1) h₁
-      have hnf₁ : NodeFree (fresh + 1) (σ.setNode fresh id) :=
-        (hnf.mono (by vomega)).setNode fresh (by vomega) id
-      have hnf₂ : NodeFree fr₁ σ₂ := by
-        intro w hw; rw [hfr₂.node]; exact hnf₁ w (by vomega)
+      have hnf₁ : NodeFree (fresh + 1) (joinBind G σ fresh id) :=
+        (hnf.mono (by vomega)).joinBind G fresh (by vomega) id
+      have hnf₂ : NodeFree fr₁ σ₂ :=
+        NodeFree.ofFrame hfr₂ hnf₁ hle₁
+          (forall₂_elemRel_lt hrel (fun x hx => by have := hlt x (by simp [hx]); vomega) hle₁)
       have hnd' := List.nodup_append.1 hnd
       have hrf₂ : RestFree (Pat.restVarsList elems) σ₂ := by
         intro r hr
@@ -2032,13 +2167,13 @@ theorem soundAt_of_sub {G : Graph} {sig : Sym → Kind} (P : Pat)
       have htk : List.Forall₂ (fun v c => σ₂.cls v = some c) vs taken :=
         forall₂_cls_of_zip hlen_t hcls
       have hall := soundNestedList elems (fun p hp => ih p (sizeOf_lt_aci hp f rest)) vs taken fr₁
-        σ₂ σ' hk hconf hwk' hnf₂ hrf₂ hnd'.2.1 hvs htk (by rw [h₂]; exact hσ')
-      obtain ⟨hf₃, -, -⟩ := structNestedList elems (fun q _ => structAt q) vs fr₁ σ₂ σ' hnf₂ hrf₂
+        σ₂ σ' hk hconf hwk' (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂ hrf₂ hnd'.2.1 hvs htk (by rw [h₂]; exact hσ')
+      obtain ⟨hf₃, -, -⟩ := structNestedList elems (fun q _ => structAt q) vs fr₁ σ₂ σ' (fun x hx => by have := hlt x (by simp [hx]); vomega) hnf₂ hrf₂
         hnd'.2.1 (by rw [h₂]; exact hσ')
       rw [h₂] at hf₃
       simp only at hf₃
       refine ⟨id, ⟨f, .set st⟩, hf₃.ext.2.1 fresh id
-        (by rw [hfr₂.node]; exact setNode_node_self _ _ _), hmem,
+        (by rw [hfr₂.node]; exact joinBind_node_self _ _ _ _), hmem,
         by simp [Pat.head], fun z hz' => hst.1.ext.1 z _ (hz z hz'), ?_⟩
       exact MatchN.aci hnd_t hall.length_eq hmem_t (fun et het => (List.forall₂_iff_zip.1 hall).2 het)
         (hrest.mono hf₃.ext)
@@ -2069,11 +2204,11 @@ whose first rest is not checked (the stubs `decompose_ac_sound`,
 the primed forms carry the "rest unbound" hypothesis). -/
 theorem interp_sound' (G : Graph) (sig : Sym → Kind) (P : Pat) (fresh : Nat) (σ : Binding)
     (hkeys : G.KeysNodup) (hconf : G.Conforms sig) (hwk : PatWK sig P)
-    (hP : P.head.isSome = true) (_hf : ∀ x ∈ P.vars, x < fresh) (hnd : P.restVars.Nodup)
+    (hP : P.head.isSome = true) (hf : ∀ x ∈ P.vars, x < fresh) (hnd : P.restVars.Nodup)
     (h : σ ∈ run G (compile P fresh) Binding.empty) :
     ∃ id n, σ.node fresh = some id ∧ (id, n) ∈ G.nodes ∧ MatchN G P n σ := by
   obtain ⟨id, n, hid, hmem, -, -, hm⟩ := soundAt (sig := sig) P none fresh Binding.empty σ hkeys
-    hconf hwk hP (fun _ _ => rfl) (fun _ _ => ⟨rfl, rfl, rfl⟩) hnd h
+    hconf hwk hP hf (fun _ _ => ⟨rfl, rfl⟩) (fun _ _ => ⟨rfl, rfl, rfl⟩) hnd h
   exact ⟨id, n, hid, hmem, hm⟩
 
 /-! ## Completeness -/
@@ -2100,17 +2235,25 @@ theorem CInv.mono {b fresh fresh' : Nat} {σr σ : Binding} (h : CInv b fresh σ
   clsFree v hv := h.clsFree v (by vomega)
   nodeFree v hv := h.nodeFree v (by vomega)
 
-theorem CInv.setNode {b fresh : Nat} {σr σ : Binding} (h : CInv b fresh σr σ) (id : NodeId) :
-    CInv b (fresh + 1) (σr.setNode fresh id) σ where
-  cls := h.cls
+theorem CInv.joinBind {b fresh : Nat} {σr σ : Binding} (h : CInv b fresh σr σ) (G : Graph)
+    (hb : b ≤ fresh) (id : NodeId) : CInv b (fresh + 1) (joinBind G σr fresh id) σ where
+  cls x c hx hc := by
+    rw [joinBind_cls_of_ne _ _ _ _ _ (by vomega)] at hc
+    exact h.cls x c hx hc
   mult := h.mult
   rest := h.rest
   seqRest := h.seqRest
   finRest := h.finRest
-  clsFree v hv := h.clsFree v (by vomega)
+  clsFree v hv := by
+    rw [joinBind_cls_of_ne _ _ _ _ _ (by vomega)]
+    exact h.clsFree v (by vomega)
   nodeFree v hv := by
-    rw [setNode_node_of_ne _ _ _ _ (by vomega)]
+    rw [joinBind_node_of_ne _ _ _ _ _ (by vomega)]
     exact h.nodeFree v (by vomega)
+
+/-- The run binding is `NodeFree` (node and class) from `fresh` upward. -/
+theorem CInv.free {b fresh : Nat} {σr σ : Binding} (h : CInv b fresh σr σ) : NodeFree fresh σr :=
+  fun v hv => ⟨h.nodeFree v hv, h.clsFree v hv⟩
 
 theorem CInv.empty (b fresh : Nat) (σ : Binding) : CInv b fresh Binding.empty σ where
   cls _ _ _ h := by cases h
@@ -2498,7 +2641,8 @@ theorem completeNestedList {G : Graph} : ∀ (ps : List Pat), (∀ p ∈ ps, Com
         hnd'.1 hinv hpc hvc
       rw [h₁] at hσ₁ hinv₁
       simp only at hσ₁ hinv₁
-      obtain ⟨hf₁, -, hle₁⟩ := structNested (structAt p) v fresh σr σ₁ hinv.nodeFree
+      obtain ⟨hf₁, -, hle₁⟩ := structNested (structAt p) v fresh σr σ₁
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hinv.free
         (hrf.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₁]; exact hσ₁)
       rw [h₁] at hf₁ hle₁
       simp only at hf₁ hle₁
@@ -2553,7 +2697,8 @@ theorem completeNestedAC {G : Graph} : ∀ (es : List (Pat × Mult)),
         (hrf.mono (List.subset_append_left _ _)) hnd'.1 hinv hpc hvc
       rw [h₁] at hσ₁ hinv₁
       simp only at hσ₁ hinv₁
-      obtain ⟨hf₁, -, hle₁⟩ := structNested (structAt p) v fresh σr σ₁ hinv.nodeFree
+      obtain ⟨hf₁, -, hle₁⟩ := structNested (structAt p) v fresh σr σ₁
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hinv.free
         (hrf.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₁]; exact hσ₁)
       rw [h₁] at hf₁ hle₁
       simp only at hf₁ hle₁
@@ -2668,7 +2813,8 @@ theorem completeArgs {G : Graph} : ∀ (args : List Pat), (∀ p ∈ args, Compl
         (hrf₀.mono (List.subset_append_left _ _)) hnd'.1 hinv₀ hpc hcls₀
       rw [h₂] at hσ₁ hinv₁
       simp only at hσ₁ hinv₁
-      obtain ⟨hf₁, -, hle₂⟩ := structNested (structAt p) v fr₁ σ₀ σ₁ hinv₀.nodeFree
+      obtain ⟨hf₁, -, hle₂⟩ := structNested (structAt p) v fr₁ σ₀ σ₁
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hinv₀.free
         (hrf₀.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₂]; exact hσ₁)
       rw [h₂] at hf₁ hle₂
       simp only at hf₁ hle₂
@@ -2782,20 +2928,20 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
       rcases h₁ : compilePlainArgs args fresh 0 (fresh + 1) with ⟨s, fr⟩
       rw [compileAt_plain f args cv fresh h₁]
       simp only
-      have hj : σr.setNode fresh id ∈ runStep G (joinStep fresh f cv) σr :=
+      have hj : joinBind G σr fresh id ∈ runStep G (joinStep fresh f cv) σr :=
         mem_joinStep.2 ⟨id, _, hmem, rfl, hz, rfl⟩
-      have hinv₁ := hinv.setNode id
+      have hinv₁ := hinv.joinBind G hb id
       obtain ⟨σ', hσ', hinv'⟩ := completeArgs args (fun p hp => ih p (sizeOf_lt_plain hp f)) fresh 0
-        (fresh + 1) b (σr.setNode fresh id) σ id _ cs hk hlt (by vomega) (hrf.setNode fresh id) hnd
-        hinv₁ (setNode_node_self _ _ _) hmem rfl (by simp [hlen])
+        (fresh + 1) b (joinBind G σr fresh id) σ id _ cs hk hlt (by vomega) (hrf.joinBind G fresh id) hnd
+        hinv₁ (joinBind_node_self _ _ _ _) hmem rfl (by simp [hlen])
         (by simpa using hall_of_forall₂ hlen hall)
       rw [h₁] at hσ' hinv'
       simp only at hσ' hinv'
       obtain ⟨hf, -, -⟩ := structArgs args (fun q _ => structAt q) fresh 0 (fresh + 1) _ σ'
-        hinv₁.nodeFree (hrf.setNode fresh id) hnd (by rw [h₁]; exact hσ')
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hinv₁.free (hrf.joinBind G fresh id) hnd (by rw [h₁]; exact hσ')
       rw [h₁] at hf
       simp only at hf
-      exact ⟨σ', mem_run_cons.2 ⟨_, hj, hσ'⟩, hf.ext.2.1 fresh id (setNode_node_self _ _ _), hinv'⟩
+      exact ⟨σ', mem_run_cons.2 ⟨_, hj, hσ'⟩, hf.ext.2.1 fresh id (joinBind_node_self _ _ _ _), hinv'⟩
   | comm f p q =>
       have hcase : ∃ a₀ b₀ ca cb, n = ⟨f, .spair a₀ b₀⟩ ∧ MatchC G p ca σ ∧ MatchC G q cb σ ∧
           ((ca = a₀ ∧ cb = b₀) ∨ (ca = b₀ ∧ cb = a₀)) := by
@@ -2809,9 +2955,9 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
       rcases h₄ : compileNested q vq fr₃ with ⟨sq, fr₄⟩
       rw [compileAt_comm f p q cv fresh h₁ h₂ h₃ h₄]
       simp only
-      have hj : σr.setNode fresh id ∈ runStep G (joinStep fresh f cv) σr :=
+      have hj : joinBind G σr fresh id ∈ runStep G (joinStep fresh f cv) σr :=
         mem_joinStep.2 ⟨id, _, hmem, rfl, hz, rfl⟩
-      have hinv₁ := hinv.setNode id
+      have hinv₁ := hinv.joinBind G hb id
       have hsp := elemVar_spec p (fresh + 1) h₁
       have hsq := elemVar_spec q fr₁ h₂
       rw [vars_comm] at hlt
@@ -2830,7 +2976,7 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
           · rw [hvq]
             rcases hsp with ⟨-, -, -, hfr₁⟩ | ⟨-, -, hfr₁⟩ <;> exact Or.inr (by vomega)
       have hext₁ := extends_star (pairs := [(vp, ca), (vq, cb)]) hinv₁ hkeys
-      have hstar_p : (star b (σr.setNode fresh id) σ [(vp, ca), (vq, cb)]).cls vp = some ca := by
+      have hstar_p : (star b (joinBind G σr fresh id) σ [(vp, ca), (vq, cb)]).cls vp = some ca := by
         rcases hsp with ⟨x, hpx, hvx, -⟩ | ⟨-, hvp, hfr₁⟩
         · subst hpx
           rw [hvx]
@@ -2847,7 +2993,7 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
             rcases hsq with ⟨x, hqx, hvx, -⟩ | ⟨-, hvq, -⟩
             · have := hlt x (List.mem_append_right _ (by rw [hqx]; simp)); vomega
             · vomega
-      have hstar_q : (star b (σr.setNode fresh id) σ [(vp, ca), (vq, cb)]).cls vq = some cb := by
+      have hstar_q : (star b (joinBind G σr fresh id) σ [(vp, ca), (vq, cb)]).cls vq = some cb := by
         rcases hsq with ⟨x, hqx, hvx, -⟩ | ⟨-, hvq, -⟩
         · subst hqx
           rw [hvx]
@@ -2868,8 +3014,8 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         (by rcases hab with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
             · exact Or.inl ⟨hstar_p, hstar_q⟩
             · exact Or.inr ⟨hstar_p, hstar_q⟩)
-      have hσ₂' : σ₂ ∈ runStep G (.decomposeComm fresh vp vq) (σr.setNode fresh id) := by
-        simp only [runStep, nodeOf_of_node hk (setNode_node_self _ _ _) hmem]
+      have hσ₂' : σ₂ ∈ runStep G (.decomposeComm fresh vp vq) (joinBind G σr fresh id) := by
+        simp only [runStep, nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem]
         exact hσ₂
       have hfr₂ := frame_decomposeComm hσ₂
       have hle₁ : fresh + 1 ≤ fr₁ := by rcases hsp with ⟨-, -, -, hfr₁⟩ | ⟨-, -, hfr₁⟩ <;> vomega
@@ -2913,7 +3059,8 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         (hrf₂.mono (List.subset_append_left _ _)) hnd'.1 hinv₂ hp hvp
       rw [h₃] at hσ₃ hinv₃
       simp only at hσ₃ hinv₃
-      obtain ⟨hf₃, -, hle₃⟩ := structNested (structAt p) vp fr₂ σ₂ σ₃ hinv₂.nodeFree
+      obtain ⟨hf₃, -, hle₃⟩ := structNested (structAt p) vp fr₂ σ₂ σ₃
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hinv₂.free
         (hrf₂.mono (List.subset_append_left _ _)) hnd'.1 (by rw [h₃]; exact hσ₃)
       rw [h₃] at hf₃ hle₃
       simp only at hf₃ hle₃
@@ -2927,7 +3074,8 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         (hf₃.ext.1 vq cb hvq)
       rw [h₄] at hσ' hinv'
       simp only at hσ' hinv'
-      obtain ⟨hf₄, -, -⟩ := structNested (structAt q) vq fr₃ σ₃ σ' hinv₃.nodeFree hrf₃ hnd'.2.1
+      obtain ⟨hf₄, -, -⟩ := structNested (structAt q) vq fr₃ σ₃ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hinv₃.free hrf₃ hnd'.2.1
         (by rw [h₄]; exact hσ')
       rw [h₄] at hf₄
       simp only at hf₄
@@ -2935,7 +3083,7 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
       · rw [List.cons_append, List.cons_append, mem_run_cons]
         exact ⟨_, hj, mem_run_cons.2 ⟨σ₂, hσ₂', mem_run_append.2 ⟨σ₃, hσ₃, hσ'⟩⟩⟩
       · exact hf₄.ext.2.1 fresh id (hf₃.ext.2.1 fresh id
-          (by rw [hfr₂.node]; exact setNode_node_self _ _ _))
+          (by rw [hfr₂.node]; exact joinBind_node_self _ _ _ _))
   | assoc f pre args suf =>
       cases hm with
       | assoc hlen hpre hsuf hall =>
@@ -2944,9 +3092,9 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
       rcases h₂ : compileNestedList args vs fr₁ with ⟨s, fr₂⟩
       rw [compileAt_assoc f pre args suf cv fresh h₁ h₂]
       simp only
-      have hj : σr.setNode fresh id ∈ runStep G (joinStep fresh f cv) σr :=
+      have hj : joinBind G σr fresh id ∈ runStep G (joinStep fresh f cv) σr :=
         mem_joinStep.2 ⟨id, _, hmem, rfl, hz, rfl⟩
-      have hinv₁ := hinv.setNode id
+      have hinv₁ := hinv.joinBind G hb id
       obtain ⟨hle₁, hrel⟩ := elemVars_spec args (fresh + 1) h₁
       rw [vars_assoc] at hlt
       rw [restVars_assoc] at hrf hnd
@@ -2961,20 +3109,20 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         · exact Or.inr h.1
       have hext₁ := extends_star (pairs := vs.zip mid) hinv₁ hkeys
       have hdist := elemVars_distinct args (fresh + 1) h₁ (fun x hx => by have := hlt_args x hx; vomega)
-      have hcls := star_cls_keys (σ1 := σr.setNode fresh id) (σ := σ) (by vomega) hrange
+      have hcls := star_cls_keys (σ1 := joinBind G σr fresh id) (σ := σ) (by vomega) hrange
         (var_key_cls (by vomega) hrel hall) hdist
       have hlen' : mid.length = vs.length := by rw [← hlen, hrel.length_eq]
-      have hpre' : SeqRestOk (star b (σr.setNode fresh id) σ (vs.zip mid)) pre u := by
+      have hpre' : SeqRestOk (star b (joinBind G σr fresh id) σ (vs.zip mid)) pre u := by
         cases pre with
         | none => exact hpre
         | some r => exact star_seqRest_lt (hlt r (by simp)) hpre
-      have hsuf' : SeqRestOk (star b (σr.setNode fresh id) σ (vs.zip mid)) suf w := by
+      have hsuf' : SeqRestOk (star b (joinBind G σr fresh id) σ (vs.zip mid)) suf w := by
         cases suf with
         | none => exact hsuf
         | some r => exact star_seqRest_lt (hlt r (by simp)) hsuf
       obtain ⟨σ₂, hσ₂, hext₂⟩ := expand_a_complete' pre suf vs u mid w _ _ hext₁ hlen' hpre' hsuf' hcls
-      have hσ₂' : σ₂ ∈ runStep G (.expandA fresh pre vs suf) (σr.setNode fresh id) := by
-        simp only [runStep, nodeOf_of_node hk (setNode_node_self _ _ _) hmem]
+      have hσ₂' : σ₂ ∈ runStep G (.expandA fresh pre vs suf) (joinBind G σr fresh id) := by
+        simp only [runStep, nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem]
         exact hσ₂
       have hfr₂ := frame_expandA hσ₂
       have hinv₂ : CInv b fr₁ σ₂ σ := by
@@ -2984,9 +3132,9 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         · exact Or.inl h
         · exact Or.inr h.2
       -- the element variables are bound to `mid`
-      have hpre₀ : ∀ r, pre = some r → (σr.setNode fresh id).seqRest r = none := by
+      have hpre₀ : ∀ r, pre = some r → (joinBind G σr fresh id).seqRest r = none := by
         intro r hr; subst hr; exact (hrf r (by simp)).2.1
-      have hsuf₀ : ∀ r, suf = some r → (σr.setNode fresh id).seqRest r = none := by
+      have hsuf₀ : ∀ r, suf = some r → (joinBind G σr fresh id).seqRest r = none := by
         intro r hr; subst hr; exact (hrf r (by simp)).2.1
       have hdist' : ∀ r, pre = some r → suf ≠ some r := by
         intro r hr hs; subst hr; subst hs
@@ -2996,7 +3144,7 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
       have hmid' : List.Forall₂ (fun v c => σ₂.cls v = some c) vs mid' :=
         forall₂_cls_of_zip hlen''.symm hcls'
       have hmid_eq : mid' = mid := by
-        refine forall₂_cls_unique (f := (star b (σr.setNode fresh id) σ (vs.zip mid)).cls)
+        refine forall₂_cls_unique (f := (star b (joinBind G σr fresh id) σ (vs.zip mid)).cls)
           (hmid'.imp (fun v c h => hext₂.1 v c h)) ?_
         exact List.forall₂_iff_zip.2 ⟨hlen'.symm, fun hab => hcls _ hab⟩
       subst hmid_eq
@@ -3010,12 +3158,13 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         hrf₂ hnd'.2.1 hinv₂ (hall_of_forall₂ hlen hall) hmid'
       rw [h₂] at hσ' hinv'
       simp only at hσ' hinv'
-      obtain ⟨hf₃, -, -⟩ := structNestedList args (fun q _ => structAt q) vs fr₁ σ₂ σ' hinv₂.nodeFree
+      obtain ⟨hf₃, -, -⟩ := structNestedList args (fun q _ => structAt q) vs fr₁ σ₂ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hinv₂.free
         hrf₂ hnd'.2.1 (by rw [h₂]; exact hσ')
       rw [h₂] at hf₃
       simp only at hf₃
       refine ⟨σ', mem_run_cons.2 ⟨_, hj, mem_run_cons.2 ⟨σ₂, hσ₂', hσ'⟩⟩, ?_, hinv'⟩
-      exact hf₃.ext.2.1 fresh id (by rw [hfr₂.node]; exact setNode_node_self _ _ _)
+      exact hf₃.ext.2.1 fresh id (by rw [hfr₂.node]; exact joinBind_node_self _ _ _ _)
   | ac f elems rest =>
       cases hm with
       | ac hnd_t hlen_t hmem_t hall hmult hrest =>
@@ -3024,9 +3173,9 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
       rcases h₂ : compileNestedAC elems (vs.map (·.1)) fr₁ with ⟨s, fr₂⟩
       rw [compileAt_ac f elems rest cv fresh h₁ h₂]
       simp only
-      have hj : σr.setNode fresh id ∈ runStep G (joinStep fresh f cv) σr :=
+      have hj : joinBind G σr fresh id ∈ runStep G (joinStep fresh f cv) σr :=
         mem_joinStep.2 ⟨id, _, hmem, rfl, hz, rfl⟩
-      have hinv₁ := hinv.setNode id
+      have hinv₁ := hinv.joinBind G hb id
       obtain ⟨hle₁, hrel⟩ := elemVarsAC_spec elems (fresh + 1) h₁
       rw [vars_ac] at hlt
       rw [restVars_ac] at hrf hnd
@@ -3041,14 +3190,14 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
       have hext₁ := extends_star (pairs := (vs.map (·.1)).zip taken) hinv₁ hkeys
       have hdist := elemVarsAC_distinct elems (fresh + 1) h₁
         (fun x hx => by have := hlt_el x hx; vomega)
-      have hcls := star_cls_keys (σ1 := σr.setNode fresh id) (σ := σ) (by vomega) hrange
+      have hcls := star_cls_keys (σ1 := joinBind G σr fresh id) (σ := σ) (by vomega) hrange
         (var_key_cls_ac (by vomega) hrel hall) hdist
       have hlen_v : vs.length = taken.length := by rw [← hlen_t, hrel.length_eq]
       have hcls_v : ∀ et ∈ vs.zip taken,
-          (star b (σr.setNode fresh id) σ ((vs.map (·.1)).zip taken)).cls et.1.1 = some et.2 :=
+          (star b (joinBind G σr fresh id) σ ((vs.map (·.1)).zip taken)).cls et.1.1 = some et.2 :=
         fun et het => hcls _ (mem_zip_map_fst het)
       have hmult' : ∀ et ∈ vs.zip taken,
-          MultOk (star b (σr.setNode fresh id) σ ((vs.map (·.1)).zip taken)) et.1.2 (m.count et.2) := by
+          MultOk (star b (joinBind G σr fresh id) σ ((vs.map (·.1)).zip taken)) et.1.2 (m.count et.2) := by
         intro et het
         obtain ⟨et', het', ⟨hμ, -⟩, hc⟩ := zip_transfer hrel.flip taken et het
         have hok := hmult et' het'
@@ -3061,14 +3210,14 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
             refine ⟨star_mult_lt ?_ hk', hlo, hhi⟩
             apply hlt_el
             exact mem_varsElems_of_mult (List.of_mem_zip het').1 (by rw [hμ, hμ']; simp [Mult.vars])
-      have hrest' : MsetRestOk (star b (σr.setNode fresh id) σ ((vs.map (·.1)).zip taken)) rest m taken := by
+      have hrest' : MsetRestOk (star b (joinBind G σr fresh id) σ ((vs.map (·.1)).zip taken)) rest m taken := by
         cases rest with
         | none => exact hrest
         | some r => exact star_rest_lt (hlt r (by simp)) hrest
       obtain ⟨σ₂, hσ₂, hext₂⟩ := decompose_ac_complete' vs rest m _ _ taken hext₁ hnd_t hlen_v hmem_t
         hcls_v hmult' hrest'
-      have hσ₂' : σ₂ ∈ runStep G (.decomposeAC fresh vs rest) (σr.setNode fresh id) := by
-        simp only [runStep, nodeOf_of_node hk (setNode_node_self _ _ _) hmem]
+      have hσ₂' : σ₂ ∈ runStep G (.decomposeAC fresh vs rest) (joinBind G σr fresh id) := by
+        simp only [runStep, nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem]
         exact hσ₂
       have hfr₂ := frame_decomposeAC vs rest _ _ _ hσ₂
       have hinv₂ : CInv b fr₁ σ₂ σ := by
@@ -3077,13 +3226,13 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         rcases hrange pr.1 (List.of_mem_zip hpr).1 with h | h
         · exact Or.inl h
         · exact Or.inr h.2
-      have hfresh : ∀ r ∈ rest, (σr.setNode fresh id).rest r = none := by
+      have hfresh : ∀ r ∈ rest, (joinBind G σr fresh id).rest r = none := by
         intro r hr; exact (hrf r (List.mem_append_left _ (Option.mem_toList.2 hr))).1
       obtain ⟨-, taken', -, hlen', -, hcls', -, -⟩ := decompose_ac_sound' vs rest m _ σ₂ hfresh hσ₂
       have htk' : List.Forall₂ (fun v c => σ₂.cls v = some c) (vs.map (·.1)) taken' :=
         forall₂_cls_of_zip_fst hlen' hcls'
       have htk_eq : taken' = taken := by
-        refine forall₂_cls_unique (f := (star b (σr.setNode fresh id) σ ((vs.map (·.1)).zip taken)).cls)
+        refine forall₂_cls_unique (f := (star b (joinBind G σr fresh id) σ ((vs.map (·.1)).zip taken)).cls)
           (htk'.imp (fun v c h => hext₂.1 v c h)) ?_
         rw [List.forall₂_map_left_iff]
         exact List.forall₂_iff_zip.2 ⟨hlen_v, fun hab => hcls _ (mem_zip_map_fst hab)⟩
@@ -3099,11 +3248,11 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
       rw [h₂] at hσ' hinv'
       simp only at hσ' hinv'
       obtain ⟨hf₃, -, -⟩ := structNestedAC elems (fun q _ => structAt q.1) (vs.map (·.1)) fr₁ σ₂ σ'
-        hinv₂.nodeFree hrf₂ hnd'.2.1 (by rw [h₂]; exact hσ')
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hinv₂.free hrf₂ hnd'.2.1 (by rw [h₂]; exact hσ')
       rw [h₂] at hf₃
       simp only at hf₃
       refine ⟨σ', mem_run_cons.2 ⟨_, hj, mem_run_cons.2 ⟨σ₂, hσ₂', hσ'⟩⟩, ?_, hinv'⟩
-      exact hf₃.ext.2.1 fresh id (by rw [hfr₂.node]; exact setNode_node_self _ _ _)
+      exact hf₃.ext.2.1 fresh id (by rw [hfr₂.node]; exact joinBind_node_self _ _ _ _)
   | aci f elems rest =>
       cases hm with
       | aci hnd_t hlen_t hmem_t hall hrest =>
@@ -3112,9 +3261,9 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
       rcases h₂ : compileNestedList elems vs fr₁ with ⟨s, fr₂⟩
       rw [compileAt_aci f elems rest cv fresh h₁ h₂]
       simp only
-      have hj : σr.setNode fresh id ∈ runStep G (joinStep fresh f cv) σr :=
+      have hj : joinBind G σr fresh id ∈ runStep G (joinStep fresh f cv) σr :=
         mem_joinStep.2 ⟨id, _, hmem, rfl, hz, rfl⟩
-      have hinv₁ := hinv.setNode id
+      have hinv₁ := hinv.joinBind G hb id
       obtain ⟨hle₁, hrel⟩ := elemVars_spec elems (fresh + 1) h₁
       rw [vars_aci] at hlt
       rw [restVars_aci] at hrf hnd
@@ -3128,17 +3277,17 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         · exact Or.inr h.1
       have hext₁ := extends_star (pairs := vs.zip taken) hinv₁ hkeys
       have hdist := elemVars_distinct elems (fresh + 1) h₁ (fun x hx => by have := hlt_el x hx; vomega)
-      have hcls := star_cls_keys (σ1 := σr.setNode fresh id) (σ := σ) (by vomega) hrange
+      have hcls := star_cls_keys (σ1 := joinBind G σr fresh id) (σ := σ) (by vomega) hrange
         (var_key_cls (by vomega) hrel hall) hdist
       have hlen_v : vs.length = taken.length := by rw [← hlen_t, hrel.length_eq]
-      have hrest' : SetRestOk (star b (σr.setNode fresh id) σ (vs.zip taken)) rest st taken := by
+      have hrest' : SetRestOk (star b (joinBind G σr fresh id) σ (vs.zip taken)) rest st taken := by
         cases rest with
         | none => exact hrest
         | some r => exact star_finRest_lt (hlt r (by simp)) hrest
       obtain ⟨σ₂, hσ₂, hext₂⟩ := decompose_aci_complete' vs rest st _ _ taken hext₁ hnd_t hlen_v hmem_t
         hcls hrest'
-      have hσ₂' : σ₂ ∈ runStep G (.decomposeACI fresh vs rest) (σr.setNode fresh id) := by
-        simp only [runStep, nodeOf_of_node hk (setNode_node_self _ _ _) hmem]
+      have hσ₂' : σ₂ ∈ runStep G (.decomposeACI fresh vs rest) (joinBind G σr fresh id) := by
+        simp only [runStep, nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem]
         exact hσ₂
       have hfr₂ := frame_decomposeACI vs rest _ _ _ hσ₂
       have hinv₂ : CInv b fr₁ σ₂ σ := by
@@ -3147,13 +3296,13 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         rcases hrange pr.1 (List.of_mem_zip hpr).1 with h | h
         · exact Or.inl h
         · exact Or.inr h.2
-      have hfresh : ∀ r ∈ rest, (σr.setNode fresh id).finRest r = none := by
+      have hfresh : ∀ r ∈ rest, (joinBind G σr fresh id).finRest r = none := by
         intro r hr; exact (hrf r (List.mem_append_left _ (Option.mem_toList.2 hr))).2.2
       obtain ⟨-, taken', -, hlen', -, hcls', -⟩ := decompose_aci_sound' vs rest st _ σ₂ hfresh hσ₂
       have htk' : List.Forall₂ (fun v c => σ₂.cls v = some c) vs taken' :=
         forall₂_cls_of_zip hlen' hcls'
       have htk_eq : taken' = taken := by
-        refine forall₂_cls_unique (f := (star b (σr.setNode fresh id) σ (vs.zip taken)).cls)
+        refine forall₂_cls_unique (f := (star b (joinBind G σr fresh id) σ (vs.zip taken)).cls)
           (htk'.imp (fun v c h => hext₂.1 v c h)) ?_
         exact List.forall₂_iff_zip.2 ⟨hlen_v, fun hab => hcls _ hab⟩
       subst htk_eq
@@ -3166,12 +3315,13 @@ theorem completeAt_of_sub {G : Graph} (P : Pat)
         vs taken' fr₁ b σ₂ σ hk hlt_el (by vomega) hrf₂ hnd'.2.1 hinv₂ (hall_of_forall₂ hlen_t hall) htk'
       rw [h₂] at hσ' hinv'
       simp only at hσ' hinv'
-      obtain ⟨hf₃, -, -⟩ := structNestedList elems (fun q _ => structAt q) vs fr₁ σ₂ σ' hinv₂.nodeFree
+      obtain ⟨hf₃, -, -⟩ := structNestedList elems (fun q _ => structAt q) vs fr₁ σ₂ σ'
+        (fun x hx => by have := hlt x (by simp [hx]); vomega) hinv₂.free
         hrf₂ hnd'.2.1 (by rw [h₂]; exact hσ')
       rw [h₂] at hf₃
       simp only at hf₃
       refine ⟨σ', mem_run_cons.2 ⟨_, hj, mem_run_cons.2 ⟨σ₂, hσ₂', hσ'⟩⟩, ?_, hinv'⟩
-      exact hf₃.ext.2.1 fresh id (by rw [hfr₂.node]; exact setNode_node_self _ _ _)
+      exact hf₃.ext.2.1 fresh id (by rw [hfr₂.node]; exact joinBind_node_self _ _ _ _)
 
 theorem completeAt_all {G : Graph} : ∀ (n : Nat) (P : Pat), sizeOf P = n → CompleteAt G P := by
   intro n
