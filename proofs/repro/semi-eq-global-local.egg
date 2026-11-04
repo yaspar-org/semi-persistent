@@ -1,0 +1,19 @@
+;; TYPES: machine
+;; A global equated to a local CHILD variable through a `(= x g)` fact.
+;; `needs_naive_match` does not route this rule to naive matching: the global
+;; is not in a child position syntactically (`pattern_refs_global` is false) and
+;; the EqGlobal's local `x` is not a node variable.
+;; Round 0: (rewrite (a) (b)) merges a's class into b's class. If b's root
+;; survives, (h (b)) is not recanonicalized, and the only touched nodes are the
+;; absorbed members of a's class, which no atom of `want` scans. The match
+;; (h x), x = b = canon(g) is new in round 1 but has no join-atom node in the delta.
+(datatype E (h E) (a) (b) (c) (d) (b1) (b2) (b3))
+(let g (a))
+(let t (h (b)))
+(union (b) (b1))
+(union (b) (b2))
+(union (b) (b3))
+(rule ((h x) (= x g)) ((union (c) (d))))
+(rewrite (a) (b))
+(run 3)
+(check-eq (c) (d))

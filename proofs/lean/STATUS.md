@@ -44,6 +44,19 @@ Written 2026-11-04 after the second extension.
   `plan_matches`, `engine_plan_sound/complete`), runtime scheduling
   (`runND_matches`, `runND_indep`), `byOp_demotion`, semi-naive
   `variant_partition`/`variants_disjoint`/`variants_cover_new`.
+- `Engine/Rounds/`: the cross-round half of semi-naive matching. A
+  `Round` is the transition between two frozen snapshots with the deferred
+  unions, the added nodes, subsumption, the touched log and the
+  merge-membership delta; `Round.WF` is what rebuild guarantees.
+  `delta_complete`: for tracked matching, a binding that satisfies a rule's
+  atoms after the round and not before binds some join atom to a new node;
+  `semi_naive_round_complete` and `semi_naive_complete` over a chain of
+  rounds compose it with the within-round partition. Counter-models
+  `delta_incomplete_global` (an equality with a global, the sixth engine
+  gap, fixed by routing such rules to naive matching) and
+  `delta_incomplete_untracked` (why the merge-membership delta exists).
+  Not modelled: `:flatten` and sequence rules across rounds, action
+  application, the transport of bindings through later merges.
 - `Flatten/`: opening trees, views, normalization, demand; `views_sound`,
   `views_complete`, `flatten_match_{sound,complete}_{ac,aci,assoc}`;
   `Fix.lean`/`FixMain.lean`/`FixKind.lean`: the corrected demand rule
