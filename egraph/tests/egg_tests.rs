@@ -170,8 +170,7 @@ fn run_with<
                     report.rules.len()
                 );
                 assert_eq!(
-                    slot_nonmin,
-                    0,
+                    slot_nonmin, 0,
                     "CHECK_AC_BASIS: {slot_nonmin} classes store a non-minimal min_monomial slot \
                      (I5; offenders (class, op): {slot_offenders:?})"
                 );
@@ -619,14 +618,32 @@ egg_test!(ac_inverse_unit_node, "ac_inverse_unit_node.egg");
 egg_test!(ac_inverse_rule_cp, "ac_inverse_rule_cp.egg");
 egg_test!(ac_inverse_nilpotent, "ac_inverse_nilpotent.egg");
 egg_test!(ac_inverse_nilpotent_self, "ac_inverse_nilpotent_self.egg");
-egg_test!(ac_inverse_nilpotent_absent, "ac_inverse_nilpotent_absent.egg");
-egg_test!(ac_inverse_nilpotent_control, "ac_inverse_nilpotent_control.egg");
+egg_test!(
+    ac_inverse_nilpotent_absent,
+    "ac_inverse_nilpotent_absent.egg"
+);
+egg_test!(
+    ac_inverse_nilpotent_control,
+    "ac_inverse_nilpotent_control.egg"
+);
 egg_test!(ac_inverse_cancel_control, "ac_inverse_cancel_control.egg");
 // The min-monomial slot refresh (I5) and the flatten demand refold, fixtures of the two
 // previous fixes on this branch that were never registered.
 egg_test!(ac_min_slot_refresh, "ac_min_slot_refresh.egg");
 egg_test!(flatten_demand_refold, "flatten_demand_refold.egg");
-egg_test!(flatten_demand_refold_control, "flatten_demand_refold_control.egg");
+egg_test!(
+    flatten_demand_refold_control,
+    "flatten_demand_refold_control.egg"
+);
+// The demand rule under the laws: a leaf whose closing is not inert (the unit, a clamp
+// to zero, a cancel pair on either side) is satisfied; counterexamples 1-5 of the laws
+// proof (`demand_laws_complete_{ac,aci,assoc}`). The sequence case is unreachable (a
+// sequence has no unit) and the fixture pins that.
+egg_test!(flatten_laws_inverse, "flatten_laws_inverse.egg");
+egg_test!(flatten_laws_identity, "flatten_laws_identity.egg");
+egg_test!(flatten_laws_nilpotent, "flatten_laws_nilpotent.egg");
+egg_test!(flatten_laws_inverse_leaf, "flatten_laws_inverse_leaf.egg");
+egg_test!(flatten_laws_assoc_unit, "flatten_laws_assoc_unit.egg");
 // Regression for the leapfrog_join target-clear bug: a rule with two same-op AC atoms +
 // rest-vars (the bound-node ByRepr re-join cleared a target bound upstream). Completion off.
 egg_test!(ac_two_same_op_atoms, "ac_two_same_op_atoms.egg");

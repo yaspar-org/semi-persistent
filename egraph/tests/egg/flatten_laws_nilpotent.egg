@@ -1,0 +1,26 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; The demand rule under `:nilpotent`: an untaken leaf whose opened class clamps to
+;; zero when refolded (counterexample 3 of the laws proof). n = xor{X, Y}, Y ∋ xor{X, t},
+;; X ∋ xor{b, c}, order 2. Opening Y and one instance of X gives {b, c, X, t}, and
+;; (xor (Tc) ..rest) matches it with rest = {b, c, X}. Both trees giving that view have
+;; the leaf (X, [b, c]), which takes nothing and whose class is not taken, so the old
+;; rule rejected the match; closing the leaf gives {X, X, t}, which the clamp reduces
+;; to {t}, not a node, and opening both instances of X clamps b and c away, so no other
+;; view carries the match. The leaf is non-inert (the refolded count of X is 2 = 0 mod
+;; 2) and the match is kept. Before the rule was extended this check failed.
+(sort E)
+(function e () E)
+(function Tc () E) (function Bc () E) (function Cc () E) (function Xc () E) (function Yc () E)
+(function xor (E) E :assoc :comm :nilpotent :identity (e))
+(function Pick (E) E)
+(let x (Xc))
+(let y (Yc))
+(union x (xor (Bc) (Cc)))
+(union y (xor x (Tc)))
+(let n (xor x y))
+(rewrite (xor (Tc) ..rest) (Pick (xor ..rest)) :flatten)
+(run 1)
+(check-eq n (Pick (xor (Bc) (Cc) x)))

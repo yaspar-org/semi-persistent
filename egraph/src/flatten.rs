@@ -14,20 +14,29 @@
 //!
 //! An opening must be needed (`doc/goal-canonical-flatten-views.md`, decision 2): each
 //! view records the leaf groups of every opening tree that gives it, each with the class
-//! whose opening produced it ([`Demand`]), and a match is kept when some tree's leaves
+//! whose opening produced it and a flag saying whether closing it is inert under the
+//! operator's laws ([`Demand`], [`Leaf`]), and a match is kept when some tree's leaves
 //! are each satisfied: a leaf is satisfied when it directly holds a class an item takes,
-//! or, for a multiset, when the class it opened is itself taken. The second case is what
-//! makes the rule complete for AC: a match that takes nothing from a leaf is found on
-//! the view that keeps the leaf's class closed, unless that class is taken, in which
-//! case closing it coalesces the taken occurrence with the closed one into one entry of
-//! higher count and the match is lost (`proofs/lean`, `demand_fix_complete_ac`). A
-//! sequence keeps the two occurrences apart (`demand_orig_complete_assoc`), and a set
-//! dedups them into the taken element, which loses the match only through a member
-//! with one child, which rebuild merges into its child's class
-//! (`demand_orig_complete_aci`, hypothesis `TwoClasses`); so for both the first case
-//! suffices. The decomposition or assembly reading the view applies that check, and the
-//! walk prunes a leaf with no takeable element, and for a multiset no takeable opened
-//! class, as it closes.
+//! or, for a multiset, when the class it opened is itself taken, or when it is not
+//! inert. The second case is what makes the rule complete for AC without laws: a match
+//! that takes nothing from a leaf is found on the view that keeps the leaf's class
+//! closed, unless that class is taken, in which case closing it coalesces the taken
+//! occurrence with the closed one into one entry of higher count and the match is lost
+//! (`proofs/lean`, `demand_fix_complete_ac`). A sequence keeps the two occurrences
+//! apart (`demand_orig_complete_assoc`), and a set dedups them into the taken element,
+//! which loses the match only through a member with one child, which rebuild merges
+//! into its child's class (`demand_orig_complete_aci`, hypothesis `TwoClasses`); so for
+//! both the first case suffices. The third case is what makes the rule complete under
+//! `:identity`, `:nilpotent` and `:inverse` (`demand_laws_complete_{ac,aci,assoc}`):
+//! closing the leaf refolds its group into one occurrence of the opened class `X`, and
+//! the laws may then normalize the refolded view to something the match is not on (the
+//! unit drops `X`; the clamp zeroes `X`'s refolded count; a cancel pair among the
+//! classes the refold touches and the classes present changes the walk), so such a
+//! leaf is kept. The flag is computed when the raw view is canonized, on the same
+//! reading of the graph ([`FlattenScratch::record`]). The decomposition or assembly
+//! reading the view applies that check, and the walk prunes a leaf with no takeable
+//! element, for a multiset no takeable opened class, and no way of being non-inert,
+//! as it closes.
 //!
 //! "Member" is what the round's index holds: `by_repr[X] ∩ by_op[f]`, computed as the
 //! class's bucket filtered by each node's round operator. Nothing is precomputed and
@@ -169,15 +178,14 @@ pub struct FlattenScratch<G, M> {
     /// Per view element, the opening instance it lies directly under, and whether its
     /// class is takeable (see [`enumerate`]).
     view_parent: Vec<(Option<usize>, bool)>,
-    /// Per opening instance, the instance it lies under, the instances opened directly
-    /// under it, its takeable direct elements, and the class it opened.
-    instances: Vec<(Option<usize>, usize, usize, G)>,
+    instances: Vec<Instance<G, M>>,
     elems: Vec<(G, M)>,
     /// One per raw view that canonizes to a node: its canonical span, and its leaf
     /// groups as a span of `groups`.
     recs: Vec<Rec>,
-    /// Leaf groups, each a span of `group_elems` with the class the leaf opened.
-    groups: Vec<(usize, usize, G)>,
+    /// Leaf groups, each a span of `group_elems` with the class the leaf opened and
+    /// whether closing it is not inert ([`Leaf::non_inert`]).
+    groups: Vec<(usize, usize, G, bool)>,
     group_elems: Vec<G>,
     /// The distinct views: a canonical span, and the span of `recs` (sorted) giving it.
     spans: Vec<(usize, usize, usize, usize)>,
@@ -192,6 +200,22 @@ pub struct FlattenScratch<G, M> {
     kind: FlatKind,
 }
 
+/// An opening instance of the walk.
+#[derive(Clone, Copy, Debug)]
+struct Instance<G, M> {
+    /// The instance it lies under (`None`: directly under the root).
+    parent: Option<usize>,
+    /// The instances opened directly under it.
+    opened: usize,
+    /// Its takeable direct elements.
+    hits: usize,
+    /// The class it opened.
+    class: G,
+    /// The folded count of that opening: the multiplicity the member's children were
+    /// scaled by.
+    mult: M,
+}
+
 /// A raw view's record: its canonical content and its opening tree's leaf groups.
 #[derive(Clone, Copy, Debug)]
 struct Rec {
@@ -201,19 +225,37 @@ struct Rec {
     gcount: usize,
 }
 
+/// A leaf of an opening tree: an opened instance with no opening below it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Leaf<G> {
+    /// The class the leaf opened.
+    pub opened: G,
+    /// Closing the leaf, which refolds `elems` into one occurrence of `opened` with the
+    /// folded count, is not inert under the operator's laws, so the match may be on no
+    /// less-opened view (`proofs/lean`, `nonInertB`). For a multiset: `opened` is the
+    /// unit; or, under `:nilpotent k`, the refolded count of `opened` is `0 mod k`; or,
+    /// under `:inverse`, a class the refold touches (`opened` or one of `elems`) has its
+    /// inverse among the classes present (`opened` and the raw view's), or a present
+    /// class has its inverse among the touched ones. For a set: `opened` is the unit.
+    /// For a sequence: `opened` is the unit, or every element of `elems` is the unit.
+    pub non_inert: bool,
+    /// The classes directly under the leaf.
+    pub elems: Vec<G>,
+}
+
 /// Which matches a view admits (`doc/goal-canonical-flatten-views.md`, decision 2): a
 /// match is kept when, for some opening tree giving the view, every leaf of the tree is
 /// satisfied: it directly holds a class the items take, or, when `merge_on_close`, the
-/// class it opened is taken. A view some tree gives with no opening admits every match.
+/// class it opened is taken, or it is [`Leaf::non_inert`]. A view some tree gives with
+/// no opening admits every match.
 #[derive(Clone, Debug)]
 pub struct Demand<G> {
     pub unconditional: bool,
     /// Closing a leaf merges its class with a taken occurrence of the same class into
     /// one entry of higher count: true for a multiset, false for a set and a sequence.
     pub merge_on_close: bool,
-    /// Per opening tree, its leaf groups: the class each leaf opened, and the classes
-    /// directly under it.
-    pub alts: Vec<Vec<(G, Vec<G>)>>,
+    /// Per opening tree, its leaves.
+    pub alts: Vec<Vec<Leaf<G>>>,
 }
 
 impl<G> Default for Demand<G> {
@@ -230,15 +272,13 @@ impl<G: PartialEq> Demand<G> {
     /// Whether a match taking the classes `taken` is kept.
     pub fn accepts(&self, taken: &[G]) -> bool {
         self.unconditional
-            || self
-                .alts
-                .iter()
-                .any(|leaves| {
-                    leaves.iter().all(|(x, g)| {
-                        (self.merge_on_close && taken.contains(x))
-                            || g.iter().any(|c| taken.contains(c))
-                    })
+            || self.alts.iter().any(|leaves| {
+                leaves.iter().all(|l| {
+                    l.non_inert
+                        || (self.merge_on_close && taken.contains(&l.opened))
+                        || l.elems.iter().any(|c| taken.contains(c))
                 })
+            })
     }
 }
 
@@ -320,7 +360,11 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
             }
             let leaves = self.groups[r.gstart..r.gstart + r.gcount]
                 .iter()
-                .map(|&(s, n, x)| (x, self.group_elems[s..s + n].to_vec()))
+                .map(|&(s, n, opened, non_inert)| Leaf {
+                    opened,
+                    non_inert,
+                    elems: self.group_elems[s..s + n].to_vec(),
+                })
                 .collect();
             out.alts.push(leaves);
         }
@@ -354,7 +398,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
         use crate::nary_canon::Normal;
         self.norm.clear();
         self.norm.extend_from_slice(&self.view);
-        match crate::nary_canon::normalize(laws, &mut self.norm, inverse_class) {
+        match crate::nary_canon::normalize(laws, &mut self.norm, &inverse_class) {
             Normal::Node => {}
             Normal::Unit | Normal::Single(_) | Normal::Empty => return Ok(()),
             Normal::Overflow => {
@@ -399,19 +443,26 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
         }
         self.elems.extend_from_slice(&self.norm);
         // The leaf groups: each opened instance no other instance lies under, with the
-        // (raw, canonical-class) elements directly under it.
+        // (raw, canonical-class) elements directly under it, and whether closing it is
+        // not inert, read on the same view of the graph as the normalization above.
         let gstart = self.groups.len();
         for i in 0..self.instances.len() {
-            if self.instances[i].1 > 0 {
+            if self.instances[i].opened > 0 {
                 continue;
             }
+            let non_inert = self.non_inert(i, laws, &inverse_class)?;
             let es = self.group_elems.len();
             for (e, p) in self.view.iter().zip(&self.view_parent) {
                 if p.0 == Some(i) {
                     self.group_elems.push(e.0);
                 }
             }
-            self.groups.push((es, self.group_elems.len() - es, self.instances[i].3));
+            self.groups.push((
+                es,
+                self.group_elems.len() - es,
+                self.instances[i].class,
+                non_inert,
+            ));
         }
         self.recs.push(Rec {
             start,
@@ -420,6 +471,101 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
             gcount: self.groups.len() - gstart,
         });
         Ok(())
+    }
+
+    /// Whether closing the leaf instance `i` of the complete raw view `self.view` is not
+    /// inert under `laws` ([`Leaf::non_inert`]): closing refolds the elements directly
+    /// under `i` into one occurrence of the class it opened, `x`, with its folded
+    /// count, and the normalization of the refolded view may then not carry the match.
+    /// `inverse_class` is the normalization's: the clause reads the same graph.
+    fn non_inert<O: Copy>(
+        &self,
+        i: usize,
+        laws: &crate::nary_canon::NaryLaws<G, O>,
+        inverse_class: &impl Fn(O, G) -> Option<G>,
+    ) -> Result<bool, &'static str> {
+        use crate::nary_canon::NaryKind;
+        let inst = self.instances[i];
+        let x = inst.class;
+        // The unit drops from the refolded view.
+        if laws.unit == Some(x) {
+            return Ok(true);
+        }
+        let view = &self.view;
+        let under = |j: usize| self.view_parent[j].0 == Some(i);
+        match laws.kind {
+            // The leaf's block vanishes from the sequence, so its closing is not where
+            // the block was.
+            NaryKind::Assoc => Ok((0..view.len())
+                .filter(|&j| under(j))
+                .all(|j| laws.unit == Some(view[j].0))),
+            NaryKind::Aci => Ok(false),
+            NaryKind::Ac { nilpotent } => {
+                if let Some(k) = nilpotent {
+                    // The refolded count of `x`: its occurrences not under the leaf,
+                    // plus the folded count; each residue is below `k`, so the sum fits.
+                    let mut r = inst.mult.rem_order(k);
+                    for j in 0..view.len() {
+                        if !under(j) && view[j].0 == x {
+                            r = r
+                                .checked_add(view[j].1.rem_order(k))
+                                .ok_or(MULT_OVERFLOW)?
+                                .rem_order(k);
+                        }
+                    }
+                    if r == M::ZERO {
+                        return Ok(true);
+                    }
+                }
+                if let Some(inv) = laws.inverse {
+                    // The classes the refold touches, `x` and the leaf's elements, and
+                    // the classes present, `x` and the raw view's: a cancel pair across
+                    // the two, in either direction, self-inverse included.
+                    let touched =
+                        |c: G| c == x || (0..view.len()).any(|j| under(j) && view[j].0 == c);
+                    let present = |c: G| c == x || view.iter().any(|e| e.0 == c);
+                    let pair = |c: G| inverse_class(inv, c);
+                    if pair(x).is_some_and(|y| present(y) || touched(y)) {
+                        return Ok(true);
+                    }
+                    for j in (0..view.len()).filter(|&j| under(j)) {
+                        if pair(view[j].0).is_some_and(present) {
+                            return Ok(true);
+                        }
+                    }
+                    for e in view.iter() {
+                        if pair(e.0).is_some_and(touched) {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    /// Whether the leaf instance `i`, complete but with the rest of the raw view still
+    /// to choose, could be non-inert on some completion ([`Self::non_inert`]): the walk
+    /// must not prune it then. The unit test and the sequence test read only the leaf;
+    /// the clamp and the cancel tests read the whole view, so under `:nilpotent` or
+    /// `:inverse` every multiset leaf is kept.
+    fn may_be_non_inert<O: Copy>(
+        &self,
+        i: usize,
+        laws: &crate::nary_canon::NaryLaws<G, O>,
+    ) -> bool {
+        use crate::nary_canon::NaryKind;
+        let x = self.instances[i].class;
+        if laws.unit == Some(x) {
+            return true;
+        }
+        match laws.kind {
+            NaryKind::Assoc => (0..self.view.len())
+                .filter(|&j| self.view_parent[j].0 == Some(i))
+                .all(|j| laws.unit == Some(self.view[j].0)),
+            NaryKind::Aci => false,
+            NaryKind::Ac { nilpotent } => nilpotent.is_some() || laws.inverse.is_some(),
+        }
     }
 
     /// Group the records by canonical content: one span per distinct view, in sorted
@@ -455,14 +601,17 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                 }
                 Undo::Opened(x) => {
                     self.on_path.remove(&x);
-                    if let Some((Some(p), _, _, _)) = self.instances.pop() {
-                        self.instances[p].1 = self.instances[p].1.saturating_sub(1);
+                    if let Some(Instance {
+                        parent: Some(p), ..
+                    }) = self.instances.pop()
+                    {
+                        self.instances[p].opened = self.instances[p].opened.saturating_sub(1);
                     }
                 }
                 Undo::Viewed => {
                     self.view.pop();
                     if let Some((Some(p), true)) = self.view_parent.pop() {
-                        self.instances[p].2 = self.instances[p].2.saturating_sub(1);
+                        self.instances[p].hits = self.instances[p].hits.saturating_sub(1);
                     }
                 }
                 Undo::Pushed(n) => {
@@ -590,8 +739,10 @@ fn times<M: MultiplicityLike>(k: M, j: M) -> Result<M, &'static str> {
 /// `takeable(c)` says whether an item could take an element of class `c`. It prunes
 /// the walk by the demand rule (`doc/goal-canonical-flatten-views.md`, decision 2): an
 /// opening instance that completes with no instance opened under it is a leaf, and a
-/// leaf none of whose direct elements is takeable, and for a multiset whose opened class
-/// is not takeable either, makes no match, so the branch is abandoned there. Counters per instance make the check constant-time, which keeps a
+/// leaf none of whose direct elements is takeable, for a multiset whose opened class is
+/// not takeable either, and whose closing is inert under the laws on every completion
+/// of the view ([`FlattenScratch::may_be_non_inert`]) makes no match, so the branch is
+/// abandoned there. Counters per instance make the check constant-time, which keeps a
 /// chain of 10^5 levels linear when one level's element is the only takeable one.
 pub fn enumerate<G, O, M, Src>(
     src: &Src,
@@ -636,12 +787,14 @@ where
                     Task::Close(x, inst) => {
                         s.on_path.remove(&x);
                         s.trail.push(Undo::Closed(x));
-                        // A leaf with no takeable element, and for a multiset no takeable
-                        // opened class either: no match from here.
-                        let (_, opened, hits, _) = s.instances[inst];
+                        // A leaf with no takeable element, for a multiset no takeable
+                        // opened class either, and no way of being non-inert: no match
+                        // from here.
+                        let Instance { opened, hits, .. } = s.instances[inst];
                         if opened == 0
                             && hits == 0
                             && !(kind == FlatKind::Ac && takeable(x))
+                            && !s.may_be_non_inert(inst, &laws)
                             && !backtrack(src, op, kind, &takeable, s, &mut work)?
                         {
                             break;
@@ -700,7 +853,7 @@ where
         c.kept = true;
         let hit = c.parent.is_some() && takeable(c.class);
         if let (Some(p), true) = (c.parent, hit) {
-            s.instances[p].2 = s.instances[p].2.checked_add(1).ok_or(OVER_BOUND)?;
+            s.instances[p].hits = s.instances[p].hits.checked_add(1).ok_or(OVER_BOUND)?;
         }
         s.view.push((c.class, c.mult));
         s.view_parent.push((c.parent, hit));
@@ -741,9 +894,15 @@ where
         }
         let inst = s.instances.len();
         if let Some(p) = c.parent {
-            s.instances[p].1 = s.instances[p].1.checked_add(1).ok_or(OVER_BOUND)?;
+            s.instances[p].opened = s.instances[p].opened.checked_add(1).ok_or(OVER_BOUND)?;
         }
-        s.instances.push((c.parent, 0, 0, x));
+        s.instances.push(Instance {
+            parent: c.parent,
+            opened: 0,
+            hits: 0,
+            class: x,
+            mult: k,
+        });
         s.on_path.insert(x);
         s.trail.push(Undo::Opened(x));
         let base = s.pending.len();

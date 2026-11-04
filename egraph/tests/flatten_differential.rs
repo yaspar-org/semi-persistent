@@ -175,9 +175,21 @@ type View = Vec<(Class, u64)>;
 /// Every raw view of `n`'s children under operator `f`, before normalization: the
 /// product, over the children, of each child's options.
 /// The leaf groups of an opening tree: for each opened instance with no opening below
-/// it, the class it opened and the classes directly under it. An empty list is the
-/// stored children, opened nowhere.
-type Leaves = Vec<(Class, Vec<Class>)>;
+/// it, the class it opened, the folded count of that opening (the multiplicity the
+/// member's children were scaled by), and the scaled entries directly under it. An
+/// empty list is the stored children, opened nowhere.
+type RawLeaves = Vec<(Class, u64, View)>;
+
+/// A leaf of an opening tree, flagged at the root: the class it opened, whether closing
+/// it is not inert under the laws (`non_inert`), and the classes directly under it.
+#[derive(Clone, Debug)]
+struct Leaf {
+    x: Class,
+    non_inert: bool,
+    g: Vec<Class>,
+}
+
+type Leaves = Vec<Leaf>;
 
 /// Every raw view of `n`'s children under operator `f`, before normalization, with the
 /// leaf groups of its opening tree: the product, over the children, of each child's
@@ -191,20 +203,20 @@ fn raw_views(
     f: OpId,
     mult: u64,
     path: &BTreeSet<Class>,
-) -> Vec<(View, Leaves)> {
-    let mut acc: Vec<(View, Leaves)> = vec![(Vec::new(), Vec::new())];
+) -> Vec<(View, RawLeaves)> {
+    let mut acc: Vec<(View, RawLeaves)> = vec![(Vec::new(), Vec::new())];
     for &(x, j) in &n.kids {
         let k = mult * j;
-        let mut opts: Vec<(View, Leaves)> = vec![(vec![(x, k)], Vec::new())];
+        let mut opts: Vec<(View, RawLeaves)> = vec![(vec![(x, k)], Vec::new())];
         if !path.contains(&x) {
             let mut p = path.clone();
             p.insert(x);
             for m in model.members(x).iter().filter(|m| m.op == f) {
                 for (v, leaves) in raw_views(model, m, f, k, &p) {
                     // Nothing opened below: this instance is a leaf, its group the
-                    // classes directly under it.
+                    // scaled entries directly under it.
                     let leaves = if leaves.is_empty() {
-                        vec![(x, v.iter().map(|e| e.0).collect())]
+                        vec![(x, k, v.clone())]
                     } else {
                         leaves
                     };
@@ -234,14 +246,75 @@ type Alts = Vec<Leaves>;
 /// view, every leaf is satisfied: it directly holds a class the items take, or, for a
 /// multiset (`merge_on_close`), the class it opened is taken (closing it would then
 /// coalesce the two occurrences into one entry, so the match exists on no less-opened
-/// view). Interior openings are then needed through the leaves below them. The stored
-/// view has no leaves.
+/// view), or closing it is not inert under the laws (`non_inert`). Interior openings
+/// are then needed through the leaves below them. The stored view has no leaves.
 fn demanded(alts: &Alts, taken: &BTreeSet<Class>, merge_on_close: bool) -> bool {
     alts.iter().any(|leaves| {
-        leaves.iter().all(|(x, g)| {
-            (merge_on_close && taken.contains(x)) || g.iter().any(|c| taken.contains(c))
+        leaves.iter().all(|l| {
+            l.non_inert
+                || (merge_on_close && taken.contains(&l.x))
+                || l.g.iter().any(|c| taken.contains(c))
         })
     })
+}
+
+/// The class of the node `inv(x)` in the model, if one exists: the normalization's
+/// inverse lookup, which the non-inert clause reads on the same model.
+fn inverse_class(model: &Model, inv: OpId, x: Class) -> Option<Class> {
+    model
+        .members
+        .iter()
+        .find(|(_, ms)| {
+            ms.iter()
+                .any(|m| m.op == inv && m.kids.first().map(|k| k.0) == Some(x))
+        })
+        .map(|(c, _)| *c)
+}
+
+/// Whether closing the leaf `(x, k, l)` of the raw view `v` is not inert under the
+/// operator's laws (`proofs/lean`, `nonInertB`): closing refolds the entries `l` into
+/// one entry `(x, k)`, and the normalization of the refolded view may then not carry
+/// the match. For a multiset: `x` is the unit, or under `:nilpotent n` the refolded
+/// count of `x`, `count_v(x) - count_l(x) + k`, is `0 mod n`, or under `:inverse` a
+/// touched class (`x` or a class of `l`) has its inverse among the present classes
+/// (`x` and the classes of `v`) or a present class has its inverse among the touched
+/// ones, self-inverse included. For a set: `x` is the unit. For a sequence: `x` is the
+/// unit or every class of `l` is the unit.
+fn non_inert(model: &Model, op: OpId, v: &View, x: Class, k: u64, l: &View) -> bool {
+    use semi_persistent_egraph::nary_canon::NaryKind;
+    let laws = model.laws[&op];
+    if laws.unit == Some(x) {
+        return true;
+    }
+    match laws.kind {
+        NaryKind::Assoc => l.iter().all(|e| laws.unit == Some(e.0)),
+        NaryKind::Aci => false,
+        NaryKind::Ac { nilpotent } => {
+            let count =
+                |w: &View, c: Class| w.iter().filter(|e| e.0 == c).map(|e| e.1).sum::<u64>();
+            if let Some(n) = nilpotent
+                && (count(v, x) - count(l, x) + k).is_multiple_of(u64::from(n))
+            {
+                return true;
+            }
+            if let Some(inv) = laws.inverse {
+                let touched: BTreeSet<Class> =
+                    std::iter::once(x).chain(l.iter().map(|e| e.0)).collect();
+                let present: BTreeSet<Class> =
+                    std::iter::once(x).chain(v.iter().map(|e| e.0)).collect();
+                let pair = |c: &Class| inverse_class(model, inv, *c);
+                return touched
+                    .iter()
+                    .filter_map(pair)
+                    .any(|y| present.contains(&y))
+                    || present
+                        .iter()
+                        .filter_map(pair)
+                        .any(|y| touched.contains(&y));
+            }
+            false
+        }
+    }
 }
 
 /// A raw view canonized by the one normalization (`nary_canon::normalize`), with the
@@ -260,17 +333,7 @@ fn canonical(model: &Model, op: OpId, v: View) -> Option<View> {
             )
         })
         .collect();
-    let inverse_class = |inv: OpId, x: Class| {
-        model
-            .members
-            .iter()
-            .find(|(_, ms)| {
-                ms.iter()
-                    .any(|m| m.op == inv && m.kids.first().map(|k| k.0) == Some(x))
-            })
-            .map(|(c, _)| *c)
-    };
-    match normalize(&laws, &mut kids, inverse_class) {
+    match normalize(&laws, &mut kids, |inv, x| inverse_class(model, inv, x)) {
         Normal::Node => Some(
             kids.into_iter()
                 .map(|(c, k)| (c, k.to_u64().expect("a test count fits u64")))
@@ -288,6 +351,15 @@ fn views(model: &Model, n: &Node, flatten: bool) -> Vec<(View, Alts)> {
     }
     let mut by_view: BTreeMap<View, Alts> = BTreeMap::new();
     for (v, leaves) in raw_views(model, n, n.op, 1, &BTreeSet::new()) {
+        // The flags are computed on the raw view, before it is canonized.
+        let leaves: Leaves = leaves
+            .iter()
+            .map(|(x, k, l)| Leaf {
+                x: *x,
+                non_inert: non_inert(model, n.op, &v, *x, *k, l),
+                g: l.iter().map(|e| e.0).collect(),
+            })
+            .collect();
         if let Some(c) = canonical(model, n.op, v) {
             by_view.entry(c).or_default().push(leaves);
         }
@@ -747,10 +819,27 @@ const DECLS: &str = "\
 (function S0 () E) (function S1 () E) (function S2 () E) (function S3 () E)
 ";
 
+/// The same operators with laws: `Plus` with a unit and an inverse, `Xor` nilpotent of
+/// order 2 with a unit, so that a view's normalization drops, clamps and cancels, and
+/// the non-inert clause of the demand rule is exercised.
+const DECLS_LAWS: &str = "\
+(sort E)
+(function l0 () E) (function l1 () E) (function l2 () E) (function l3 () E)
+(function G (E) E)
+(function H (E E) E)
+(function Z () E) (function Neg (E) E) (function Ze () E)
+(function And (E) E :assoc-comm-idem :identity (l3))
+(function Or (E) E :assoc-comm-idem)
+(function Plus (E) E :assoc-comm :identity (Z) :inverse Neg)
+(function Xor (E) E :assoc :comm :nilpotent :identity (Ze))
+(function Seq (E) E :assoc)
+(function S0 () E) (function S1 () E) (function S2 () E) (function S3 () E)
+";
+
 /// A random term over the declared operators. N-ary terms nest on purpose: under the
 /// surface builder a nested same-operator child is flattened, under a rewrite's
 /// right-hand side it is stored nested.
-fn term(rng: &mut Rng, names: &[String], depth: u32) -> String {
+fn term_over(rng: &mut Rng, names: &[String], depth: u32, ops: &[&str]) -> String {
     let leaf = |rng: &mut Rng| {
         if !names.is_empty() && rng.below(3) == 0 {
             names[rng.below(names.len() as u64) as usize].clone()
@@ -763,39 +852,77 @@ fn term(rng: &mut Rng, names: &[String], depth: u32) -> String {
     }
     match rng.below(8) {
         0 => leaf(rng),
-        1 => format!("(G {})", term(rng, names, depth - 1)),
+        1 => format!("(G {})", term_over(rng, names, depth - 1, ops)),
         2..=5 => {
-            let op = ["And", "Or", "Plus", "Seq"][rng.below(4) as usize];
+            let op = ops[rng.below(ops.len() as u64) as usize];
             let k = 2 + rng.below(2);
             let mut kids: Vec<String> = Vec::new();
             for _ in 0..k {
                 // A repeated child gives an AC multiplicity above 1.
-                if !kids.is_empty() && op == "Plus" && rng.below(3) == 0 {
+                if !kids.is_empty() && (op == "Plus" || op == "Xor") && rng.below(3) == 0 {
                     let again = kids[0].clone();
                     kids.push(again);
                 } else {
-                    kids.push(term(rng, names, depth - 1));
+                    kids.push(term_over(rng, names, depth - 1, ops));
                 }
             }
             format!("({op} {})", kids.join(" "))
         }
-        _ => format!("(And {} {})", leaf(rng), term(rng, names, depth - 1)),
+        _ => format!(
+            "(And {} {})",
+            leaf(rng),
+            term_over(rng, names, depth - 1, ops)
+        ),
     }
 }
 
 /// A program that builds nesting by every route the goal names: right-hand sides
 /// (`add` does not flatten), merges after construction, and cycles.
 fn program(rng: &mut Rng) -> String {
-    let mut p = String::from(DECLS);
+    program_over(rng, false)
+}
+
+/// `program` with the laws: the operators of `DECLS_LAWS`, `Xor` among the n-ary ones,
+/// and merges that make a leaf's closing non-inert: a class with its inverse node, a
+/// class with the unit.
+fn program_laws(rng: &mut Rng) -> String {
+    program_over(rng, true)
+}
+
+fn program_over(rng: &mut Rng, laws: bool) -> String {
+    let ops: &[&str] = if laws {
+        &["And", "Or", "Plus", "Seq", "Xor"]
+    } else {
+        &["And", "Or", "Plus", "Seq"]
+    };
+    let mut p = String::from(if laws { DECLS_LAWS } else { DECLS });
     let mut names: Vec<String> = Vec::new();
     for i in 0..5 {
-        let t = term(rng, &names, 2);
+        let t = term_over(rng, &names, 2, ops);
         p.push_str(&format!("(let v{i} {t})\n"));
         names.push(format!("v{i}"));
     }
     for k in 0..4 {
-        let t = term(rng, &names, 3);
+        let t = term_over(rng, &names, 3, ops);
         p.push_str(&format!("(let s{k} (S{k}))\n(rewrite (S{k}) {t})\n"));
+    }
+    if laws {
+        // An inverse node of a named class, merged with another named class or with
+        // a leaf, and a class merged with a unit, after construction.
+        for _ in 0..2 {
+            let a = &names[rng.below(names.len() as u64) as usize];
+            let b = match rng.below(3) {
+                0 => names[rng.below(names.len() as u64) as usize].clone(),
+                1 => format!("(l{})", rng.below(4)),
+                _ => "(Z)".to_string(),
+            };
+            p.push_str(&format!("(union (Neg {a}) {b})\n"));
+        }
+        if rng.below(2) == 0 {
+            let a = &names[rng.below(names.len() as u64) as usize];
+            let u = ["(Z)", "(Ze)", "(l3)"][rng.below(3) as usize];
+            p.push_str(&format!("(union {a} {u})\n"));
+        }
     }
     p.push_str("(run 1)\n");
     for k in 0..4 {
@@ -867,19 +994,42 @@ fn patterns() -> Vec<P> {
     ]
 }
 
+/// `patterns` with the nilpotent operator's.
+fn patterns_laws() -> Vec<P> {
+    let mut ps = patterns();
+    ps.push(nary("Xor", vec![v("x0"), v("x1")]));
+    ps.push(nary_suf("Xor", vec![v("x0")], "r"));
+    ps.push(nary_suf("Xor", vec![app("G", vec![v("x0")])], "r"));
+    ps
+}
+
 /// Compare engine and reference on `seeds` random programs, for every pattern.
 /// Returns the matches compared, and how many (graph, pattern) pairs had a flattened
 /// match set different from the untagged one, so the caller can require that the
 /// comparison was not vacuous and that nesting was exercised.
 fn differential(seeds: std::ops::Range<u64>, flatten: bool) -> (usize, usize) {
+    differential_over(seeds, flatten, false)
+}
+
+/// `differential` over the programs with laws (`program_laws`, `patterns_laws`).
+fn differential_laws(seeds: std::ops::Range<u64>, flatten: bool) -> (usize, usize) {
+    differential_over(seeds, flatten, true)
+}
+
+fn differential_over(seeds: std::ops::Range<u64>, flatten: bool, laws: bool) -> (usize, usize) {
     let (mut compared, mut exercised) = (0, 0);
     for seed in seeds {
         let mut rng = Rng(seed.wrapping_mul(0x5851F42D4C957F2D) ^ 0xF1A7);
-        let src = program(&mut rng);
+        let src = if laws {
+            program_laws(&mut rng)
+        } else {
+            program(&mut rng)
+        };
         let eg = build(&src);
         let index = IndexStore::build(&eg);
         let model = Model::read(&eg, &index);
-        for p in patterns() {
+        let pats = if laws { patterns_laws() } else { patterns() };
+        for p in pats {
             let want = reference(&model, &p, flatten);
             compared += want.values().sum::<usize>();
             for runtime in [false, true] {
@@ -915,6 +1065,30 @@ fn flattened_matches_reference() {
     let (compared, exercised) = differential(0..60, true);
     eprintln!(
         "flatten differential: {compared} matches compared, {exercised} (graph, pattern) pairs changed by flattening"
+    );
+    assert!(compared > 1000, "too few matches compared: {compared}");
+    assert!(
+        exercised > 30,
+        "too few (graph, pattern) pairs where flattening changed the matches: {exercised}"
+    );
+}
+
+/// With the laws and without the tag, the engine's matches are the reference's over
+/// the stored children, which rebuild has normalized.
+#[test]
+fn untagged_matches_stored_children_laws() {
+    let (compared, _) = differential_laws(0..60, false);
+    assert!(compared > 1000, "too few matches compared: {compared}");
+}
+
+/// With the laws and the tag, the engine's matches are the reference's over every
+/// flattened view, canonized by the laws and kept by the demand rule with the
+/// non-inert clause.
+#[test]
+fn flattened_matches_reference_laws() {
+    let (compared, exercised) = differential_laws(0..60, true);
+    eprintln!(
+        "flatten differential under laws: {compared} matches compared, {exercised} (graph, pattern) pairs changed by flattening"
     );
     assert!(compared > 1000, "too few matches compared: {compared}");
     assert!(
