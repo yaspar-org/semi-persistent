@@ -175,9 +175,9 @@ type View = Vec<(Class, u64)>;
 /// Every raw view of `n`'s children under operator `f`, before normalization: the
 /// product, over the children, of each child's options.
 /// The leaf groups of an opening tree: for each opened instance with no opening below
-/// it, the classes directly under it. An empty list is the stored children, opened
-/// nowhere.
-type Leaves = Vec<Vec<Class>>;
+/// it, the class it opened and the classes directly under it. An empty list is the
+/// stored children, opened nowhere.
+type Leaves = Vec<(Class, Vec<Class>)>;
 
 /// Every raw view of `n`'s children under operator `f`, before normalization, with the
 /// leaf groups of its opening tree: the product, over the children, of each child's
@@ -204,7 +204,7 @@ fn raw_views(
                     // Nothing opened below: this instance is a leaf, its group the
                     // classes directly under it.
                     let leaves = if leaves.is_empty() {
-                        vec![v.iter().map(|e| e.0).collect()]
+                        vec![(x, v.iter().map(|e| e.0).collect())]
                     } else {
                         leaves
                     };
@@ -231,11 +231,17 @@ fn raw_views(
 type Alts = Vec<Leaves>;
 
 /// The demand rule (decision 2): a match is kept when, for some opening tree giving its
-/// view, every leaf directly holds a class the items take. Interior openings are then
-/// needed through the leaves below them. The stored view has no leaves.
-fn demanded(alts: &Alts, taken: &BTreeSet<Class>) -> bool {
-    alts.iter()
-        .any(|leaves| leaves.iter().all(|g| g.iter().any(|c| taken.contains(c))))
+/// view, every leaf is satisfied: it directly holds a class the items take, or, for a
+/// multiset (`merge_on_close`), the class it opened is taken (closing it would then
+/// coalesce the two occurrences into one entry, so the match exists on no less-opened
+/// view). Interior openings are then needed through the leaves below them. The stored
+/// view has no leaves.
+fn demanded(alts: &Alts, taken: &BTreeSet<Class>, merge_on_close: bool) -> bool {
+    alts.iter().any(|leaves| {
+        leaves.iter().all(|(x, g)| {
+            (merge_on_close && taken.contains(x)) || g.iter().any(|c| taken.contains(c))
+        })
+    })
 }
 
 /// A raw view canonized by the one normalization (`nary_canon::normalize`), with the
@@ -474,7 +480,7 @@ fn match_seq(
         _ => return,
     };
     let taken: BTreeSet<Class> = fixed.iter().map(|e| e.0).collect();
-    if !demanded(d.alts, &taken) {
+    if !demanded(d.alts, &taken, false) {
         return;
     }
     let mut envs = vec![env.clone()];
@@ -513,7 +519,7 @@ fn match_aci(
             .filter(|&j| used[j])
             .map(|j| view[j].0)
             .collect();
-        if !demanded(d.alts, &taken) {
+        if !demanded(d.alts, &taken, false) {
             return;
         }
         match rest {
@@ -573,7 +579,7 @@ fn match_ac(
     if i == ps.len() {
         // An item takes a whole entry, so the entries it took are the zeroed ones.
         let taken: BTreeSet<Class> = res.iter().filter(|e| e.1 == 0).map(|e| e.0).collect();
-        if !demanded(d.alts, &taken) {
+        if !demanded(d.alts, &taken, true) {
             return;
         }
         match rest {
@@ -1420,10 +1426,13 @@ fn rest_only_chain_matches() {
     }
     eprintln!("{at_root} matches at _1");
     // x = A or _2 opening nothing; _3, _4, or Y opening _2; X opening _2 and _3; Z
-    // through each of the two instances of _4. Y inside _4 has multiplicity 2 in that
+    // through each of the two instances of _4; and _4 kept at one position while the
+    // other instance of _4 is opened, which the demand rule keeps because the leaf's
+    // class is the one taken (closing it would merge the two instances into _4:2, which
+    // the unannotated item would take whole). Y inside _4 has multiplicity 2 in that
     // view, which an unannotated item does not take.
     assert_eq!(
-        at_root, 8,
+        at_root, 9,
         "one match per choice of x and of the classes it opens"
     );
 }

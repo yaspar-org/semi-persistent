@@ -13,10 +13,21 @@
 //!   (`C ∋ f{a, C}`) finite.
 //!
 //! An opening must be needed (`doc/goal-canonical-flatten-views.md`, decision 2): each
-//! view records the leaf groups of every opening tree that gives it ([`Demand`]), and a
-//! match is kept when some tree's leaves each directly hold a class an item takes. The
-//! decomposition or assembly reading the view applies that check, and the walk prunes a
-//! leaf with no takeable element as it closes.
+//! view records the leaf groups of every opening tree that gives it, each with the class
+//! whose opening produced it ([`Demand`]), and a match is kept when some tree's leaves
+//! are each satisfied: a leaf is satisfied when it directly holds a class an item takes,
+//! or, for a multiset, when the class it opened is itself taken. The second case is what
+//! makes the rule complete for AC: a match that takes nothing from a leaf is found on
+//! the view that keeps the leaf's class closed, unless that class is taken, in which
+//! case closing it coalesces the taken occurrence with the closed one into one entry of
+//! higher count and the match is lost (`proofs/lean`, `demand_fix_complete_ac`). A
+//! sequence keeps the two occurrences apart (`demand_orig_complete_assoc`), and a set
+//! dedups them into the taken element, which loses the match only through a member
+//! with one child, which rebuild merges into its child's class
+//! (`demand_orig_complete_aci`, hypothesis `TwoClasses`); so for both the first case
+//! suffices. The decomposition or assembly reading the view applies that check, and the
+//! walk prunes a leaf with no takeable element, and for a multiset no takeable opened
+//! class, as it closes.
 //!
 //! "Member" is what the round's index holds: `by_repr[X] ∩ by_op[f]`, computed as the
 //! class's bucket filtered by each node's round operator. Nothing is precomputed and
@@ -159,14 +170,14 @@ pub struct FlattenScratch<G, M> {
     /// class is takeable (see [`enumerate`]).
     view_parent: Vec<(Option<usize>, bool)>,
     /// Per opening instance, the instance it lies under, the instances opened directly
-    /// under it, and its takeable direct elements.
-    instances: Vec<(Option<usize>, usize, usize)>,
+    /// under it, its takeable direct elements, and the class it opened.
+    instances: Vec<(Option<usize>, usize, usize, G)>,
     elems: Vec<(G, M)>,
     /// One per raw view that canonizes to a node: its canonical span, and its leaf
     /// groups as a span of `groups`.
     recs: Vec<Rec>,
-    /// Leaf groups, each a span of `group_elems`.
-    groups: Vec<(usize, usize)>,
+    /// Leaf groups, each a span of `group_elems` with the class the leaf opened.
+    groups: Vec<(usize, usize, G)>,
     group_elems: Vec<G>,
     /// The distinct views: a canonical span, and the span of `recs` (sorted) giving it.
     spans: Vec<(usize, usize, usize, usize)>,
@@ -177,6 +188,8 @@ pub struct FlattenScratch<G, M> {
     first_overflow: Option<FlattenOverflow<G, M>>,
     /// The node being enumerated, for [`FlattenOverflow::node`].
     root: Option<G>,
+    /// Its kind, for [`Demand::merge_on_close`].
+    kind: FlatKind,
 }
 
 /// A raw view's record: its canonical content and its opening tree's leaf groups.
@@ -189,20 +202,25 @@ struct Rec {
 }
 
 /// Which matches a view admits (`doc/goal-canonical-flatten-views.md`, decision 2): a
-/// match is kept when, for some opening tree giving the view, every leaf of the tree
-/// directly holds a class the items take. A view some tree gives with no opening admits
-/// every match.
+/// match is kept when, for some opening tree giving the view, every leaf of the tree is
+/// satisfied: it directly holds a class the items take, or, when `merge_on_close`, the
+/// class it opened is taken. A view some tree gives with no opening admits every match.
 #[derive(Clone, Debug)]
 pub struct Demand<G> {
     pub unconditional: bool,
-    /// Per opening tree, its leaf groups.
-    pub alts: Vec<Vec<Vec<G>>>,
+    /// Closing a leaf merges its class with a taken occurrence of the same class into
+    /// one entry of higher count: true for a multiset, false for a set and a sequence.
+    pub merge_on_close: bool,
+    /// Per opening tree, its leaf groups: the class each leaf opened, and the classes
+    /// directly under it.
+    pub alts: Vec<Vec<(G, Vec<G>)>>,
 }
 
 impl<G> Default for Demand<G> {
     fn default() -> Self {
         Self {
             unconditional: true,
+            merge_on_close: false,
             alts: Vec::new(),
         }
     }
@@ -215,7 +233,12 @@ impl<G: PartialEq> Demand<G> {
             || self
                 .alts
                 .iter()
-                .any(|leaves| leaves.iter().all(|g| g.iter().any(|c| taken.contains(c))))
+                .any(|leaves| {
+                    leaves.iter().all(|(x, g)| {
+                        (self.merge_on_close && taken.contains(x))
+                            || g.iter().any(|c| taken.contains(c))
+                    })
+                })
     }
 }
 
@@ -240,6 +263,7 @@ impl<G, M> Default for FlattenScratch<G, M> {
             overflows: 0,
             first_overflow: None,
             root: None,
+            kind: FlatKind::Ac,
         }
     }
 }
@@ -287,6 +311,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
         let (_, _, rs, rn) = self.spans[i];
         out.alts.clear();
         out.unconditional = false;
+        out.merge_on_close = self.kind == FlatKind::Ac;
         for r in &self.recs[rs..rs + rn] {
             if r.gcount == 0 {
                 out.unconditional = true;
@@ -295,7 +320,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
             }
             let leaves = self.groups[r.gstart..r.gstart + r.gcount]
                 .iter()
-                .map(|&(s, n)| self.group_elems[s..s + n].to_vec())
+                .map(|&(s, n, x)| (x, self.group_elems[s..s + n].to_vec()))
                 .collect();
             out.alts.push(leaves);
         }
@@ -386,7 +411,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                     self.group_elems.push(e.0);
                 }
             }
-            self.groups.push((es, self.group_elems.len() - es));
+            self.groups.push((es, self.group_elems.len() - es, self.instances[i].3));
         }
         self.recs.push(Rec {
             start,
@@ -430,7 +455,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                 }
                 Undo::Opened(x) => {
                     self.on_path.remove(&x);
-                    if let Some((Some(p), _, _)) = self.instances.pop() {
+                    if let Some((Some(p), _, _, _)) = self.instances.pop() {
                         self.instances[p].1 = self.instances[p].1.saturating_sub(1);
                     }
                 }
@@ -565,8 +590,8 @@ fn times<M: MultiplicityLike>(k: M, j: M) -> Result<M, &'static str> {
 /// `takeable(c)` says whether an item could take an element of class `c`. It prunes
 /// the walk by the demand rule (`doc/goal-canonical-flatten-views.md`, decision 2): an
 /// opening instance that completes with no instance opened under it is a leaf, and a
-/// leaf none of whose direct elements is takeable makes no match, so the branch is
-/// abandoned there. Counters per instance make the check constant-time, which keeps a
+/// leaf none of whose direct elements is takeable, and for a multiset whose opened class
+/// is not takeable either, makes no match, so the branch is abandoned there. Counters per instance make the check constant-time, which keeps a
 /// chain of 10^5 levels linear when one level's element is the only takeable one.
 pub fn enumerate<G, O, M, Src>(
     src: &Src,
@@ -584,6 +609,7 @@ where
 {
     s.reset();
     s.root = Some(node);
+    s.kind = kind;
     let laws = src.laws(op);
     src.children(node, kind, &mut s.kids, &mut s.ids);
     for i in (0..s.kids.len()).rev() {
@@ -610,10 +636,12 @@ where
                     Task::Close(x, inst) => {
                         s.on_path.remove(&x);
                         s.trail.push(Undo::Closed(x));
-                        // A leaf with no takeable element: no match from here.
-                        let (_, opened, hits) = s.instances[inst];
+                        // A leaf with no takeable element, and for a multiset no takeable
+                        // opened class either: no match from here.
+                        let (_, opened, hits, _) = s.instances[inst];
                         if opened == 0
                             && hits == 0
+                            && !(kind == FlatKind::Ac && takeable(x))
                             && !backtrack(src, op, kind, &takeable, s, &mut work)?
                         {
                             break;
@@ -715,7 +743,7 @@ where
         if let Some(p) = c.parent {
             s.instances[p].1 = s.instances[p].1.checked_add(1).ok_or(OVER_BOUND)?;
         }
-        s.instances.push((c.parent, 0, 0));
+        s.instances.push((c.parent, 0, 0, x));
         s.on_path.insert(x);
         s.trail.push(Undo::Opened(x));
         let base = s.pending.len();
