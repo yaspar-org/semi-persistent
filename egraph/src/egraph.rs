@@ -918,6 +918,11 @@ where
         self.track_merge_members = on;
     }
 
+    /// Whether merges record their absorbed members in the touched log.
+    pub fn track_merge_members(&self) -> bool {
+        self.track_merge_members
+    }
+
     /// The number of distinct e-classes over the current node set. A scan, not a maintained
     /// counter: `(print-size)` / `(print-stats)` ask for it a handful of times per program.
     pub fn class_count(&self) -> usize {

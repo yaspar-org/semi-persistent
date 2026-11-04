@@ -1287,8 +1287,13 @@ where
             }
         }
         CompiledAction::Insert(t) => {
+            // A change only when a node was created: on a hash-cons hit the
+            // graph is as before, and counting it would keep the saturation
+            // loop from reporting a fixpoint while a naive-routed insert rule
+            // re-fires its old matches every round.
+            let before = eg.node_count();
             eval(t, env, eg, model, globals)?;
-            1
+            usize::from(eg.node_count() > before)
         }
         CompiledAction::Set {
             func: _,
@@ -1299,8 +1304,12 @@ where
         }
         CompiledAction::Subsume(var) => {
             let node = env.node(RhsNodeRef::Query(*var));
+            // A change only when the flag was not set: a subsumed node is not
+            // matched again, so this is reached once per node unless another
+            // rule's action names it.
+            let fresh = eg.node_flags(node) & crate::node_types::FLAG_SUBSUMED == 0;
             eg.subsume(node);
-            1
+            usize::from(fresh)
         }
     })
 }

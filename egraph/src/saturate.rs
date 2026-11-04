@@ -866,6 +866,38 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
+    // Semi-naive is the one consumer of the merge-membership delta
+    // (`merge_in_classes`): without it a merge whose surviving representative
+    // is the id the parents already store recanonicalizes nothing, no delta
+    // names the match it enables, and the round misses it
+    // (`semi_merge_membership_delta.egg`). Every entry point reaches this
+    // function, so the flag is set here and restored on return, whatever the
+    // caller did.
+    let was_tracking = eg.track_merge_members();
+    eg.set_track_merge_members(true);
+    let r = saturate_rules_semi_tracked(rules, eg, model, spec, globals, scratch, stop);
+    eg.set_track_merge_members(was_tracking);
+    r
+}
+
+fn saturate_rules_semi_tracked<Cfg, L, M, S, R, const T: bool, const P: bool>(
+    rules: &[R],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    scratch: &mut crate::index::IndexScratch<Cfg>,
+    stop: Option<&StopGoal<'_, Cfg, L, T, P>>,
+) -> Result<SatResult, SatError>
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    R: RuleEntry<Cfg, S, L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
     let limit = spec.limit;
     let seqs = sequence_entries(rules, spec.ruleset);
     let seq_globals = R::sequence_globals(globals);
