@@ -525,6 +525,7 @@ egg_test!(ac_lazy_entailment, "ac_lazy_entailment.egg");
 egg_test!(ac_lazy_neq_derived, "ac_lazy_neq_derived.egg");
 egg_test!(ac_lazy_alternation, "ac_lazy_alternation.egg");
 egg_test!(semi_recanon_parent_delta, "semi_recanon_parent_delta.egg");
+egg_test!(semi_eq_global_local, "semi_eq_global_local.egg");
 egg_test!(
     semi_merge_membership_delta,
     "semi_merge_membership_delta.egg"

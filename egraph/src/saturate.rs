@@ -600,17 +600,23 @@ pub(crate) fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> b
     if rq.atoms.iter().any(pattern_refs_global) {
         return true;
     }
-    let has_eq = rq
-        .atoms
-        .iter()
-        .any(|a| matches!(a, RAtom::Eq(..) | RAtom::EqGlobal(..)));
-    if !has_eq {
+    // An equality with a global is the fixed-class constraint above in
+    // disguise, whatever its local names: `(= x g)` with `x` a child of `(h x)`
+    // is satisfied once the global's class absorbs the child's, an event the
+    // delta records only through nodes it recanonicalizes, and the parent is
+    // not recanonicalized when the child's id survives as representative.
+    // `semi_eq_global_local.egg` is the regression test (the rule whose
+    // consequence semi-naive missed; its syntactic twin `((h g))` was already
+    // routed naive by `pattern_refs_global`).
+    if rq.atoms.iter().any(|a| matches!(a, RAtom::EqGlobal(..))) {
+        return true;
+    }
+    if !rq.atoms.iter().any(|a| matches!(a, RAtom::Eq(..))) {
         return false;
     }
     let node_vars: Vec<crate::ast::VarId> = rq.atoms.iter().filter_map(atom_node).collect();
     rq.atoms.iter().any(|a| match a {
         RAtom::Eq(x, y) => node_vars.contains(x) || node_vars.contains(y),
-        RAtom::EqGlobal(x, _) => node_vars.contains(x),
         _ => false,
     })
 }
