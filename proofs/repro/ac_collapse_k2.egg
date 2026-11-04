@@ -1,0 +1,6 @@
+(datatype E (Add E :assoc-comm) (a) (b) (c) (d))
+(let t (Add (a) (b)))
+(rule ((Add x:2)) ((union (c) (d))))
+(union (a) (b))
+(run 1)
+(check-eq (c) (d))

@@ -5,6 +5,20 @@ Lean 4 with Mathlib v4.35.0. `lake build` of the whole project passes;
 `Check.lean` files prints only `propext`, `Classical.choice`, `Quot.sound`.
 Written 2026-11-04 after the second extension.
 
+## Final theorem (`SemperProofs/Final/Main.lean`)
+
+`saturation_modulo_complete`: for a chain of saturation rounds (rebuild's
+round facts, merge tracking on, no `:subsume`, well-formed rules and plans,
+every variant or naive match emitted per round) whose last state is the
+represented graph of a completion state satisfying the convergence
+hypotheses, at a round that changed nothing, for every rule with head `f`
+and every pair of theory-equal active nodes, every match at one node is
+fired and its root binds the class of the other. `saturation_modulo_sound`
+is the matching-side converse. The two known limits are in the docstring:
+a theory-equal term that is absent is matched through its class only
+(`per_node_form_fails`), and maximum partition drops a two-item match when
+its two children classes merge (`NoCollapse`).
+
 ## CC: AC-congruence closure (`SemperProofs/CC/`)
 
 - `completion_sound`: invariant I2 (nodes of one class are `=_E`-equal) is
@@ -34,6 +48,15 @@ Written 2026-11-04 after the second extension.
   `completion_complete_combined_engine` with engine-level hypotheses only,
   plus the retirement-order invariant I3.
 
+- `Bridge/`: `represents st f A`, the matching graph of one AC operator read
+  from a completion state; `ac_equal_same_class_graph` (at a converged
+  state, theory-equal nodes share a class), `matches_closed_under_theory`
+  and `classMatches_congr` (the match set of a class is determined by the
+  class's theory-equivalence class), `engine_match_modulo_complete`/`_sound`
+  (every match at a theory-equal present node is emitted with the root in
+  the class), and `per_node_form_fails`, the formal counterexample to the
+  per-node statement.
+
 ## EMatch: e-matching (`SemperProofs/EMatch/`)
 
 - Base (`Defs`, `Ref`, `Main`): `MatchN`/`MatchC` (maximum partition),
@@ -57,6 +80,20 @@ Written 2026-11-04 after the second extension.
   `delta_incomplete_untracked` (why the merge-membership delta exists).
   Not modelled: `:flatten` and sequence rules across rounds, action
   application, the transport of bindings through later merges.
+- `Engine/Saturate/`: the saturation loop. Actions (`insert`, `union`,
+  `subsume` as apply.rs runs them), `Den` (a right-hand-side term built in
+  the graph), `Fired`, the transport of a binding through a round's merges
+  (`fired_transport`; `matches_transport` needs `NoCollapse`, the
+  maximum-partition fact that a two-item AC pattern stops matching when its
+  two children classes merge, realized by the probe `ac_collapse.egg`),
+  rounds with actions (`ActRound`, `fired_after_actions`), the invariant
+  with one round of latency (`InvLag`, `inv_step`, `invLag_chain`) and the
+  fixpoint theorem `saturation_complete`: at a state where a round changed
+  nothing, every match of every rule is fired, for tracked semi-naive and
+  naive routing. Not modelled: `:subsume` runs, literals, globals,
+  primitives, comprehensions, `--flatten-rhs`, sequence rules; n-ary
+  right-hand sides are stored literally, their normal forms are the
+  bridge's side.
 - `Flatten/`: opening trees, views, normalization, demand; `views_sound`,
   `views_complete`, `flatten_match_{sound,complete}_{ac,aci,assoc}`;
   `Fix.lean`/`FixMain.lean`/`FixKind.lean`: the corrected demand rule
