@@ -1,8 +1,12 @@
 import SemperProofs.Basic
 import SemperProofs.CC.Main
+import SemperProofs.CC.Laws.Main
+import SemperProofs.CC.Laws.InvRulesMain
 import SemperProofs.EMatch.Main
 import SemperProofs.EMatch.Engine.Main
 import SemperProofs.EMatch.Flatten.Main
 import SemperProofs.EMatch.Flatten.FixMain
+import SemperProofs.EMatch.Flatten.FixKind
+import SemperProofs.EMatch.Flatten.LawsMain
 import SemperProofs.EMatch.Steps.Main
 import SemperProofs.EMatch.Env.Main

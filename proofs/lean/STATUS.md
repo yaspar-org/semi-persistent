@@ -22,7 +22,17 @@ Written 2026-11-04 after the second extension.
   `completion_complete_{identity,nilpotent,idempotent,inverse,combined}` with
   `hcp` reduced to rule-side conditions: `RuleRuleCP`, and for `:inverse`
   `InvMatching`, `InvUnitFree`, `InverseAxiomCP`, `NilpotentInverseCP`,
-  which the engine does not establish (four confirmed gaps, `proofs/repro`).
+  which the engine did not establish (four confirmed gaps, `proofs/repro`).
+- `Laws/InvRules*.lean`: the five rules R1-R5 the engine now applies
+  (injectivity and involution of the inverse, inverse against the unit,
+  rule-inverse critical pairs, the nilpotent-inverse pairs) as inference
+  steps; `inv_rules_sound` extends soundness; `RoundFixedInv`,
+  `RoundFixedInvUnit`, `RoundFixedInvNil` discharge the four hypotheses
+  (`invMatching_of_fixed`, `invUnitFree_of_fixed`,
+  `inverseAxiomCP_of_fixed`, `nilpotentInverseCP_of_fixed`), giving
+  `completion_complete_inverse_engine` and
+  `completion_complete_combined_engine` with engine-level hypotheses only,
+  plus the retirement-order invariant I3.
 
 ## EMatch: e-matching (`SemperProofs/EMatch/`)
 
@@ -43,8 +53,15 @@ Written 2026-11-04 after the second extension.
   is complete for sequences (`demand_orig_complete_assoc`) and for sets under
   `TwoClasses` (`demand_orig_complete_aci`), which rebuild guarantees by
   merging a one-child member into its child's class; `acceptsKind` is the
-  engine's per-kind rule (`merge_on_close` for multisets only). Laws-free
-  only; the laws case has a recorded counterexample shape.
+  engine's per-kind rule (`merge_on_close` for multisets only).
+  `Laws.lean`/`LawsMain.lean`: the rule under laws for any `Laws` (identity,
+  nilpotent, inverse, composed): a leaf is also satisfied when closing it is
+  not inert (`nonInertB`: its class is the unit, its refolded count clamps
+  to zero, or a cancellation pair touches it); `refold_normalize_inert`,
+  `demand_laws_complete_{ac,aci,assoc}` (the sequence case no longer needs
+  `NoNullary`), `demand_laws_no_redundancy_*`, `acceptsFix_imp_acceptsLaws`;
+  five executed counterexamples against the kept-count rule in
+  `LawsCheck.lean`.
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);

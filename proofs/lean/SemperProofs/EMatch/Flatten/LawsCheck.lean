@@ -117,4 +117,21 @@ def nonInertXOnly (laws : Laws) (v : List (C × Nat)) (l : LeafL) : Bool :=
 #eval nonInertXOnly lawsInvB [(3, 2), (1, 1), (2, 1)] ⟨4, 1, [(1, 1), (2, 1)]⟩
 #eval nonInertAC lawsInvB [(3, 2), (1, 1), (2, 1)] ⟨4, 1, [(1, 1), (2, 1)]⟩
 
+/-! ## Assoc: an all-unit group vanishes from the view
+
+`seq` Assoc (op 8), unit `u = 0`, classes `a = 1, b = 2, X = 4`; `X ∋ seq[u]`,
+`n = seq[a, X, b]`. The opened view `[a, u, b]` normalizes to `[a, b]`; the
+leaf `(X, 1, [u])` is flagged (every child is the unit), since its closing
+`[a, X, b]` carries no match of `(seq x y)`. -/
+def exSeq : Ctx :=
+  ⟨⟨[(10, ⟨8, .seq [0]⟩)], fun id => if id = 10 then 4 else id⟩, 8, .assoc, fun _ => true⟩
+
+def exSeqN : Node := ⟨8, .seq [1, 4, 2]⟩
+
+def lawsUnit0 : Laws := ⟨some 0, none, none⟩
+
+#eval showL (enumerateL exSeq lawsUnit0 exSeqN)
+#eval (enumerateL exSeq lawsUnit0 exSeqN).map (fun wd => (wd.1, wd.2.acceptsLawsB [1, 2]))
+#eval (enumerateX exSeq lawsUnit0 exSeqN).map (fun wd => (wd.1, wd.2.acceptsFixB [1, 2]))
+
 end Semper.EMatch.Flatten
