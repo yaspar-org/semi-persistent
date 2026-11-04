@@ -222,6 +222,66 @@ where
         (nonminimal, offenders)
     }
 
+    /// GROUND-TRUTH check 1b (I5): for every (class, op) with at least one active completion
+    /// node, is the stored `min_monomial` slot the `monomial_cmp`-least active same-op node?
+    /// Unlike `cc_min_used_nonminimal` this does not depend on any rule existing: the gap it
+    /// catches is a class whose slot is stale after an in-place shrink, where the old minimum
+    /// is not a rule and the shrunk node is dropped by the orientation guard, so no rule is
+    /// read at all. Unit and atomic classes are skipped: their RHS is `{}` or `{class}`, and
+    /// the slot is not read. Returns the count and the worst offenders `(class repr, op)`.
+    pub fn cc_slot_nonminimal(&self) -> (usize, Vec<(Cfg::G, Cfg::O)>) {
+        let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
+        let mut truemin: BTreeMap<(Cfg::G, Cfg::O), Vec<(Cfg::G, Cfg::M)>> = BTreeMap::new();
+        for gid in self.node_ids() {
+            if !matches!(self.node_ref(gid), NodeRef::MSet(_) | NodeRef::Set(_))
+                || self.node_flags(gid) & inactive != 0
+            {
+                continue;
+            }
+            let key = (self.class_repr(gid), self.node_op(gid));
+            let m = self.cc_invariant_monomial(gid);
+            truemin
+                .entry(key)
+                .and_modify(|cur| {
+                    if monomial_cmp(&m, cur) == std::cmp::Ordering::Less {
+                        *cur = m.clone();
+                    }
+                })
+                .or_insert(m);
+        }
+        let mut nonminimal = 0usize;
+        let mut offenders: Vec<(Cfg::G, Cfg::O)> = Vec::new();
+        for ((cls, op), tm) in &truemin {
+            if self
+                .unit_node(*op)
+                .is_some_and(|u| self.class_repr(u) == *cls)
+                || self.class_atomic(*cls) == Some(true)
+            {
+                continue;
+            }
+            // The slot of the class in `op`'s column, read through any member: `cls` is a
+            // class representative, which `class_min_monomial` accepts as an id only if it
+            // is a node of `op`; find one through the stored slot of a member instead.
+            let stale = match self.slot_monomial(*cls, *op) {
+                None => true,
+                Some(sm) => monomial_cmp(tm, &sm) == std::cmp::Ordering::Less,
+            };
+            if stale {
+                nonminimal += 1;
+                offenders.push((*cls, *op));
+            }
+        }
+        offenders.truncate(20);
+        (nonminimal, offenders)
+    }
+
+    /// The monomial of the stored `min_monomial` slot of class `cls` (a representative) in
+    /// `op`'s completion column, or `None` if the column holds no node.
+    fn slot_monomial(&self, cls: Cfg::G, op: Cfg::O) -> Option<Vec<(Cfg::G, Cfg::M)>> {
+        let node = self.class_min_monomial_of_op(cls, op)?;
+        Some(self.cc_invariant_monomial(node))
+    }
+
     /// Finite-state diagnostic 2: is the active rule set *fully reduced* in Kapur's sense
     /// (§3), rather than only a direct-containment antichain? Kapur-reduced means that neither
     /// side of any rule can be rewritten by the *other* rules. `reducible_pairs` only catches
@@ -404,9 +464,10 @@ where
     pub fn cc_basis_dump(&self, tag: &str) {
         let r = self.cc_basis_report();
         let (nonmin, _) = self.cc_min_used_nonminimal();
+        let (slot_nonmin, _) = self.cc_slot_nonminimal();
         let (lhs_red, rhs_red) = self.cc_not_kapur_reduced();
         eprintln!(
-            "[basis {tag}] completion_nodes={} subsumed={} collapsed={} active_rules={} reducible_pairs={} reducible_rules={} antichain_core={} | cc_min_used_nonminimal={nonmin} kapur_lhs_reducible={lhs_red} kapur_rhs_reducible={rhs_red}",
+            "[basis {tag}] completion_nodes={} subsumed={} collapsed={} active_rules={} reducible_pairs={} reducible_rules={} antichain_core={} | cc_min_used_nonminimal={nonmin} cc_slot_nonminimal={slot_nonmin} kapur_lhs_reducible={lhs_red} kapur_rhs_reducible={rhs_red}",
             r.n_ac_nodes,
             r.n_subsumed,
             r.n_collapsed,

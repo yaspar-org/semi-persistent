@@ -237,6 +237,10 @@ pub struct EGraph<
     /// per-class `min_monomial`, §9a). Two buffers to hold both sides without aliasing;
     /// cleared and refilled per comparison, never grown per merge.
     cmp_buf_a: Vec<(Cfg::G, Cfg::M)>,
+    /// Scratch for `rebuild_congruence`: parents whose span shrank in the absorbed-uses
+    /// sweep, refreshed into the min-monomial pool after the sweep releases the use-list
+    /// borrow. Round-local, never restored.
+    refresh_buf: Vec<Cfg::G>,
     cmp_buf_b: Vec<(Cfg::G, Cfg::M)>,
     /// Reusable scratch for flattening nested same-op AC children (`WF_flat`,
     /// design §6c). Worklist of children still to expand; never grown per add.
@@ -415,6 +419,7 @@ where
             cc: false,
             basis_checks: std::env::var_os("AC_BASIS_DUMP").is_some(),
             cmp_buf_a: Vec::new(),
+            refresh_buf: Vec::new(),
             cmp_buf_b: Vec::new(),
             flatten_buf: Vec::new(),
             mset_flatten_buf: Vec::new(),
@@ -1555,6 +1560,44 @@ where
         self.cmp_buf_b = b;
     }
 
+    /// Keep the min-monomial slot least after an in-place recanonization. Invariant (I5):
+    /// the slot of a class in `id`'s op column is the degree-lex-least *active* same-op
+    /// monomial of that class. The slot is written at creation (`register_if_fresh`) and
+    /// folded on merge (`fold_min_monomial`); recanonization rewrites a stored node's span
+    /// in place (coalesce, unit drop, clamp after a child merge) and can shrink `id` below
+    /// the slot. The trap: with a stale slot the old minimum is not a rule (`M = r(c)`) and
+    /// the shrunk node is dropped by the orientation guard (`M ≺ r(c)`), so the class yields
+    /// no rule and completion misses `a+b+z = p+q+z` from `a+b = p+q+r`, `r = 0`.
+    /// O(1) plus two monomial reads; the write goes through the tracked pool, so `restore`
+    /// rolls it back with the recanonization.
+    fn refresh_min_monomial(&mut self, id: Cfg::G) {
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        if self.node_flags(id) & (FLAG_SUBSUMED | FLAG_AC_COLLAPSED) != 0 {
+            return;
+        }
+        let Some(col) = self.completion_column(id) else {
+            return;
+        };
+        let Some(repr) = self.classes.repr_id(self.classes.find_const(id)) else {
+            return;
+        };
+        match self.classes.min_monomial(repr, col) {
+            None => self.classes.set_min_monomial(repr, col, id),
+            Some(cur) if cur != id => {
+                let mut a = std::mem::take(&mut self.cmp_buf_a);
+                let mut b = std::mem::take(&mut self.cmp_buf_b);
+                self.node_monomial_into(cur, &mut a);
+                self.node_monomial_into(id, &mut b);
+                if crate::multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
+                    self.classes.set_min_monomial(repr, col, id);
+                }
+                self.cmp_buf_a = a;
+                self.cmp_buf_b = b;
+            }
+            Some(_) => {}
+        }
+    }
+
     pub fn merge(&mut self, a: Cfg::G, b: Cfg::G) -> Option<(Cfg::G, Cfg::G)> {
         debug_assert_eq!(
             self.node_sort(a),
@@ -2298,6 +2341,7 @@ where
                 .copied()
                 .map(|u| classes.find_const(u))
         };
+        let touched_before = self.touched.len();
         let normal = self.nodes.recanonize_node(
             parent,
             find,
@@ -2308,6 +2352,11 @@ where
             &mut self.touched,
             &self.ops,
         );
+        // The span changed (recanonize pushes to `touched` only then) and still forms a
+        // node: keep the class's min-monomial slot least (I5).
+        if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before {
+            self.refresh_min_monomial(parent);
+        }
         // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
         // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
         // then *equals* an existing class — empty ⇒ the unit, size-1 mult-1 ⇒ that child.
@@ -2332,6 +2381,8 @@ where
             // mirrors `recanonize_parent` — it cannot be a method call here because the
             // use-list iterator holds `self.classes` for the whole loop, and only inline
             // field-disjoint borrows split around it.
+            let mut refresh = std::mem::take(&mut self.refresh_buf);
+            refresh.clear();
             for parent in self.classes.uses().iter(absorbed_uses) {
                 let find = |g: Cfg::G| self.classes.find_const(g);
                 let units = &self.unit_node;
@@ -2342,6 +2393,7 @@ where
                         .copied()
                         .map(|u| classes.find_const(u))
                 };
+                let touched_before = self.touched.len();
                 let normal = self.nodes.recanonize_node(
                     parent,
                     find,
@@ -2352,6 +2404,14 @@ where
                     &mut self.touched,
                     &self.ops,
                 );
+                // As in `recanonize_parent`: a changed span that is still a node refreshes
+                // the class's min-monomial slot (I5). Deferred past the loop, which holds
+                // the use-list borrow.
+                if normal == crate::nary_canon::Normal::Node
+                    && self.touched.len() > touched_before
+                {
+                    refresh.push(parent);
+                }
                 if normal == crate::nary_canon::Normal::Overflow {
                     self.width_error.get_or_insert(MultOverflow);
                 }
@@ -2359,6 +2419,11 @@ where
                     self.collisions.push(pair);
                 }
             }
+
+            for &parent in &refresh {
+                self.refresh_min_monomial(parent);
+            }
+            self.refresh_buf = refresh;
 
             let current_surv = self.classes.find_const(survivor);
             let surv_repr = self.classes.repr_id(current_surv).unwrap();
@@ -3870,6 +3935,16 @@ where
         self.classes.min_monomial(repr, col)
     }
 
+    /// The minimum-monomial node stored for the class of `cls` in `op`'s completion column,
+    /// for any `cls` (a representative or a member of any kind). `None` if `op` has no
+    /// completion column or the column holds no node for that class. Read by diagnostics.
+    #[allow(dead_code)]
+    pub(crate) fn class_min_monomial_of_op(&self, cls: Cfg::G, op: Cfg::O) -> Option<Cfg::G> {
+        let repr = self.classes.repr_id(self.classes.find_const(cls))?;
+        let col = self.ops.completion_column(op)?;
+        self.classes.min_monomial(repr, col)
+    }
+
     /// Whether `id`'s class is `atomic` (referenced as a child / has a non-AC node, so
     /// `{class}` is its canonical summand form, §9a). `None` if `id` has no class.
     #[allow(dead_code)]
@@ -4629,6 +4704,68 @@ mod tests {
             f4: eg.register_opn("f4", &[int, int, int, int], int),
         };
         (eg, th)
+    }
+
+    // I5 under in-place recanonization: a child merge into the identity class shrinks a stored
+    // node below its class's min-monomial slot. The slot must follow the shrunk node (else the
+    // class yields no completion rule), and roll back with the e-graph token.
+    #[test]
+    fn min_monomial_refreshes_on_recanonization_shrink_and_rolls_back() {
+        use crate::registry::{Clamp, OpKind};
+        let mut eg = EGraph31::<NiraLitVal, true, false>::new();
+        let s = eg.intern_sort("E");
+        let zero_op = eg.register_op0("zero", s);
+        let zero = eg.add(zero_op, &[]);
+        let add = eg.register_kind(
+            "add",
+            s,
+            OpKind::MSet {
+                arg_sort: s,
+                clamp: Clamp::None,
+                identity: None,
+                cancellative: false,
+            },
+        );
+        eg.set_unit_node(add, zero);
+        // p, q get smaller ids than a, b: at equal size Add{p,q} ≺ Add{a,b} in degree-lex.
+        let mut leaf = |eg: &mut EGraph31<NiraLitVal, true, false>, name: &str| {
+            let op = eg.register_op0(name, s);
+            eg.add(op, &[])
+        };
+        let p = leaf(&mut eg, "p");
+        let q = leaf(&mut eg, "q");
+        let a = leaf(&mut eg, "a");
+        let b = leaf(&mut eg, "b");
+        let z = leaf(&mut eg, "z");
+        let r = leaf(&mut eg, "r");
+        let n1 = eg.add(add, &[a, b]);
+        let n2 = eg.add(add, &[p, q, r]);
+        eg.set_cc(true);
+        eg.merge(n1, n2);
+        eg.rebuild();
+        assert_eq!(eg.class_min_monomial(n1), Some(n1), "size 2 beats size 3");
+        let d = eg.add(add, &[a, b, z]);
+        let e = eg.add(add, &[p, q, z]);
+        eg.rebuild();
+        assert_ne!(eg.find(d), eg.find(e), "nothing joins d and e yet");
+
+        let token = eg.mark(ShrinkPolicy::Never);
+        eg.merge(r, zero);
+        eg.rebuild();
+        assert_eq!(
+            eg.class_min_monomial(n1),
+            Some(n2),
+            "the shrunk node Add{{p,q}} is the class's least monomial and must be the slot"
+        );
+        assert_eq!(eg.find(d), eg.find(e), "a+b+z = p+q+z follows from a+b = p+q+r, r = 0");
+
+        eg.restore(token);
+        assert_eq!(
+            eg.class_min_monomial(n1),
+            Some(n1),
+            "the slot refresh must roll back with the e-graph token"
+        );
+        assert_ne!(eg.find(d), eg.find(e));
     }
 
     /// Randomized canonization coverage for the AC count-clamp / identity-drop / degenerate-arity

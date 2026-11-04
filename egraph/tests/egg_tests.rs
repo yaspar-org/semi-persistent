@@ -160,6 +160,7 @@ fn run_with<
             if d.check_ac_basis {
                 let report = interp.eg.cc_basis_report();
                 let (nonmin, _) = interp.eg.cc_min_used_nonminimal();
+                let (slot_nonmin, slot_offenders) = interp.eg.cc_slot_nonminimal();
                 let (lhs_red, _rhs_red) = interp.eg.cc_not_kapur_reduced();
                 let (axiom_nonjoin, axiom_offenders) = interp.eg.cc_axiom_cps_nonjoinable();
                 assert_eq!(
@@ -167,6 +168,12 @@ fn run_with<
                     0,
                     "CHECK_AC_BASIS: {nonmin} rules use a non-minimal min_monomial (active_rules={})",
                     report.rules.len()
+                );
+                assert_eq!(
+                    slot_nonmin,
+                    0,
+                    "CHECK_AC_BASIS: {slot_nonmin} classes store a non-minimal min_monomial slot \
+                     (I5; offenders (class, op): {slot_offenders:?})"
                 );
                 assert_eq!(
                     lhs_red,
