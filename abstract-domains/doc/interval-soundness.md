@@ -54,6 +54,8 @@ this document applies to the disabled `u128` instantiation.
 
 The maintained designs and proof obligations for those extensions are in
 [`future/interval-extensions.md`](future/interval-extensions.md).
+Unbounded integer intervals, including division and narrowing, are in
+[`interval-z.md`](interval-z.md).
 
 The mirror tests in `abstract-domains/tests/fuzz.rs` add finite executable
 evidence. The machine-checked claim comes from:
