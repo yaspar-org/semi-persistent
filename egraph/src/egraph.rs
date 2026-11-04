@@ -2655,7 +2655,7 @@ where
         if self.repair_state == Some(state) {
             return false;
         }
-        let changed = self.inverse_cancel_repair();
+        let changed = self.inverse_cancel_repair() | self.inverse_law_repair();
         if !changed {
             // Arm the skip only on a clean round. A round that merged left `touched` and
             // `num_classes` moved, and the caller drains congruence and calls again.
@@ -2747,6 +2747,136 @@ where
                 Justification::InverseCancel {
                     node_a: c,
                     node_b: gid,
+                },
+            );
+        }
+        changed
+    }
+
+    /// The nodes `inv(x)` of the unary op `inv`, as `(node, class of x)`: a scan of the
+    /// unary partition.
+    fn inverse_nodes(&self, inv: Cfg::O) -> Vec<(Cfg::G, Cfg::G)> {
+        use crate::typed_routing::NodeIds;
+        let n = self.nodes.plain1.len().to_usize();
+        let mut out = Vec::new();
+        for i in 0..n {
+            let node = self.nodes.plain1.get(<Cfg::Ids as NodeIds>::L1::from_usize(i));
+            if node.op() == inv {
+                out.push((node.global_id(), self.classes.find_const(node.children[0])));
+            }
+        }
+        out
+    }
+
+    /// `(class of inv(x), class of x)` over the nodes of `inv`, sorted by the first: the
+    /// reverse of `inverse_class`, answering which class a class is the inverse of.
+    pub(crate) fn inverse_classes(&self, inv: Cfg::O) -> Vec<(Cfg::G, Cfg::G)> {
+        let mut out: Vec<(Cfg::G, Cfg::G)> = self
+            .inverse_nodes(inv)
+            .into_iter()
+            .map(|(node, x)| (self.classes.find_const(node), x))
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// The consequences of the group law `x ∘ inv(x) = e` that cancelling pairs inside one
+    /// monomial cannot reach, over the nodes of every `:inverse` op (the `InvMatching`,
+    /// `InvUnitFree` and `NilpotentInverseCP` hypotheses of the completeness proof):
+    /// - `inv(a) = inv(c)` gives `a = c`, and the node `inv(inv(x))` equals `x`
+    ///   (`{a, inv a} = ∅ = {c, inv c}` cancelled on the shared inverse);
+    /// - with `:identity e`: `inv(x) = e` gives `x = e` and `x = e` gives `inv(x) = e`
+    ///   (`{x, inv x} = ∅` with the unit dropped);
+    /// - with `:nilpotent k`: `inv(x) = x^(k−1)` (`x^k = ∅` and `{x, inv x} = ∅` overlap
+    ///   on `x`), and for `inv(x)` of class `y ≠ x`, `y^(k−1) = x` (the overlap on `y`,
+    ///   whether or not the node `inv(y)` exists); both nodes are built. A self-inverse
+    ///   class is not exempt: for odd `k` its `x^(k−1)` normalizes to the unit, so `x = e`.
+    /// Collect over a snapshot of the union-find, then apply through `repair_merge` and
+    /// `add_monomial`, so `restore` rolls everything back. The whole unary partition is
+    /// read, not the touched log: the first premise is a merge of two classes each holding
+    /// an inverse node, which recanonizes neither node. Free for a graph with no `:inverse`
+    /// op; otherwise it runs only when `canon_repair_round` sees a change.
+    fn inverse_law_repair(&mut self) -> bool {
+        if self.inverse_op.is_empty() {
+            return false;
+        }
+        let ops: Vec<(Cfg::O, Cfg::O)> = self.inverse_op.iter().copied().collect();
+        let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
+        // `(op, base, k−1, target)`: the node `base^(k−1)` to build and merge with `target`.
+        let mut powers: Vec<(Cfg::O, Cfg::G, Cfg::M, Cfg::G)> = Vec::new();
+        for (op, inv) in ops {
+            let nodes = self.inverse_nodes(inv);
+            if nodes.is_empty() {
+                continue;
+            }
+            let unit = self.unit_node(op).map(|u| self.classes.find_const(u));
+            let power = match self.ops.info(op).kind {
+                OpKind::MSet {
+                    clamp: crate::registry::Clamp::Nilpotent { order },
+                    ..
+                } => Some(
+                    Cfg::M::try_from_u64(u64::from(order) - 1)
+                        .expect("a u8 nilpotent order fits every multiplicity width"),
+                ),
+                _ => None,
+            };
+            // `(class of inv(x), class of x)`, sorted: equal first components are two
+            // inverse nodes in one class.
+            let mut classes: Vec<(Cfg::G, Cfg::G)> = Vec::with_capacity(nodes.len());
+            for &(node, x) in &nodes {
+                let y = self.classes.find_const(node);
+                classes.push((y, x));
+                if let Some(e) = unit {
+                    if y == e && x != e {
+                        merges.push((x, node));
+                    }
+                    if x == e && y != e {
+                        merges.push((node, x));
+                    }
+                }
+                if let Some(k) = power {
+                    powers.push((op, x, k, node));
+                    if y != x {
+                        powers.push((op, y, k, x));
+                    }
+                }
+            }
+            classes.sort_unstable();
+            for w in classes.windows(2) {
+                if w[0].0 == w[1].0 && w[0].1 != w[1].1 {
+                    merges.push((w[0].1, w[1].1));
+                }
+            }
+            for &(node, x) in &nodes {
+                // `x` holds some `inv(z)`, so `node` is `inv(inv(z))`.
+                if let Ok(i) = classes.binary_search_by(|p| p.0.cmp(&x)) {
+                    merges.push((node, classes[i].1));
+                }
+            }
+        }
+        let mut changed = false;
+        for (a, b) in merges {
+            changed |= self.repair_merge(
+                a,
+                b,
+                Justification::InverseCancel {
+                    node_a: a,
+                    node_b: b,
+                },
+            );
+        }
+        let mut scratch: Vec<Cfg::C> = Vec::new();
+        for (op, base, k, target) in powers {
+            let c = self
+                .add_monomial(op, &[(base, k)], &mut scratch)
+                .expect("a count below the nilpotent order fits every multiplicity width");
+            changed |= self.repair_merge(
+                c,
+                target,
+                Justification::InverseCancel {
+                    node_a: c,
+                    node_b: target,
                 },
             );
         }
@@ -3014,6 +3144,13 @@ where
         let mut sub_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut delta_skipped = 0usize;
         let delta_in_rules = rules.iter().filter(|r| in_delta(r.node)).count();
+        // The rule-inverse pairs below need the reverse of `inverse_class`: which class a
+        // summand is the inverse of. One scan per op with an inverse, per round.
+        let inv_classes: Vec<(Cfg::O, Vec<(Cfg::G, Cfg::G)>)> = self
+            .inverse_op
+            .iter()
+            .map(|&(op, inv)| (op, self.inverse_classes(inv)))
+            .collect();
         for ti in 0..rules.len() {
             // A reducible rule is not a member of the antichain: collapse will retire it,
             // so it must not seed critical pairs.
@@ -3066,6 +3203,38 @@ where
                         }
                     }
                     CompletionClamp::Multiset => {} // plain AC / identity-only: none (Lemma 4.3)
+                }
+                // The rule's pairs with the group law `{a, inv a} = ∅` (Lean
+                // `cp_rule_invGen_left/right`): for `a ∈ M` whose inverse node exists with
+                // class `y`, `(N ⊎ {y}, M − {a})`; for `y ∈ M` the class of some `inv(x)`,
+                // `(N ⊎ {x}, M − {y})`. Without them `a + c = d` misses `d + neg(a) = c`.
+                if let Some(inv) = self.inverse_op(op) {
+                    let inverted: &[(Cfg::G, Cfg::G)] = inv_classes
+                        .iter()
+                        .find(|(o, _)| *o == op)
+                        .map_or(&[], |(_, v)| v.as_slice());
+                    let order = match self.op_clamp(op) {
+                        CompletionClamp::Nilpotent { order } => Some(order),
+                        _ => None,
+                    };
+                    for &(a, _) in &rules[ti].lhs {
+                        let inverse_of_a = self.inverse_class(inv, a);
+                        let inverted_by_a = inverted
+                            .binary_search_by(|p| p.0.cmp(&a))
+                            .ok()
+                            .map(|i| inverted[i].1);
+                        for z in inverse_of_a.into_iter().chain(inverted_by_a) {
+                            let mut r1 = multiset_union(&rules[ti].rhs, &[(z, Cfg::M::ONE)]);
+                            if let Some(order) = order {
+                                crate::multiset::clamp_nilpotent(&mut r1, order);
+                            }
+                            let r2 = crate::multiset::multiset_subtract(
+                                &rules[ti].lhs,
+                                &[(a, Cfg::M::ONE)],
+                            );
+                            crit.push((op, CpOrigin::AxiomCp, r1, r2));
+                        }
+                    }
                 }
             }
 

@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; Control for ac_inverse_nilpotent.egg: the nilpotent clamp alone, x^3 = Zero,
+;; passed before R4 and must keep passing.
+(sort E)
+(constructor X () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :nilpotent 3 :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(let u (Add (X) (X) (X)))
+(check-eq u (Zero))

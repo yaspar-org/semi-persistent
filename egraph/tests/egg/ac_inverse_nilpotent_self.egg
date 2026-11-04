@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; R4 (NilpotentInverseCP), self-inverse class: with Neg(X) = X and odd k, X^(k-1)
+;; normalizes to the unit (pairs cancel), so X = Zero. The law-law pair (∅, X^(k-2))
+;; of the completeness proof needs this instance.
+(sort E)
+(constructor X () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :nilpotent 3 :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(union (Neg (X)) (X))
+(check-eq (X) (Zero))

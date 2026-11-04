@@ -610,6 +610,23 @@ egg_test!(a_matrix_kron_fusion, "a_matrix_kron_fusion.egg");
 egg_test!(ac_complete_containment, "ac_complete_containment.egg");
 egg_test!(ac_complete_superposition, "ac_complete_superposition.egg");
 egg_test!(ac_complete_cancel, "ac_complete_cancel.egg");
+// Consequences of `:inverse` beyond pair cancellation inside one monomial, asserted at
+// rebuild (R1, R2, R4, R5) and as rule-inverse critical pairs (R3); each with its control.
+egg_test!(ac_inverse_matching, "ac_inverse_matching.egg");
+egg_test!(ac_inverse_involution, "ac_inverse_involution.egg");
+egg_test!(ac_inverse_unit_free, "ac_inverse_unit_free.egg");
+egg_test!(ac_inverse_unit_node, "ac_inverse_unit_node.egg");
+egg_test!(ac_inverse_rule_cp, "ac_inverse_rule_cp.egg");
+egg_test!(ac_inverse_nilpotent, "ac_inverse_nilpotent.egg");
+egg_test!(ac_inverse_nilpotent_self, "ac_inverse_nilpotent_self.egg");
+egg_test!(ac_inverse_nilpotent_absent, "ac_inverse_nilpotent_absent.egg");
+egg_test!(ac_inverse_nilpotent_control, "ac_inverse_nilpotent_control.egg");
+egg_test!(ac_inverse_cancel_control, "ac_inverse_cancel_control.egg");
+// The min-monomial slot refresh (I5) and the flatten demand refold, fixtures of the two
+// previous fixes on this branch that were never registered.
+egg_test!(ac_min_slot_refresh, "ac_min_slot_refresh.egg");
+egg_test!(flatten_demand_refold, "flatten_demand_refold.egg");
+egg_test!(flatten_demand_refold_control, "flatten_demand_refold_control.egg");
 // Regression for the leapfrog_join target-clear bug: a rule with two same-op AC atoms +
 // rest-vars (the bound-node ByRepr re-join cleared a target bound upstream). Completion off.
 egg_test!(ac_two_same_op_atoms, "ac_two_same_op_atoms.egg");

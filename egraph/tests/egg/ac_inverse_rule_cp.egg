@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; R3 (InverseAxiomCP): the critical pair of a completion rule with the group law.
+;; Rule Add{A, C} -> D and {A, Neg(A)} = {} overlap on A: Add{D, Neg(A)} = Add{C}.
+(sort E)
+(constructor A () E)
+(constructor C () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(union (Add (A) (C)) (D))
+(let t (Add (D) (Neg (A))))
+(check-eq t (C))

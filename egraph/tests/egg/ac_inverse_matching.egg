@@ -1,0 +1,21 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; R1 (InvMatching): two inverse nodes in one class have equal arguments.
+;; {A, Neg(A)} = {} = {C, Neg(C)} and Neg(A) = Neg(C) give {A} = {C} by cancellation.
+;; Without it the one-directional cancel walk gives s = C but not s = A.
+(sort E)
+(constructor A () E)
+(constructor C () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(union (Neg (A)) (Neg (C)))
+(let s (Add (A) (Neg (A)) (C)))
+(check-eq s (C))
+(check-eq s (A))
+(check-eq (A) (C))

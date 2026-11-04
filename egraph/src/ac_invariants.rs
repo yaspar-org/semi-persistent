@@ -348,7 +348,7 @@ where
         use crate::egraph::CompletionClamp;
         use crate::multiset::{
             clamp_idempotent, clamp_nilpotent, multiset_subtract, multiset_union,
-            normalize_nilpotent, normalize_set,
+            normalize_ms, normalize_nilpotent, normalize_set,
         };
         let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
 
@@ -389,7 +389,7 @@ where
             let op = rules[k].op;
             let clamp = self.op_clamp(op);
             type Pair<G, M> = (Vec<(G, M)>, Vec<(G, M)>);
-            let axiom_pairs: Vec<Pair<Cfg::G, Cfg::M>> = match clamp {
+            let mut axiom_pairs: Vec<Pair<Cfg::G, Cfg::M>> = match clamp {
                 CompletionClamp::Idempotent => rules[k]
                     .lhs
                     .iter()
@@ -418,6 +418,25 @@ where
                     .collect(),
                 CompletionClamp::Multiset => Vec::new(),
             };
+            // The rule-inverse pairs, as `cc_round` generates them.
+            let inv = self.inverse_op(op);
+            if let Some(inv) = inv {
+                let inverted = self.inverse_classes(inv);
+                for &(a, _) in &rules[k].lhs {
+                    let rest = multiset_subtract(&rules[k].lhs, &[(a, Cfg::M::ONE)]);
+                    let inverted_by_a = inverted
+                        .binary_search_by(|p| p.0.cmp(&a))
+                        .ok()
+                        .map(|i| inverted[i].1);
+                    for z in self.inverse_class(inv, a).into_iter().chain(inverted_by_a) {
+                        let mut r1 = multiset_union(&rules[k].rhs, &[(z, Cfg::M::ONE)]);
+                        if let CompletionClamp::Nilpotent { order } = clamp {
+                            clamp_nilpotent(&mut r1, order);
+                        }
+                        axiom_pairs.push((r1, rest.clone()));
+                    }
+                }
+            }
             if axiom_pairs.is_empty() {
                 continue;
             }
@@ -430,7 +449,7 @@ where
                 })
                 .collect();
             for (r1, r2) in axiom_pairs {
-                let (n1, n2) = match clamp {
+                let (mut n1, mut n2) = match clamp {
                     CompletionClamp::Idempotent => {
                         (normalize_set(&r1, &nf_rules), normalize_set(&r2, &nf_rules))
                     }
@@ -438,8 +457,14 @@ where
                         normalize_nilpotent(&r1, &nf_rules, order),
                         normalize_nilpotent(&r2, &nf_rules, order),
                     ),
-                    CompletionClamp::Multiset => unreachable!(),
+                    CompletionClamp::Multiset => {
+                        (normalize_ms(&r1, &nf_rules), normalize_ms(&r2, &nf_rules))
+                    }
                 };
+                if let Some(inv) = inv {
+                    self.group_cancel_pairs(inv, &mut n1);
+                    self.group_cancel_pairs(inv, &mut n2);
+                }
                 let joined = n1 == n2
                     || matches!(
                         (
