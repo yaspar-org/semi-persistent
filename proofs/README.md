@@ -1,41 +1,63 @@
 # Proofs
 
-Lean 4 formalizations of the two correctness arguments of the egraph crate,
-and the programs that reproduce the two incompleteness findings.
+Lean 4 formalizations of the correctness arguments of the egraph crate, and
+the programs that reproduce the incompleteness findings they led to.
 
 ## lean/
 
 A Lake project pinned to Mathlib v4.35.0 (`lean-toolchain`,
-`lakefile.toml`). Build:
+`lakefile.toml`). Build and gate:
 
     cd proofs/lean
-    lake exe cache get   # fetches the prebuilt Mathlib oleans, about 7 GB on disk
-    lake build
+    lake exe cache get          # the prebuilt Mathlib oleans, about 7 GB on disk
+    bash scripts/check-proofs.sh   # lake build, then the two gates
 
-Every theorem is sorry-free and depends only on `propext`,
-`Classical.choice` and `Quot.sound`; `SemperProofs/CC/Check.lean` and
-`SemperProofs/EMatch/Check.lean` print the axiom audit.
+The gates: no declaration uses `sorry`, and every `#print axioms` in the
+`*Check.lean` files reports only `propext`, `Classical.choice` and
+`Quot.sound`. CI runs the same script (`.github/workflows/lean.yml`) on
+every change under `proofs/lean`. Cost with the Mathlib cache present: a
+clean build of the project's own modules takes 82 s wall on 14 cores (Apple
+M4 Pro, 2026-11-04), and the gates about 70 s more; expect several times
+that on a 4-core runner, plus the cache download.
 
-- `SemperProofs/CC/`: AC congruence completion. `completion_sound` (no
-  merge leaves the equational theory), `completion_complete_at_convergence`
-  (two active nodes equal in the theory share a class, at a fixed round,
-  under the engine- and law-level hypotheses listed in its docstring),
-  `SlotState.fix_sufficient` and `reachable_I5` (the min-monomial slot
-  refresh keeps the slot the degree-lex-least active monomial of its class
-  through every operation), `shrinkNoRefresh_breaks_I5` (the state of
-  `proofs/repro/min-slot-gap.egg` as a counter-model without the refresh).
-- `SemperProofs/EMatch/`: leapfrog e-matching under maximum-partition
-  semantics. `ematch_sound` and `ematch_complete` for the reference plan
-  compiler and the list-based reference interpreter.
-- `STATUS.md`: statements in words, hypotheses in engine terms, the stub
+- `SemperProofs/CC/`: AC congruence completion. `completion_sound`,
+  `completion_complete_at_convergence`, the min-monomial slot invariant I5
+  and its preservation by the fixed engine (`reachable_I5`,
+  `fix_sufficient`, `shrinkNoRefresh_breaks_I5`), termination
+  (`kapur_termination`), confluence modulo the laws. `Laws/`: the concrete
+  identity, nilpotent, idempotent and inverse clamps of `nary_canon`, the
+  completeness theorem instantiated for each, and `InvRules*.lean`: the
+  five inverse rules the engine applies at rebuild and in completion, proved
+  sound and sufficient (`completion_complete_inverse_engine`,
+  `completion_complete_combined_engine`).
+- `SemperProofs/EMatch/`: e-matching under maximum-partition semantics.
+  The reference plan (`ematch_sound`, `ematch_complete`); `Engine/`, every
+  plan the scheduler can produce, runtime scheduling, the ByOp demotion,
+  semi-naive variants; `Flatten/`, views, the demand rule, its corrected
+  form and the per-kind rule (`demand_fix_complete_ac`,
+  `demand_kind_complete_*`), and the rule under laws
+  (`demand_laws_complete_*`); `Steps/`, globals, literals, predicates and
+  the sequence-pattern engine; `Env/`, the mutable match environment with
+  undo refines the reference interpreter (`env_refine`, `env_restore`).
+- `STATUS.md`: the theorems in words with their hypotheses, the stub
   statements that were false and how they were corrected, and what is not
   modelled.
 
 ## repro/
 
-- `min-slot-gap.egg`: fails `check-eq` before commit 231ac1b, passes after.
-  `min-slot-gap-control.egg`: the same facts asserted in another order,
-  passes before and after.
+Each program fails `check-eq` on the engine before the named commit and
+passes after; the `*control*` programs pass before and after.
+
+- `min-slot-gap.egg` (commit 231ac1b): the min-monomial slot not refreshed
+  on an in-place shrink.
+- `demand-gap.egg` (commit 844bcba): the `:flatten` demand rule rejects a
+  match whose untaken leaf opened a taken class.
+- `inv-into-unit.egg`, `unit-inverse.egg`, `non-matching.egg`,
+  `rule-inverse-cp.egg`, `z3-inverse.egg` (commit c98d7fc): the five
+  consequences of the inverse law across nodes, rules R1 to R5.
+- `aci-overaccept.egg`, `aci-overaccept-ac.egg`: probes, not failures: a
+  redundant set match the demand rule admits, and its multiset analogue
+  which it rejects.
 - `assoc-incomplete.egg`, `assoc-incomplete-witness.egg`: a consequence of
   two associative-only equations that completion does not derive, because
   `a_round` reduces and never superposes; the header explains why no
