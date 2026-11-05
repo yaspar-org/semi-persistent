@@ -109,6 +109,12 @@ impl Outcome {
 
 type Interp<Cfg> = Interpreter<Cfg, MachineLit, MachineModel, true, false>;
 
+thread_local! {
+    /// Whether `:flatten` rules match regrouped views (`EGraph::set_flatten_regroup`) in
+    /// the runs of this thread; on unless a test's oracle does not model them.
+    static REGROUP: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
 fn run_cfg<Cfg>(src: &str, strategy: SaturationStrategy, names: &[&str]) -> Outcome
 where
     Cfg: EGraphConfig,
@@ -122,6 +128,7 @@ where
     };
     let mut interp = Interp::<Cfg>::new(MachineModel);
     interp.set_strategy(strategy);
+    interp.eg.set_flatten_regroup(REGROUP.with(|c| c.get()));
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         cmds,
@@ -1412,8 +1419,13 @@ fn flatten_matching<P: Preset>(
     Ok(())
 }
 
+/// The oracle reads the stored and the opened view only, so regrouped views are off: on
+/// `t = Add{L0, Kc:3}` with `Kc ≡ Add{L0:2}`, the opened view `{L0:7}` regroups to
+/// `{L0:5, Kc}`, where `(Add x:1 ..r)` binds `x = Kc`, a sound match the oracle lacks.
+/// Regrouping is checked against its own reference in `tests/flatten_differential.rs`.
 #[test]
 fn flatten_views_multiply_counts() {
+    REGROUP.with(|c| c.set(false));
     proptest_run(
         300,
         (

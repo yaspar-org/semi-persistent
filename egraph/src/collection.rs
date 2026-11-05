@@ -2072,6 +2072,10 @@ where
     fn assoc_dir(&self, op: Cfg::O) -> crate::registry::AssocDir {
         crate::flatten::assoc_dir(self.eg, op)
     }
+
+    fn class_of(&self, node: Cfg::G) -> Cfg::G {
+        self.eg.class_repr(node)
+    }
 }
 
 /// Route 1's rows: each item's pattern matched against the live e-graph.

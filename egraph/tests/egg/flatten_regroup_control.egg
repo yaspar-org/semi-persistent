@@ -1,0 +1,34 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; The control for flatten_regroup_{ac,assoc,assoc_left,assoc_right}.egg: without
+;; `:flatten` a scalar variable takes one stored entry (maximum partition, design 07 §7.5),
+;; so a binary pattern matches no three-element node, whichever grouping's class exists.
+;; Completion is off, its default.
+(sort E)
+(function A () E) (function B () E) (function C () E)
+(function F (E) E :assoc-comm)
+(function G (E) E :assoc)
+(function Sub (E) E :assoc-left)
+(function Pow (E) E :assoc-right)
+(function T2 (E E) E)
+(let fab (F (A) (B)))
+(let f (F (A) (B) (C)))
+(let gab (G (A) (B)))
+(let gbc (G (B) (C)))
+(let g (G (A) (B) (C)))
+(let sab (Sub (A) (B)))
+(let s (Sub (A) (B) (C)))
+(let pbc (Pow (B) (C)))
+(let p (Pow (A) (B) (C)))
+(rewrite (F x y) (T2 x y))
+(rewrite (G x y) (T2 x y))
+(rewrite (Sub x y) (T2 x y))
+(rewrite (Pow x y) (T2 x y))
+(run 2)
+(check-neq f (T2 fab (C)))
+(check-neq g (T2 gab (C)))
+(check-neq g (T2 (A) gbc))
+(check-neq s (T2 sab (C)))
+(check-neq p (T2 (A) pbc))

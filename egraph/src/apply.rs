@@ -1448,7 +1448,8 @@ pub(crate) fn report_flatten_skips<Cfg, L, S, O, const T: bool, const P: bool>(
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
     let (skipped, overflowed) = (pool.flatten_skipped(), pool.flatten_overflowed());
-    if skipped == 0 && overflowed == 0 {
+    let truncated = pool.flatten_regroup_truncated();
+    if skipped == 0 && overflowed == 0 && truncated == 0 {
         // Nothing to report. The rule's name is looked up only here: a caller that compiled
         // its rule outside the e-graph's registry (the unit tests below) has no entry for it.
         return;
@@ -1459,6 +1460,12 @@ pub(crate) fn report_flatten_skips<Cfg, L, S, O, const T: bool, const P: bool>(
         eprintln!(
             "warning: {name}: {n} node(s) with {} skipped",
             crate::flatten::OVER_BOUND
+        );
+    }
+    if truncated > 0 {
+        eprintln!(
+            "warning: {name}: {truncated} node(s) with {}; their other views were matched",
+            crate::flatten::REGROUP_TRUNCATED
         );
     }
     let n = overflowed;

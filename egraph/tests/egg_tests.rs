@@ -408,6 +408,14 @@ egg_test!(flatten_inverse, "flatten_inverse.egg");
 egg_test!(flatten_inverse_control, "flatten_inverse_control.egg");
 egg_test!(flatten_rest_only, "flatten_rest_only.egg");
 egg_test!(flatten_rest_only_control, "flatten_rest_only_control.egg");
+egg_test!(flatten_regroup_ac, "flatten_regroup_ac.egg");
+egg_test!(flatten_regroup_assoc, "flatten_regroup_assoc.egg");
+egg_test!(flatten_regroup_assoc_left, "flatten_regroup_assoc_left.egg");
+egg_test!(
+    flatten_regroup_assoc_right,
+    "flatten_regroup_assoc_right.egg"
+);
+egg_test!(flatten_regroup_control, "flatten_regroup_control.egg");
 egg_test!(checked_add_ok, "checked_add_ok.egg");
 // A partial primitive applied outside its domain is a reported program error,
 // not a panic: the engine cannot pick a value, but the caller has to be able to

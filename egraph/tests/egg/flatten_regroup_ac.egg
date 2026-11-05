@@ -1,0 +1,36 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Regrouped views (design 07 §7.5, "Regrouped views"): under `:flatten` a variable of an AC
+;; or ACI pattern binds a class holding a node over a sub-multiset of the matched node's
+;; entries. A group whose class no node spells is not matched. The plain rule's behavior is
+;; pinned in flatten_regroup_control.egg.
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E)
+(function F (E) E :assoc-comm)
+(function S (E) E :assoc-comm-idem)
+(function T2 (E E) E)
+(function U2 (E E) E)
+(let ab (F (A) (B)))
+(let aa (F (A) (A)))
+(let t (F (A) (B) (C)))
+(let t2 (F (A) (A) (B)))
+(let t3 (F (A) (A) (C)))
+(let w (F (B) (C) (D)))
+(let sab (S (A) (B)))
+(let s (S (A) (B) (C)))
+(rewrite (F x y) (T2 x y) :flatten)
+(rewrite (S x y) (U2 x y) :flatten)
+(run 2)
+;; {A, B} is a sub-multiset of {A, B, C}, and ab's class holds F{A, B}.
+(check-eq t (T2 ab (C)))
+;; {A, B} out of {A:2, B}: the remaining entry is A.
+(check-eq t2 (T2 ab (A)))
+;; {A:2} out of {A:2, C}: a group respects multiplicities.
+(check-eq t3 (T2 aa (C)))
+;; ACI: {A, B} is a subset of {A, B, C}.
+(check-eq s (U2 sab (C)))
+;; No node spells {B, C} or {C, D} during the run: no regrouped view, no match.
+(check-neq t (T2 (F (B) (C)) (A)))
+(check-neq w (T2 (F (C) (D)) (B)))

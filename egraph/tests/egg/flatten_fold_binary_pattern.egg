@@ -2,28 +2,43 @@
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; TYPES: machine
-;; A binary pattern does not match a flattened fold (design 07 §7.5, "Left- and
-;; right-associative operators"). Build-time flattening stores `Sub(Sub(a, b), c)` as the
-;; sequence [a, b, c]. `(Sub x y)` binds one child per variable, so it matches a two-element
-;; node only; neither plain matching nor a `:flatten` view regroups the run [a, b] into one
-;; child. The rewrite therefore never fires on `t`, with or without `:flatten`. A pattern of
-;; the stored arity, or one with a rest variable such as `(Sub ..p y)`, matches. The
-;; rest-variable case runs on a second operator, `Rsub`, so that its rewrite does not put `t`
-;; in the class of a `T2` term.
+;; A binary pattern against a flattened fold (design 07 §7.5, "Left- and right-associative
+;; operators"). Build-time flattening stores `Sub(Sub(a, b), c)` as the sequence [a, b, c].
+;; `(Sub x y)` binds one child per variable, so without `:flatten` it matches a two-element
+;; node only and never fires on a three-element one (`Psub` below). Under `:flatten` a
+;; regrouped view lets `x` bind the class of the prefix [a, b] when a node spells it. Building
+;; `t` does not leave a node `Sub(a, b)` (the surface builder splices it), so `ab` adds one, and
+;; the rewrite fires on `t`. On `w`, no node spells the prefix [c, b] during the run, and the
+;; rewrite does not fire. A pattern of the stored arity, or one
+;; with a rest variable such as `(Sub ..p y)`, matches without regrouping. The rest-variable
+;; case runs on a third operator, `Rsub`, so that its rewrite does not put a node in the
+;; class of a `T2` term.
+;;
+;; Correction (2026-11-05): this fixture first pinned that the `:flatten` rule does not fire
+;; on `t` either (`check-neq t (T2 (Sub (A) (B)) (C))`), because a view only opened nested
+;; children and never closed a run. Regrouped views close a prefix of a left fold when its
+;; class exists, so the fixture adds that class (`ab`), the check is now `check-eq`, the plain
+;; rule moved to `Psub`, and `w` keeps the case without the class.
 (sort E)
 (function A () E) (function B () E) (function C () E)
 (function Sub (E) E :assoc-left)
+(function Psub (E) E :assoc-left)
 (function T2 (E E) E)
 (function T3 (E E E) E)
 (function Rsub (E) E :assoc-left)
 (function U2 (E E) E)
+(let ab (Sub (A) (B)))
 (let t (Sub (Sub (A) (B)) (C)))
-(rewrite (Sub x y) (T2 x y))
+(let w (Sub (C) (B) (A)))
+(let p (Psub (Psub (A) (B)) (C)))
+(rewrite (Psub x y) (T2 x y))
 (rewrite (Sub x y) (T2 x y) :flatten)
 (rewrite (Sub x y z) (T3 x y z))
 (let u (Rsub (Rsub (A) (B)) (C)))
 (rewrite (Rsub ..p y) (U2 (Rsub ..p) y))
 (run 2)
-(check-neq t (T2 (Sub (A) (B)) (C)))
+(check-eq t (T2 (Sub (A) (B)) (C)))
+(check-neq w (T2 (Sub (C) (B)) (A)))
+(check-neq p (T2 (Psub (A) (B)) (C)))
 (check-eq t (T3 (A) (B) (C)))
 (check-eq u (U2 (Rsub (A) (B)) (C)))

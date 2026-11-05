@@ -192,6 +192,9 @@ pub struct EGraph<
     /// [`set_matching_shield`](Self::set_matching_shield)). Runtime switch, not
     /// semi-persistent: a relevancy client toggles it per matching round.
     matching_shield: bool,
+    /// Whether a `:flatten` rule also matches regrouped views (`crate::flatten`,
+    /// "Regrouped views"); see [`set_flatten_regroup`](Self::set_flatten_regroup).
+    flatten_regroup: bool,
     /// Survivor policy for class merges (see [`UnionBy`]).
     union_by: UnionBy,
     /// Set by a completion round that met a multiplicity past the configured width;
@@ -470,6 +473,7 @@ where
             touched: Vec::new(),
             track_merge_members: false,
             matching_shield: false,
+            flatten_regroup: true,
             union_by: UnionBy::Rank,
             cc_overflow: false,
             width_error: None,
@@ -2003,6 +2007,19 @@ where
     /// Whether the node-level e-matching shield is on.
     pub fn matching_shield(&self) -> bool {
         self.matching_shield
+    }
+
+    /// Turn regrouped views of `:flatten` rules on (the default) or off
+    /// (`crate::flatten`, "Regrouped views"). Off, a `:flatten` rule matches the opened
+    /// views only, the matching the Lean model specifies: the conformance runner
+    /// (`tests/conform.rs`) turns it off for the model's `:flatten` fixtures.
+    pub fn set_flatten_regroup(&mut self, on: bool) {
+        self.flatten_regroup = on;
+    }
+
+    /// Whether `:flatten` rules match regrouped views.
+    pub fn flatten_regroup(&self) -> bool {
+        self.flatten_regroup
     }
 
     /// Shield (`false`) or un-shield (`true`) the single node `id` from

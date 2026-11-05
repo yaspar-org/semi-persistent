@@ -877,8 +877,10 @@ AC matching implements *maximum-partition* matching over the classes that exist:
 - without `..rest`, every entry must be taken.
 
 Two restrictions are deliberate. A variable binds an e-class, never a sub-sum that no
-node spells: `?x` cannot become `a+b` if no node `a+b` exists. And a multiplicity is
-never split between variables. Classical AC matching admits both, and is NP-complete
+node spells: `?x` cannot become `a+b` if no node `a+b` exists. Without `:flatten`, a
+variable takes one stored entry, so it does not become `a+b` even when that node exists;
+under `:flatten` it does, through a regrouped view ("Regrouped views", below). And a
+multiplicity is never split between variables. Classical AC matching admits both, and is NP-complete
 (Benanav, Kapur, Narendran 1987).
 
 The completeness problem that matters in practice is nesting. A node stored as `+(a, c)`,
@@ -898,7 +900,7 @@ each view with the same function as §5.1. Two rules keep this tractable:
 
 Views cover nesting for A, AC, and ACI operators; a `:comm` operator is matched in both
 orders instead. Sequence patterns (filters, runs, `:except`) are matched by the same
-views.
+opened views; only ordinary rules also match regrouped views ("Regrouped views", below).
 
 Guarantee: completeness relative to maximum partition plus views is argued in the
 design, and checked by differential tests against brute-force references
@@ -950,11 +952,14 @@ exception stands.
   (`Conform/Flatten`) writes `tests/egg/conform-flatten/`, with nested atoms, laws at two
   levels, cycles and folds (commit `267d8f46`). `tests/conform.rs` runs each file under both
   evaluation strategies and both atom-scheduling choices; the Lean workflow regenerates both
-  directories and fails on a difference. The brute-force references of
+  directories and fails on a difference. The model does not regroup, so `tests/conform.rs`
+  runs both matching samples with regrouped views off, and checks with them on that every
+  `check-eq` still holds ("Regrouped views", below). The brute-force references of
   `tests/flatten_differential.rs` and `tests/seq_reference.rs` are a second, independent check.
 - Not modelled: the galloping cursor; faults inside sequence sub-queries; literals,
   sequence-filter patterns and predicates in the base model (`EMatch/Defs.lean` header);
-  `:flatten` and sequence rules across rounds, which the engine matches against the full
+  regrouped views (`flatten::FlattenScratch::regroup`); `:flatten` and sequence rules across
+  rounds, which the engine matches against the full
   index each round (§9.2); and the correspondence of the model to `ematch.rs` and
   `flatten.rs`.
 
@@ -1042,6 +1047,9 @@ the pattern elements and the rest variable:
    multiset elements cannot (language guide, migration caveat).
 3. The rest variable takes every unbound child, each with its whole
    multiplicity.
+
+Under `:flatten` the partition is taken over each view of the node, opened and regrouped
+("Flattened Matching", below), not over the stored children only.
 
 #### Multiplicity Constraints
 
@@ -1294,6 +1302,73 @@ tests read the leaf alone; the clamp and cancel tests read the whole view, so un
 (`Flatten/EngineRule.lean`). The reference in `tests/flatten_differential.rs` computes the
 same flag; `flattened_matches_reference_laws` fails at seed 18 with the flag forced off.
 
+**Regrouped views.** Opening a view never closes a run, so maximum partition misses a
+match whose variable binds a class spelling several entries. Measured on the PR #153
+binary with `(rewrite (F x y) (T2 x y) :flatten)`, `ab = F(a, b)` and `t = F(a, b, c)`,
+`(check-eq t (T2 ab (C)))` failed for `:assoc-comm` with completion off (it held under
+`(set-option :completion eager)`, which materializes `F{ab, c}`), for `:assoc` in every
+mode, for the prefix `[a, b]` of an `:assoc-left` node, and for the suffix of an
+`:assoc-right` node. A `:flatten` rule now also matches each *regrouped* view
+(`flatten::FlattenScratch::regroup`): a group of the view's entries is replaced by the
+class `G` of an `f` node over exactly that group. The group is a sub-multiset of at least
+two entries for AC (multiplicities respected), a subset of at least two for ACI, a
+contiguous run of at least two for `:assoc`, a prefix for `:assoc-left` and a suffix for
+`:assoc-right`; never the whole view, and never a node over its own class
+(`G ∋ f{G, c}`, an absorption a cyclic class repeats without end). A regrouped view is
+normalized like any view and regrouped again, largest first. Candidates come from the use
+lists of the view's classes (`Members::containing`, the round's `by_contains`), the partner
+search of completion's `cc_round`; no sub-multiset is enumerated, and no node is created.
+
+- **Soundness.** `G` holds a node `f(group)`, so `G` equals `f(group)` in the theory, and the
+  regrouped view spells a term equal to the view's: by associativity and commutativity for
+  AC and ACI, by associativity for `:assoc`. For a left fold, `[a, b, c]` spells
+  `f(f(a, b), c)`, which is `f(G, c)` when `G` holds `f(a, b)`. Any other run is not a
+  subterm: regrouping `[b, c]` would spell `f(a, f(b, c))`, and `a - (b - c)` is not
+  `(a - b) - c` (the counter-model of "Folds open only their spine"). The right fold is the
+  mirror.
+- **Composition with opening and demand.** Regrouping runs on the canonical views the walk
+  produces, so a view may open some children and regroup others. A regrouped class is kept
+  whole and never opened, and openings stay on the spine. A regrouped view inherits its
+  source's opening trees, and a leaf holding a class of the group also holds `G`, so an item
+  that takes `G` satisfies the leaf. A regrouping must be needed, as an opening is: the view
+  records the regrouped classes, and a match is kept only if its items take each of them
+  (`Demand::needs`). A view needing more regrouped classes than the decomposition has items
+  is not built. When the items are all bound, the walk counts as takeable the classes below
+  a bound class through `f` members, so its pruning keeps the leaves a regrouped item takes
+  from.
+- **Guarantee.** A `:flatten` rule is complete modulo the theory relative to the classes
+  holding a node that spells the group: when such a class exists, the match that binds a
+  variable to it is found. The exceptions are a node over its own class, excluded above,
+  and a node whose regrouping stops at a bound, which is reported.
+- **Bounds.** Regrouping has its own bounds per node: `MAX_REGROUP_VIEWS` (2^14) regrouped
+  records and `MAX_REGROUP_WORK` (2^20) candidates examined. Past either, regrouping stops,
+  the views found so far are matched, and the node is counted
+  (`MatchPool::flatten_regroup_truncated`); saturation warns "regrouped views truncated at one
+  node" (`apply::report_flatten_skips`). The opening bounds are unchanged.
+- **Scope.** Only the relational matcher's `Step::Flatten` regroups. Sequence rules
+  (`flatten::views_u64`) do not. `EGraph::set_flatten_regroup(false)` turns regrouping off,
+  which is the matching the Lean model specifies; `tests/conform.rs` runs the model's two
+  matching samples that way, because each holds `check-neq` candidates a regrouped view
+  matches soundly (`conform/c1_0100.egg`, `conform-flatten/f2_0071.egg`), and a second test
+  checks with regrouping on that every `check-eq` of both samples still holds.
+- **Evidence.** `tests/egg/flatten_regroup_{ac,assoc,assoc_left,assoc_right}.egg` pin the
+  valid groupings with `check-eq`, and the off-spine fold groupings, the non-contiguous
+  `:assoc` run and the groups no node spells with `check-neq`;
+  `flatten_regroup_control.egg` pins that a rule without the tag still misses every one.
+  `tests/flatten_differential.rs` extends its brute-force reference with regrouping over
+  every `f` member of the model, needs and the item limit included; over its 60 seeds,
+  regrouping changes the matches of 352 (graph, pattern) pairs, and 273 under laws, and the
+  engine equals the reference on each.
+- **Cost** (release build, best of three runs per file, 2026-11-05). The 231 `:flatten`
+  programs of `tests/egg` and `tests/egg/conform-flatten` other than
+  `ac_lazy_budget_inconclusive.egg` take 0.590 s in total before and 0.604 s after.
+  `ac_lazy_budget_inconclusive.egg`, whose rule rounds grow the graph about 8x, takes 0.43 s
+  before and 0.74 s after: each `Min` node scans the use lists of the four leaf classes, which
+  hold most of the graph. Two programs stop at a regroup bound, each on one node, and are
+  reported: `conform/c1_0052.egg` run with regrouping on, a cyclic graph whose views carry
+  large counts, and `mult_flatten_view_overflow.egg` under `--bits 64`, whose opened view
+  `{b:2^32, c:65536, a}` regroups `{b:65536, c}` into `K` once per step of a chain of 65,536.
+
 The walk follows the e-graph's nesting, so it is an explicit-stack depth-first search
 over pending tasks, the view so far, the open classes and instances, and an undo trail.
 A chain of 10^5 nested conjunctions costs no Rust stack. Three bounds stop one node's
@@ -1359,15 +1434,24 @@ Added 2026-11-05. The caveats below hold for every operator declared `:assoc-lef
   `rewrite_right_sound`, `left_off_spine_unsound`, `right_off_spine_unsound`, `aRound_sound`
   and `aRoundH_sound` in `CC/ARound/`;
   [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
-- **A binary pattern does not match a flattened fold.** `(Sub x y)` binds one child per
-  variable, so it matches a stored node of two elements only. The store holds `(a - b) - c`
-  as `[a, b, c]`, and neither plain matching nor a `:flatten` view regroups the run `[a, b]`
-  into one child: a view opens nested children and never closes a run. After
-  `(rewrite (Sub x y) (T2 x y))`, with or without `:flatten`,
-  `(check-eq t (T2 (Sub (A) (B)) (C)))` reports "terms are not equal". Write the pattern at
-  the stored arity, `(Sub x y z)`, or with a rest variable, `(Sub ..p y)`, which binds `p` to
-  `[a, b]` and `y` to `c`. Fixture: `tests/egg/flatten_fold_binary_pattern.egg`, which pins
-  the miss with `check-neq` and the two working forms with `check-eq`, under both strategies.
+- **A binary pattern matches a flattened fold under `:flatten` through a regrouped spine
+  prefix or suffix, when a node spells it.** `(Sub x y)` binds one child per variable. The
+  store holds `(a - b) - c` as `[a, b, c]`. Without `:flatten` the rule matches a node of two
+  elements only. Under `:flatten`, a regrouped view lets `x` bind a class holding
+  `Sub(a, b)`, so `(check-eq t (T2 (Sub (A) (B)) (C)))` holds when that node exists during
+  the run; with no such node it reports "terms are not equal". A left fold regroups a prefix
+  only and a right fold a suffix only: `a - (b - c)` is a different term, and
+  `(check-neq t (T2 (A) bc))` holds even when `bc = Sub(b, c)` exists. Without a node for the
+  group, write the pattern at the stored arity, `(Sub x y z)`, or with a rest variable,
+  `(Sub ..p y)`, which binds `p` to `[a, b]` and `y` to `c`. Fixtures:
+  `tests/egg/flatten_fold_binary_pattern.egg`, `flatten_regroup_assoc_left.egg`,
+  `flatten_regroup_assoc_right.egg`.
+
+  **Correction (2026-11-05).** This item first read "A binary pattern does not match a
+  flattened fold", with or without `:flatten`, because a view only opened nested children.
+  Regrouped views ("Regrouped views", above) close a spine prefix or suffix whose class
+  exists, so the `:flatten` case now matches; `flatten_fold_binary_pattern.egg` moved its
+  plain rule to a second operator and keeps a node with no class for the prefix.
 - **A fold combines with none of `:comm`, `:identity`, `:nilpotent`, `:inverse`.** The sort
   checker rejects `:comm` with a fold
   (`:assoc-left/:assoc-right cannot be combined with :comm`), and the three laws, with
@@ -1415,7 +1499,8 @@ chain, the view bound, and proofs mode. The egg programs are `flatten_nested.egg
 `flatten_two_members.egg`, `flatten_assoc.egg`, `flatten_ac_mult.egg`,
 `mult_flatten_view_overflow.egg`, `flatten_with_nary_no_warning.egg`, and
 `flatten_without_nary_warns.egg`; `flatten_fold_spine.egg` and
-`flatten_fold_binary_pattern.egg` for folds; and the `seq_flatten*.egg` programs. The 200
+`flatten_fold_binary_pattern.egg` for folds; `flatten_regroup_{ac,assoc,assoc_left,assoc_right}.egg`
+and `flatten_regroup_control.egg` for regrouped views; and the `seq_flatten*.egg` programs. The 200
 programs of `tests/egg/conform-flatten/` come from the Lean model (`semper-conform-flatten`;
 "What is machine-checked" above).
 

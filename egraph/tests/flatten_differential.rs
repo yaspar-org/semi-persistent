@@ -10,6 +10,13 @@
 //! all differences. Without the tag the reference reads the stored children only, so
 //! the same comparison also pins that an untagged rule matches as before.
 //!
+//! **Regrouped views** (`flatten`, "Regrouped views"). With the tag, each view also
+//! yields, largest first and recursively, the views that replace a group of its entries
+//! (a sub-multiset, a subset, or a run, a prefix or suffix for a fold) by a class holding
+//! an `f` node over that group, found by scanning every `f` member of the model rather
+//! than use lists. A regrouped view keeps its source's opening trees, and its matches
+//! must take each regrouped class, at most one per item.
+//!
 //! **Views** (`doc/goal-flatten-and-engine-completion.md`, decision 2 and task 3). For a
 //! node `n` of an n-ary operator `f`, each child class `X` contributes one of:
 //! - `X` itself, kept whole, unless every member of `X` is an `f` node (a class with no
@@ -194,6 +201,9 @@ struct Leaf {
     x: Class,
     non_inert: bool,
     g: Vec<Class>,
+    /// A regrouped class the items must take (`flatten::Demand::needs`), encoded as a
+    /// leaf satisfied exactly when `x` is taken: `g` is `[x]` and `non_inert` false.
+    need: bool,
 }
 
 type Leaves = Vec<Leaf>;
@@ -360,7 +370,7 @@ fn canonical(model: &Model, op: OpId, v: View) -> Option<View> {
 
 /// The views `n` is matched against: the stored children without the tag, every
 /// distinct normalized view with it.
-fn views(model: &Model, n: &Node, flatten: bool) -> Vec<(View, Alts)> {
+fn views(model: &Model, n: &Node, flatten: bool, limit: usize) -> Vec<(View, Alts)> {
     if !flatten {
         return vec![(n.kids.clone(), vec![Vec::new()])];
     }
@@ -373,13 +383,165 @@ fn views(model: &Model, n: &Node, flatten: bool) -> Vec<(View, Alts)> {
                 x: *x,
                 non_inert: non_inert(model, n.op, &v, *x, *k, l),
                 g: l.iter().map(|e| e.0).collect(),
+                need: false,
             })
             .collect();
         if let Some(c) = canonical(model, n.op, v) {
             by_view.entry(c).or_default().push(leaves);
         }
     }
+    regroup(model, n.op, limit, &mut by_view);
     by_view.into_iter().collect()
+}
+
+/// A member's children as a group: a multiset by class for AC, a set for ACI, the
+/// sequence for `:assoc` and the folds.
+fn group_of(kind: Kind, kids: &[(Class, u64)]) -> View {
+    match kind {
+        Kind::Ac => {
+            let mut m: BTreeMap<Class, u64> = BTreeMap::new();
+            for &(c, k) in kids {
+                *m.entry(c).or_default() += k;
+            }
+            m.into_iter().collect()
+        }
+        Kind::Aci => {
+            let s: BTreeSet<Class> = kids.iter().map(|e| e.0).collect();
+            s.into_iter().map(|c| (c, 1)).collect()
+        }
+        Kind::Assoc | Kind::Plain => kids.to_vec(),
+    }
+}
+
+/// Every raw view that replaces one occurrence of `grp` in `v` by the class `g`: a
+/// sub-multiset (AC), a subset (ACI), or a contiguous run (`:assoc`), a prefix for
+/// `:assoc-left` and a suffix for `:assoc-right`, of at least two entries and not all
+/// of `v`, by a node not over its own class.
+fn fits(kind: Kind, dir: AssocDir, v: &View, grp: &View, g: Class) -> Vec<View> {
+    // A node over its own class is not a group.
+    if grp.iter().any(|e| e.0 == g) {
+        return vec![];
+    }
+    match kind {
+        Kind::Assoc | Kind::Plain => {
+            let k = grp.len();
+            if k < 2 || k >= v.len() {
+                return vec![];
+            }
+            (0..=v.len() - k)
+                .filter(|&p| match dir {
+                    AssocDir::Both => true,
+                    AssocDir::Left => p == 0,
+                    AssocDir::Right => p + k == v.len(),
+                })
+                .filter(|&p| v[p..p + k].iter().zip(grp).all(|(a, b)| a.0 == b.0))
+                .map(|p| {
+                    let mut w = v[..p].to_vec();
+                    w.push((g, 1));
+                    w.extend_from_slice(&v[p + k..]);
+                    w
+                })
+                .collect()
+        }
+        Kind::Ac | Kind::Aci => {
+            let total: u64 = grp.iter().map(|e| e.1).sum();
+            if total < 2 || grp == v {
+                return vec![];
+            }
+            let mut w = v.clone();
+            for &(c, k) in grp {
+                match w.iter_mut().find(|e| e.0 == c) {
+                    Some(e) if e.1 >= k => e.1 -= k,
+                    _ => return vec![],
+                }
+            }
+            w.retain(|e| e.1 > 0);
+            w.push((g, 1));
+            vec![w]
+        }
+    }
+}
+
+thread_local! {
+    /// Set to compute the reference without regrouped views, to count the
+    /// (graph, pattern) pairs regrouping changes.
+    static NO_REGROUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The (graph, pattern) pairs whose matches regrouping changed, on this thread.
+    static REGROUPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Regrouped views (`flatten`, "Regrouped views"), by brute force over every `f`
+/// member of the model: each view, largest first, yields the canonical views that
+/// replace a group of its entries by a class `g` holding an `f` node over that group,
+/// recursively. A regrouped view inherits each of its source's opening trees: a leaf
+/// holding a class of the group also holds `g`, the regrouped classes the group absorbs
+/// are no longer needed, and `g` is; a tree needing more than `limit` (the pattern's
+/// items) is dropped.
+fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Alts>) {
+    if NO_REGROUP.with(|c| c.get()) {
+        return;
+    }
+    let kind = model.kinds[&f];
+    let dir = model.dirs.get(&f).copied().unwrap_or(AssocDir::Both);
+    let groups: Vec<(Class, View)> = model
+        .members
+        .iter()
+        .flat_map(|(c, ms)| {
+            ms.iter()
+                .filter(|m| m.op == f)
+                .map(move |m| (*c, group_of(kind, &m.kids)))
+        })
+        .collect();
+    let size = |v: &View| v.iter().map(|e| u128::from(e.1)).sum::<u128>();
+    let mut done: BTreeSet<View> = BTreeSet::new();
+    while let Some(v) = by_view
+        .keys()
+        .filter(|v| !done.contains(*v))
+        .max_by_key(|v| (size(v), (*v).clone()))
+        .cloned()
+    {
+        done.insert(v.clone());
+        let alts = by_view[&v].clone();
+        for (g, grp) in &groups {
+            for raw in fits(kind, dir, &v, grp, *g) {
+                let Some(c) = canonical(model, f, raw) else {
+                    continue;
+                };
+                if done.contains(&c) {
+                    continue;
+                }
+                let entry = by_view.entry(c).or_default();
+                if entry.iter().any(|l| l.is_empty()) {
+                    continue;
+                }
+                let in_group = |x: &Class| grp.iter().any(|e| e.0 == *x);
+                for leaves in &alts {
+                    let mut next: Leaves = leaves
+                        .iter()
+                        .filter(|l| !(l.need && in_group(&l.x)))
+                        .map(|l| {
+                            let mut l = l.clone();
+                            if !l.need && !l.g.contains(g) && l.g.iter().any(in_group) {
+                                l.g.push(*g);
+                            }
+                            l
+                        })
+                        .collect();
+                    if !next.iter().any(|l| l.need && l.x == *g) {
+                        next.push(Leaf {
+                            x: *g,
+                            non_inert: false,
+                            g: vec![*g],
+                            need: true,
+                        });
+                    }
+                    if next.iter().filter(|l| l.need).count() <= limit {
+                        entry.push(next);
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ── Patterns ─────────────────────────────────────────────────────────────────
@@ -517,7 +679,7 @@ fn match_node(
 ) -> Vec<Env> {
     let kind = model.kinds[&n.op];
     let mut out = Vec::new();
-    for (view, alts) in views(model, n, flatten) {
+    for (view, alts) in views(model, n, flatten, ps.len()) {
         let d = Demand {
             alts: &alts,
             flatten,
@@ -1061,6 +1223,14 @@ fn differential_over(seeds: std::ops::Range<u64>, flatten: bool, laws: bool) -> 
             if flatten && want != reference(&model, &p, false) {
                 exercised += 1;
             }
+            if flatten {
+                NO_REGROUP.with(|c| c.set(true));
+                let opened = reference(&model, &p, true);
+                NO_REGROUP.with(|c| c.set(false));
+                if opened != want {
+                    REGROUPED.with(|c| c.set(c.get() + 1));
+                }
+            }
         }
     }
     (compared, exercised)
@@ -1077,11 +1247,17 @@ fn untagged_matches_stored_children() {
 /// With the tag, the engine's matches are the reference's over every flattened view.
 #[test]
 fn flattened_matches_reference() {
+    REGROUPED.with(|c| c.set(0));
     let (compared, exercised) = differential(0..60, true);
+    let regrouped = REGROUPED.with(|c| c.get());
     eprintln!(
-        "flatten differential: {compared} matches compared, {exercised} (graph, pattern) pairs changed by flattening"
+        "flatten differential: {compared} matches compared, {exercised} (graph, pattern) pairs changed by flattening, {regrouped} by regrouping"
     );
     assert!(compared > 1000, "too few matches compared: {compared}");
+    assert!(
+        regrouped > 10,
+        "too few (graph, pattern) pairs where regrouping changed the matches: {regrouped}"
+    );
     assert!(
         exercised > 30,
         "too few (graph, pattern) pairs where flattening changed the matches: {exercised}"
@@ -1101,11 +1277,17 @@ fn untagged_matches_stored_children_laws() {
 /// non-inert clause.
 #[test]
 fn flattened_matches_reference_laws() {
+    REGROUPED.with(|c| c.set(0));
     let (compared, exercised) = differential_laws(0..60, true);
+    let regrouped = REGROUPED.with(|c| c.get());
     eprintln!(
-        "flatten differential under laws: {compared} matches compared, {exercised} (graph, pattern) pairs changed by flattening"
+        "flatten differential under laws: {compared} matches compared, {exercised} (graph, pattern) pairs changed by flattening, {regrouped} by regrouping"
     );
     assert!(compared > 1000, "too few matches compared: {compared}");
+    assert!(
+        regrouped > 10,
+        "too few (graph, pattern) pairs where regrouping changed the matches: {regrouped}"
+    );
     assert!(
         exercised > 30,
         "too few (graph, pattern) pairs where flattening changed the matches: {exercised}"
@@ -1619,10 +1801,13 @@ fn rest_only_chain_matches() {
     // other instance of _4 is opened, which the demand rule keeps because the leaf's
     // class is the one taken (closing it would merge the two instances into _4:2, which
     // the unannotated item would take whole). Y inside _4 has multiplicity 2 in that
-    // view, which an unannotated item does not take.
+    // view, which an unannotated item does not take. The tenth is a regrouped view
+    // (`flatten`, "Regrouped views"): opening `_2`, `_3` and the `_4` directly under `_2`
+    // gives `{A, X, _4, Y:2, Z}`, and `_3 ∋ Add{X, _4}` regroups it to `{A, _3, Y:2, Z}`,
+    // where x = _3 with rest = [Y:2, Z, A], since `_1 = A + _3 + Y + Z + Y`.
     assert_eq!(
-        at_root, 9,
-        "one match per choice of x and of the classes it opens"
+        at_root, 10,
+        "one match per choice of x and of the classes it opens or regroups"
     );
 }
 

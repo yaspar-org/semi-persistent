@@ -41,6 +41,51 @@
 //! element, for a multiset no takeable opened class, and no way of being non-inert,
 //! as it closes.
 //!
+//! **Regrouped views.** Maximum partition gives each scalar item one entry, so `(f x y)`
+//! does not match `f{a, b, c}` with `x` the class of `f{a, b}`, although that class exists.
+//! The ordinary matcher (`Step::Flatten`) therefore also matches every *regrouped* view:
+//! a view in which a group of entries is replaced by the class `G` of an `f` node over
+//! exactly that group. The group is a sub-multiset of at least two entries for AC
+//! (multiplicities respected), a subset of at least two for ACI, and a contiguous run of
+//! at least two for `:assoc`; for `:assoc-left` it is a prefix and for `:assoc-right` a
+//! suffix ([`spine`]). It is never the whole view, and a node over its own class
+//! (`G ∋ f{G, c}`) is not a group: it would replace `G + c` by `G`, an absorption a cyclic
+//! class repeats without end, as the walk's path cut excludes reopening a class. A
+//! regrouped view is normalized as any view and regrouped again, largest view first.
+//! Candidates are the `f` nodes on the use lists of the view's classes
+//! ([`Members::containing`], the round's `by_contains`, the partner search of completion's
+//! `cc_round`); nothing enumerates sub-multisets. Variables still bind existing classes:
+//! nothing is created.
+//!
+//! A regrouping must be needed, as an opening is: a regrouped view records the regrouped
+//! classes its matches must take ([`Demand::needs`]), so a match in which only the rest
+//! holds a regrouped class is not kept, and a view needing more classes than the
+//! decomposition has items is not built.
+//! Two bounds of their own keep regrouping cheap: [`MAX_REGROUP_VIEWS`] records and
+//! [`MAX_REGROUP_WORK`] candidates examined per node. Past either, regrouping stops, the
+//! views found so far are matched, and the node is counted ([`REGROUP_TRUNCATED`],
+//! reported by `apply::report_flatten_skips`). `EGraph::set_flatten_regroup(false)` turns
+//! regrouping off, which gives the matching the Lean model specifies.
+//!
+//! Soundness. `G` holds a node `f(group)`, so `G` equals `f(group)` in the theory, and a
+//! regrouped view spells a term equal to the view's: for AC and ACI by associativity and
+//! commutativity, for `:assoc` by associativity. For a left fold, `[a, b, c]` spells
+//! `f(f(a, b), c)`, which is `f(G, c)` when `G` holds `f(a, b)`; a longer prefix is the
+//! same argument applied to the innermost nesting. Any other run is not a subterm:
+//! regrouping `[b, c]` would spell `f(a, f(b, c))`, and for subtraction `a - (b - c)` is not
+//! `(a - b) - c`, the counter-model of [`spine`]. The right fold is the mirror.
+//!
+//! Regrouping composes with opening. Regrouping runs on the canonical views the walk
+//! produces, so a view may open some children and regroup others; a regrouped class is
+//! kept whole, never opened, and opening stays on the spine. A regrouped view inherits the
+//! source view's opening trees with one change: a leaf directly holding a class of the
+//! group also holds `G`, so an item taking `G` takes from the leaf and satisfies the demand
+//! rule. A source view with no opening makes the regrouped view unconditional. When the
+//! decomposition's items are all bound, the walk's `takeable` test admits the classes
+//! below a bound class through `f` members (`ematch.rs`, `Step::Flatten`), so the demand
+//! pruning keeps the leaves a regrouped item takes from. Sequence rules (`views_u64`) do
+//! not regroup.
+//!
 //! "Member" is what the round's index holds: `by_repr[X] ∩ by_op[f]`, computed as the
 //! class's bucket filtered by each node's round operator. Nothing is precomputed and
 //! nothing stored changes.
@@ -87,6 +132,14 @@ pub enum FlatKind {
     Aci,
 }
 
+/// Regrouped records added at one node; past it regrouping stops
+/// ([`FlattenScratch::regroup_truncated`]).
+pub const MAX_REGROUP_VIEWS: usize = 1 << 14;
+/// Regrouping candidates examined at one node, likewise.
+pub const MAX_REGROUP_WORK: usize = 1 << 20;
+/// The outcome of a node whose regrouping stopped at a bound: its views and the
+/// regrouped views found so far are matched, and the node is counted.
+pub const REGROUP_TRUNCATED: &str = "regrouped views truncated at one node";
 /// Complete combinations enumerated at one node.
 pub const MAX_VIEWS: usize = 1 << 20;
 /// Options taken at one node, views or dead ends.
@@ -195,6 +248,10 @@ pub struct FlattenScratch<G, M> {
     /// The distinct views: a canonical span, and the span of `recs` (sorted) giving it.
     spans: Vec<(usize, usize, usize, usize)>,
     norm: Vec<(G, M)>,
+    /// Per record, the regrouped classes a match must take ([`Demand::needs`]).
+    needs: Vec<G>,
+    /// Regrouping stopped at a bound ([`MAX_REGROUP_VIEWS`], [`MAX_REGROUP_WORK`]).
+    regroup_truncated: bool,
     /// Views and openings of the last enumeration skipped for [`MULT_OVERFLOW`], and the
     /// first of them.
     overflows: usize,
@@ -204,6 +261,10 @@ pub struct FlattenScratch<G, M> {
     /// Its kind, for [`Demand::merge_on_close`].
     kind: FlatKind,
 }
+
+/// A regrouped record's demand: per leaf, the class it opened, its flag and its sorted
+/// elements, sorted; and its sorted needs.
+type Sig<G> = (Vec<(G, bool, Vec<G>)>, Vec<G>);
 
 /// An opening instance of the walk.
 #[derive(Clone, Copy, Debug)]
@@ -228,6 +289,9 @@ struct Rec {
     len: usize,
     gstart: usize,
     gcount: usize,
+    /// The regrouped classes the items must take, a span of `needs`.
+    nstart: usize,
+    ncount: usize,
 }
 
 /// A leaf of an opening tree: an opened instance with no opening below it.
@@ -261,6 +325,9 @@ pub struct Demand<G> {
     pub merge_on_close: bool,
     /// Per opening tree, its leaves.
     pub alts: Vec<Vec<Leaf<G>>>,
+    /// Per opening tree, the regrouped classes the items must take (module
+    /// documentation, "Regrouped views"): a regrouping must be needed, as an opening is.
+    pub needs: Vec<Vec<G>>,
 }
 
 impl<G> Default for Demand<G> {
@@ -269,6 +336,7 @@ impl<G> Default for Demand<G> {
             unconditional: true,
             merge_on_close: false,
             alts: Vec::new(),
+            needs: Vec::new(),
         }
     }
 }
@@ -277,12 +345,15 @@ impl<G: PartialEq> Demand<G> {
     /// Whether a match taking the classes `taken` is kept.
     pub fn accepts(&self, taken: &[G]) -> bool {
         self.unconditional
-            || self.alts.iter().any(|leaves| {
-                leaves.iter().all(|l| {
-                    l.non_inert
-                        || (self.merge_on_close && taken.contains(&l.opened))
-                        || l.elems.iter().any(|c| taken.contains(c))
-                })
+            || self.alts.iter().enumerate().any(|(i, leaves)| {
+                self.needs
+                    .get(i)
+                    .is_none_or(|n| n.iter().all(|g| taken.contains(g)))
+                    && leaves.iter().all(|l| {
+                        l.non_inert
+                            || (self.merge_on_close && taken.contains(&l.opened))
+                            || l.elems.iter().any(|c| taken.contains(c))
+                    })
             })
     }
 }
@@ -305,6 +376,8 @@ impl<G, M> Default for FlattenScratch<G, M> {
             group_elems: Vec::new(),
             spans: Vec::new(),
             norm: Vec::new(),
+            needs: Vec::new(),
+            regroup_truncated: false,
             overflows: 0,
             first_overflow: None,
             root: None,
@@ -322,6 +395,11 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     /// the multiplicity width ([`MULT_OVERFLOW`]).
     pub fn overflows(&self) -> usize {
         self.overflows
+    }
+
+    /// Whether the last enumeration stopped regrouping at a bound ([`REGROUP_TRUNCATED`]).
+    pub fn regroup_truncated(&self) -> bool {
+        self.regroup_truncated
     }
 
     /// The first of them, with the nesting that produced the count.
@@ -355,14 +433,18 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     pub fn demand_into(&self, i: usize, out: &mut Demand<G>) {
         let (_, _, rs, rn) = self.spans[i];
         out.alts.clear();
+        out.needs.clear();
         out.unconditional = false;
         out.merge_on_close = self.kind == FlatKind::Ac;
         for r in &self.recs[rs..rs + rn] {
-            if r.gcount == 0 {
+            if r.gcount == 0 && r.ncount == 0 {
                 out.unconditional = true;
                 out.alts.clear();
+                out.needs.clear();
                 return;
             }
+            out.needs
+                .push(self.needs[r.nstart..r.nstart + r.ncount].to_vec());
             let leaves = self.groups[r.gstart..r.gstart + r.gcount]
                 .iter()
                 .map(|&(s, n, opened, non_inert)| Leaf {
@@ -388,6 +470,8 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
         self.groups.clear();
         self.group_elems.clear();
         self.spans.clear();
+        self.needs.clear();
+        self.regroup_truncated = false;
         self.overflows = 0;
         self.first_overflow = None;
         self.root = None;
@@ -474,6 +558,8 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
             len: self.norm.len(),
             gstart,
             gcount: self.groups.len() - gstart,
+            nstart: self.needs.len(),
+            ncount: 0,
         });
         Ok(())
     }
@@ -596,6 +682,320 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
         }
     }
 
+    /// Add the regrouped views of the complete enumeration (module documentation,
+    /// "Regrouped views"): for each view, every view that replaces a group of its entries
+    /// by the class `g` of an `op` node spelling that group, recursively, while a record
+    /// needs at most `limit` regrouped classes. Every regrouped view is strictly smaller
+    /// than its source (a group of at least two entries becomes one, and the
+    /// normalization only drops entries), so views are taken largest first, and each
+    /// view's records are all known when it is regrouped. Past [`MAX_REGROUP_VIEWS`]
+    /// records or [`MAX_REGROUP_WORK`] candidates examined, regrouping stops, the views
+    /// found so far are kept, and [`FlattenScratch::regroup_truncated`] is set.
+    #[allow(clippy::too_many_arguments)]
+    fn regroup<O, Src>(
+        &mut self,
+        src: &Src,
+        op: O,
+        kind: FlatKind,
+        dir: crate::registry::AssocDir,
+        laws: &crate::nary_canon::NaryLaws<G, O>,
+        limit: usize,
+    ) -> Result<(), &'static str>
+    where
+        O: Copy + PartialEq,
+        Src: Members<G, O, M> + ?Sized,
+    {
+        use crate::nary_canon::Normal;
+        use std::collections::{BinaryHeap, HashMap};
+        // The total count of a view, the order in which views are regrouped.
+        let size = |v: &[(G, M)]| -> u128 {
+            v.iter()
+                .map(|e| u128::from(e.1.to_u64().unwrap_or(u64::MAX)))
+                .sum()
+        };
+        // Per distinct view: its span in `elems`, its records, and whether it is done.
+        let mut entries: Vec<(usize, usize, Vec<usize>, bool)> = Vec::new();
+        let mut by_content: HashMap<Vec<(G, M)>, usize> = HashMap::new();
+        let mut heap: BinaryHeap<(u128, usize)> = BinaryHeap::new();
+        for r in 0..self.recs.len() {
+            let Rec { start, len, .. } = self.recs[r];
+            let content = self.elems[start..start + len].to_vec();
+            let e = *by_content.entry(content).or_insert_with(|| {
+                entries.push((start, len, Vec::new(), false));
+                heap.push((size(&self.elems[start..start + len]), entries.len() - 1));
+                entries.len() - 1
+            });
+            entries[e].2.push(r);
+        }
+        let (mut views, mut work) = (0usize, 0usize);
+        let mut cands: Vec<G> = Vec::new();
+        let mut fresh: Vec<(G, M)> = Vec::new();
+        let mut group: Vec<G> = Vec::new();
+        let mut need: Vec<G> = Vec::new();
+        let mut outs: Vec<Vec<(G, M)>> = Vec::new();
+        // Per target view, the demands of the records regrouping added to it.
+        let mut sigs: HashMap<usize, std::collections::HashSet<Sig<G>>> = HashMap::new();
+        while let Some((_, e)) = heap.pop() {
+            if entries[e].3 {
+                continue;
+            }
+            entries[e].3 = true;
+            let (start, len) = (entries[e].0, entries[e].1);
+            let view: Vec<(G, M)> = self.elems[start..start + len].to_vec();
+            // Candidate groups: the `op` nodes holding a class of the view (the use lists).
+            cands.clear();
+            for (i, &(c, _)) in view.iter().enumerate() {
+                if view[..i].iter().any(|x| x.0 == c) {
+                    continue;
+                }
+                for &m in src.containing(c) {
+                    work += 1;
+                    if work > MAX_REGROUP_WORK {
+                        self.regroup_truncated = true;
+                        return Ok(());
+                    }
+                    if src.op(m) == Some(op) {
+                        cands.push(m);
+                    }
+                }
+            }
+            cands.sort_unstable();
+            cands.dedup();
+            for ci in 0..cands.len() {
+                let m = cands[ci];
+                src.children(m, kind, &mut self.kids, &mut self.ids);
+                work = work.saturating_add(self.kids.len());
+                if work > MAX_REGROUP_WORK {
+                    self.regroup_truncated = true;
+                    return Ok(());
+                }
+                let g = src.class_of(m);
+                self.fits(kind, dir, &view, g, &mut outs);
+                if outs.is_empty() {
+                    continue;
+                }
+                // The classes of the group: a leaf holding one of them is satisfied when
+                // an item takes `g`, which holds it.
+                group.clear();
+                group.extend(self.kids.iter().map(|e| e.0));
+                for raw in std::mem::take(&mut outs) {
+                    fresh.clear();
+                    fresh.extend_from_slice(&raw);
+                    match crate::nary_canon::normalize(laws, &mut fresh, |inv, x| {
+                        src.inverse_class(inv, x)
+                    }) {
+                        Normal::Node => {}
+                        Normal::Overflow => {
+                            self.overflows = self.overflows.saturating_add(1);
+                            continue;
+                        }
+                        Normal::Unit | Normal::Single(_) | Normal::Empty => continue,
+                    }
+                    let target = match by_content.get(fresh.as_slice()) {
+                        // Not smaller than a view already regrouped: only a count past
+                        // u64 saturates the order.
+                        Some(&t) if entries[t].3 => continue,
+                        Some(&t) => t,
+                        None => {
+                            let s = self.elems.len();
+                            if s.checked_add(fresh.len()).ok_or(OVER_BOUND)? > MAX_ELEMS {
+                                return Err(OVER_BOUND);
+                            }
+                            self.elems.extend_from_slice(&fresh);
+                            entries.push((s, fresh.len(), Vec::new(), false));
+                            let t = entries.len() - 1;
+                            by_content.insert(fresh.clone(), t);
+                            heap.push((size(&fresh), t));
+                            t
+                        }
+                    };
+                    // A target some record admits every match on gains nothing.
+                    if entries[target]
+                        .2
+                        .iter()
+                        .any(|&r| self.recs[r].gcount == 0 && self.recs[r].ncount == 0)
+                    {
+                        continue;
+                    }
+                    let (ts, tl) = (entries[target].0, entries[target].1);
+                    // The source's records; one with no opening and no need makes every
+                    // record derived from the others redundant.
+                    let src_recs: Vec<usize> = match entries[e]
+                        .2
+                        .iter()
+                        .find(|&&r| self.recs[r].gcount == 0 && self.recs[r].ncount == 0)
+                    {
+                        Some(&r) => vec![r],
+                        None => entries[e].2.clone(),
+                    };
+                    for r in src_recs {
+                        let Rec {
+                            gstart,
+                            gcount,
+                            nstart,
+                            ncount,
+                            ..
+                        } = self.recs[r];
+                        // The classes the regrouped record needs taken: the source's,
+                        // less those the group absorbs, and `g`.
+                        need.clear();
+                        need.extend(
+                            self.needs[nstart..nstart + ncount]
+                                .iter()
+                                .filter(|c| !group.contains(c)),
+                        );
+                        if !need.contains(&g) {
+                            need.push(g);
+                        }
+                        if need.len() > limit {
+                            continue;
+                        }
+                        // The derived record's demand, to skip one the target already has.
+                        let mut sig: Sig<G> = (
+                            (gstart..gstart + gcount)
+                                .map(|gi| {
+                                    let (es, en, opened, non_inert) = self.groups[gi];
+                                    let mut el = self.group_elems[es..es + en].to_vec();
+                                    if !el.contains(&g) && el.iter().any(|c| group.contains(c)) {
+                                        el.push(g);
+                                    }
+                                    el.sort_unstable();
+                                    (opened, non_inert, el)
+                                })
+                                .collect(),
+                            need.clone(),
+                        );
+                        sig.0.sort_unstable();
+                        sig.1.sort_unstable();
+                        if !sigs.entry(target).or_default().insert(sig) {
+                            continue;
+                        }
+                        views += 1;
+                        if views > MAX_REGROUP_VIEWS {
+                            self.regroup_truncated = true;
+                            return Ok(());
+                        }
+                        let total = self
+                            .group_elems
+                            .len()
+                            .checked_add(self.elems.len())
+                            .ok_or(OVER_BOUND)?;
+                        if total > MAX_ELEMS {
+                            return Err(OVER_BOUND);
+                        }
+                        let ng = self.groups.len();
+                        for gi in gstart..gstart + gcount {
+                            let (es, en, opened, non_inert) = self.groups[gi];
+                            let ns = self.group_elems.len();
+                            let leaf = &self.group_elems[es..es + en];
+                            let holds =
+                                !leaf.contains(&g) && leaf.iter().any(|c| group.contains(c));
+                            self.group_elems.extend_from_within(es..es + en);
+                            if holds {
+                                self.group_elems.push(g);
+                            }
+                            self.groups
+                                .push((ns, self.group_elems.len() - ns, opened, non_inert));
+                        }
+                        let nn = self.needs.len();
+                        self.needs.extend_from_slice(&need);
+                        self.recs.push(Rec {
+                            start: ts,
+                            len: tl,
+                            gstart: ng,
+                            gcount,
+                            nstart: nn,
+                            ncount: need.len(),
+                        });
+                        entries[target].2.push(self.recs.len() - 1);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Every raw view that replaces one occurrence of the group `self.kids`, the
+    /// children of an `op` node of class `g`, in `view` by `g`, into `outs`: a
+    /// sub-multiset (AC), a subset (ACI), or a contiguous run (`:assoc`), a prefix for
+    /// `:assoc-left` and a suffix for `:assoc-right` ([`spine`]), of at least two
+    /// entries and not the whole view.
+    fn fits(
+        &mut self,
+        kind: FlatKind,
+        dir: crate::registry::AssocDir,
+        view: &[(G, M)],
+        g: G,
+        outs: &mut Vec<Vec<(G, M)>>,
+    ) {
+        use crate::registry::AssocDir;
+        outs.clear();
+        // A node over its own class (`G ∋ f{G, c}`) is not a group: regrouping by it
+        // replaces `G + c` by `G`, an absorption, and repeats without end.
+        if self.kids.iter().any(|e| e.0 == g) {
+            return;
+        }
+        match kind {
+            FlatKind::Assoc => {
+                let k = self.kids.len();
+                if k < 2 || k >= view.len() {
+                    return;
+                }
+                for p in 0..=view.len() - k {
+                    let on_spine = match dir {
+                        AssocDir::Both => true,
+                        AssocDir::Left => p == 0,
+                        AssocDir::Right => p + k == view.len(),
+                    };
+                    if on_spine
+                        && view[p..p + k]
+                            .iter()
+                            .zip(&self.kids)
+                            .all(|(a, b)| a.0 == b.0)
+                    {
+                        let mut v = view[..p].to_vec();
+                        v.push((g, M::ONE));
+                        v.extend_from_slice(&view[p + k..]);
+                        outs.push(v);
+                    }
+                }
+            }
+            FlatKind::Ac | FlatKind::Aci => {
+                // The group by class: summed counts for AC, deduplicated for ACI.
+                self.kids.sort_by_key(|e| e.0);
+                self.norm.clear();
+                for &(c, k) in &self.kids {
+                    let k = if kind == FlatKind::Ac { k } else { M::ONE };
+                    match self.norm.last_mut() {
+                        Some(last) if last.0 == c => {
+                            if kind == FlatKind::Ac {
+                                let Some(s) = last.1.checked_add(k) else {
+                                    return;
+                                };
+                                last.1 = s;
+                            }
+                        }
+                        _ => self.norm.push((c, k)),
+                    }
+                }
+                let two = self.norm.len() >= 2 || self.norm.first().is_some_and(|e| e.1 > M::ONE);
+                if !two || self.norm.as_slice() == view {
+                    return;
+                }
+                let mut v = view.to_vec();
+                for &(c, k) in &self.norm {
+                    match v.iter_mut().find(|x| x.0 == c) {
+                        Some(x) if x.1 >= k => x.1 = x.1.checked_sub(k).unwrap_or(M::ZERO),
+                        _ => return,
+                    }
+                }
+                v.retain(|x| x.1 != M::ZERO);
+                v.push((g, M::ONE));
+                outs.push(v);
+            }
+        }
+    }
+
     fn undo_to(&mut self, mark: usize) {
         while self.trail.len() > mark {
             let Some(u) = self.trail.pop() else { break };
@@ -648,6 +1048,14 @@ pub trait Members<G, O, M> {
     /// `op`'s fold direction: `Left` for `:assoc-left`, `Right` for `:assoc-right`, and
     /// `Both` for `:assoc` and every other operator ([`spine`]).
     fn assoc_dir(&self, op: O) -> crate::registry::AssocDir;
+    /// The class of the matchable member `node`, canonical in this view.
+    fn class_of(&self, node: G) -> G;
+    /// The matchable variadic nodes with `class` among their children: the use list a
+    /// regrouped view's candidates come from ([`enumerate`], `regroup`). The default is
+    /// none, which a source that never regroups keeps.
+    fn containing(&self, _class: G) -> &[G] {
+        &[]
+    }
 }
 
 /// Whether position `i` of `len` children lies on the spine of an operator of fold
@@ -748,6 +1156,16 @@ where
     fn assoc_dir(&self, op: Cfg::O) -> crate::registry::AssocDir {
         assoc_dir(self.eg, op)
     }
+
+    fn class_of(&self, node: Cfg::G) -> Cfg::G {
+        crate::ematch::round_canon(self.index, self.eg, node)
+    }
+
+    /// `by_contains[class]`: the round's variadic nodes over `class`, subsumed and
+    /// shielded nodes excluded as from every bucket.
+    fn containing(&self, class: Cfg::G) -> &[Cfg::G] {
+        self.index.full.nodes_by_contains(class)
+    }
 }
 
 /// `op`'s fold direction ([`Members::assoc_dir`]), read from the operator registry.
@@ -816,6 +1234,7 @@ pub fn enumerate<G, O, M, Src>(
     op: O,
     kind: FlatKind,
     takeable: impl Fn(G) -> bool,
+    regroup: usize,
     s: &mut FlattenScratch<G, M>,
 ) -> Result<(), &'static str>
 where
@@ -889,6 +1308,9 @@ where
                 }
             }
         }
+    }
+    if regroup > 0 {
+        s.regroup(src, op, kind, dir, &laws, regroup)?;
     }
     s.dedup();
     Ok(())
@@ -1050,7 +1472,8 @@ where
 {
     let mut s = FlattenScratch::new();
     // Every element is takeable here: which ones a filter takes is the assembly's.
-    enumerate(src, node, op, kind, |_| true, &mut s)?;
+    // Sequence rules do not regroup (module documentation, "Regrouped views").
+    enumerate(src, node, op, kind, |_| true, 0, &mut s)?;
     // The sequence assembly reports per node, so a view past the width skips the node,
     // which `PassReport::skipped_nodes` counts and the run warns about. The ordinary
     // matcher instead skips only that view and reports its nesting (`apply.rs`).
