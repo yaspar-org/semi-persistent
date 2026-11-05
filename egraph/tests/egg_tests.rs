@@ -594,6 +594,21 @@ egg_test!(set_flatten_build, "set_flatten_build.egg");
 // the A row of design §5.3 and §5.2 (`05-algebraic-operators.md`). These two files
 // pin both behaviors; the AC/ACI counterparts above pin the multiset forms.
 egg_test!(a_flatten_build, "a_flatten_build.egg");
+// A spliced child is `find`'d at build: a stale stored child kept the node's key
+// non-canonical and unrecanonicalized (hash-cons miss after rebuild).
+egg_test!(seq_hashcons_miss_min, "seq_hashcons_miss_min.egg");
+egg_test!(rounds_r1_0581, "rounds_r1_0581.egg");
+egg_test!(flatten_stale_splice_assoc, "flatten_stale_splice_assoc.egg");
+egg_test!(
+    flatten_stale_splice_assoc_left,
+    "flatten_stale_splice_assoc_left.egg"
+);
+egg_test!(
+    flatten_stale_splice_assoc_right,
+    "flatten_stale_splice_assoc_right.egg"
+);
+egg_test!(flatten_stale_splice_ac, "flatten_stale_splice_ac.egg");
+egg_test!(flatten_stale_splice_aci, "flatten_stale_splice_aci.egg");
 egg_test!(a_singleton_collapse, "a_singleton_collapse.egg");
 
 // ── A-only matching: a fixed child an earlier atom already bound ──

@@ -4542,7 +4542,10 @@ where
                 }
                 continue;
             }
-            out.push(c);
+            // The class, not the stored id: a spliced `c` is a stored child of `min_node`,
+            // stale until the next rebuild (see `flatten_seq_children`), and a stale id
+            // would also escape the coalescing that `normalize_by` does on equal ids.
+            out.push(Cfg::mset_child_with_mult(cls, Cfg::mset_child_mult(&c)));
         }
         assert!(
             out.len() <= cap,
@@ -4563,7 +4566,8 @@ where
     /// - otherwise (the class is `atomic`: referenced as a child, or has a non-AC node) the
     ///   single atom `{class}` is its canonical summand form, so keep the child as a summand.
     ///
-    /// `g_buf` already holds `find`'d ids. Preserves §5b: `+{a,b}` used as `neg`'s child is
+    /// `g_buf` already holds `find`'d ids; a spliced child is `find`'d as it is emitted,
+    /// since `min_node`'s stored children may predate this round's unions. Preserves §5b: `+{a,b}` used as `neg`'s child is
     /// `atomic`, so it is kept, not flattened. The semantic invariants make recursive
     /// expansion well-founded; a work/output budget is nevertheless enforced in every build
     /// profile so corrupted cyclic state is refused instead of looping or returning a
@@ -4623,7 +4627,9 @@ where
                 spliced = true;
             }
             if !spliced {
-                out.push(g);
+                // The class, not `g`: a spliced `g` is a stored child of `min_node`,
+                // stale until the next rebuild (see `flatten_seq_children`).
+                out.push(cls);
             }
         }
         assert!(
@@ -4699,7 +4705,8 @@ where
     /// child for `Right`, or any child for `Both`. A non-selected nested child remains one
     /// element, preserving explicit grouping such as `a - (b - c)`.
     ///
-    /// `g_buf` already holds `find`'d ids. The least-node choice makes expansion
+    /// `g_buf` already holds `find`'d ids; a spliced element is `find`'d as it is emitted,
+    /// since the nested node's stored children may predate this round's unions. The least-node choice makes expansion
     /// well-founded for a valid append-only graph. The same work/output budget as
     /// `flatten_ac_children` is still enforced in every build profile: malformed state such
     /// as `X = {seq(X)}` is refused rather than looping or producing a partial normal form.
@@ -4744,7 +4751,14 @@ where
                         spliced = true;
                     }
                     if !spliced {
-                        out.push(g);
+                        // `find` here, not only at the seed: a spliced element is read
+                        // from the nested node's *stored* children, which are stale when
+                        // a union of this round has not been rebuilt yet. Kept raw, the
+                        // node is stored under a non-canonical key that no later lookup
+                        // spells, and `add` registers no use for it (an absorbed id has
+                        // no `repr_id`), so no rebuild ever recanonicalizes it
+                        // (seq_hashcons_miss_min.egg).
+                        out.push(self.classes.find_const(g));
                     }
                 }
             }
@@ -4774,8 +4788,9 @@ where
                 if dir == AssocDir::Right {
                     scratch.extend_from_slice(&out[..out.len() - 1]);
                 }
+                // `find` each stored element: see the `Both` arm.
                 for i in s..e {
-                    scratch.push(self.nodes.seq.pool_get(i));
+                    scratch.push(self.classes.find_const(self.nodes.seq.pool_get(i)));
                 }
                 if dir == AssocDir::Left {
                     scratch.extend_from_slice(&out[1..]);
