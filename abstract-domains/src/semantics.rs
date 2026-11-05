@@ -21,6 +21,7 @@ use vstd::prelude::*;
 
 verus! {
 
+// TODO(abs-domain-registry): add the meanings of bitwise ops, shifts, bvsmod and SMT-LIB division by zero, or define them in the registry's concrete spec, see abstract-domains/doc/future/registry-task.md §6
 pub trait Semantics {
     type V;
 

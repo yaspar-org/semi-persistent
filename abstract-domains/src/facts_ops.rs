@@ -80,6 +80,7 @@ fn lift_div<W: Word>(q: (BotOr<Interval<W>>, DivZero)) -> (r: (BotOr<Facts<W>>, 
     }
 }
 
+// TODO(abs-domain-registry): add Bitwise (bvand bvor bvxor bvnot) and Shift (bvshl bvlshr bvashr) impls for Facts<W>, and backward transfers for every operator here, see abstract-domains/doc/future/registry-task.md §4
 impl<W: Word> Arith<Unsigned<W>> for Facts<W> {
     fn add(&self, o: &Self) -> (r: Self) {
         lift(<Interval<W> as Arith<Unsigned<W>>>::add(&self.interval(), &o.interval()))
@@ -100,6 +101,7 @@ impl<W: Word> Mul<Unsigned<W>> for Facts<W> {
     }
 }
 
+// TODO(abs-domain-registry): bvudiv/bvurem: the contract excludes zero divisors; the registry joins the SMT-LIB value (all ones, x) when the flag is not Never, see abstract-domains/doc/future/registry-task.md §4
 impl<W: Word> DivRem<Unsigned<W>> for Facts<W> {
     fn contains_zero(&self) -> (b: bool) {
         let u = self.interval();
@@ -117,6 +119,7 @@ impl<W: Word> DivRem<Unsigned<W>> for Facts<W> {
     }
 }
 
+// TODO(abs-domain-registry): bvsdiv/bvsrem read a placeholder (top); bvsmod has no transfer and no Semantics operator, see abstract-domains/doc/future/registry-task.md §4
 impl<W: Word> DivRem<Signed<W>> for Facts<W> {
     fn contains_zero(&self) -> (b: bool) {
         let u = self.interval();
@@ -134,6 +137,7 @@ impl<W: Word> DivRem<Signed<W>> for Facts<W> {
     }
 }
 
+// TODO(abs-domain-registry): replace this stub (bvult, bvule, `=`) with forward and backward transfers on `u`, see abstract-domains/doc/future/registry-task.md §4
 /// Stub: forward answers `Top`, backward keeps both operands. The planned work
 /// replaces it with transfers on the `u` field (doc/reduced-product.md).
 impl<W: Word> Compare<Unsigned<W>> for Facts<W> {
@@ -162,6 +166,7 @@ impl<W: Word> Compare<Unsigned<W>> for Facts<W> {
     }
 }
 
+// TODO(abs-domain-registry): replace this stub (bvslt, bvsle) with forward and backward transfers on `u` and the planned `s`, see abstract-domains/doc/future/registry-task.md §4
 /// Stub: forward answers `Top`, backward keeps both operands. The planned work
 /// replaces it with transfers on the `u` field (doc/reduced-product.md).
 impl<W: Word> Compare<Signed<W>> for Facts<W> {
