@@ -52,12 +52,12 @@ found, each with the engine section that explains it, are listed in
 Each program fails `check-eq` on the engine before the named commit and
 passes after; the `*control*` programs pass before and after.
 
-- `min-slot-gap.egg` (commit 231ac1b): the min-monomial slot not refreshed
+- `min-slot-gap.egg` (commit bb961302): the min-monomial slot not refreshed
   on an in-place shrink.
-- `demand-gap.egg` (commit 844bcba): the `:flatten` demand rule rejects a
+- `demand-gap.egg` (commit d95883f5): the `:flatten` demand rule rejects a
   match whose untaken leaf opened a taken class.
 - `inv-into-unit.egg`, `unit-inverse.egg`, `non-matching.egg`,
-  `rule-inverse-cp.egg`, `z3-inverse.egg` (commit c98d7fc): the five
+  `rule-inverse-cp.egg`, `z3-inverse.egg` (commit e1e6aec8): the five
   consequences of the inverse law across nodes, rules R1 to R5.
 - `aci-overaccept.egg`, `aci-overaccept-ac.egg`: probes, not failures: a
   redundant set match the demand rule admits, and its multiset analogue
