@@ -5,6 +5,7 @@ on:
       - 'proofs/lean/**'
       - 'egraph/tests/egg/conform/**'
       - 'egraph/tests/egg/conform-flatten/**'
+      - 'egraph/tests/egg/conform-cc/**'
       - '.github/workflows/lean.yml'
   push:
     branches: [main]
@@ -12,6 +13,7 @@ on:
       - 'proofs/lean/**'
       - 'egraph/tests/egg/conform/**'
       - 'egraph/tests/egg/conform-flatten/**'
+      - 'egraph/tests/egg/conform-cc/**'
       - '.github/workflows/lean.yml'
   workflow_dispatch:
 
@@ -109,6 +111,33 @@ jobs:
           out=$(mktemp -d)
           lake exe semper-conform-flatten 2 200 "$out"
           fixtures=../../egraph/tests/egg/conform-flatten
+          status=0
+          for f in "$fixtures"/*.egg; do
+            name=$(basename "$f")
+            if ! diff -u "$f" "$out/$name"; then
+              echo "::error::$name differs from the generator's output"
+              status=1
+            fi
+          done
+          if [ "$(ls "$out" | wc -l)" -ne "$(ls "$fixtures"/*.egg | wc -l)" ]; then
+            echo "::error::the generator writes $(ls "$out" | wc -l) files, the fixtures hold $(ls "$fixtures"/*.egg | wc -l)"
+            status=1
+          fi
+          exit $status
+
+      # The fixtures under egraph/tests/egg/conform-cc are the output of the
+      # AC-congruence closure generator (proofs/lean/Conform/CC) for seed 1,
+      # whose expected equalities come from a bounded closure of the theory
+      # proved sound in SemperProofs/CC/BoundedOracle.lean. Same check as above.
+      # The rounds sample (egraph/tests/egg/conform-rounds) is not regenerated
+      # here: its oracle reads the engine's own dumps, so it needs the binary.
+      - name: Regenerate the AC-congruence closure conformance fixtures
+        run: |
+          set -euo pipefail
+          lake build semper-conform-cc
+          out=$(mktemp -d)
+          lake exe semper-conform-cc 1 200 "$out"
+          fixtures=../../egraph/tests/egg/conform-cc
           status=0
           for f in "$fixtures"/*.egg; do
             name=$(basename "$f")

@@ -17,5 +17,13 @@ name = "semper-conform"
 root = "Conform.Main"
 
 [[lean_exe]]
+name = "semper-conform-rounds"
+root = "Conform.Rounds.Main"
+
+[[lean_exe]]
+name = "semper-conform-cc"
+root = "Conform.CC.Main"
+
+[[lean_exe]]
 name = "semper-conform-flatten"
 root = "Conform.Flatten.Main"

@@ -9,10 +9,17 @@
 //! `tests/egg/conform-flatten/` were written by `semper-conform-flatten`
 //! (`proofs/lean/Conform/Flatten`), whose `:flatten` rules nest n-ary
 //! applications and are matched by the model's flattened plan (every n-ary atom
-//! with its own view register). The directories are scanned: a file needs no
-//! registration. Each directory's `README.md` names the seed and the
-//! regeneration command; the Lean workflow regenerates both samples and fails
-//! when a committed file differs.
+//! with its own view register). The files under `tests/egg/conform-cc/` were
+//! written by `semper-conform-cc` (`proofs/lean/Conform/CC`), whose oracle is a
+//! bounded closure of the AC theory with its laws, proved sound in
+//! `CC/BoundedOracle.lean`. The files under `tests/egg/conform-rounds/` were
+//! written by `semper-conform-rounds` (`proofs/lean/Conform/Rounds`): rules that
+//! build terms over several rounds, checked against the model's fired-instance
+//! invariant on the engine's own snapshot. The directories are scanned: a file
+//! needs no registration. Each directory's `README.md` names the seed and the
+//! regeneration command; the Lean workflow regenerates the matching, `:flatten`
+//! and completion samples and fails when a committed file differs. The rounds
+//! sample is not regenerated in CI, because its oracle reads the engine's dumps.
 //!
 //! The runner is the one of `egg_tests.rs`, reduced to the directives these files
 //! use (`;; EXPECT: ok`, `;; TYPES: machine`): every file runs under both
@@ -125,4 +132,14 @@ fn conform_fixtures_agree_with_the_model() {
 #[test]
 fn conform_flatten_fixtures_agree_with_the_model() {
     check_dir("tests/egg/conform-flatten");
+}
+
+#[test]
+fn conform_cc_fixtures_agree_with_the_model() {
+    check_dir("tests/egg/conform-cc");
+}
+
+#[test]
+fn conform_rounds_fixtures_agree_with_the_model() {
+    check_dir("tests/egg/conform-rounds");
 }
