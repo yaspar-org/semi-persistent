@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; n = Plus{Y, Z}, Z ∋ Plus{Y, d}, Y ∋ Plus{X, c}.
 ;; Fully flattened, n = Plus{X, c, Y, d}. The pattern (Plus (Yc) (Dc) ..rest)
 ;; matches it with rest = {X, c}; the demand rule rejects that match on the

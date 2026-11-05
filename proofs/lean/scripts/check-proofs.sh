@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Gates on the Lean development, run after `lake build` from the project root:
 #   1. no declaration uses `sorry` (checked in the sources and in the build log);
 #   2. every `#print axioms` in the *Check.lean files reports only the standard

@@ -79,8 +79,18 @@ fn conform_fixtures_agree_with_the_model() {
         let src = std::fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
         let (expect, types) = directives(&src);
-        assert_eq!(expect, "ok", "{}: a conformance file expects ok", path.display());
-        assert_eq!(types, "machine", "{}: a conformance file runs machine types", path.display());
+        assert_eq!(
+            expect,
+            "ok",
+            "{}: a conformance file expects ok",
+            path.display()
+        );
+        assert_eq!(
+            types,
+            "machine",
+            "{}: a conformance file runs machine types",
+            path.display()
+        );
         for runtime in [false, true] {
             semi_persistent_egraph::ematch::set_runtime_scheduling(runtime);
             for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {

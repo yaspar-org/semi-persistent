@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 ;; TYPES: machine
 ;; A global equated to a local CHILD variable through a `(= x g)` fact.
 ;; `needs_naive_match` does not route this rule to naive matching: the global

@@ -32,6 +32,13 @@ fn insert_hit_is_not_a_change() {
     .expect("sortchecks");
     interp.run_checked(&checked).expect("runs");
     let sat = interp.last_sat().expect("a run happened");
-    assert!(sat.saturated, "the loop must report a fixpoint, ran {} rounds", sat.iterations);
-    assert_eq!(sat.iterations, 2, "one round of changes, one unchanged round");
+    assert!(
+        sat.saturated,
+        "the loop must report a fixpoint, ran {} rounds",
+        sat.iterations
+    );
+    assert_eq!(
+        sat.iterations, 2,
+        "one round of changes, one unchanged round"
+    );
 }

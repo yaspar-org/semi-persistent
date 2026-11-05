@@ -114,6 +114,8 @@ def program (cs : Case) (ms : List Match) (rej : List Match) : String :=
   let checks := (ms.map fun m => s!"(check-eq {cname cs m.root} {ppTag cs m})").eraseDups
   let neqs := rej.map fun m => s!"(check-neq {cname cs m.root} {ppTag cs m})"
   let header := [
+    ";; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+    ";; SPDX-License-Identifier: Apache-2.0",
     ";; EXPECT: ok",
     ";; TYPES: machine",
     s!";; semper-conform seed={cs.seed} case={cs.idx} root={cs.root.name} flatten={cs.flatten} classes={cs.nC}",

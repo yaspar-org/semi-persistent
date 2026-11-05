@@ -1,3 +1,5 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
 (sort E)
 (function p () E) (function q () E) (function Kc () E)
 (function Add (E) E :assoc-comm)

@@ -2412,8 +2412,7 @@ where
                 // As in `recanonize_parent`: a changed span that is still a node refreshes
                 // the class's min-monomial slot (I5). Deferred past the loop, which holds
                 // the use-list borrow.
-                if normal == crate::nary_canon::Normal::Node
-                    && self.touched.len() > touched_before
+                if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before
                 {
                     refresh.push(parent);
                 }
@@ -2765,7 +2764,10 @@ where
         let n = self.nodes.plain1.len().to_usize();
         let mut out = Vec::new();
         for i in 0..n {
-            let node = self.nodes.plain1.get(<Cfg::Ids as NodeIds>::L1::from_usize(i));
+            let node = self
+                .nodes
+                .plain1
+                .get(<Cfg::Ids as NodeIds>::L1::from_usize(i));
             if node.op() == inv {
                 out.push((node.global_id(), self.classes.find_const(node.children[0])));
             }
@@ -2797,6 +2799,7 @@ where
     ///   on `x`), and for `inv(x)` of class `y ≠ x`, `y^(k−1) = x` (the overlap on `y`,
     ///   whether or not the node `inv(y)` exists); both nodes are built. A self-inverse
     ///   class is not exempt: for odd `k` its `x^(k−1)` normalizes to the unit, so `x = e`.
+    ///
     /// Collect over a snapshot of the union-find, then apply through `repair_merge` and
     /// `add_monomial`, so `restore` rolls everything back. The whole unary partition is
     /// read, not the touched log: the first premise is a merge of two classes each holding
@@ -4902,7 +4905,7 @@ mod tests {
         );
         eg.set_unit_node(add, zero);
         // p, q get smaller ids than a, b: at equal size Add{p,q} ≺ Add{a,b} in degree-lex.
-        let mut leaf = |eg: &mut EGraph31<NiraLitVal, true, false>, name: &str| {
+        let leaf = |eg: &mut EGraph31<NiraLitVal, true, false>, name: &str| {
             let op = eg.register_op0(name, s);
             eg.add(op, &[])
         };
@@ -4931,7 +4934,11 @@ mod tests {
             Some(n2),
             "the shrunk node Add{{p,q}} is the class's least monomial and must be the slot"
         );
-        assert_eq!(eg.find(d), eg.find(e), "a+b+z = p+q+z follows from a+b = p+q+r, r = 0");
+        assert_eq!(
+            eg.find(d),
+            eg.find(e),
+            "a+b+z = p+q+z follows from a+b = p+q+r, r = 0"
+        );
 
         eg.restore(token);
         assert_eq!(

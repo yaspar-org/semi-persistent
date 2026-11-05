@@ -347,8 +347,8 @@ where
     pub fn cc_axiom_cps_nonjoinable(&self) -> (usize, Vec<(Cfg::G, Cfg::O)>) {
         use crate::egraph::CompletionClamp;
         use crate::multiset::{
-            clamp_idempotent, clamp_nilpotent, multiset_subtract, multiset_union,
-            normalize_ms, normalize_nilpotent, normalize_set,
+            clamp_idempotent, clamp_nilpotent, multiset_subtract, multiset_union, normalize_ms,
+            normalize_nilpotent, normalize_set,
         };
         let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
 
