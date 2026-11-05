@@ -1117,6 +1117,17 @@ evaluation order is fixed. The dependence is only *across statements*, which is 
 AC incompleteness the eager and lazy modes (§13) exist to close. Getting all AC consequences
 requires one of those modes; plain mode gives canonization plus congruence and no more.
 
+The same dependence separates the two saturation strategies. A rule's right-hand side is a
+statement too, built when its match fires, and naive re-fires every old match each round
+while semi-naive fires a match once. A class that turns atomic between the two firings
+gives naive the nested spelling and semi-naive only the flat one, so in plain mode the two
+strategies agree at the fixpoint only modulo this order dependence:
+`semi_naive_atomic_naive.egg` derives `(W (C))` and `semi_naive_atomic_semi.egg` does not.
+Every completion mode derives it under both strategies (`semi_naive_atomic_eager.egg`).
+[Chapter 9 §9.2](09-saturation.md#a-build-time-choice-the-delta-cannot-see) gives the
+mechanism and the three open fixes: route those rules to naive, log atomic flips into the
+delta, or accept and document, which is the current state.
+
 The A-only (`Seq`) analogue of this is a different matter and *is* fixed, because A-only
 operators admit neither `:identity` nor `:inverse` (the property resolver rejects both
 without `:comm`), so no §5b pair depends on a nested spelling being kept. There, the
@@ -1929,8 +1940,8 @@ Three ways to run an AC workload, selected on the CLI:
   completeness gap stands.
 - **eager** (`--derive-ac-eqs`): every rebuild attempts completion. It returns
   `Converged` after an unchanged full round, `AbortedGrowthLimit` after the
-  configured growth backstop, or `AbortedOverflow` when a multiplicity exceeds the
-  configured width. Interleaving saturation rules grows the term/class
+  configured growth backstop, `AbortedWorkLimit` after a round's work backstop,
+  or `AbortedOverflow` when a multiplicity exceeds the configured width. Interleaving saturation rules grows the term/class
   pool, so neither the abstract fixed-signature argument nor the implementation
   currently proves termination or completeness of the combined loop.
 - **lazy** (`--lazy-ac-eqs`): saturation runs plain; an equality check that
@@ -1948,8 +1959,8 @@ the pair is still apart, phase 1 did not hit the growth budget, and the program 
 ordinary rules, hands the pair to the
 saturation driver as an `:until` goal with completion enabled: rounds alternate
 rule matching with completion fixpoints and stop the moment the pair joins,
-bounded by an alternation budget (default 32 rounds) and the completion
-node-growth budget. A budget stop is reported as inconclusive. An unchanged
+bounded by an alternation budget (default 32 rounds), the decision's node-growth
+budget and the completion work budget. A budget stop is reported as inconclusive. An unchanged
 operational joint round means the selected ruleset and implemented completion
 passes found no more work; it is not, without the §10 theorem, a proof of
 non-derivability in the abstract AC theory. Phase 2 runs the ordinary rules of the
@@ -1968,9 +1979,34 @@ Three properties of the lazy mode:
   inside a round's two apply loops*, and stops with
   `CompletionOutcome::GoalMet` mid-closure the moment the pair joins. Every
   completion pass inside the alternation is goal-directed the same way.
-- **In-round budget check.** The node-growth budget is consulted
-  inside a round's apply loops, so a single blown-up round stops mid-apply
-  instead of waiting for the between-rounds check.
+- **One node budget per decision.** `lazy_ac_decide` and `lazy_query_decide`
+  open the budget at the node count the decision starts from
+  (`EGraph::open_decision_budget`), and `completion_node_budget` (default
+  50,000) then charges every node minted after it, by rule applications and
+  by completion alike: each completion rebuild measures its growth from the
+  decision's start, not its own. The budget is checked after every rule (and
+  every semi-naive variant) in the saturation apply loops, before each
+  completion round, and inside a round's apply loops (`cc_should_stop`), so a
+  single blown-up round stops mid-apply instead of waiting for the
+  between-rounds check.
+- **A work budget per completion round.** A round over a large rule set can
+  cost targets times rules in `NfRules::find_applicable` while minting almost
+  nothing, which no node count sees. `cc_round` meters its rule containment
+  tests (the reducibility pass and every normalization step) and stops past
+  `completion_work_budget` (default 100,000,000 tests), reported as
+  `CompletionOutcome::AbortedWorkLimit`. The budget applies to every
+  completion round, eager mode included. The default sits about 800 times
+  above the largest round of the test suite (122,750 tests, the 200-program
+  `conform-cc` sample included), and at the measured 3 to 10 ns per test it
+  stops a round within about a second. Once either budget stops a completion
+  rebuild inside the decision, the decision is spent: the saturation loops
+  stop at their next check and later rebuilds of the decision skip completion.
+  `ac_lazy_budget_inconclusive.egg` is the program that needs both budgets: its
+  rule rounds grow the graph about 8 times per round, and one completion round
+  at 29,597 nodes (19,315 rules, 22,239 targets) used to run for minutes while
+  minting almost nothing. Its check-neq now reports the stop as inconclusive in
+  under a second in a release build (`lazy_budget_check_returns_promptly`);
+  with the node budget alone it still runs past 100 s.
 
 Focused lazy-mode tests cover transaction sharing, goal polling, growth aborts,
 and restoration. This chapter makes no fixed timing, node-count, or speedup

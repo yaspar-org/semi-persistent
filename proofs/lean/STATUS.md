@@ -198,4 +198,11 @@ its two children classes merge (`NoCollapse`).
 View bounds `MAX_VIEWS`/`MAX_WORK`/`MAX_ELEMS` and multiplicity widths
 (hypotheses only); cross-round delta
 completeness; the galloping cursor (Verus, containers-verus); faults inside
-sequence sub-queries; `Nodup` of emitted lists (membership only).
+sequence sub-queries; `Nodup` of emitted lists (membership only); the
+build-time `atomic` choice of a right-hand side's AC spelling
+(`flatten_mset_children`): `saturation_complete` is about matches, and in
+plain mode naive and semi-naive reach the same fixpoint only modulo the
+order dependence of design §6c, since naive rebuilds an old match's
+right-hand side after a class turns atomic and semi-naive does not
+(`semi_naive_atomic_naive.egg` / `semi_naive_atomic_semi.egg`; the
+completion modes agree, `semi_naive_atomic_eager.egg`).

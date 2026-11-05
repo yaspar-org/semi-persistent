@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; The program of `semi_naive_atomic_naive.egg` / `semi_naive_atomic_semi.egg` under eager
+;; completion: completion joins the flat and nested spellings of the Q argument, so the
+;; second rule matches under both strategies and (W (C)) holds. Plain mode is the one
+;; where naive and semi-naive disagree (design §6c, §9.2).
+(set-option :completion eager)
+(sort E)
+(function A () E) (function B () E) (function C () E)
+(function Add (E) E :assoc-comm)
+(function P (E) E) (function Q (E) E) (function H (E) E) (function W (E) E)
+(let p (P (C)))
+(rule ((P y)) ((Q (Add (Add (A) (B)) y)) (H (Add (A) (B)))))
+(rule ((Q (Add (Add (A) (B)) w))) ((W w)))
+(run 10)
+(check (W (C)))

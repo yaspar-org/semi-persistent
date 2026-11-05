@@ -516,6 +516,52 @@ The fallback stays for ordinary flattened rules. Sequence rules under `:flatten`
 need it: their `Δ_collect` adds the climb through nesting from every affected and
 touched class, and the semi-filter test descends through the views' classes (§7.6, "Semi-naive evaluation").
 
+#### A build-time choice the delta cannot see
+
+The key invariant is about *matches*: semi-naive finds every match naive finds. It does
+not make the two strategies build the same nodes from those matches, and in plain mode
+(completion off) they can reach different fixpoints. The node a right-hand side builds for
+an AC term depends on whether a nested same-op child's class is `atomic` at build time
+(`flatten_mset_children`, [Chapter 6 §6c](06-ac-congruence-closure.md#6c-continuous-flattening-what-to-flatten-and-the-representative-trap)): a non-atomic
+child is spliced flat, an atomic one is kept nested. The bit flips as the graph grows,
+through `register_if_fresh`, the use path and the merge fold, and a flip changes no node,
+so it enters no delta. Naive re-fires every old match each round and rebuilds the term
+under the new bit; semi-naive never re-fires a match whose nodes did not change.
+
+`tests/egg/semi_naive_atomic_naive.egg` and `semi_naive_atomic_semi.egg` hold the
+reproducer:
+
+```lisp
+(let p (P (C)))
+(rule ((P y)) ((Q (Add (Add (A) (B)) y)) (H (Add (A) (B)))))
+(rule ((Q (Add (Add (A) (B)) w))) ((W w)))
+(run 10)
+(check (W (C)))
+```
+
+Round 1 builds Q's argument flat, `Add{A,B,C}`, because `[Add(A,B)]` is not yet atomic,
+and the same round's H action makes it atomic. Naive re-fires the `(P (C))` match in
+round 2, builds the nested `Add{[A+B],C}`, and the second rule's nested pattern matches
+it: `(W (C))` holds. Semi-naive never builds the nested spelling, and the check fails.
+Every completion mode derives `(W (C))` under both strategies
+(`semi_naive_atomic_eager.egg` for eager), because completion joins the flat and nested
+spellings. The two strategies therefore agree at the fixpoint only modulo the §6c order
+dependence in plain mode; with completion on they agree.
+
+Three fixes are open, and the choice is the user's:
+
+1. **Route to naive.** Extend `needs_naive_match` to every rule whose right-hand side
+   builds an AC term with a nested same-op argument, so those rules re-fire every round as
+   under naive. It gives up the delta saving on those rules.
+2. **Log atomic flips into the delta.** Record each class whose `atomic` bit flips, and
+   re-fire the matches whose right-hand side builds through it. The pattern does not name
+   that class (in the reproducer the first rule matches `(P y)`), so the record has to be
+   keyed by right-hand side, not by pattern atom; it keeps the delta saving elsewhere and
+   adds a write on the three flip paths.
+3. **Accept and document.** Plain mode is defined as canonization plus congruence, and the
+   same order dependence already separates two statement orders (§6c). This is the
+   current state: the fixtures pin it and 13-soundness.md §5 lists it.
+
 ### The K-Variant Decomposition
 
 For a rule with k atoms, semi-naive runs k variants of the rule's
@@ -1766,6 +1812,9 @@ a universal proof. As built:
   semi-naive is checked against naive across the entire program corpus
   (arithmetic, AC multiplicity, ACI, extraction, folding, subsumption,
   globals, push/pop).
+  The exception is the plain-mode AC pair `semi_naive_atomic_naive.egg` /
+  `semi_naive_atomic_semi.egg`, which pins the one known fixpoint difference
+  (§9.2, "A build-time choice the delta cannot see").
 - **Disjointness** (the property final-state equivalence may not see):
   in one round, the variant
   match sets must be pairwise disjoint and their union must equal the

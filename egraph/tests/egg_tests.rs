@@ -524,6 +524,14 @@ egg_test!(ac_multiplicity_variant, "ac_multiplicity_variant.egg");
 egg_test!(ac_lazy_entailment, "ac_lazy_entailment.egg");
 egg_test!(ac_lazy_neq_derived, "ac_lazy_neq_derived.egg");
 egg_test!(ac_lazy_alternation, "ac_lazy_alternation.egg");
+// A lazy check whose rule rounds grow the graph 8x per round: the decision's cumulative
+// node budget and the per-round completion work budget stop it, and the check-neq reports
+// the stop as inconclusive. A regression of either budget hangs this fixture, which the
+// CI job's timeout reports; no test here bounds wall-clock time (design 13 §5).
+egg_test!(
+    ac_lazy_budget_inconclusive,
+    "ac_lazy_budget_inconclusive.egg"
+);
 egg_test!(semi_recanon_parent_delta, "semi_recanon_parent_delta.egg");
 egg_test!(semi_eq_global_local, "semi_eq_global_local.egg");
 egg_test!(
@@ -602,6 +610,13 @@ egg_test!(
     ac_flatten_order_dependence_eager,
     "ac_flatten_order_dependence_eager.egg"
 );
+// The same plain-mode order dependence, seen as a strategy difference: naive re-fires an
+// old match after a class turned `atomic` and builds the nested spelling the second rule
+// needs, semi-naive does not (`09-saturation.md` §9.2). The two files run one strategy
+// each; under eager completion both strategies pass.
+egg_test!(semi_naive_atomic_naive, "semi_naive_atomic_naive.egg");
+egg_test!(semi_naive_atomic_semi, "semi_naive_atomic_semi.egg");
+egg_test!(semi_naive_atomic_eager, "semi_naive_atomic_eager.egg");
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");

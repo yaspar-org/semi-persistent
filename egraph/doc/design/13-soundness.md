@@ -106,7 +106,8 @@ never a superset. The AC completion pass enlarges that subset toward the
 entailed set; with it off, the engine still decides every equality plain
 congruence reaches and merely misses some AC consequences (§3.3). This is why completion
 can default off, and why a growth-budget abort mid-completion (the divergence
-backstop, reported as `CompletionOutcome::AbortedGrowthLimit`) leaves a sound,
+backstop, reported as `CompletionOutcome::AbortedGrowthLimit`), or a work-budget
+abort of one round (`CompletionOutcome::AbortedWorkLimit`), leaves a sound,
   plain-congruence-closed state, without endangering any consumer that respects the
   polarity above. Before returning from this abort path, `rebuild()` drains the
   pending plain-congruence worklist.
@@ -507,6 +508,14 @@ is fixed on this branch.
     states one (§3.4; [Chapter 6 §14](06-ac-congruence-closure.md#14-the-a-only-transfer-inter-reduction-for-sequences-and-where-it-must-stop)).
 21. Every `tests/egg` fixture is registered by hand in `egg_tests.rs` and no test depends on
     machine speed ([Developer Guide](A2-developer-guide.md#regression-fixtures-and-tests)).
+22. Naive and semi-naive agree at the fixpoint only modulo the §6c order dependence in plain
+    mode: a class that turns `atomic` after a match fired changes the spelling naive rebuilds
+    when it re-fires the match, and semi-naive does not re-fire it
+    (`semi_naive_atomic_naive.egg` / `semi_naive_atomic_semi.egg`). Every completion mode
+    agrees across strategies. Route to naive, log atomic flips into the delta, or accept and
+    document are the open fixes; the third is the current state
+    ([§9.2](09-saturation.md#a-build-time-choice-the-delta-cannot-see);
+    [Chapter 6 §6c](06-ac-congruence-closure.md#6c-continuous-flattening-what-to-flatten-and-the-representative-trap)).
 
 ---
 [← Ch 12: Anti-Unification](12-anti-unification.md) · [Table of Contents](00-table-of-contents.md) · [Ch 14: Proof Logging →](14-proof-logging.md)

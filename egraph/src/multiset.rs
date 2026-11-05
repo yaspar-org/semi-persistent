@@ -376,13 +376,21 @@ impl<'a, G, M> From<&'a NfRule<G, M>> for NfRuleRef<'a, G, M> {
 pub struct NfRules<'r, 'i, G, M> {
     rules: &'i [NfRuleRef<'r, G, M>],
     index: Option<&'i NfIndex<G>>,
+    /// Work meter, charged one unit per rule tested for containment
+    /// ([`with_work`](Self::with_work)). The completion round reads it to stop a round
+    /// whose normalizations cost more than its work budget.
+    work: Option<&'i std::cell::Cell<u64>>,
 }
 
 impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
     /// Scan every rule on every step. Correct for any rule set; the right choice when the
     /// set is not reused across enough normalizations to pay for an index.
     pub fn linear(rules: &'i [NfRuleRef<'r, G, M>]) -> Self {
-        Self { rules, index: None }
+        Self {
+            rules,
+            index: None,
+            work: None,
+        }
     }
 
     /// Consult `index` to narrow the rules tested. `index` must have been built from
@@ -396,6 +404,15 @@ impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
         Self {
             rules,
             index: Some(index),
+            work: None,
+        }
+    }
+
+    /// Charge every rule tested for containment to `work`, one unit per test.
+    pub fn with_work(self, work: &'i std::cell::Cell<u64>) -> Self {
+        Self {
+            work: Some(work),
+            ..self
         }
     }
 
@@ -413,20 +430,26 @@ impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
         out: &[Pair<G, M>],
         cands: &mut CandVec,
     ) -> Option<NfRuleRef<'r, G, M>> {
-        match self.index {
-            None => self
-                .rules
-                .iter()
-                .copied()
-                .find(|r| rule_applies_linear(r, out)),
+        let (found, tested) = match self.index {
+            None => match self.rules.iter().position(|r| rule_applies_linear(r, out)) {
+                Some(i) => (Some(self.rules[i]), i + 1),
+                None => (None, self.rules.len()),
+            },
             Some(ix) => {
                 ix.candidates(out, cands);
-                cands.iter().find_map(|&i| {
-                    let r = self.rules[i as usize];
-                    multiset_subset(r.lhs, out).then_some(r)
-                })
+                match cands
+                    .iter()
+                    .position(|&i| multiset_subset(self.rules[i as usize].lhs, out))
+                {
+                    Some(k) => (Some(self.rules[cands[k] as usize]), k + 1),
+                    None => (None, cands.len()),
+                }
             }
+        };
+        if let Some(w) = self.work {
+            w.set(w.get().saturating_add(tested as u64));
         }
+        found
     }
 }
 

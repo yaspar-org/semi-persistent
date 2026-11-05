@@ -216,8 +216,31 @@ pub struct EGraph<
     cc_goal: Option<(Cfg::G, Cfg::G)>,
     /// Node count at the start of the current completion run, for the
     /// in-round budget check (`cc_should_stop`): a single blown-up round is
-    /// stopped mid-apply instead of only between rounds.
+    /// stopped mid-apply instead of only between rounds. Inside a lazy decision
+    /// it is the decision's own start (`decision_start`), so the budget is
+    /// cumulative over the decision.
     cc_start_nodes: usize,
+    /// Node count when the current lazy decision opened
+    /// ([`open_decision_budget`](Self::open_decision_budget)), `None` outside one.
+    /// While set, `completion_node_budget` counts every node minted since that point,
+    /// by rule applications and by completion alike: each completion `rebuild`
+    /// measures its growth from here instead of from its own start, and the
+    /// saturation apply loops stop once the count passes it
+    /// ([`decision_budget_exhausted`](Self::decision_budget_exhausted)).
+    decision_start: Option<usize>,
+    /// Set when a completion `rebuild` inside the open lazy decision stopped on a budget
+    /// (node growth or round work). The decision is inconclusive from then on, so the
+    /// saturation loops stop at their next check instead of growing the graph further.
+    decision_spent: bool,
+    /// Work budget for one completion round, in rule containment tests (the
+    /// normalizers' `find_applicable` and the round's reducibility pass). A round past
+    /// it stops and `rebuild` reports [`CompletionOutcome::AbortedWorkLimit`]. Like
+    /// `completion_node_budget`, a resource backstop and a config knob, not
+    /// semi-persistent state; default [`DEFAULT_COMPLETION_WORK_BUDGET`].
+    completion_work_budget: u64,
+    /// Set by a completion round that passed `completion_work_budget`: the work it had
+    /// spent. `rebuild` takes it and reports the abort.
+    cc_work_stop: Option<u64>,
     /// Whether `rebuild` runs the AC congruence-completion pass (superposition +
     /// inter-reduction). **Default off** because ground AC completion is doubly
     /// exponential in the worst case. The growth backstop is checked between rounds and
@@ -291,9 +314,16 @@ pub struct EGraph<
     repair_state: Option<(usize, usize)>,
 }
 
-/// Default node-growth budget for one completion-enabled `rebuild` (see
-/// [`EGraph::set_completion_node_budget`]).
+/// Default node-growth budget for one completion-enabled `rebuild`, or for one lazy
+/// decision (see [`EGraph::set_completion_node_budget`]).
 pub const DEFAULT_COMPLETION_NODE_BUDGET: usize = 50_000;
+
+/// Default work budget for one completion round, in rule containment tests (see
+/// [`EGraph::set_completion_work_budget`]). The largest round of the test suite,
+/// the 200-program `conform-cc` sample included, costs 122,750 tests, so the default
+/// is about 800 times above it; at the measured 3 to 10 ns per test a round stops
+/// within about a second. `ac_lazy_budget_inconclusive.egg` is the round it stops.
+pub const DEFAULT_COMPLETION_WORK_BUDGET: u64 = 100_000_000;
 
 /// Outcome of the AC congruence-completion pass inside `rebuild`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -312,6 +342,11 @@ pub enum CompletionOutcome {
     /// Completion aborted because the node-growth budget was exceeded. The e-graph is
     /// sound-but-incomplete: some AC-entailed equalities may be missing.
     AbortedGrowthLimit { added_nodes: usize, limit: usize },
+    /// Completion aborted because one round tested more rules for containment than the
+    /// work budget allows ([`EGraph::set_completion_work_budget`]): a round over a large
+    /// rule set can cost targets times rules while minting almost nothing, which the
+    /// node budget cannot see. Sound-but-incomplete, as for the growth limit.
+    AbortedWorkLimit { work: u64, limit: u64 },
     /// Completion stopped because a critical pair or a normal form needed a multiplicity
     /// the configured width cannot hold. The e-graph is a valid plain-congruence-closed
     /// state and incomplete; the overflow is also recorded for the caller to report
@@ -322,6 +357,17 @@ pub enum CompletionOutcome {
     /// deliberately unfinished — the caller asked a question and it is
     /// answered. Only the lazy-check transaction sets a goal.
     GoalMet { rounds: usize },
+}
+
+impl CompletionOutcome {
+    /// Whether completion stopped on a resource budget (node growth or round work)
+    /// before its fixpoint: the lazy checks report such a stop as inconclusive.
+    pub fn is_budget_stop(self) -> bool {
+        matches!(
+            self,
+            Self::AbortedGrowthLimit { .. } | Self::AbortedWorkLimit { .. }
+        )
+    }
 }
 
 /// Aggregate counts from [`EGraph::dump_all_proofs`].
@@ -422,6 +468,10 @@ where
             monomial_overflow: std::sync::atomic::AtomicBool::new(false),
             cc_goal: None,
             cc_start_nodes: 0,
+            decision_start: None,
+            decision_spent: false,
+            completion_work_budget: DEFAULT_COMPLETION_WORK_BUDGET,
+            cc_work_stop: None,
             cc: false,
             basis_checks: std::env::var_os("AC_BASIS_DUMP").is_some(),
             cmp_buf_a: Vec::new(),
@@ -473,6 +523,41 @@ where
         self.completion_node_budget = budget;
     }
 
+    /// Set the work budget for one completion round, in rule containment tests (default
+    /// [`DEFAULT_COMPLETION_WORK_BUDGET`]). Exceeding it aborts completion soundly and
+    /// records [`CompletionOutcome::AbortedWorkLimit`]. A config knob, not
+    /// semi-persistent state.
+    pub fn set_completion_work_budget(&mut self, budget: u64) {
+        self.completion_work_budget = budget;
+    }
+
+    /// Open a lazy decision's cumulative node budget at the current node count (see the
+    /// `decision_start` field). Until [`close_decision_budget`](Self::close_decision_budget),
+    /// `completion_node_budget` bounds every node minted since this call, and completion
+    /// rebuilds report [`CompletionOutcome::AbortedGrowthLimit`] once it is spent.
+    pub fn open_decision_budget(&mut self) {
+        self.decision_start = Some(self.node_count());
+        self.decision_spent = false;
+    }
+
+    /// Close the lazy decision's node budget: completion rebuilds measure from their own
+    /// start again.
+    pub fn close_decision_budget(&mut self) {
+        self.decision_start = None;
+        self.decision_spent = false;
+    }
+
+    /// Whether the open lazy decision is out of budget: it has minted more nodes than
+    /// `completion_node_budget` allows, or one of its completion rebuilds stopped on a
+    /// budget. Always false outside a decision. The saturation loops read it after each
+    /// round's rebuild and after every rule.
+    pub fn decision_budget_exhausted(&self) -> bool {
+        self.decision_start.is_some_and(|start| {
+            self.decision_spent
+                || self.node_count() > start.saturating_add(self.completion_node_budget)
+        })
+    }
+
     /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
     /// See the `cc` field docs and `doc/future/ac-completion-limitations.md` §1.
     pub fn set_cc(&mut self, enabled: bool) {
@@ -509,8 +594,8 @@ where
     }
 
     /// Goal-directed early stop for the completion loops: the goal pair
-    /// joined, or the in-round node budget is exhausted. `rebuild` sorts out
-    /// which of the two happened.
+    /// joined, or the in-round node budget is exhausted (counted from the open lazy
+    /// decision's start, if any). `rebuild` sorts out which of the two happened.
     fn cc_should_stop(&self) -> bool {
         if let Some((a, b)) = self.cc_goal
             && self.classes.find_const(a) == self.classes.find_const(b)
@@ -2272,7 +2357,8 @@ where
     /// another congruence pass, then complete again, until a whole completion round
     /// adds nothing. Only [`CompletionOutcome::Converged`] reports that joint
     /// fixpoint. [`CompletionOutcome::Disabled`], [`CompletionOutcome::GoalMet`],
-    /// and [`CompletionOutcome::AbortedGrowthLimit`] guarantee plain congruence
+    /// [`CompletionOutcome::AbortedGrowthLimit`] and
+    /// [`CompletionOutcome::AbortedWorkLimit`] guarantee plain congruence
     /// closure but not complete AC/ACI congruence closure. Inspect
     /// [`completion_outcome`](Self::completion_outcome) after each call.
     pub fn rebuild(&mut self) {
@@ -2314,8 +2400,10 @@ where
         // where it started, we stop rather than continue materializing nodes. This is NOT a
         // termination argument or a work bound — it is a growth guard, and the
         // abort is REPORTED (`CompletionOutcome::AbortedGrowthLimit`), never silent.
+        // Inside a lazy decision the budget is cumulative: growth counts from the
+        // decision's start, so nodes minted by rule rounds and earlier rebuilds are charged.
         let budget = self.completion_node_budget;
-        let start_nodes = self.node_count();
+        let start_nodes = self.decision_start.unwrap_or_else(|| self.node_count());
         self.cc_start_nodes = start_nodes;
         let basis_dump = self.basis_checks;
         let mut round = 0usize;
@@ -2350,6 +2438,19 @@ where
                 self.completion_outcome = Some(CompletionOutcome::GoalMet { rounds: round });
                 return;
             }
+            // A budget already spent (by the open lazy decision's rule rounds or by an
+            // earlier rebuild of it) stops before a round: the round's rule scan and
+            // reducibility pass cost rules squared before any in-round check runs.
+            if self.decision_spent {
+                // An earlier rebuild of the open lazy decision already stopped on a
+                // budget: the decision is inconclusive, and its outcome stays the one
+                // that rebuild reported. The graph is plain-congruence-closed here.
+                return;
+            }
+            if self.node_count() - start_nodes > budget {
+                self.abort_growth(start_nodes, budget, trace);
+                return;
+            }
             if basis_dump {
                 self.cc_basis_dump(&format!("round {round} pre"));
             }
@@ -2362,10 +2463,32 @@ where
                 self.cc_round(full, prev_mark, mark) | self.a_round() | self.canon_repair_round();
             prev_mark = mark;
             if std::mem::take(&mut self.cc_overflow) {
-                // Sound-but-incomplete stop, as for the growth budget, and reported.
+                // Sound-but-incomplete stop, as for the growth budget, and reported. A
+                // work stop the same round recorded is superseded, not left for the next
+                // rebuild to read.
+                self.cc_work_stop = None;
                 self.rebuild_congruence();
                 self.width_error.get_or_insert(MultOverflow);
                 self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
+                return;
+            }
+            if let Some(work) = self.cc_work_stop.take() {
+                // The round stopped on its work budget: same sound-but-incomplete stop,
+                // reported, and never read as a fixpoint (the round may have stopped
+                // before changing anything).
+                self.rebuild_congruence();
+                let limit = self.completion_work_budget;
+                self.completion_outcome = Some(CompletionOutcome::AbortedWorkLimit { work, limit });
+                self.decision_spent = self.decision_start.is_some();
+                if trace {
+                    eprintln!("[ac-complete] ABORT: round work {work} > budget {limit}");
+                }
+                return;
+            }
+            // A round the node budget stopped mid-apply may report no change, so the
+            // budget is checked before the fixpoint test, not after it.
+            if self.node_count() - start_nodes > budget {
+                self.abort_growth(start_nodes, budget, trace);
                 return;
             }
             if trace {
@@ -2390,27 +2513,26 @@ where
             }
             // Made progress: stay incremental for the next round.
             full = false;
-            let added = self.node_count() - start_nodes;
-            if added > budget {
-                // Sound-but-incomplete stop: drain the pending congruence work so the
-                // graph is a valid (plain-congruence-closed) state, then report the abort
-                // through `completion_outcome` — the caller decides what to do with a
-                // partial completion (there is deliberately NO assert here: the abort is
-                // an expected, reported condition on pathological inputs, and tests drive
-                // it directly with a tiny budget).
-                self.rebuild_congruence();
-                self.completion_outcome = Some(CompletionOutcome::AbortedGrowthLimit {
-                    added_nodes: added,
-                    limit: budget,
-                });
-                if trace {
-                    eprintln!(
-                        "[ac-complete] ABORT: added {added} nodes > budget {budget} \
-                         without converging"
-                    );
-                }
-                return;
-            }
+        }
+    }
+
+    /// Stop completion on the node budget: drain the pending congruence work so the
+    /// graph is a valid (plain-congruence-closed) state, then report the abort through
+    /// `completion_outcome`. The caller decides what to do with a partial completion
+    /// (there is deliberately no assert here: the abort is an expected, reported
+    /// condition on pathological inputs, and tests drive it directly with a tiny budget).
+    fn abort_growth(&mut self, start_nodes: usize, budget: usize, trace: bool) {
+        self.rebuild_congruence();
+        let added = self.node_count() - start_nodes;
+        self.completion_outcome = Some(CompletionOutcome::AbortedGrowthLimit {
+            added_nodes: added,
+            limit: budget,
+        });
+        self.decision_spent = self.decision_start.is_some();
+        if trace {
+            eprintln!(
+                "[ac-complete] ABORT: added {added} nodes > budget {budget} without converging"
+            );
         }
     }
 
@@ -3099,6 +3221,13 @@ where
         // pair cannot be represented, so completion stops there (`rebuild` reports
         // `CompletionOutcome::AbortedOverflow` and records the error) instead of panicking.
         let overflow = std::cell::Cell::new(false);
+        // The round's work meter, in rule containment tests: the reducibility pass and
+        // every normalization step charge it. A round past `completion_work_budget`
+        // stops and leaves the work spent in `cc_work_stop` for `rebuild` to report. A
+        // round over a large rule set costs targets times rules while minting almost
+        // nothing, which the node budget cannot see.
+        let work = std::cell::Cell::new(0u64);
+        let work_limit = self.completion_work_budget;
         let multiset_union = |a: &[(Cfg::G, Cfg::M)], b: &[(Cfg::G, Cfg::M)]| {
             try_multiset_union(a, b).unwrap_or_else(|_| {
                 overflow.set(true);
@@ -3216,6 +3345,7 @@ where
         let reducible: Vec<bool> = (0..rules.len())
             .map(|i| {
                 rules.iter().enumerate().any(|(j, rj)| {
+                    work.set(work.get() + 1);
                     j != i
                         && rj.op == rules[i].op
                         && rj.lhs != rules[i].lhs
@@ -3224,6 +3354,10 @@ where
             })
             .collect();
         let dt_reducible = t_reducible.elapsed();
+        if work.get() > work_limit {
+            self.cc_work_stop = Some(work.get());
+            return false;
+        }
 
         // Build a normal form as a node, one entry per distinct summand, into a reused
         // scratch. The combinators that form these monomials (`multiset_union`) already
@@ -3649,6 +3783,10 @@ where
             if self.cc_should_stop() {
                 break;
             }
+            if work.get() > work_limit {
+                self.cc_work_stop = Some(work.get());
+                break;
+            }
             nf_refs.clear();
             nf_refs.extend(
                 rules
@@ -3665,7 +3803,7 @@ where
             // normalized by every rule but its own), so there is no reuse to amortize an
             // index over. Any relative phase cost is workload-dependent and belongs in the
             // Criterion completion benchmark, not in this correctness comment.
-            let nf = NfRules::linear(&nf_refs);
+            let nf = NfRules::linear(&nf_refs).with_work(&work);
             let normalized = match self.op_clamp(op) {
                 CompletionClamp::Idempotent => {
                     try_normalize_set_into(&mut nf_out, &mut nf_ping, &mset, nf)
@@ -3767,8 +3905,12 @@ where
         let mut n1_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut n2_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for (op, origin, r1, r2) in crit {
-            // Same in-round stop as the (A′) loop above.
+            // Same in-round stops as the (A′) loop above.
             if self.cc_should_stop() {
+                break;
+            }
+            if work.get() > work_limit {
+                self.cc_work_stop = Some(work.get());
                 break;
             }
             // Cheap raw-equality reject: most critical pairs are trivial (the two reducts
@@ -3781,7 +3923,8 @@ where
             let nf_rules = match nf_by_op.iter().position(|(o, _)| *o == op) {
                 Some(i) => NfRules::indexed(&nf_by_op[i].1, &nf_index_by_op[i]),
                 None => NfRules::linear(&empty_nf),
-            };
+            }
+            .with_work(&work);
             // Normalize both reducts in the op's count domain (idempotent → set, nilpotent →
             // mod-n, plain AC → ℕ) before comparing/merging.
             let normalized = match self.op_clamp(op) {
@@ -3861,6 +4004,9 @@ where
                 "[ac-complete]   full={full} rules={} delta_in_rules={delta_in_rules} delta_skipped_pairs={delta_skipped} crit_generated={crit_generated}",
                 rules.len(),
             );
+        }
+        if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
+            eprintln!("[ac-complete]   work={} (budget {work_limit})", work.get());
         }
         if phase_time {
             let dt_bclose = t_bclose.elapsed();

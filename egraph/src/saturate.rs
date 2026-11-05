@@ -395,6 +395,11 @@ where
         if goal_met(spec, eg) || stop.is_some_and(|f| f(eg)) {
             return Ok(sat_result_seq(seq_report, i, false, true, steps_base));
         }
+        // An open lazy decision that ran out of budget (in this rebuild's completion or
+        // in the previous round's rules) is inconclusive: stop before matching.
+        if eg.decision_budget_exhausted() {
+            return Ok(sat_result_seq(seq_report, i, false, false, steps_base));
+        }
         let index = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
             IndexStore::build_with(eg, scratch)
@@ -402,6 +407,10 @@ where
         // The fixpoint test compares the graph, not the actions' counts: see `size_stamp`.
         let stamp = eg.size_stamp();
         let mut changes = 0;
+        // Set when an open lazy decision's node budget runs out mid-round (see
+        // `EGraph::decision_budget_exhausted`): the round stops after the rule that
+        // spent it, and the run returns unsaturated.
+        let mut over_budget = false;
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
             let stats = {
@@ -418,24 +427,33 @@ where
                 // that ends the program, and keeping them would mean either a
                 // guard object or duplicating the recycle on the error path.
                 changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool)?;
+                if eg.decision_budget_exhausted() {
+                    over_budget = true;
+                    break;
+                }
             }
-            changes += apply_sequence_batch(
-                &seqs,
-                eg,
-                &index,
-                &stats,
-                model,
-                seq_globals,
-                &mut pool,
-                None,
-                &mut seq_report,
-            )?;
+            if !over_budget {
+                changes += apply_sequence_batch(
+                    &seqs,
+                    eg,
+                    &index,
+                    &stats,
+                    model,
+                    seq_globals,
+                    &mut pool,
+                    None,
+                    &mut seq_report,
+                )?;
+            }
         }
         // Before any exit from the loop body: the arenas go back so the next
         // round, and the next `(run)`, build into the same span tables.
         index.recycle_into(scratch, true);
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
         crate::phase_timing::round_line("naive");
+        if over_budget {
+            return Ok(sat_result_seq(seq_report, i + 1, false, false, steps_base));
+        }
         // `changes` still carries what the stamp cannot see: a `:subsume` flag newly set.
         if changes == 0 && eg.size_stamp() == stamp {
             return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
@@ -918,6 +936,11 @@ where
         if goal_met(spec, eg) || stop.is_some_and(|f| f(eg)) {
             return Ok(sat_result_seq(seq_report, i, false, true, steps_base));
         }
+        // An open lazy decision that ran out of budget (in this rebuild's completion or
+        // in the previous round's rules) is inconclusive: stop before matching.
+        if eg.decision_budget_exhausted() {
+            return Ok(sat_result_seq(seq_report, i, false, false, steps_base));
+        }
         let full = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
             IndexStore::build_with(eg, scratch)
@@ -955,6 +978,9 @@ where
         // The fixpoint test compares the graph, not the actions' counts: see `size_stamp`.
         let stamp = eg.size_stamp();
         let mut changes = 0;
+        // As in the naive loop: an open lazy decision's spent node budget stops the
+        // round after the rule (or variant) that spent it.
+        let mut over_budget = false;
         match &delta {
             // Round 0: naive — the whole graph is new.
             None => {
@@ -970,18 +996,24 @@ where
                 {
                     changes +=
                         run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool)?;
+                    if eg.decision_budget_exhausted() {
+                        over_budget = true;
+                        break;
+                    }
                 }
-                changes += apply_sequence_batch(
-                    &seqs,
-                    eg,
-                    &full,
-                    &stats,
-                    model,
-                    seq_globals,
-                    &mut pool,
-                    None,
-                    &mut seq_report,
-                )?;
+                if !over_budget {
+                    changes += apply_sequence_batch(
+                        &seqs,
+                        eg,
+                        &full,
+                        &stats,
+                        model,
+                        seq_globals,
+                        &mut pool,
+                        None,
+                        &mut seq_report,
+                    )?;
+                }
             }
             // Rounds ≥ 1: one variant per join atom.
             Some(delta) => {
@@ -989,7 +1021,7 @@ where
                     let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
                     IndexStats::from_index(&full)
                 };
-                for rule in rules
+                'rules: for rule in rules
                     .iter()
                     .filter_map(|r| r.ordinary())
                     .filter(|r| r.ruleset == spec.ruleset)
@@ -1010,6 +1042,10 @@ where
                             globals,
                             &mut pool,
                         )?;
+                        if eg.decision_budget_exhausted() {
+                            over_budget = true;
+                            break 'rules;
+                        }
                         continue;
                     }
                     for &di in &jatoms {
@@ -1021,24 +1057,30 @@ where
                         let vindex = VariantIndex::variant(&full, delta, di);
                         changes +=
                             run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool)?;
+                        if eg.decision_budget_exhausted() {
+                            over_budget = true;
+                            break 'rules;
+                        }
                     }
                 }
-                let rd = RoundDelta {
-                    index: delta,
-                    touched: &touched_ids,
-                    subsumed: &subsumed,
-                };
-                changes += apply_sequence_batch(
-                    &seqs,
-                    eg,
-                    &full,
-                    &full_stats,
-                    model,
-                    seq_globals,
-                    &mut pool,
-                    Some(&rd),
-                    &mut seq_report,
-                )?;
+                if !over_budget {
+                    let rd = RoundDelta {
+                        index: delta,
+                        touched: &touched_ids,
+                        subsumed: &subsumed,
+                    };
+                    changes += apply_sequence_batch(
+                        &seqs,
+                        eg,
+                        &full,
+                        &full_stats,
+                        model,
+                        seq_globals,
+                        &mut pool,
+                        Some(&rd),
+                        &mut seq_report,
+                    )?;
+                }
             }
         }
         match_timer.stop();
@@ -1051,6 +1093,9 @@ where
         full.recycle_into(scratch, true);
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
         crate::phase_timing::round_line(if had_delta { "semi" } else { "semi-r0" });
+        if over_budget {
+            return Ok(sat_result_seq(seq_report, i + 1, false, false, steps_base));
+        }
 
         // `changes` still carries what the stamp cannot see: a `:subsume` flag newly set.
         if changes == 0 && eg.size_stamp() == stamp {
