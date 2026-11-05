@@ -112,6 +112,24 @@ its two children classes merge (`NoCollapse`).
   `NoNullary`), `demand_laws_no_redundancy_*`, `acceptsFix_imp_acceptsLaws`;
   five executed counterexamples against the kept-count rule in
   `LawsCheck.lean`.
+  `EngineRule.lean`/`EngineComplete.lean`: the engine's one
+  `Demand::accepts` (`acceptsE`: the opened-class clause for multisets
+  only) is `acceptsLaws` on multisets (`acceptsE_ac_iff`) and implies it on
+  every kind; the engine's flag computed as the code does
+  (`nonInertEng`, residue loop and the three inverse loops) equals
+  `nonInertB` on every leaf block (`nonInertEng_eq`); the walk's pruning
+  with `may_be_non_inert` is match-preserving (`prune_engine`);
+  completeness of the engine's rule under any laws,
+  `demand_engine_complete_{ac,aci,assoc}` (sets under `TwoClassesL`).
+  `PlanDefs.lean`/`Plan.lean`: the flattened plan with one view register
+  per n-ary atom (`planF`, `runE`, any atom order, joins without
+  `by_contains`, pruned enumeration), `lowerF_sound`/`lowerF_complete`,
+  `flatten_plan_sound`/`flatten_plan_complete` for `AtomSatF` (each n-ary
+  atom on a view of its own node accepted by its own demand).
+  `Fold.lean`/`FoldPlan.lean`: folds open only their spine
+  (`fold_open_off_spine_unsound`, the counter-model of the engine bug
+  fixed in `flatten.rs`; `otLeft_sound`/`otRight_sound`); `runED` with the
+  spine-restricted enumerator, equal to `runE` without folds (`runED_both`).
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);
