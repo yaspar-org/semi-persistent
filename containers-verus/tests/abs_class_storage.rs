@@ -96,17 +96,6 @@ fn nested_marks_restore_values_in_order() {
 
 #[test]
 #[ignore = "abs-class-storage: not implemented yet"]
-fn restore_after_merge_with_handle_adoption() {
-    // Only if the student chooses handle adoption (§8 decision 4).
-    // (a, ka) without a value, (b, kb) with value 8; mark;
-    // merge_directed_with(a, b, true) so that a survives.
-    // After the merge the survivor reads 8 through its own handle.
-    // restore: ka has no handle again, kb reads 8.
-    // Without adoption, delete this test and record the decision in §8.
-}
-
-#[test]
-#[ignore = "abs-class-storage: not implemented yet"]
 fn dead_key_write_refuses() {
     // Final form: #[should_panic(expected = "class key is not live")].
     // (a, ka), (b, kb); mi = merge(a, b); the absorbed key is dead.

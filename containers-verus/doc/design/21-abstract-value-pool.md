@@ -333,6 +333,34 @@ Line numbers refer to the hand-off commit, which includes the TODO comments.
 Each decision is recorded in this chapter, with its reason, before the PR
 leaves draft.
 
+### 8.1 Recorded decisions
+
+1. Payload size: option A. `abs` is stored as a `(handle, present)` pair,
+   exactly as `min_row` is stored, and `repr_wf` pins the absent value to
+   `(min, false)`. The repr grows to 20 bytes at 31-bit ids and 40 bytes at
+   63-bit ids. Option A reuses the `min_row` proofs unchanged in shape. B1
+   couples the abstract-value pool to `min_pool`, so a class with only one of
+   the two allocates both, and `set_min_monomial` and `set_abs_value` share
+   one allocation proof. B2 needs new `repr_wf` and extensionality proofs for
+   packed words, and the use-list word's high bit already carries the capture
+   tag. The peak-memory and wall-time measurement is recorded in the size
+   assert comments in `egraph/src/classes.rs`.
+2. Entry representation: a type parameter `A: Copy + Default`, default
+   `NoAbs`. One entry is one pool cell, so W8a holds by the cell type and no
+   `abs_width` arithmetic enters W8b. The entry format stays the business of
+   `abs-domain-registry`, which instantiates `A`.
+3. One pool. The handle stays one index word, which option A sizes. A
+   per-sort pool widens the handle to a `(sort tag, offset)` pair and enlarges
+   the repr again; it can follow once the registry defines the sorts.
+4. No handle adoption. `merge_with` leaves the survivor's payload `abs`
+   unchanged, so W8 for the merged state is a subset of the old live handles
+   and `merge_with` writes no extra payload. A survivor without a handle gets
+   one on its first `set_abs_value`, which costs one pool entry. The test
+   `restore_after_merge_with_handle_adoption` is deleted.
+5. `set_abs_value` returns nothing. A caller that needs the old value reads
+   it with `abs_value` first; the saturation engine reads both inputs of the
+   meet before it writes, so it has the old value already.
+
 ## 9. Acceptance criteria
 
 1. Verification reports 0 errors for the modules `eclasses` and `group`:
