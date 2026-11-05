@@ -8,7 +8,7 @@
 ;; (proofs/lean/Conform/Flatten); the expected matches are the flattened plan's
 ;; (SemperProofs/EMatch/Flatten/PlanDefs.lean). Regenerate with
 ;;   lake exe semper-conform-flatten 2 <count> <dir>   (file f2_0080.egg)
-;; expected matches: 4, rejected candidates: 4
+;; expected matches: 8, rejected candidates: 4
 (sort E)
 (function C0 () E)
 (function Top () E)
@@ -36,6 +36,10 @@
 (check-eq (Top) (Tag (RS (End) (C3) (Top) (Top)) (RS (End) (C3) (C2)) (C3) (C3) (RS (End) (C3) (C3))))
 (check-eq (Top) (Tag (RS (End) (C3) (Top) (Top)) (RS (End) (C3) (C3) (C3)) (C3) (C3) (RS (End) (C3))))
 (check-eq (Top) (Tag (RS (End) (C3) (Top) (Top)) (RS (End) (C3) (C3) (C3)) (C3) (C3) (RS (End) (C3) (C3))))
+(check-eq (Top) (Tag (RS (End) (C3) (Top) (Top)) (RS (End) (C3) (C3)) (C2) (C3) (RS (End) (C3))))
+(check-eq (Top) (Tag (RS (End) (C3) (Top) (Top)) (RS (End) (C3) (C3)) (C2) (C3) (RS (End) (C3) (C3))))
+(check-eq (Top) (Tag (RS (End) (C3) (Top) (Top)) (RS (End) (C2)) (C2) (C3) (RS (End) (C3))))
+(check-eq (Top) (Tag (RS (End) (C3) (Top) (Top)) (RS (End) (C2)) (C2) (C3) (RS (End) (C3) (C3))))
 (check-neq (Top) (Tag (RS (End) (Top) (Top)) (RS (End) (C3) (C2)) (C3) (C3) (RS (End) (C3))))
 (check-neq (Top) (Tag (RS (End) (C3) (Top)) (RS (End) (C3) (C2)) (C3) (C3) (RS (End) (C3))))
 (check-neq (Top) (Tag (RS (End) (Top) (Top) (C3)) (RS (End) (C3) (C2)) (C3) (C3) (RS (End) (C3))))

@@ -1,14 +1,16 @@
 import Conform.Flatten.Case
+import SemperProofs.EMatch.Flatten.RegroupDefs
 
 /-!
 # `:flatten` conformance generator: the oracle
 
 A rule tagged `:flatten` runs the flattened plan of `PlanDefs.lean`, with the
-fold-restricted views of `FoldPlan.lean` (`runED`; `runED_both`: equal to
-`runE` when no operator is a fold): the
+fold-restricted views of `FoldPlan.lean` and the regrouped views of
+`RegroupDefs.lean` (`runER`): the
 pattern's atoms in post-order (`atoms P rootVar`), every n-ary atom joined
-by operator, flattened into its own view register (`enumeratePrunedE`) and
-decomposed on the view, the decomposition kept when the engine's demand rule
+by operator, flattened into its own view register (`enumerateRD`: the walk's
+records pruned by `takeableR`, regrouped with at most one regrouped class per
+item) and decomposed on the view, the decomposition kept when the engine's demand rule
 `DemandL.acceptsEB` accepts the classes it took. An untagged rule runs the
 reference interpreter `run (compile P rootVar)` on the stored nodes, as in
 `Conform.Oracle`. A match is the root class and the tag arguments
@@ -25,17 +27,30 @@ open Conform (Gen chance Arg Match argsOf tagVars isClsVar isMultVar isAcRest is
 def matchesFlat (cs : FCase) : List Match :=
   let G := cs.graph
   let c : FCtx := ⟨G, fun _ => true, cs.lawsOf⟩
-  (runED c cs.dirOf (planF (atoms cs.pat rootVar) ∅ 0) EEnv.empty).filterMap fun env => do
+  (runER c cs.dirOf (planF (atoms cs.pat rootVar) ∅ 0) EEnv.empty).filterMap fun env => do
     let id ← env.σ.node rootVar
     let args ← argsOf cs.pat env.σ
     pure ⟨G.find id, args⟩
 
 /-- The cost guard of a draw: the flattened plan run breadth-first (the same
-steps as `runED`, level by level), giving up when a level holds more than
-`envCap` environments or a `Flatten` step would enumerate more than
-`enumCap` raw views over the level. -/
+steps as `runER`, level by level), giving up when a level holds more than
+`envCap` environments, a `Flatten` step would enumerate more than
+`enumCap` raw views over the level, or regroup past `regroupCap`. -/
 def envCap : Nat := 5000
 def enumCap : Nat := 30000
+
+/-- Whether the regrouping of a `Flatten` step stays within the budget
+`regroupCap` (`regroupLevelsCapped`); past it the engine may stop at its own
+bounds, so a draw past the budget is redrawn. -/
+def withinRegroupBudget (c : FCtx) (dir : Sym → Dir) (v : Var) (f : Sym) (κ : FlatKind)
+    (items : List Var) (env : EEnv) : Bool :=
+  match env.σ.nodeOf c.G v with
+  | some n =>
+      let ctx := c.ctx f κ
+      let base := baseRecsR ctx (dir f) (c.laws f) n
+      (regroupLevelsCapped ctx (dir f) (c.laws f) items.length regroupCap (regroupFuel base)
+        (base.filter (keepRec κ (takeableR ctx env.σ items) (c.laws f)))).isSome
+  | none => true
 
 def affordable (cs : FCase) : Bool :=
   let G := cs.graph
@@ -44,10 +59,12 @@ def affordable (cs : FCase) : Bool :=
     | [], _ => true
     | s :: ss, envs =>
         let ok := match s with
-          | .flatten _ f κ _ _ => envs.length * max 1 ((viewCounts G f κ).foldl max 0) ≤ enumCap
+          | .flatten v f κ _ items =>
+              envs.length * max 1 ((viewCounts G f κ).foldl max 0) ≤ enumCap &&
+                envs.all (fun env => withinRegroupBudget c cs.dirOf v f κ items env)
           | _ => true
         if !ok then false else
-        let envs' := envs.flatMap (runEStepD c cs.dirOf s)
+        let envs' := envs.flatMap (runEStepR c cs.dirOf s)
         if envs'.length > envCap then false else go ss envs'
   go (planF (atoms cs.pat rootVar) ∅ 0) [EEnv.empty]
 

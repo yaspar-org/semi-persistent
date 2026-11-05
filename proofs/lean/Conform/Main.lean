@@ -22,7 +22,10 @@ def writeCase (outdir : String) (seed idx : Nat) : IO Unit := do
   let cs := caseOf seed idx
   let ms := expected cs
   let rej := rejected cs ms 4
-  IO.FS.writeFile s!"{outdir}/{fileName seed idx}" (program cs ms rej)
+  let note := if regroupOverBudget cs then
+    ";; regrouping past the model's budget (Conform.regroupCap): the expected matches omit the regrouped views\n"
+    else ""
+  IO.FS.writeFile s!"{outdir}/{fileName seed idx}" (program cs ms rej ++ note)
 
 def main (args : List String) : IO UInt32 := do
   match args with

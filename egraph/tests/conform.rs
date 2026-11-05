@@ -32,9 +32,7 @@ use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::*;
 use semi_persistent_egraph::saturate::SaturationStrategy;
 
-/// `regroup`: whether `:flatten` rules match regrouped views
-/// (`EGraph::set_flatten_regroup`), which the Lean model does not specify.
-fn run_source(src: &str, strategy: SaturationStrategy, regroup: bool) -> String {
+fn run_source(src: &str, strategy: SaturationStrategy) -> String {
     let surface_cmds = match semi_persistent_egraph::parser::parse_program_v2(src) {
         Ok(c) => c,
         Err(e) => return format!("parse-error: {e}"),
@@ -47,7 +45,6 @@ fn run_source(src: &str, strategy: SaturationStrategy, regroup: bool) -> String 
         false,
     >::new(MachineModel);
     interp.set_strategy(strategy);
-    interp.eg.set_flatten_regroup(regroup);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         surface_cmds,
@@ -81,13 +78,8 @@ fn directives(src: &str) -> (String, String) {
 }
 
 /// Runs every `.egg` file of `dir` under both evaluation strategies and both
-/// atom-scheduling modes; panics with the list of disagreements. `regroup` as for
-/// [`run_source`]; `keep` filters the program's lines.
+/// atom-scheduling modes; panics with the list of disagreements.
 fn check_dir(dir: &str) {
-    check_dir_with(dir, true, |_| true);
-}
-
-fn check_dir_with(dir: &str, regroup: bool, keep: impl Fn(&str) -> bool) {
     let mut paths: Vec<_> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("cannot read {dir}: {e}"))
         .map(|e| e.expect("directory entry").path())
@@ -99,11 +91,6 @@ fn check_dir_with(dir: &str, regroup: bool, keep: impl Fn(&str) -> bool) {
     for path in &paths {
         let src = std::fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-        let src: String = src
-            .lines()
-            .filter(|l| keep(l))
-            .map(|l| format!("{l}\n"))
-            .collect();
         let (expect, types) = directives(&src);
         assert_eq!(
             expect,
@@ -120,7 +107,7 @@ fn check_dir_with(dir: &str, regroup: bool, keep: impl Fn(&str) -> bool) {
         for runtime in [false, true] {
             semi_persistent_egraph::ematch::set_runtime_scheduling(runtime);
             for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {
-                let out = run_source(&src, strategy, regroup);
+                let out = run_source(&src, strategy);
                 if !out.starts_with("ok") {
                     failures.push(format!(
                         "{} [{strategy:?}, runtime_scheduling={runtime}]: {out}",
@@ -140,30 +127,14 @@ fn check_dir_with(dir: &str, regroup: bool, keep: impl Fn(&str) -> bool) {
     );
 }
 
-/// The model's matching opens `:flatten` views and does not regroup them, so the two
-/// matching samples run with regrouped views off: their `check-neq` lines are candidates
-/// the model rejects, and a regrouped view matches some of them soundly. In
-/// `conform/c1_0100.egg`, `C3 ∋ Add{C0, C3, C5}` and `C4 ∋ Add{C0:2, C5}`; opening `C3`
-/// gives `{C0:2, C3, C5:2}`, which regroups to `{C4, C3, C5}` and matches
-/// `(Add x0 x1 ..r)` with `x0 = C4`, a rejected candidate, and
-/// `C3 = C0 + C0 + C3 + C5 + C5 = C4 + C3 + C5` holds.
 #[test]
 fn conform_fixtures_agree_with_the_model() {
-    check_dir_with("tests/egg/conform", false, |_| true);
+    check_dir("tests/egg/conform");
 }
 
 #[test]
 fn conform_flatten_fixtures_agree_with_the_model() {
-    check_dir_with("tests/egg/conform-flatten", false, |_| true);
-}
-
-/// Regrouped views only add matches: with them on, every match the model finds
-/// (`check-eq`) is still found. The rejected candidates (`check-neq`) are dropped.
-#[test]
-fn conform_matches_survive_regrouping() {
-    for dir in ["tests/egg/conform", "tests/egg/conform-flatten"] {
-        check_dir_with(dir, true, |l| !l.trim_start().starts_with("(check-neq"));
-    }
+    check_dir("tests/egg/conform-flatten");
 }
 
 #[test]

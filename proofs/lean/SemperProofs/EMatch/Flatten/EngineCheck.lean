@@ -20,7 +20,7 @@ rule, flag and pruning (`EngineRule.lean`), its completeness
 #print axioms Semper.EMatch.Flatten.takenOf_takeable
 #print axioms Semper.EMatch.Flatten.lowerF_sound
 #print axioms Semper.EMatch.Flatten.lowerF_complete
-#print axioms Semper.EMatch.Flatten.AtomSatF.mono
+#print axioms Semper.EMatch.Flatten.AtomSatG.mono
 #print axioms Semper.EMatch.Flatten.planF_sound
 #print axioms Semper.EMatch.Flatten.planF_complete
 #print axioms Semper.EMatch.Flatten.flatten_plan_sound

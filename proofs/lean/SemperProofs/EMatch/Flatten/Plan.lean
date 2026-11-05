@@ -29,14 +29,15 @@ open Binding (Extends)
 
 /-! ## The interpreter -/
 
-theorem mem_runE_cons {c : FCtx} {s : EStep} {ss : List EStep} {env env' : EEnv} :
-    env' ∈ runE c (s :: ss) env ↔ ∃ env₁ ∈ runEStep c s env, env' ∈ runE c ss env₁ := by
-  simp [runE]
+theorem mem_runE_cons {E : Enumerator} {c : FCtx} {s : EStep} {ss : List EStep}
+    {env env' : EEnv} :
+    env' ∈ runEG E c (s :: ss) env ↔ ∃ env₁ ∈ runEStepG E c s env, env' ∈ runEG E c ss env₁ := by
+  simp [runEG]
 
-theorem mem_runE_append {c : FCtx} :
+theorem mem_runE_append {E : Enumerator} {c : FCtx} :
     ∀ (xs ys : List EStep) (env env' : EEnv),
-      env' ∈ runE c (xs ++ ys) env ↔ ∃ env₁ ∈ runE c xs env, env' ∈ runE c ys env₁
-  | [], ys, env, env' => by simp [runE]
+      env' ∈ runEG E c (xs ++ ys) env ↔ ∃ env₁ ∈ runEG E c xs env, env' ∈ runEG E c ys env₁
+  | [], ys, env, env' => by simp [runEG]
   | s :: xs, ys, env, env' => by
       simp only [List.cons_append, mem_runE_cons, mem_runE_append xs ys]
       constructor
@@ -53,16 +54,16 @@ theorem mem_runE_append {c : FCtx} :
     (env.withBinding σ).withBinding σ' = env.withBinding σ' := rfl
 
 /-- A plan of reference steps runs as `run` on the binding. -/
-theorem mem_runE_base {c : FCtx} :
+theorem mem_runE_base {E : Enumerator} {c : FCtx} :
     ∀ (pl : Plan) (env env' : EEnv),
-      env' ∈ runE c (pl.map .base) env ↔ ∃ σ' ∈ run c.G pl env.σ, env' = env.withBinding σ'
+      env' ∈ runEG E c (pl.map .base) env ↔ ∃ σ' ∈ run c.G pl env.σ, env' = env.withBinding σ'
   | [], env, env' => by
-      simp only [List.map_nil, runE, List.mem_singleton, run]
+      simp only [List.map_nil, runEG, List.mem_singleton, run]
       constructor
       · intro h; subst h; exact ⟨_, rfl, rfl⟩
       · rintro ⟨σ', h1, h2⟩; subst h1; subst h2; rfl
   | s :: pl, env, env' => by
-      simp only [List.map_cons, mem_runE_cons, runEStep, List.mem_map, mem_run_cons]
+      simp only [List.map_cons, mem_runE_cons, runEStepG, List.mem_map, mem_run_cons]
       constructor
       · rintro ⟨_, ⟨σ₁, h₁, rfl⟩, h⟩
         obtain ⟨σ', h', rfl⟩ := (mem_runE_base pl _ _).1 h
@@ -143,10 +144,39 @@ theorem full_to_pruned {T : C → Bool} {ctx : Ctx} {laws : Laws} {n : Node}
     ∃ d', (w, d') ∈ enumeratePrunedE T ctx laws n ∧ d'.acceptsE ctx.κ taken :=
   (prune_engine T ctx laws n w taken hT).2 ⟨d, h, hacc⟩
 
+/-- What the plan theorems need of an enumeration: every view is a
+normalization result, and the pruned enumeration accepts a `taken` set of
+classes bound to the items exactly when the full one does. -/
+structure Enumerator.Spec (E : Enumerator) : Prop where
+  normal : ∀ {ctx : Ctx} {laws : Laws} {items : List Var} {n : Node} {w : List (C × Nat)}
+    {d : DemandL}, (w, d) ∈ E.full ctx laws items n → ∃ v, normalize ctx.κ laws v = .node w
+  normalP : ∀ {ctx : Ctx} {laws : Laws} {σ : Binding} {items : List Var} {n : Node}
+    {w : List (C × Nat)} {d : DemandL}, (w, d) ∈ E.pruned ctx laws σ items n →
+      ∃ v, normalize ctx.κ laws v = .node w
+  to_full : ∀ {ctx : Ctx} {laws : Laws} {σ σ' : Binding} {items : List Var} {n : Node}
+    {w : List (C × Nat)} {d : DemandL}, Extends σ σ' → (∀ x ∈ items, ∃ c, σ'.cls x = some c) →
+      (w, d) ∈ E.pruned ctx laws σ items n → d.acceptsE ctx.κ (takenOf σ' items) →
+      ∃ d', (w, d') ∈ E.full ctx laws items n ∧ d'.acceptsE ctx.κ (takenOf σ' items)
+  to_pruned : ∀ {ctx : Ctx} {laws : Laws} {σ σ' : Binding} {items : List Var} {n : Node}
+    {w : List (C × Nat)} {d : DemandL}, Extends σ σ' → (∀ x ∈ items, ∃ c, σ'.cls x = some c) →
+      (w, d) ∈ E.full ctx laws items n → d.acceptsE ctx.κ (takenOf σ' items) →
+      ∃ d', (w, d') ∈ E.pruned ctx laws σ items n ∧ d'.acceptsE ctx.κ (takenOf σ' items)
+
+/-- The opening walk meets the specification (`prune_engine`, `takenOf_takeable`). -/
+theorem Enumerator.base_spec : Enumerator.base.Spec where
+  normal h := by
+    obtain ⟨v, -, -, hn⟩ := (views_soundL h).1
+    exact ⟨v, hn⟩
+  normalP h := by
+    obtain ⟨v, -, -, -, hn⟩ := mem_enumeratePrunedE h
+    exact ⟨v, hn⟩
+  to_full hext hb h hacc := pruned_to_full (takenOf_takeable hext hb) h hacc
+  to_pruned hext hb h hacc := full_to_pruned (takenOf_takeable hext hb) h hacc
+
 /-! ## The specification of one flattened lowering -/
 
 /-- `LowerSpec` with the flattened semantics of the atom. -/
-structure LowerSpecF (c : FCtx) (a : RAtom) (B : Finset Var) (σ σ' : Binding) : Prop where
+structure LowerSpecF (E : Enumerator) (c : FCtx) (a : RAtom) (B : Finset Var) (σ σ' : Binding) : Prop where
   ext : Extends σ σ'
   clsDom : ClsDom σ' (B ∪ a.binds)
   node : ∀ v, v ≠ a.node → σ'.node v = σ.node v
@@ -154,19 +184,19 @@ structure LowerSpecF (c : FCtx) (a : RAtom) (B : Finset Var) (σ σ' : Binding) 
   rest : ∀ r, r ∉ a.msetRestVars → σ'.rest r = σ.rest r
   seqRest : ∀ r, r ∉ a.seqRestVars → σ'.seqRest r = σ.seqRest r
   finRest : ∀ r, r ∉ a.setRestVars → σ'.finRest r = σ.finRest r
-  sat : AtomSatF c σ' a
+  sat : AtomSatG E c σ' a
 
-theorem atomSatF_of_none {c : FCtx} {σ : Binding} {a : RAtom} (h : a.shape.flatKind = none) :
-    AtomSatF c σ a ↔ AtomSat c.G σ a := by
-  unfold AtomSatF; rw [h]
+theorem atomSatF_of_none {E : Enumerator} {c : FCtx} {σ : Binding} {a : RAtom}
+    (h : a.shape.flatKind = none) : AtomSatG E c σ a ↔ AtomSat c.G σ a := by
+  unfold AtomSatG; rw [h]
 
-theorem LowerSpec.toF {c : FCtx} {a : RAtom} {B : Finset Var} {σ σ' : Binding}
-    (h : LowerSpec c.G a B σ σ') (hk : a.shape.flatKind = none) : LowerSpecF c a B σ σ' :=
+theorem LowerSpec.toF {E : Enumerator} {c : FCtx} {a : RAtom} {B : Finset Var} {σ σ' : Binding}
+    (h : LowerSpec c.G a B σ σ') (hk : a.shape.flatKind = none) : LowerSpecF E c a B σ σ' :=
   ⟨h.ext, h.clsDom, h.node, h.mult, h.rest, h.seqRest, h.finRest, (atomSatF_of_none hk).2 h.sat⟩
 
 /-- The frame part of a flattened n-ary lowering (`lowerSpec_of_frame`
 without the satisfaction). -/
-theorem lowerSpecF_of_frame {c : FCtx} {σ σ' : Binding} {n : Var} {f : Sym} {sh : Shape}
+theorem lowerSpecF_of_frame {E : Enumerator} {c : FCtx} {σ σ' : Binding} {n : Var} {f : Sym} {sh : Shape}
     {B : Finset Var} {id : NodeId} {ks rs ss fs : List Var}
     (hdom : ClsDom σ B) (hn : σ.node n = none)
     (hc : σ.cls n = none ∨ σ.cls n = some (c.G.find id))
@@ -177,8 +207,8 @@ theorem lowerSpecF_of_frame {c : FCtx} {σ σ' : Binding} {n : Var} {f : Sym} {s
     (hfs : ∀ r ∈ fs, r ∈ RAtom.setRestVars ⟨n, f, sh⟩)
     (hext : Extends (joinBind c.G σ n id) σ')
     (hall : ∀ x ∈ RAtom.elems ⟨n, f, sh⟩, ∃ c', σ'.cls x = some c')
-    (hsat : AtomSatF c σ' ⟨n, f, sh⟩) :
-    LowerSpecF c ⟨n, f, sh⟩ B σ σ' where
+    (hsat : AtomSatG E c σ' ⟨n, f, sh⟩) :
+    LowerSpecF E c ⟨n, f, sh⟩ B σ σ' where
   ext := (extends_joinBind_of_cls hn hc).trans hext
   clsDom := clsDom_congr (clsDom_of_frame hfr (clsDom_joinBind hdom) hall) (binds_eq n f sh B).symm
   node v hv := by rw [hfr.node, joinBind_node_of_ne _ _ _ _ _ hv]
@@ -189,13 +219,14 @@ theorem lowerSpecF_of_frame {c : FCtx} {σ σ' : Binding} {n : Var} {f : Sym} {s
   sat := hsat
 
 /-- The three steps of a flattened n-ary lowering, unfolded. -/
-theorem mem_lowerF_nary {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {B : Finset Var}
+theorem mem_lowerF_nary {E : Enumerator} {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {B : Finset Var}
     {κ : FlatKind} {r : Nat} {items : List Var} {s : EStep} :
-    env' ∈ runE c [.base (.join n (flatJoin ⟨n, f, .ac [] none⟩ B)), .flatten n f κ r items, s] env ↔
+    env' ∈ runEG E c [.base (.join n (flatJoin ⟨n, f, .ac [] none⟩ B)), .flatten n f κ r items, s]
+        env ↔
       ∃ id ∈ candidates c.G env.σ (joinLookups ⟨n, f, .ac [] none⟩ B),
         ∃ n' wd, (joinBind c.G env.σ n id).nodeOf c.G n = some n' ∧
-          wd ∈ enumeratePrunedE (takeableOf (joinBind c.G env.σ n id) items) (c.ctx f κ) (c.laws f) n' ∧
-          env' ∈ runEStep c s ((env.withBinding (joinBind c.G env.σ n id)).setView r wd) := by
+          wd ∈ E.pruned (c.ctx f κ) (c.laws f) (joinBind c.G env.σ n id) items n' ∧
+          env' ∈ runEStepG E c s ((env.withBinding (joinBind c.G env.σ n id)).setView r wd) := by
   have hj : flatJoin ⟨n, f, .ac [] none⟩ B = joinLookups ⟨n, f, .ac [] none⟩ B := flatJoin_eq _ _
   rw [mem_runE_cons]
   constructor
@@ -204,13 +235,13 @@ theorem mem_lowerF_nary {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {B : Fi
     obtain ⟨env₂, h₂, h⟩ := h
     rw [mem_runE_cons] at h
     obtain ⟨env₃, h₃, h⟩ := h
-    simp only [runE, List.mem_singleton] at h
+    simp only [runEG, List.mem_singleton] at h
     subst h
-    simp only [runEStep, List.mem_map] at h₁
+    simp only [runEStepG, List.mem_map] at h₁
     obtain ⟨σ₁, hσ₁, rfl⟩ := h₁
     rw [runStep_join_mem, hj] at hσ₁
     obtain ⟨id, hid, rfl⟩ := hσ₁
-    simp only [runEStep, EEnv.withBinding_σ] at h₂
+    simp only [runEStepG, EEnv.withBinding_σ] at h₂
     revert h₂
     cases hn' : (joinBind c.G env.σ n id).nodeOf c.G n with
     | none => simp
@@ -220,22 +251,22 @@ theorem mem_lowerF_nary {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {B : Fi
         exact ⟨id, hid, n', wd, hn', hwd, h₃⟩
   · rintro ⟨id, hid, n', wd, hn', hwd, h₃⟩
     refine ⟨env.withBinding (joinBind c.G env.σ n id), ?_, ?_⟩
-    · simp only [runEStep, List.mem_map]
+    · simp only [runEStepG, List.mem_map]
       exact ⟨_, by rw [runStep_join_mem, hj]; exact ⟨id, hid, rfl⟩, rfl⟩
     · rw [mem_runE_cons]
       refine ⟨(env.withBinding (joinBind c.G env.σ n id)).setView r wd, ?_, ?_⟩
-      · simp only [runEStep, EEnv.withBinding_σ, hn']
+      · simp only [runEStepG, EEnv.withBinding_σ, hn']
         exact List.mem_map.2 ⟨wd, hwd, rfl⟩
       · rw [mem_runE_cons]
-        exact ⟨env', h₃, by simp [runE]⟩
+        exact ⟨env', h₃, by simp [runEG]⟩
 
 /-! ## AC -/
 
-theorem lowerF_sound_ac {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : List (Var × Mult)}
+theorem lowerF_sound_ac {E : Enumerator} (hE : E.Spec) {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : List (Var × Mult)}
     {rest : Option Var} {B : Finset Var} {r : Nat} (hk : c.G.KeysNodup) (hdom : ClsDom env.σ B)
     (hn : env.σ.node n = none) (hrf : RAtom.RestFresh ⟨n, f, .ac es rest⟩ env.σ)
-    (h : env' ∈ runE c (lowerF ⟨n, f, .ac es rest⟩ B r) env) :
-    LowerSpecF c ⟨n, f, .ac es rest⟩ B env.σ env'.σ := by
+    (h : env' ∈ runEG E c (lowerF ⟨n, f, .ac es rest⟩ B r) env) :
+    LowerSpecF E c ⟨n, f, .ac es rest⟩ B env.σ env'.σ := by
   have hj : flatJoin ⟨n, f, .ac es rest⟩ B = flatJoin ⟨n, f, .ac [] none⟩ B := rfl
   simp only [lowerF, hj] at h
   obtain ⟨id, hid, n', ⟨w, d⟩, hn', hwd, h₃⟩ := mem_lowerF_nary.1 h
@@ -243,11 +274,11 @@ theorem lowerF_sound_ac {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : L
   simp only at hop
   rw [nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem] at hn'
   obtain rfl := Option.some.inj hn'
-  simp only [runEStep, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
+  simp only [runEStepG, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
     EEnv.withBinding_σ] at h₃
   obtain ⟨σ', ⟨hd, hacc⟩, rfl⟩ := h₃
   simp only [EEnv.withBinding_σ]
-  obtain ⟨v₀, ls₀, o₀, hv₀, hn₀⟩ := mem_enumeratePrunedE hwd
+  obtain ⟨v₀, hn₀⟩ := hE.normalP hwd
   have hent : Multiset.entries (ofEntries w) = w := normalize_ac_entries hn₀
   obtain ⟨-, hr, -, -⟩ := hrf
   simp only [RAtom.msetRestVars] at hr
@@ -263,7 +294,7 @@ theorem lowerF_sound_ac {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : L
     obtain ⟨t, ht⟩ := mem_zip_of_mem_left hlen e he
     exact ⟨t, hcls (e, t) ht⟩
   rw [DemandL.acceptsEB_iff] at hacc
-  obtain ⟨d', hd', hacc'⟩ := pruned_to_full (takenOf_takeable hext hbound) hwd hacc
+  obtain ⟨d', hd', hacc'⟩ := hE.to_full hext hbound hwd hacc
   refine lowerSpecF_of_frame hdom hn hc (by simpa [RAtom.elems] using hfr) (by simp [RAtom.multVars])
     (by simp [RAtom.msetRestVars]) (by simp [RAtom.seqRestVars]) (by simp [RAtom.setRestVars]) hext
     (by simpa [RAtom.elems] using hbound) ?_
@@ -273,18 +304,18 @@ theorem lowerF_sound_ac {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : L
   · show DemandL.acceptsE .ac d' (takenOf σ' (es.map Prod.fst))
     exact hacc'
 
-theorem lowerF_complete_ac {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f : Sym}
+theorem lowerF_complete_ac {E : Enumerator} (hE : E.Spec) {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f : Sym}
     {es : List (Var × Mult)} {rest : Option Var} {B : Finset Var} {r : Nat}
     (hk : c.G.KeysNodup) (hdom : ClsDom env.σ B) (hrf : RAtom.RestFresh ⟨n, f, .ac es rest⟩ env.σ)
-    (hext : Extends env.σ σ') (hsat : AtomSatF c σ' ⟨n, f, .ac es rest⟩) :
-    ∃ env₁ ∈ runE c (lowerF ⟨n, f, .ac es rest⟩ B r) env, Extends env₁.σ σ' := by
+    (hext : Extends env.σ σ') (hsat : AtomSatG E c σ' ⟨n, f, .ac es rest⟩) :
+    ∃ env₁ ∈ runEG E c (lowerF ⟨n, f, .ac es rest⟩ B r) env, Extends env₁.σ σ' := by
   obtain ⟨id, nd, hnode, hmem, hcls, hop, w, d, hwd, hm, hacc⟩ := hsat
   simp only [RAtom.shallow] at hm
   obtain ⟨m, taken, hch, hnd, hlen, hmem', hcl, hmult, hrest⟩ := matchN_ac_vars.1 hm
   simp only at hnode hcls hop
   simp only [ofView, Node.mk.injEq, Children.mset.injEq, true_and] at hch
   subst hch
-  obtain ⟨v₀, ls₀, hv₀, hn₀⟩ := (views_soundL hwd).1
+  obtain ⟨v₀, hn₀⟩ := hE.normal hwd
   have hent : Multiset.entries (ofEntries w) = w := normalize_ac_entries hn₀
   have hjoin : id ∈ candidates c.G env.σ (joinLookups ⟨n, f, .ac [] none⟩ B) :=
     join_lower_complete hdom hext hmem hop hcls (by simp [extraLookups, containsLookups, RAtom.elems])
@@ -310,13 +341,13 @@ theorem lowerF_complete_ac {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f 
   have htk : takenOf σ₁ (es.map Prod.fst) = takenOf σ' (es.map Prod.fst) :=
     takenOf_extends hext' _ hb₁
   have hacc₀ : d.acceptsE (c.ctx f .ac).κ (takenOf σ' (es.map Prod.fst)) := hacc
-  obtain ⟨d', hd', hacc'⟩ := full_to_pruned (takenOf_takeable hext₁ hbound) hwd hacc₀
+  obtain ⟨d', hd', hacc'⟩ := hE.to_pruned hext₁ hbound hwd hacc₀
   refine ⟨((env.withBinding (joinBind c.G env.σ n id)).setView r (w, d')).withBinding σ₁, ?_, hext'⟩
   have hj : flatJoin ⟨n, f, .ac es rest⟩ B = flatJoin ⟨n, f, .ac [] none⟩ B := rfl
   simp only [lowerF, hj]
   rw [mem_lowerF_nary]
   refine ⟨id, hjoin, nd, (w, d'), nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem, hd', ?_⟩
-  simp only [runEStep, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
+  simp only [runEStepG, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
     EEnv.withBinding_σ]
   refine ⟨σ₁, ⟨by rw [hent] at h₁; exact h₁, ?_⟩, rfl⟩
   rw [DemandL.acceptsEB_iff, htk]
@@ -324,11 +355,11 @@ theorem lowerF_complete_ac {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f 
 
 /-! ## ACI -/
 
-theorem lowerF_sound_aci {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : List Var}
+theorem lowerF_sound_aci {E : Enumerator} (hE : E.Spec) {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : List Var}
     {rest : Option Var} {B : Finset Var} {r : Nat} (hk : c.G.KeysNodup) (hdom : ClsDom env.σ B)
     (hn : env.σ.node n = none) (hrf : RAtom.RestFresh ⟨n, f, .aci es rest⟩ env.σ)
-    (h : env' ∈ runE c (lowerF ⟨n, f, .aci es rest⟩ B r) env) :
-    LowerSpecF c ⟨n, f, .aci es rest⟩ B env.σ env'.σ := by
+    (h : env' ∈ runEG E c (lowerF ⟨n, f, .aci es rest⟩ B r) env) :
+    LowerSpecF E c ⟨n, f, .aci es rest⟩ B env.σ env'.σ := by
   have hj : flatJoin ⟨n, f, .aci es rest⟩ B = flatJoin ⟨n, f, .ac [] none⟩ B := rfl
   simp only [lowerF, hj] at h
   obtain ⟨id, hid, n', ⟨w, d⟩, hn', hwd, h₃⟩ := mem_lowerF_nary.1 h
@@ -336,11 +367,11 @@ theorem lowerF_sound_aci {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : 
   simp only at hop
   rw [nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem] at hn'
   obtain rfl := Option.some.inj hn'
-  simp only [runEStep, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
+  simp only [runEStepG, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
     EEnv.withBinding_σ] at h₃
   obtain ⟨σ', ⟨hd, hacc⟩, rfl⟩ := h₃
   simp only [EEnv.withBinding_σ]
-  obtain ⟨v₀, ls₀, o₀, hv₀, hn₀⟩ := mem_enumeratePrunedE hwd
+  obtain ⟨v₀, hn₀⟩ := hE.normalP hwd
   have hsort := normalize_aci_sort hn₀
   obtain ⟨-, -, hr, -⟩ := hrf
   simp only [RAtom.setRestVars] at hr
@@ -355,7 +386,7 @@ theorem lowerF_sound_aci {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : 
     obtain ⟨t, ht⟩ := mem_zip_of_mem_left hlen x hx
     exact ⟨t, hcls (x, t) ht⟩
   rw [DemandL.acceptsEB_iff] at hacc
-  obtain ⟨d', hd', hacc'⟩ := pruned_to_full (takenOf_takeable hext hbound) hwd hacc
+  obtain ⟨d', hd', hacc'⟩ := hE.to_full hext hbound hwd hacc
   refine lowerSpecF_of_frame hdom hn hc (by simpa [RAtom.elems] using hfr) (by simp [RAtom.multVars])
     (by simp [RAtom.msetRestVars]) (by simp [RAtom.seqRestVars]) (by simp [RAtom.setRestVars]) hext
     (by simpa [RAtom.elems] using hbound) ?_
@@ -365,18 +396,18 @@ theorem lowerF_sound_aci {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym} {es : 
   · show DemandL.acceptsE .aci d' (takenOf σ' es)
     exact hacc'
 
-theorem lowerF_complete_aci {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f : Sym}
+theorem lowerF_complete_aci {E : Enumerator} (hE : E.Spec) {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f : Sym}
     {es : List Var} {rest : Option Var} {B : Finset Var} {r : Nat}
     (hk : c.G.KeysNodup) (hdom : ClsDom env.σ B) (hrf : RAtom.RestFresh ⟨n, f, .aci es rest⟩ env.σ)
-    (hext : Extends env.σ σ') (hsat : AtomSatF c σ' ⟨n, f, .aci es rest⟩) :
-    ∃ env₁ ∈ runE c (lowerF ⟨n, f, .aci es rest⟩ B r) env, Extends env₁.σ σ' := by
+    (hext : Extends env.σ σ') (hsat : AtomSatG E c σ' ⟨n, f, .aci es rest⟩) :
+    ∃ env₁ ∈ runEG E c (lowerF ⟨n, f, .aci es rest⟩ B r) env, Extends env₁.σ σ' := by
   obtain ⟨id, nd, hnode, hmem, hcls, hop, w, d, hwd, hm, hacc⟩ := hsat
   simp only [RAtom.shallow] at hm
   obtain ⟨st, taken, hch, hnd, hlen, hmem', hcl, hrest⟩ := matchN_aci_vars.1 hm
   simp only at hnode hcls hop
   simp only [ofView, Node.mk.injEq, Children.set.injEq, true_and] at hch
   subst hch
-  obtain ⟨v₀, ls₀, hv₀, hn₀⟩ := (views_soundL hwd).1
+  obtain ⟨v₀, hn₀⟩ := hE.normal hwd
   have hsort := normalize_aci_sort hn₀
   have hjoin : id ∈ candidates c.G env.σ (joinLookups ⟨n, f, .ac [] none⟩ B) :=
     join_lower_complete hdom hext hmem hop hcls (by simp [extraLookups, containsLookups, RAtom.elems])
@@ -398,13 +429,13 @@ theorem lowerF_complete_aci {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f
     exact ⟨t, hcls₁ (x, t) ht⟩
   have htk : takenOf σ₁ es = takenOf σ' es := takenOf_extends hext' _ hb₁
   have hacc₀ : d.acceptsE (c.ctx f .aci).κ (takenOf σ' es) := hacc
-  obtain ⟨d', hd', hacc'⟩ := full_to_pruned (takenOf_takeable hext₁ hbound) hwd hacc₀
+  obtain ⟨d', hd', hacc'⟩ := hE.to_pruned hext₁ hbound hwd hacc₀
   refine ⟨((env.withBinding (joinBind c.G env.σ n id)).setView r (w, d')).withBinding σ₁, ?_, hext'⟩
   have hj : flatJoin ⟨n, f, .aci es rest⟩ B = flatJoin ⟨n, f, .ac [] none⟩ B := rfl
   simp only [lowerF, hj]
   rw [mem_lowerF_nary]
   refine ⟨id, hjoin, nd, (w, d'), nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem, hd', ?_⟩
-  simp only [runEStep, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
+  simp only [runEStepG, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
     EEnv.withBinding_σ]
   refine ⟨σ₁, ⟨by rw [hsort] at h₁; exact h₁, ?_⟩, rfl⟩
   rw [DemandL.acceptsEB_iff, htk]
@@ -412,12 +443,12 @@ theorem lowerF_complete_aci {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f
 
 /-! ## Assoc -/
 
-theorem lowerF_sound_assoc {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym}
+theorem lowerF_sound_assoc {E : Enumerator} (hE : E.Spec) {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym}
     {pre suf : Option Var} {fx : List Var} {B : Finset Var} {r : Nat} (hk : c.G.KeysNodup)
     (hdom : ClsDom env.σ B) (hn : env.σ.node n = none)
     (hrf : RAtom.RestFresh ⟨n, f, .assoc pre fx suf⟩ env.σ)
-    (h : env' ∈ runE c (lowerF ⟨n, f, .assoc pre fx suf⟩ B r) env) :
-    LowerSpecF c ⟨n, f, .assoc pre fx suf⟩ B env.σ env'.σ := by
+    (h : env' ∈ runEG E c (lowerF ⟨n, f, .assoc pre fx suf⟩ B r) env) :
+    LowerSpecF E c ⟨n, f, .assoc pre fx suf⟩ B env.σ env'.σ := by
   have hj : flatJoin ⟨n, f, .assoc pre fx suf⟩ B = flatJoin ⟨n, f, .ac [] none⟩ B := rfl
   simp only [lowerF, hj] at h
   obtain ⟨id, hid, n', ⟨w, d⟩, hn', hwd, h₃⟩ := mem_lowerF_nary.1 h
@@ -425,7 +456,7 @@ theorem lowerF_sound_assoc {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym}
   simp only at hop
   rw [nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem] at hn'
   obtain rfl := Option.some.inj hn'
-  simp only [runEStep, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
+  simp only [runEStepG, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
     EEnv.withBinding_σ] at h₃
   obtain ⟨σ', ⟨hd, hacc⟩, rfl⟩ := h₃
   simp only [EEnv.withBinding_σ]
@@ -447,7 +478,7 @@ theorem lowerF_sound_assoc {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym}
     obtain ⟨b, -, hb⟩ := forall₂_exists_right hf₂ x hx
     exact ⟨b, hb⟩
   rw [DemandL.acceptsEB_iff] at hacc
-  obtain ⟨d', hd', hacc'⟩ := pruned_to_full (takenOf_takeable hext hbound) hwd hacc
+  obtain ⟨d', hd', hacc'⟩ := hE.to_full hext hbound hwd hacc
   refine lowerSpecF_of_frame hdom hn hc (by simpa [RAtom.elems] using hfr) (by simp [RAtom.multVars])
     (by simp [RAtom.msetRestVars]) (by simp [RAtom.seqRestVars]) (by simp [RAtom.setRestVars]) hext
     (by simpa [RAtom.elems] using hbound) ?_
@@ -459,12 +490,12 @@ theorem lowerF_sound_assoc {c : FCtx} {env env' : EEnv} {n : Var} {f : Sym}
   · show DemandL.acceptsE .assoc d' (takenOf σ' fx)
     exact hacc'
 
-theorem lowerF_complete_assoc {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f : Sym}
+theorem lowerF_complete_assoc {E : Enumerator} (hE : E.Spec) {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} {f : Sym}
     {pre suf : Option Var} {fx : List Var} {B : Finset Var} {r : Nat}
     (hk : c.G.KeysNodup) (hdom : ClsDom env.σ B)
     (hrf : RAtom.RestFresh ⟨n, f, .assoc pre fx suf⟩ env.σ)
-    (hext : Extends env.σ σ') (hsat : AtomSatF c σ' ⟨n, f, .assoc pre fx suf⟩) :
-    ∃ env₁ ∈ runE c (lowerF ⟨n, f, .assoc pre fx suf⟩ B r) env, Extends env₁.σ σ' := by
+    (hext : Extends env.σ σ') (hsat : AtomSatG E c σ' ⟨n, f, .assoc pre fx suf⟩) :
+    ∃ env₁ ∈ runEG E c (lowerF ⟨n, f, .assoc pre fx suf⟩ B r) env, Extends env₁.σ σ' := by
   obtain ⟨id, nd, hnode, hmem, hcls, hop, w, d, hwd, hm, hacc⟩ := hsat
   simp only [RAtom.shallow] at hm
   obtain ⟨u, mid, v, hch, hpre, hsuf, hf₂⟩ := matchN_assoc_vars.1 hm
@@ -495,13 +526,13 @@ theorem lowerF_complete_assoc {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} 
     exact ⟨t, hcls₁ (x, t) ht⟩
   have htk : takenOf σ₁ fx = takenOf σ' fx := takenOf_extends hext' _ hb₁
   have hacc₀ : d.acceptsE (c.ctx f .assoc).κ (takenOf σ' fx) := hacc
-  obtain ⟨d', hd', hacc'⟩ := full_to_pruned (takenOf_takeable hext₁ hbound) hwd hacc₀
+  obtain ⟨d', hd', hacc'⟩ := hE.to_pruned hext₁ hbound hwd hacc₀
   refine ⟨((env.withBinding (joinBind c.G env.σ n id)).setView r (w, d')).withBinding σ₁, ?_, hext'⟩
   have hj : flatJoin ⟨n, f, .assoc pre fx suf⟩ B = flatJoin ⟨n, f, .ac [] none⟩ B := rfl
   simp only [lowerF, hj]
   rw [mem_lowerF_nary]
   refine ⟨id, hjoin, nd, (w, d'), nodeOf_of_node hk (joinBind_node_self _ _ _ _) hmem, hd', ?_⟩
-  simp only [runEStep, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
+  simp only [runEStepG, EEnv.setView_self, List.mem_map, List.mem_filter, EEnv.setView_σ,
     EEnv.withBinding_σ]
   refine ⟨σ₁, ⟨by rw [hch]; exact h₁, ?_⟩, rfl⟩
   rw [DemandL.acceptsEB_iff, htk]
@@ -510,15 +541,15 @@ theorem lowerF_complete_assoc {c : FCtx} {env : EEnv} {σ' : Binding} {n : Var} 
 /-! ## Any atom -/
 
 /-- **Soundness of one flattened lowering.** -/
-theorem lowerF_sound {c : FCtx} {sig : Sym → Kind} {env env' : EEnv} {a : RAtom} {B : Finset Var}
+theorem lowerF_sound {E : Enumerator} (hE : E.Spec) {c : FCtx} {sig : Sym → Kind} {env env' : EEnv} {a : RAtom} {B : Finset Var}
     {r : Nat} (hk : c.G.KeysNodup) (hconf : c.G.Conforms sig) (hwk : a.WK sig)
     (hdom : ClsDom env.σ B) (hn : env.σ.node a.node = none) (hrf : a.RestFresh env.σ)
-    (h : env' ∈ runE c (lowerF a B r) env) : LowerSpecF c a B env.σ env'.σ := by
+    (h : env' ∈ runEG E c (lowerF a B r) env) : LowerSpecF E c a B env.σ env'.σ := by
   obtain ⟨n, f, sh⟩ := a
   cases sh with
-  | assoc pre fx suf => exact lowerF_sound_assoc hk hdom hn hrf h
-  | ac es rest => exact lowerF_sound_ac hk hdom hn hrf h
-  | aci es rest => exact lowerF_sound_aci hk hdom hn hrf h
+  | assoc pre fx suf => exact lowerF_sound_assoc hE hk hdom hn hrf h
+  | ac es rest => exact lowerF_sound_ac hE hk hdom hn hrf h
+  | aci es rest => exact lowerF_sound_aci hE hk hdom hn hrf h
   | plain cs =>
       simp only [lowerF] at h
       obtain ⟨σ', h', rfl⟩ := (mem_runE_base _ _ _).1 h
@@ -529,15 +560,15 @@ theorem lowerF_sound {c : FCtx} {sig : Sym → Kind} {env env' : EEnv} {a : RAto
       exact LowerSpec.toF (lower_sound hk hconf hwk hdom hn hrf h') rfl
 
 /-- **Completeness of one flattened lowering.** -/
-theorem lowerF_complete {c : FCtx} {env : EEnv} {σ' : Binding} {a : RAtom} {B : Finset Var}
+theorem lowerF_complete {E : Enumerator} (hE : E.Spec) {c : FCtx} {env : EEnv} {σ' : Binding} {a : RAtom} {B : Finset Var}
     {r : Nat} (hk : c.G.KeysNodup) (hdom : ClsDom env.σ B) (hrf : a.RestFresh env.σ)
-    (hext : Extends env.σ σ') (hsat : AtomSatF c σ' a) :
-    ∃ env₁ ∈ runE c (lowerF a B r) env, Extends env₁.σ σ' := by
+    (hext : Extends env.σ σ') (hsat : AtomSatG E c σ' a) :
+    ∃ env₁ ∈ runEG E c (lowerF a B r) env, Extends env₁.σ σ' := by
   obtain ⟨n, f, sh⟩ := a
   cases sh with
-  | assoc pre fx suf => exact lowerF_complete_assoc hk hdom hrf hext hsat
-  | ac es rest => exact lowerF_complete_ac hk hdom hrf hext hsat
-  | aci es rest => exact lowerF_complete_aci hk hdom hrf hext hsat
+  | assoc pre fx suf => exact lowerF_complete_assoc hE hk hdom hrf hext hsat
+  | ac es rest => exact lowerF_complete_ac hE hk hdom hrf hext hsat
+  | aci es rest => exact lowerF_complete_aci hE hk hdom hrf hext hsat
   | plain cs =>
       obtain ⟨σ₁, h₁, hext₁⟩ := lower_complete hk hdom hext ((atomSatF_of_none rfl).1 hsat)
       exact ⟨env.withBinding σ₁, (mem_runE_base _ _ _).2 ⟨σ₁, h₁, rfl⟩, hext₁⟩
@@ -575,9 +606,9 @@ theorem elems_bound_of_matchN {G : Graph} {a : RAtom} {nd : Node} {σ : Binding}
       obtain ⟨t, ht⟩ := mem_zip_of_mem_left hlen x (by simpa [RAtom.elems] using hx)
       exact ⟨t, hcls (x, t) ht⟩
 
-theorem AtomSatF.mono {c : FCtx} {σ σ' : Binding} {a : RAtom} (h : AtomSatF c σ a)
-    (hext : Extends σ σ') : AtomSatF c σ' a := by
-  unfold AtomSatF at h ⊢
+theorem AtomSatG.mono {E : Enumerator} {c : FCtx} {σ σ' : Binding} {a : RAtom} (h : AtomSatG E c σ a)
+    (hext : Extends σ σ') : AtomSatG E c σ' a := by
+  unfold AtomSatG at h ⊢
   cases hκ : a.shape.flatKind with
   | none => rw [hκ] at h; exact AtomSat.mono h hext
   | some κ =>
@@ -608,8 +639,8 @@ structure PlanFWF (c : FCtx) (sig : Sym → Kind) (as : List RAtom) (σ : Bindin
   restFresh : ∀ a ∈ as, a.RestFresh σ
   restsNodup : (as.flatMap RAtom.restVars).Nodup
 
-theorem PlanFWF.tail {c : FCtx} {sig : Sym → Kind} {a : RAtom} {as : List RAtom} {B : Finset Var}
-    {σ σ' : Binding} (hw : PlanFWF c sig (a :: as) σ) (hs : LowerSpecF c a B σ σ') :
+theorem PlanFWF.tail {E : Enumerator} {c : FCtx} {sig : Sym → Kind} {a : RAtom} {as : List RAtom} {B : Finset Var}
+    {σ σ' : Binding} (hw : PlanFWF c sig (a :: as) σ) (hs : LowerSpecF E c a B σ σ') :
     PlanFWF c sig as σ' := by
   have hnd := hw.nodesNodup
   simp only [List.map_cons, List.nodup_cons, List.mem_map] at hnd
@@ -641,39 +672,39 @@ theorem PlanFWF.tail {c : FCtx} {sig : Sym → Kind} {a : RAtom} {as : List RAto
       exact h3 x hx
 
 /-- Soundness of a flattened plan, any atom order and any start. -/
-theorem planF_sound {c : FCtx} {sig : Sym → Kind} :
+theorem planF_sound {E : Enumerator} (hE : E.Spec) {c : FCtx} {sig : Sym → Kind} :
     ∀ (as : List RAtom) (B : Finset Var) (r : Nat) (env env' : EEnv),
-      PlanFWF c sig as env.σ → ClsDom env.σ B → env' ∈ runE c (planF as B r) env →
-      Extends env.σ env'.σ ∧ ClsDom env'.σ (planBound as B) ∧ ∀ a ∈ as, AtomSatF c env'.σ a
+      PlanFWF c sig as env.σ → ClsDom env.σ B → env' ∈ runEG E c (planF as B r) env →
+      Extends env.σ env'.σ ∧ ClsDom env'.σ (planBound as B) ∧ ∀ a ∈ as, AtomSatG E c env'.σ a
   | [], B, r, env, env', _, hdom, h => by
-      simp only [planF, runE, List.mem_singleton] at h
+      simp only [planF, runEG, List.mem_singleton] at h
       subst h
       exact ⟨Extends.refl _, hdom, by simp⟩
   | a :: as, B, r, env, env', hw, hdom, h => by
       simp only [planF] at h
       obtain ⟨env₁, h₁, h₂⟩ := (mem_runE_append _ _ _ _).1 h
-      have hs := lowerF_sound hw.keys hw.conf (hw.wk a (List.mem_cons_self ..)) hdom
+      have hs := lowerF_sound hE hw.keys hw.conf (hw.wk a (List.mem_cons_self ..)) hdom
         (hw.nodeFresh a (List.mem_cons_self ..)) (hw.restFresh a (List.mem_cons_self ..)) h₁
-      obtain ⟨hext, hdom', hsat⟩ := planF_sound as _ _ env₁ env' (hw.tail hs) hs.clsDom h₂
+      obtain ⟨hext, hdom', hsat⟩ := planF_sound hE as _ _ env₁ env' (hw.tail hs) hs.clsDom h₂
       refine ⟨hs.ext.trans hext, hdom', ?_⟩
       intro a' ha'
       rcases List.mem_cons.1 ha' with rfl | ha'
-      · exact AtomSatF.mono hs.sat hext
+      · exact AtomSatG.mono hs.sat hext
       · exact hsat a' ha'
 
 /-- Completeness of a flattened plan, any atom order and any start. -/
-theorem planF_complete {c : FCtx} {sig : Sym → Kind} :
+theorem planF_complete {E : Enumerator} (hE : E.Spec) {c : FCtx} {sig : Sym → Kind} :
     ∀ (as : List RAtom) (B : Finset Var) (r : Nat) (env : EEnv) (σ' : Binding),
       PlanFWF c sig as env.σ → ClsDom env.σ B → Extends env.σ σ' →
-      (∀ a ∈ as, AtomSatF c σ' a) →
-      ∃ env' ∈ runE c (planF as B r) env, Extends env'.σ σ'
-  | [], B, r, env, σ', _, _, hext, _ => ⟨env, by simp [planF, runE], hext⟩
+      (∀ a ∈ as, AtomSatG E c σ' a) →
+      ∃ env' ∈ runEG E c (planF as B r) env, Extends env'.σ σ'
+  | [], B, r, env, σ', _, _, hext, _ => ⟨env, by simp [planF, runEG], hext⟩
   | a :: as, B, r, env, σ', hw, hdom, hext, hsat => by
-      obtain ⟨env₁, h₁, hext₁⟩ := lowerF_complete (r := r) hw.keys hdom
+      obtain ⟨env₁, h₁, hext₁⟩ := lowerF_complete hE (r := r) hw.keys hdom
         (hw.restFresh a (List.mem_cons_self ..)) hext (hsat a (List.mem_cons_self ..))
-      have hs := lowerF_sound hw.keys hw.conf (hw.wk a (List.mem_cons_self ..)) hdom
+      have hs := lowerF_sound hE hw.keys hw.conf (hw.wk a (List.mem_cons_self ..)) hdom
         (hw.nodeFresh a (List.mem_cons_self ..)) (hw.restFresh a (List.mem_cons_self ..)) h₁
-      obtain ⟨env', h', hext'⟩ := planF_complete as (B ∪ a.binds) (r + regsOf a) env₁ σ'
+      obtain ⟨env', h', hext'⟩ := planF_complete hE as (B ∪ a.binds) (r + regsOf a) env₁ σ'
         (hw.tail hs) hs.clsDom hext₁ (fun a' ha' => hsat a' (List.mem_cons_of_mem _ ha'))
       exact ⟨env', by simp only [planF]; exact (mem_runE_append _ _ _ _).2 ⟨env₁, h₁, h'⟩, hext'⟩
 
@@ -696,6 +727,24 @@ theorem QueryFWF.planFWF {c : FCtx} {sig : Sym → Kind} {as : List RAtom} (h : 
 theorem clsDom_empty : ClsDom EEnv.empty.σ ∅ := by
   intro x; simp [EEnv.empty, Binding.empty]
 
+/-- Soundness of a flattened plan from the empty environment, for any
+enumeration meeting `Enumerator.Spec`. -/
+theorem flatten_plan_sound_of_spec {E : Enumerator} (hE : E.Spec) {c : FCtx} {sig : Sym → Kind}
+    {as : List RAtom} (r : Nat) (hw : QueryFWF c sig as) {env' : EEnv}
+    (h : env' ∈ runEG E c (planF as ∅ r) EEnv.empty) :
+    (∀ a ∈ as, AtomSatG E c env'.σ a) ∧ ClsDom env'.σ (planBound as ∅) := by
+  obtain ⟨-, hdom, hsat⟩ := planF_sound hE as ∅ r _ _ hw.planFWF clsDom_empty h
+  exact ⟨hsat, hdom⟩
+
+/-- Completeness of a flattened plan from the empty environment, for any
+enumeration meeting `Enumerator.Spec`. -/
+theorem flatten_plan_complete_of_spec {E : Enumerator} (hE : E.Spec) {c : FCtx}
+    {sig : Sym → Kind} {as : List RAtom} (r : Nat) (hw : QueryFWF c sig as) {σ' : Binding}
+    (hsat : ∀ a ∈ as, AtomSatG E c σ' a) :
+    ∃ env' ∈ runEG E c (planF as ∅ r) EEnv.empty, Extends env'.σ σ' := by
+  refine planF_complete hE as ∅ r _ σ' hw.planFWF clsDom_empty ?_ hsat
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> intro x y h <;> simp [EEnv.empty, Binding.empty] at h
+
 /-- **Soundness of a flattened plan with several view registers.** For any
 order of the query's atoms, every binding the flattened plan emits from the
 empty environment satisfies every atom under `AtomSatF` (each n-ary atom
@@ -703,9 +752,8 @@ through a view of its own node accepted by its own demand) and binds
 exactly the atoms' class variables. -/
 theorem flatten_plan_sound {c : FCtx} {sig : Sym → Kind} {as : List RAtom} (r : Nat)
     (hw : QueryFWF c sig as) {env' : EEnv} (h : env' ∈ runE c (planF as ∅ r) EEnv.empty) :
-    (∀ a ∈ as, AtomSatF c env'.σ a) ∧ ClsDom env'.σ (planBound as ∅) := by
-  obtain ⟨-, hdom, hsat⟩ := planF_sound as ∅ r _ _ hw.planFWF clsDom_empty h
-  exact ⟨hsat, hdom⟩
+    (∀ a ∈ as, AtomSatF c env'.σ a) ∧ ClsDom env'.σ (planBound as ∅) :=
+  flatten_plan_sound_of_spec Enumerator.base_spec r hw h
 
 /-- **Completeness of a flattened plan with several view registers**
 (`flatten_plan_complete`). For any order of the query's atoms, every binding
@@ -716,8 +764,7 @@ every variable the emitted binding binds, which are exactly the atoms'
 variables (`flatten_plan_sound`). -/
 theorem flatten_plan_complete {c : FCtx} {sig : Sym → Kind} {as : List RAtom} (r : Nat)
     (hw : QueryFWF c sig as) {σ' : Binding} (hsat : ∀ a ∈ as, AtomSatF c σ' a) :
-    ∃ env' ∈ runE c (planF as ∅ r) EEnv.empty, Extends env'.σ σ' := by
-  refine planF_complete as ∅ r _ σ' hw.planFWF clsDom_empty ?_ hsat
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> intro x y h <;> simp [EEnv.empty, Binding.empty] at h
+    ∃ env' ∈ runE c (planF as ∅ r) EEnv.empty, Extends env'.σ σ' :=
+  flatten_plan_complete_of_spec Enumerator.base_spec r hw hsat
 
 end Semper.EMatch.Flatten

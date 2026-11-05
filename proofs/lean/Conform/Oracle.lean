@@ -1,4 +1,5 @@
 import Conform.Case
+import SemperProofs.EMatch.Flatten.RegroupDefs
 
 /-!
 # Conformance generator: the oracle
@@ -7,8 +8,10 @@ The expected match set of a case is computed by the reference interpreter
 `run (compile P)` of `EMatch/Ref.lean` on the stored nodes, and for a case
 tagged `:flatten` on every canonical view of every node of the root
 operator (`enumerateX`, with the per-kind demand rule `acceptsKindB`; under
-laws `enumerateL` with `acceptsLawsB`), the view standing in for the
-stored node through a fresh node id in a fresh class.
+laws `enumerateL` with `acceptsLawsB`) and every regrouped view
+(`regroupAll` of `Flatten/RegroupDefs.lean`, at most one regrouped class per
+item of the root), the view standing in for the stored node through a fresh
+node id in a fresh class.
 
 A match is reported as the root class and the list of tag arguments: the
 pattern's variables in order of first occurrence, each bound to a class, a
@@ -73,13 +76,32 @@ def matchesStored (cs : Case) : List Match :=
     let args ← argsOf cs.pat σ
     pure ⟨G.find id, args⟩
 
-/-- The views of node `n` with their demand test. -/
-def viewsOf (cs : Case) (ctx : Ctx) (laws : Laws) (n : Node) :
+/-- A record of `rawRecordsX` as regrouping reads it: the leaf `(X, g)` with
+its flag off, no class needed. Under `acceptsEB` the flag-off leaf passes
+exactly when `acceptsKindB`'s does. -/
+def recXtoR (r : RawX) : RecR :=
+  (r.1, r.2.map (fun l => (⟨l.1, 1, l.2.map (fun c => (c, 1))⟩, false)), [])
+
+/-- The records of node `n` and their regroupings (`regroupLevels`, at most
+`limit` regrouped classes, one per item), within the budget `regroupCap`;
+past it, the walk's records alone (`regroupOverBudget`). -/
+def regroupedRecs (ctx : Ctx) (laws : Laws) (limit : Nat) (recs : List RecR) : List RecR :=
+  (regroupLevelsCapped ctx .both laws limit regroupCap (regroupFuel recs) recs).getD recs
+
+/-- The walk's records of node `n` as regrouping reads them. -/
+def recsOf (cs : Case) (ctx : Ctx) (laws : Laws) (n : Node) : List RecR :=
+  if cs.hasLaws cs.root then (rawRecordsL ctx laws n).map RecL.toR
+  else (rawRecordsX ctx laws n).map recXtoR
+
+/-- The views of node `n` with their demand test: the walk's records and
+their regroupings, the distinct views. -/
+def viewsOf (cs : Case) (ctx : Ctx) (laws : Laws) (limit : Nat) (n : Node) :
     List (List (C × Nat) × (List C → Bool)) :=
+  let recs := regroupedRecs ctx laws limit (recsOf cs ctx laws n)
   if cs.hasLaws cs.root then
-    (enumerateL ctx laws n).map (fun wd => (wd.1, fun t => wd.2.acceptsLawsB t))
+    (enumerateFromR recs).map (fun wd => (wd.1, fun t => wd.2.acceptsLawsB t))
   else
-    (enumerateX ctx laws n).map (fun wd => (wd.1, fun t => wd.2.acceptsKindB ctx.κ t))
+    (enumerateFromR recs).map (fun wd => (wd.1, fun t => wd.2.acceptsEB ctx.κ t))
 
 /-- Matches through the views, for a `:flatten` case of kind `κ`. -/
 def matchesFlat (cs : Case) (κ : FlatKind) : List Match :=
@@ -94,13 +116,31 @@ def matchesFlat (cs : Case) (κ : FlatKind) : List Match :=
   let plan := compile cs.pat rootVar
   cs.nodes.flatMap fun p =>
     if p.2.op ≠ f then [] else
-    (viewsOf cs ctx laws p.2).flatMap fun wa =>
+    (viewsOf cs ctx laws items.length p.2).flatMap fun wa =>
       let G' : Graph := ⟨G.nodes ++ [(viewId, ⟨f, ofView κ wa.1⟩)],
         fun i => if i = viewId then viewCls else G.find i⟩
       (run G' plan Binding.empty).filterMap fun σ =>
         if σ.node rootVar ≠ some viewId then none
         else if !(wa.2 (takenOf σ items)) then none
         else (argsOf cs.pat σ).map fun args => ⟨G.find p.1, args⟩
+
+/-- Whether some node of a `:flatten` case regroups past the budget: its
+expected matches then omit the regrouped views, and the program says so. -/
+def regroupOverBudget (cs : Case) : Bool :=
+  match cs.flatten, cs.root.kind? with
+  | true, some κ =>
+      let G := cs.graph
+      let f := cs.root.sym
+      let laws : Laws := match κ with
+        | .aci => cs.aciLaws
+        | .ac => cs.lawsAC.toLaws
+        | .assoc => Laws.free
+      let ctx : Ctx := ⟨G, f, κ, fun _ => true⟩
+      let limit := (itemVars cs.pat).length
+      cs.nodes.any fun p => p.2.op = f &&
+        let recs := recsOf cs ctx laws p.2
+        (regroupLevelsCapped ctx .both laws limit regroupCap (regroupFuel recs) recs).isNone
+  | _, _ => false
 
 /-- The expected match set. -/
 def expected (cs : Case) : List Match :=

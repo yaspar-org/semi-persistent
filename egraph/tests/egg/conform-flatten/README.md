@@ -6,10 +6,14 @@ Lake executable `semper-conform-flatten`). A file builds a small e-graph, applie
 one rule whose right-hand side tags the bound variables, and checks the matches
 the model computes as `check-eq`, and a sample of the candidates it rejects as
 `check-neq`. A rule tagged `:flatten` is matched by the model's flattened plan
-(`runED` of `SemperProofs/EMatch/Flatten/FoldPlan.lean` over the plan of
+(`runER` of `SemperProofs/EMatch/Flatten/RegroupDefs.lean` over the plan of
 `PlanDefs.lean`: the pattern's atoms, every n-ary atom flattened into its own
-view register and accepted by the engine's demand rule); an untagged rule by
-the reference interpreter, as in `../conform/`.
+view register, with the views of the opening walk and their regrouped views,
+accepted by the engine's demand rule); an untagged rule by the reference
+interpreter, as in `../conform/`. A regrouped view replaces a group of a view's
+entries by the class of an existing node over that group, at most one per item
+(`regroup_plan_sound`, `regroup_plan_complete` in `Flatten/Regroup.lean`). A draw
+whose regrouping passes the generator's budget (`regroupCap`) is redrawn.
 
 The cases cover what the seed-1 fixtures (`../conform/`) leave out of `:flatten`:
 n-ary applications nested in the pattern, laws on two operators of one pattern

@@ -3,7 +3,7 @@
 Lean 4 with Mathlib v4.35.0. `lake build` of the whole project passes;
 `grep -rn sorry SemperProofs/` is empty; every `#print axioms` in the
 `Check.lean` files prints only `propext`, `Classical.choice`, `Quot.sound`.
-Written 2026-11-04 after the second extension.
+Written 2026-11-04 after the second extension; regrouped views added 2026-11-05.
 
 ## Final theorem (`SemperProofs/Final/Main.lean`)
 
@@ -202,6 +202,33 @@ its two children classes merge (`NoCollapse`).
   (`fold_open_off_spine_unsound`, the counter-model of the engine bug
   fixed in `flatten.rs`; `otLeft_sound`/`otRight_sound`); `runED` with the
   spine-restricted enumerator, equal to `runE` without folds (`runED_both`).
+  The plan theorems hold for any enumeration meeting `Enumerator.Spec`
+  (every view a normalization result, pruning keeping the accepted matches):
+  `flatten_plan_sound_of_spec`/`flatten_plan_complete_of_spec`, with
+  `Enumerator.base_spec` for the walk alone.
+  `RegroupDefs.lean`/`Regroup*.lean` (2026-11-05): regrouped views as
+  `flatten.rs` builds them. `fitsR` is `fits` (sub-multiset, subset, run,
+  prefix of a left fold, suffix of a right fold; at least two entries, not
+  the whole view, not a node over its own class), `regroupRec` adds the
+  group's class `g` to a leaf holding a class of the group and records `g`
+  as needed, at most one needed class per item, `regroupLevels` iterates it,
+  `takeableR` is the takeable closure through `f`-members, and
+  `Enumerator.regroup` / `runER` is `Step::Flatten` with regrouping. A needed
+  class is the leaf `needLeaf g`, so `DemandL` and the demand rules are
+  unchanged (`needLeaf_okE`, `needLeaf_okL`). `prune_regroup` (from
+  `takeableR_down`, `keepRec_of_accept`), `regroup_spec`,
+  `regroup_plan_sound`/`regroup_plan_complete` (any fold direction, any
+  laws). Soundness: `regroup_step_sound_{ac,aci,assoc}` and
+  `regroup_views_sound_{ac,aci,assoc}` (laws-free operators, a consistent
+  denotation into a commutative monoid, a join semilattice, a monoid),
+  `regroup_step_sound_left/right`, `regroup_off_spine_unsound`.
+  Completeness, AC laws-free: `fitsR_ac_complete`, `regroup_chain_ac`,
+  `regroup_view_complete_ac`, `regroup_match_complete_ac`. Not covered: the
+  engine's regrouping bounds and its skipping of records whose acceptance
+  another record of the view implies (acceptance-preserving, argued, not
+  proved); completeness for ACI, `:assoc` and folds, and soundness under
+  laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
+  with a budget of 45,000 records per node.
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);

@@ -11,6 +11,7 @@ import SemperProofs.EMatch.Flatten.LawsMain
 import SemperProofs.EMatch.Flatten.EngineComplete
 import SemperProofs.EMatch.Flatten.Plan
 import SemperProofs.EMatch.Flatten.FoldPlan
+import SemperProofs.EMatch.Flatten.RegroupComplete
 import SemperProofs.EMatch.Steps.Main
 import SemperProofs.EMatch.Env.Main
 import SemperProofs.EMatch.Engine.Rounds.Complete

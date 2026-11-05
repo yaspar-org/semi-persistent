@@ -8,7 +8,7 @@
 ;; (proofs/lean/Conform/Flatten); the expected matches are the flattened plan's
 ;; (SemperProofs/EMatch/Flatten/PlanDefs.lean). Regenerate with
 ;;   lake exe semper-conform-flatten 2 <count> <dir>   (file f2_0195.egg)
-;; expected matches: 8, rejected candidates: 4
+;; expected matches: 9, rejected candidates: 4
 (sort E)
 (function C0 () E)
 (function Zero () E)
@@ -41,6 +41,7 @@
 (check-eq (Top) (Tag (Zero) (R (End) (C0) (C2) (C5)) (C2) (C0) (End)))
 (check-eq (Top) (Tag (C2) (R (End) (C0) (Zero) (C5)) (C2) (C0) (End)))
 (check-eq (Top) (Tag (C5) (R (End) (C0) (Zero) (C2)) (C2) (C0) (End)))
+(check-eq (Top) (Tag (C3) (R (End) (Zero) (C5)) (C2) (C0) (End)))
 (check-neq (Top) (Tag (C3) (R (End) (C2) (C5)) (Zero) (C0) (End)))
 (check-neq (Top) (Tag (C0) (R (End) (C2) (C5)) (C3) (Zero) (End)))
 (check-neq (Top) (Tag (Zero) (R (End) (C2) (C5)) (C0) (C3) (End)))

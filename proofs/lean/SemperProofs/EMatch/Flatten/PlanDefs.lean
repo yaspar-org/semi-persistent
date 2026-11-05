@@ -64,14 +64,27 @@ def EEnv.setView (env : EEnv) (r : Nat) (wd : List (C × Nat) × DemandL) : EEnv
 
 def EEnv.withBinding (env : EEnv) (σ : Binding) : EEnv := { env with σ := σ }
 
-/-- `run_step` for the flattened plan. -/
-def runEStep (c : FCtx) : EStep → EEnv → List EEnv
+/-- The enumeration a `Flatten` step runs. `full ctx laws items n` is the
+node's every view with its demand, for the decomposition's item variables
+`items`; `pruned ctx laws σ items n` is what the step computes under the
+binding `σ`, pruned by the `takeable` set it reads off `σ` and `items`. The
+opening walk alone is `Enumerator.base`; with regrouped views,
+`Enumerator.regroup` (`RegroupDefs.lean`). -/
+structure Enumerator where
+  full : Ctx → Laws → List Var → Node → List (List (C × Nat) × DemandL)
+  pruned : Ctx → Laws → Binding → List Var → Node → List (List (C × Nat) × DemandL)
+
+/-- The opening walk: `enumerateL`, pruned by `takeableOf`. -/
+def Enumerator.base : Enumerator :=
+  ⟨fun ctx laws _ n => enumerateL ctx laws n,
+    fun ctx laws σ items n => enumeratePrunedE (takeableOf σ items) ctx laws n⟩
+
+/-- `run_step` for the flattened plan, with the enumeration `E`. -/
+def runEStepG (E : Enumerator) (c : FCtx) : EStep → EEnv → List EEnv
   | .base s, env => (runStep c.G s env.σ).map env.withBinding
   | .flatten v f κ out items, env =>
       match env.σ.nodeOf c.G v with
-      | some n =>
-          (enumeratePrunedE (takeableOf env.σ items) (c.ctx f κ) (c.laws f) n).map
-            (env.setView out)
+      | some n => (E.pruned (c.ctx f κ) (c.laws f) env.σ items n).map (env.setView out)
       | none => []
   | .decomposeAC _ elems rest r, env =>
       match env.views r with
@@ -92,10 +105,16 @@ def runEStep (c : FCtx) : EStep → EEnv → List EEnv
             (fun σ' => d.acceptsEB .assoc (takenOf σ' elems))).map env.withBinding
       | none => []
 
-/-- Depth-first search over a flattened plan. -/
-def runE (c : FCtx) : List EStep → EEnv → List EEnv
+/-- Depth-first search over a flattened plan, with the enumeration `E`. -/
+def runEG (E : Enumerator) (c : FCtx) : List EStep → EEnv → List EEnv
   | [], env => [env]
-  | s :: ss, env => (runEStep c s env).flatMap (runE c ss)
+  | s :: ss, env => (runEStepG E c s env).flatMap (runEG E c ss)
+
+/-- `run_step` for the flattened plan with the opening walk. -/
+abbrev runEStep (c : FCtx) : EStep → EEnv → List EEnv := runEStepG Enumerator.base c
+
+/-- Depth-first search over a flattened plan with the opening walk. -/
+abbrev runE (c : FCtx) : List EStep → EEnv → List EEnv := runEG Enumerator.base c
 
 /-- The `:flatten` kind of an atom's shape (`none`: plain, `Comm`). -/
 def _root_.Semper.EMatch.Shape.flatKind : Shape → Option FlatKind
@@ -133,15 +152,21 @@ def planF : List RAtom → Finset Var → Nat → List EStep
   | [], _, _ => []
   | a :: as, B, r => lowerF a B r ++ planF as (B ∪ a.binds) (r + regsOf a)
 
-/-- Semantics of one atom under `:flatten`. -/
-def AtomSatF (c : FCtx) (σ : Binding) (a : RAtom) : Prop :=
+/-- Semantics of one atom under `:flatten`, with the enumeration `E`: a plain
+or `Comm` atom as `AtomSat`; an n-ary atom matches its shallow pattern on
+some view of `E.full` of a stored node of its class whose demand accepts the
+item classes. -/
+def AtomSatG (E : Enumerator) (c : FCtx) (σ : Binding) (a : RAtom) : Prop :=
   match a.shape.flatKind with
   | none => AtomSat c.G σ a
   | some κ =>
       ∃ id n, σ.node a.node = some id ∧ (id, n) ∈ c.G.nodes ∧
         σ.cls a.node = some (c.G.find id) ∧ n.op = a.op ∧
-        ∃ w d, (w, d) ∈ enumerateL (c.ctx a.op κ) (c.laws a.op) n ∧
+        ∃ w d, (w, d) ∈ E.full (c.ctx a.op κ) (c.laws a.op) a.elems n ∧
           MatchN c.G a.shallow ⟨a.op, ofView κ w⟩ σ ∧
           d.acceptsE κ (takenOf σ a.elems)
+
+/-- Semantics of one atom under `:flatten` with the opening walk. -/
+abbrev AtomSatF (c : FCtx) (σ : Binding) (a : RAtom) : Prop := AtomSatG Enumerator.base c σ a
 
 end Semper.EMatch.Flatten
