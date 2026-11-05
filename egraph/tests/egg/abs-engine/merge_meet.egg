@@ -1,0 +1,25 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; Merge and child refinement (abstract-engine-task.md §2). a is in [0, 9] and b
+;; in [5, 20]; the union meets them to [5, 9]. The class of a shrank, so the
+;; forward transfer of its parent (add a 1) runs again and gives [6, 10].
+(sort Int :interp int :domains (interval))
+(sort Obs)
+(function add (Int Int) Int :interp +)
+(function A () Int)
+(function B () Int)
+(function InA (Int) Obs)
+(function InP (Int) Obs)
+(function Yes () Obs)
+(let a (A))
+(let b (B))
+(refine a (interval 0 9))
+(refine b (interval 5 20))
+(let p (add a 1))
+(union a b)
+(rule ((= r (A)) (within r 5 9)) ((union (InA r) (Yes))))
+(rule ((= r (add s t)) (within r 6 10)) ((union (InP r) (Yes))))
+(run 4)
+(check-eq (InA a) (Yes))
+(check-eq (InP p) (Yes))

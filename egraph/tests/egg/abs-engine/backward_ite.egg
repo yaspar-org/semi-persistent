@@ -1,0 +1,27 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; Backward ite (eclass-analysis.md §6 table, abstract-engine-task.md §2). The
+;; class of (ite c t e) is seeded with [0, 5]; e is in [10, 20], so its meet with
+;; the class is empty: c is decided true and t is refined from [0, 9] to [0, 5].
+;; The decided condition is a singleton, so it is merged with the literal true.
+(sort Int :interp int :domains (interval))
+(sort Bool :interp bool :domains (bool))
+(sort Obs)
+(function ite (Bool Int Int) Int :interp ite)
+(function C () Bool)
+(function T () Int)
+(function E () Int)
+(function InT (Int) Obs)
+(function Yes () Obs)
+(let c (C))
+(let t (T))
+(let e (E))
+(refine t (interval 0 9))
+(refine e (interval 10 20))
+(let r (ite c t e))
+(refine r (interval 0 5))
+(rule ((= s (T)) (within s 0 5)) ((union (InT s) (Yes))))
+(run 4)
+(check-eq (InT t) (Yes))
+(check-eq c true)

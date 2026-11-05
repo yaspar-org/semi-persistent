@@ -1,0 +1,26 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; Derived merges from singleton values (eclass-analysis.md §8, cases 1 and 2;
+;; abstract-engine-task.md §5). x seeded with [3, 3] merges with the literal 3;
+;; (add x 2) has the value [5, 5], as does b, so both share the class of 5.
+;; p and q have the same value [0, 9], which is not a singleton: no merge.
+(sort Int :interp int :domains (interval))
+(function add (Int Int) Int :interp +)
+(function X () Int)
+(function B () Int)
+(function P () Int)
+(function Q () Int)
+(let x (X))
+(let b (B))
+(let p (P))
+(let q (Q))
+(refine x (interval 3 3))
+(refine b (interval 5 5))
+(refine p (interval 0 9))
+(refine q (interval 0 9))
+(let a (add x 2))
+(run 1)
+(check-eq x 3)
+(check-eq a b)
+(check-neq p q)

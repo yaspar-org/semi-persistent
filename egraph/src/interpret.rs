@@ -417,6 +417,9 @@ where
     /// incremental or full transient-index repair.
     fn lazy_txn_open(&mut self) {
         if self.lazy_txn.is_none() {
+            // TODO(abs-saturation-engine): the mark rebuilds, so values are propagated before the
+            // transaction opens; values refined inside it roll back when it closes, see
+            // egraph/doc/future/abstract-engine-task.md §6
             self.lazy_txn = Some(self.eg.mark(self.shrink_policy));
             self.eg.set_cc(true);
         }
@@ -456,6 +459,10 @@ where
     fn lazy_ac_decide(&mut self, a: Cfg::G, b: Cfg::G) -> Result<(bool, bool), InterpError> {
         self.lazy_txn_open();
         self.eg.set_cc_goal(Some((a, b)));
+        // TODO(abs-saturation-engine): completion merges inside the transaction meet values like
+        // any merge; a conflict found here is entailed by the program, so the check reports it
+        // instead of discarding it with the transaction, see
+        // egraph/doc/future/abstract-engine-task.md §6
         self.eg.rebuild();
         let mut equal = self.eg.find(a) == self.eg.find(b);
         let aborted = |eg: &EGraph<Cfg, L, TRACK, PROOFS>| {
@@ -813,6 +820,9 @@ where
             // A rebuild that met a multiplicity past the configured width (a union that
             // makes two children of one AC node sum past it, or completion) left that
             // node as it was: the run reports it and stops.
+            // TODO(abs-saturation-engine): report an abstract conflict met by this command the
+            // same way, through `take_abs_conflict` and a new `InterpError` variant, see
+            // egraph/doc/future/abstract-engine-task.md §5
             if let Some(e) = self.eg.take_width_error() {
                 self.lazy_txn_close();
                 let _ = e;
@@ -898,6 +908,9 @@ where
                 }
                 self.eg.rebuild();
             }
+            // TODO(abs-saturation-engine): a `(refine t v)` command (a `CCommand` variant from
+            // #1) builds `t`, meets `v` into its class through the seed path, then rebuilds as
+            // `Union` does, see egraph/doc/future/abstract-engine-task.md §2
             CCommand::CheckQuery(cq) => self.exec_check_query(cq)?,
             CCommand::SetOption(opt) => self.set_completion_option(*opt),
             CCommand::CheckEq(a, b, complete) => {
@@ -948,6 +961,9 @@ where
                     self.eg.set_cc_goal(None);
                     return Err(InterpError::CheckFailed("terms are equal".into()));
                 }
+                // TODO(abs-saturation-engine): after the milestone: an empty meet between the two
+                // classes proves the disequality without the lazy search, see
+                // egraph/doc/future/abstract-engine-task.md §5
                 // Lazy mode searches beyond plain congruence before accepting `!=`:
                 // distinct classes may still join through completion. Reaching the
                 // implemented operational fixpoint without a join is the command's
@@ -1251,6 +1267,9 @@ where
                 } else {
                     self.shrink_policy
                 };
+                // TODO(abs-saturation-engine): no engine work at push: `mark` rebuilds and drains
+                // the abs queues, and #2's pool is marked with the classes, see
+                // egraph/doc/future/abstract-engine-task.md §6
                 self.marks.push(Mark {
                     token: self.eg.mark(policy),
                     rules_len: self.rules.len(),
@@ -1367,6 +1386,9 @@ where
                 // fused, so it costs one pop core per column (design doc 08 §1;
                 // the verified `restore` alone keeps the scope open).
                 self.eg.restore_and_pop(mark.token);
+                // TODO(abs-saturation-engine): values roll back with the classes (#2), and a
+                // conflict raised inside the scope is cleared with it, see
+                // egraph/doc/future/abstract-engine-task.md §6
                 self.rules.truncate(mark.rules_len);
                 self.globals.truncate(mark.globals_len);
             }
