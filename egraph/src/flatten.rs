@@ -11,8 +11,9 @@
 //!   is already open on the path from `n`. The root's own class is not on the path, so a
 //!   node can be opened once through its own class; the cut is what makes a cyclic class
 //!   (`C ∋ f{a, C}`) finite. A fold opens only the children on its spine ([`spine`]): the
-//!   first of every node for `:assoc-left`, the last for `:assoc-right`, since a nesting
-//!   elsewhere is grouping the operator keeps.
+//!   first of every node for `:assoc-left`, the last for `:assoc-right`. A fold operator is
+//!   not associative: its n-ary node is notation for one nesting, and opening a child
+//!   anywhere else matches a different term. [`spine`] gives the reason and the example.
 //!
 //! An opening must be needed (`doc/goal-canonical-flatten-views.md`, decision 2): each
 //! view records the leaf groups of every opening tree that gives it, each with the class
@@ -650,11 +651,33 @@ pub trait Members<G, O, M> {
 }
 
 /// Whether position `i` of `len` children lies on the spine of an operator of fold
-/// direction `dir`, the only positions whose nesting the operator flattens: a left
-/// fold `f(f(a,b),c)` is `f(a,b,c)`, but `f(a,f(b,c))` keeps its grouped right child
-/// (`doc/book/src/04-declaring-algebra.md`, and `apply.rs`'s `eval_seq_args` on a
-/// right-hand side). Opening a child off the spine would match the view as a
-/// different term. `:assoc` and the multiset kinds open every position.
+/// direction `dir`: the only positions where opening a nested same-operator child
+/// preserves the term.
+///
+/// `:assoc-left` and `:assoc-right` do not declare associativity. They declare that the
+/// n-ary spelling is notation for one nesting: `(f a b c)` means `f(f(a, b), c)` for a
+/// left fold and `f(a, f(b, c))` for a right fold. A left fold stores `f(f(a, b), c)` as
+/// the sequence `[a, b, c]` and stores `f(a, f(b, c))` as `[a, f[b, c]]`: the nested node
+/// in the last position is grouping the operator keeps, because `a - (b - c)` is not
+/// `(a - b) - c` (`doc/book/src/04-declaring-algebra.md`; `add` splices only the spine,
+/// `apply.rs`'s `eval_seq_args` on a right-hand side does the same).
+///
+/// A view opens a child `X` by substituting the children of an `f`-member of `X` in its
+/// place, and a match on the view is a match of the term the view spells. For a left
+/// fold, opening the first child turns `[f[a, b], c]` into `[a, b, c]`, which spells
+/// `f(f(a, b), c)`, the same term: sound. Opening the last child turns `[a, f[b, c]]`
+/// into `[a, b, c]` too, which spells `f(f(a, b), c)`, a different term from the stored
+/// `f(a, f(b, c))`. A pattern `(f x y z)` then matches the stored node, its rewrite asserts
+/// that `a - (b - c)` equals whatever `(a - b) - c` rewrites to, and the e-graph merges two
+/// terms the declared theory keeps apart: an unsound equality, not a missed one
+/// (`flatten_fold_spine.egg`; the counter-model `fold_open_off_spine_unsound` in
+/// proofs/lean/SemperProofs/EMatch/Flatten/Fold.lean, and `otLeft_sound` /
+/// `otRight_sound` for spine-only views). Before this check every position was opened
+/// for folds as for `:assoc`.
+///
+/// `:assoc` is associative, so every nesting spells the same term and every position may
+/// be opened; the multiset kinds (`:assoc-comm`, `:assoc-comm-idem`) are associative and
+/// commutative, and likewise open every position.
 pub fn spine(dir: crate::registry::AssocDir, i: usize, len: usize) -> bool {
     use crate::registry::AssocDir;
     match dir {
