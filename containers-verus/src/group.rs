@@ -1586,8 +1586,8 @@ where
     }
 }
 
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P> Member
-    for crate::eclasses::EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A> Member
+    for crate::eclasses::EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: crate::opt::DenseId,
     K: crate::opt::DenseId<Index = <T as crate::opt::DenseId>::Index>,
@@ -1602,7 +1602,9 @@ where
         + crate::store_policy::TaggedFamily<J, <T as crate::opt::DenseId>::Index, TRACK>
         + crate::store_policy::TaggedFamily<crate::list::ListHead<N>, <L as crate::opt::DenseId>::Index, TRACK>
         + crate::store_policy::TaggedFamily<crate::list::ListNode<T, N>, <N as crate::opt::DenseId>::Index, TRACK>
-        + crate::store_policy::PlainFamily<crate::opt::Opt<T>, usize, TRACK>,
+        + crate::store_policy::PlainFamily<crate::opt::Opt<T>, usize, TRACK>
+        + crate::store_policy::PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
     // TODO(abs-class-storage): add the abstract-value pool view to Model and archive, and its depth to the lockstep checks, see containers-verus/doc/design/21-abstract-value-pool.md §4
     /// Roots, ring partition, ring cells, class data, the repr set's sparse

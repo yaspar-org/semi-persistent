@@ -109,6 +109,7 @@ pub trait ClassFamilies<Cfg: EGraphConfig, const TRACK: bool>:
     + TaggedFamily<crate::containers::list::ListHead<Cfg::UN>, Cfg::Index, TRACK>
     + TaggedFamily<crate::containers::list::ListNode<Cfg::G, Cfg::UN>, Cfg::Index, TRACK>
     + PlainFamily<crate::containers::Opt<Cfg::G>, usize, TRACK>
+    + PlainFamily<crate::containers::eclasses::NoAbs, usize, TRACK>
 {
 }
 
@@ -128,6 +129,7 @@ impl<P, Cfg: EGraphConfig, const TRACK: bool> ClassFamilies<Cfg, TRACK> for P wh
         + TaggedFamily<crate::containers::list::ListHead<Cfg::UN>, Cfg::Index, TRACK>
         + TaggedFamily<crate::containers::list::ListNode<Cfg::G, Cfg::UN>, Cfg::Index, TRACK>
         + PlainFamily<crate::containers::Opt<Cfg::G>, usize, TRACK>
+        + PlainFamily<crate::containers::eclasses::NoAbs, usize, TRACK>
 {
 }
 

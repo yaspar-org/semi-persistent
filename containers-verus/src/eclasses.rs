@@ -435,9 +435,22 @@ pub open(crate) spec fn eg_archive_agrees<
 // EClasses
 // ---------------------------------------------------------------------------
 
+/// The empty abstract-value entry: the default `A` of `EClasses`, for
+/// instantiations that carry no abstract values. Zero-sized, so its pool
+/// stores nothing.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct NoAbs;
+
+impl core::default::Default for NoAbs {
+    fn default() -> (r: NoAbs) {
+        NoAbs
+    }
+}
+
 /// Verified equivalence classes: ring + union-find + repr set + use-lists +
 /// min-monomial pool, with the agreement clauses as `wf`.
-pub struct EClasses<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P = HotFirst>
+pub struct EClasses<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P = HotFirst,
+    A = NoAbs>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -452,7 +465,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
     /// The class ring; a root cell carries the class's configured-width key
     /// while the class is live, absent once absorbed.
@@ -474,7 +489,6 @@ where
     pub(crate) uf: UnionFind<T, J, TRACK, PROOFS, P>,
     /// Per-class parent lists.
     pub(crate) uses: ListArena<T, L, N, TRACK, P>,
-    // TODO(abs-class-storage): add the `abs_pool` field after this one, with its PlainFamily bound on every where clause, see containers-verus/doc/design/21-abstract-value-pool.md §2
     /// Min-monomial pool: flat rows of `min_width` columns. A plain-family
     /// column (`ParallelStore` under the default policy, as production's
     /// `VecP`): `Opt` owns its niche bit, so it cannot sit in a bit-stealing
@@ -482,10 +496,14 @@ where
     pub(crate) min_pool: SpVec<Opt<T>, usize, <P as PlainFamily<Opt<T>, usize, TRACK>>::Store, TRACK>,
     /// Fixed row width; 0 until `set_min_width`.
     pub(crate) min_width: usize,
+    /// Abstract-value pool: one opaque entry per cell, addressed by a class's
+    /// `abs` handle. A plain-family column, as `min_pool`; the class layer
+    /// stores, copies and restores entries and never inspects them.
+    pub(crate) abs_pool: SpVec<A, usize, <P as PlainFamily<A, usize, TRACK>>::Store, TRACK>,
 }
 
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P>
-    EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A>
+    EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -500,7 +518,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
     /// Convert the public, packed class-key type to the sparse set's full-word
     /// internal key. The numeric identity is unchanged.
@@ -666,6 +686,7 @@ where
         &&& self.uf.wf()
         &&& self.uses.wf()
         &&& self.min_pool.wf()
+        &&& self.abs_pool.wf()
         &&& self.uf.n_spec() == self.n_spec()
         &&& eg_model_wf::<T, K, L, N>(
                 self.entries.model_view(),
@@ -715,9 +736,9 @@ where
                 <P as TaggedFamily<ClassData<L, T>, T::Index, TRACK>>::empty()),
             uf: UnionFind::new(),
             uses: ListArena::new(),
-            // TODO(abs-class-storage): allocate the empty abstract-value pool here, see containers-verus/doc/design/21-abstract-value-pool.md §2
             min_pool: SpVec::with_store(<P as PlainFamily<Opt<T>, usize, TRACK>>::empty()),
             min_width: 0,
+            abs_pool: SpVec::with_store(<P as PlainFamily<A, usize, TRACK>>::empty()),
         };
         proof {
             T::lemma_id_bound_word_relation();
@@ -1222,8 +1243,8 @@ pub struct MergeInfo<T: DenseId, L: DenseId> {
     pub absorbed_atomic: bool,
 }
 
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P>
-    EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A>
+    EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -1238,7 +1259,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
 
     // TODO(abs-class-storage): carry `abs` through as `min_row` is carried, and discharge W8 for the merged state, see containers-verus/doc/design/21-abstract-value-pool.md §3
@@ -2937,8 +2960,8 @@ where
 // Semi-persistence: compose from the five components
 // ---------------------------------------------------------------------------
 
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P>
-    EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A>
+    EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -2953,7 +2976,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
 
     // TODO(abs-class-storage): push the abstract-value pool in lockstep and ensure its archive grows by its view, see containers-verus/doc/design/21-abstract-value-pool.md §4
@@ -3462,8 +3487,8 @@ where
 // the union-find's glue — doc/design/egraph-class-layer.md).
 // ---------------------------------------------------------------------------
 
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P>
-    EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A>
+    EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -3478,7 +3503,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
     /// Merge with justification (records the proof edge `a—b`).
     pub fn merge_justified(&mut self, a: T, b: T, just: J) -> Option<MergeInfo<T, L>> {
@@ -3540,8 +3567,8 @@ where
 }
 
 // Production-surface parity (the pre-swap class layer shipped Default).
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P> Default
-    for EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A> Default
+    for EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -3556,7 +3583,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
     fn default() -> Self {
         Self::new()
