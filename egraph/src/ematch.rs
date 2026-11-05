@@ -1958,11 +1958,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             // element is takeable when it lies below a bound class through `op` members.
             // The closure is capped; past the cap every element is takeable, which only
             // prunes less.
-            let regroup = eg.flatten_regroup();
             let bound = bound.and_then(|b| {
-                if !regroup {
-                    return Some(b.into_iter().collect());
-                }
                 use crate::flatten::Members;
                 const CAP: usize = 4096;
                 let mut seen: std::collections::HashSet<Cfg::G> = b.iter().copied().collect();
@@ -1988,7 +1984,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             });
             let takeable = |c: Cfg::G| bound.as_ref().is_none_or(|b| b.contains(&c));
             // A match takes at most one regrouped class per item.
-            let limit = if regroup { items.len() } else { 0 };
+            let limit = items.len();
             match crate::flatten::enumerate(&snap, n, *op, *kind, takeable, limit, &mut fl) {
                 Ok(()) => {
                     if fl.regroup_truncated() {

@@ -952,13 +952,14 @@ exception stands.
   (`Conform/Flatten`) writes `tests/egg/conform-flatten/`, with nested atoms, laws at two
   levels, cycles and folds (commit `267d8f46`). `tests/conform.rs` runs each file under both
   evaluation strategies and both atom-scheduling choices; the Lean workflow regenerates both
-  directories and fails on a difference. The model does not regroup, so `tests/conform.rs`
-  runs both matching samples with regrouped views off, and checks with them on that every
-  `check-eq` still holds ("Regrouped views", below). The brute-force references of
+  directories and fails on a difference. The model specifies regrouped views
+  ("Regrouped views", below), so both samples run with the engine's matching unchanged.
+  The brute-force references of
   `tests/flatten_differential.rs` and `tests/seq_reference.rs` are a second, independent check.
 - Not modelled: the galloping cursor; faults inside sequence sub-queries; literals,
   sequence-filter patterns and predicates in the base model (`EMatch/Defs.lean` header);
-  regrouped views (`flatten::FlattenScratch::regroup`); `:flatten` and sequence rules across
+  the regrouping bounds (`MAX_REGROUP_VIEWS`, `MAX_REGROUP_WORK`, the cap on the takeable
+  closure); `:flatten` and sequence rules across
   rounds, which the engine matches against the full
   index each round (§9.2); and the correspondence of the model to `ematch.rs` and
   `flatten.rs`.
@@ -1346,11 +1347,34 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   (`MatchPool::flatten_regroup_truncated`); saturation warns "regrouped views truncated at one
   node" (`apply::report_flatten_skips`). The opening bounds are unchanged.
 - **Scope.** Only the relational matcher's `Step::Flatten` regroups. Sequence rules
-  (`flatten::views_u64`) do not. `EGraph::set_flatten_regroup(false)` turns regrouping off,
-  which is the matching the Lean model specifies; `tests/conform.rs` runs the model's two
-  matching samples that way, because each holds `check-neq` candidates a regrouped view
-  matches soundly (`conform/c1_0100.egg`, `conform-flatten/f2_0071.egg`), and a second test
-  checks with regrouping on that every `check-eq` of both samples still holds.
+  (`flatten::views_u64`) do not. Regrouping is always on under `:flatten`; there is no
+  switch.
+- **Lean model** (`proofs/lean/SemperProofs/EMatch/Flatten/Regroup*.lean`, 2026-11-05).
+  `RegroupDefs.lean` defines the step as `flatten.rs` takes it: `fitsR` is `fits` (the group
+  shapes per kind, the whole view and a node over its own class excluded, the fold spine
+  end only), `regroupRec` adds `g` to a leaf holding a class of the group and records the
+  needed classes, at most one per item, `takeableR` is the takeable closure, and
+  `Enumerator.regroup` is the enumeration of `Step::Flatten` with pruning and regrouping.
+  `regroup_spec` shows that the pruning keeps exactly the accepted matches (`prune_regroup`,
+  from `takeableR_down`), so `regroup_plan_sound` and `regroup_plan_complete` give the
+  flattened plan with regrouped views (`runER`) the plan theorems of `Plan.lean`, which now
+  hold for any enumeration meeting `Enumerator.Spec` (`flatten_plan_sound_of_spec`,
+  `flatten_plan_complete_of_spec`). Soundness in the theory: `regroup_step_sound_ac`, `_aci`,
+  `_assoc` (one regrouping keeps the denotation of the view when every `f` member denotes
+  its class), `regroup_views_sound_ac`, `_aci`, `_assoc` (every enumerated view of a
+  laws-free operator denotes the node), `regroup_step_sound_left`, `_right` (the prefix of a
+  left fold, the suffix of a right fold) and `regroup_off_spine_unsound` (the counter-model
+  for any other run). Completeness for AC: `regroup_view_complete_ac` (disjoint groups, each
+  spelled by a member of its class, their sum below the view, at most one per item, give an
+  enumerated view whose demand accepts the match) and `regroup_match_complete_ac` (the atom
+  then holds under the regrouped semantics, so `regroup_plan_complete` emits the binding).
+  The generators run this enumeration (`runER` for `conform-flatten`, `regroupLevels` for
+  the root views of `conform`), so the two samples hold matches through regrouped classes as
+  `check-eq`. Differences from `flatten.rs`: the model keeps every record, where the engine
+  skips a record whose acceptance another record of the same view implies; the bounds are not
+  modelled, and a generator gives up on a node past a budget of 45,000 records
+  (`regroupCap`), saying so in the program; completeness is proved for AC with no laws,
+  soundness for the three kinds with no laws, and the fold lemmas are per step.
 - **Evidence.** `tests/egg/flatten_regroup_{ac,assoc,assoc_left,assoc_right}.egg` pin the
   valid groupings with `check-eq`, and the off-spine fold groupings, the non-contiguous
   `:assoc` run and the groups no node spells with `check-neq`;

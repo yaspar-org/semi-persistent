@@ -64,8 +64,8 @@
 //! Two bounds of their own keep regrouping cheap: [`MAX_REGROUP_VIEWS`] records and
 //! [`MAX_REGROUP_WORK`] candidates examined per node. Past either, regrouping stops, the
 //! views found so far are matched, and the node is counted ([`REGROUP_TRUNCATED`],
-//! reported by `apply::report_flatten_skips`). `EGraph::set_flatten_regroup(false)` turns
-//! regrouping off, which gives the matching the Lean model specifies.
+//! reported by `apply::report_flatten_skips`). The Lean model specifies regrouping
+//! (`proofs/lean/SemperProofs/EMatch/Flatten/RegroupDefs.lean`, `regroup_plan_complete`).
 //!
 //! Soundness. `G` holds a node `f(group)`, so `G` equals `f(group)` in the theory, and a
 //! regrouped view spells a term equal to the view's: for AC and ACI by associativity and

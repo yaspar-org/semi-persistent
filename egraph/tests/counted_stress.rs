@@ -109,12 +109,6 @@ impl Outcome {
 
 type Interp<Cfg> = Interpreter<Cfg, MachineLit, MachineModel, true, false>;
 
-thread_local! {
-    /// Whether `:flatten` rules match regrouped views (`EGraph::set_flatten_regroup`) in
-    /// the runs of this thread; on unless a test's oracle does not model them.
-    static REGROUP: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
-}
-
 fn run_cfg<Cfg>(src: &str, strategy: SaturationStrategy, names: &[&str]) -> Outcome
 where
     Cfg: EGraphConfig,
@@ -128,7 +122,6 @@ where
     };
     let mut interp = Interp::<Cfg>::new(MachineModel);
     interp.set_strategy(strategy);
-    interp.eg.set_flatten_regroup(REGROUP.with(|c| c.get()));
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         cmds,
@@ -1370,6 +1363,13 @@ fn rules_match_a_counted_node_as_its_expansion() {
 /// `:flatten`: `t = Add{Kc:j, outer…}` with `Kc ≡ Add{inner…}` is read as
 /// `outer + j·inner`, and also as stored, with `Kc` an ordinary child; without `:flatten`
 /// only as stored. The inner node is matched as itself either way.
+///
+/// A `:flatten` rule also matches the regrouped views (`flatten`, "Regrouped views"):
+/// `Kc` holds `Add{inner…}`, so `m` copies of `inner` in `outer + j·inner` may be read as
+/// `Kc:m`, giving `outer + (j - m)·inner + Kc:m` for every `m ≥ 1` the multiset allows,
+/// past `j` when `outer` holds further copies. Such a view is kept only for a match
+/// that takes `Kc` (`Demand::needs`). On `t = Add{L0, Kc:3}` with `Kc ≡ Add{L0:2}`, the
+/// opened view `{L0:7}` regroups to `{L0:5, Kc}`, where `(Add x:1 ..r)` binds `x = Kc`.
 fn flatten_matching<P: Preset>(
     outer: &BTreeMap<u8, u64>,
     inner: &BTreeMap<u8, u64>,
@@ -1400,6 +1400,16 @@ fn flatten_matching<P: Preset>(
         match_oracle(&stored, k, "$t", &mut want);
         if flatten {
             match_oracle(&view, k, "$t", &mut want);
+            for regrouped in regrouped_views(&view, &named(inner)) {
+                let mut hits = BTreeSet::new();
+                match_oracle(&regrouped, k, "$t", &mut hits);
+                // A regrouped view needs `Kc` taken; the items are the arguments after `e`.
+                want.extend(hits.into_iter().filter(|h| {
+                    h.split_whitespace()
+                        .skip(2)
+                        .any(|a| a.trim_end_matches(')') == "$k")
+                }));
+            }
         }
         match_oracle(&named(inner), k, "$k", &mut want);
         for s in [NAIVE, SEMI] {
@@ -1419,13 +1429,31 @@ fn flatten_matching<P: Preset>(
     Ok(())
 }
 
-/// The oracle reads the stored and the opened view only, so regrouped views are off: on
-/// `t = Add{L0, Kc:3}` with `Kc ≡ Add{L0:2}`, the opened view `{L0:7}` regroups to
-/// `{L0:5, Kc}`, where `(Add x:1 ..r)` binds `x = Kc`, a sound match the oracle lacks.
-/// Regrouping is checked against its own reference in `tests/flatten_differential.rs`.
+/// The regrouped views of the opened view `view` by the group `inner`, the children of
+/// `Kc`'s sum: `view - m·inner + Kc:m` for every `m ≥ 1` with `m·inner` inside `view`.
+fn regrouped_views(
+    view: &BTreeMap<String, u64>,
+    inner: &BTreeMap<String, u64>,
+) -> Vec<BTreeMap<String, u64>> {
+    let mut out = Vec::new();
+    let mut rest = view.clone();
+    for m in 1u64.. {
+        for (x, c) in inner {
+            match rest.get_mut(x) {
+                Some(r) if *r >= *c => *r -= c,
+                _ => return out,
+            }
+        }
+        rest.retain(|_, c| *c > 0);
+        let mut v = rest.clone();
+        v.insert("$k".to_string(), m);
+        out.push(v);
+    }
+    out
+}
+
 #[test]
 fn flatten_views_multiply_counts() {
-    REGROUP.with(|c| c.set(false));
     proptest_run(
         300,
         (
