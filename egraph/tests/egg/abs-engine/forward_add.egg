@@ -1,0 +1,25 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; Declaration, seed and make (abstract-engine-task.md §2). The seed gives x the
+;; value [0, 9]; the make of (add x 1) gives y the value [1, 10] by the forward
+;; transfer of +. A rule guarded on (within r lo hi) unions a marker, so check-eq
+;; observes the value; the two check-neq show that [1, 10] is the exact bound.
+(sort Int :interp int :domains (interval))
+(sort Obs)
+(function add (Int Int) Int :interp +)
+(function X () Int)
+(function In (Int) Obs)
+(function TooLow (Int) Obs)
+(function TooHigh (Int) Obs)
+(function Yes () Obs)
+(let x (X))
+(refine x (interval 0 9))
+(let y (add x 1))
+(rule ((= r (add a b)) (within r 1 10)) ((union (In r) (Yes))))
+(rule ((= r (add a b)) (within r 2 10)) ((union (TooLow r) (Yes))))
+(rule ((= r (add a b)) (within r 1 9)) ((union (TooHigh r) (Yes))))
+(run 4)
+(check-eq (In y) (Yes))
+(check-neq (TooLow y) (Yes))
+(check-neq (TooHigh y) (Yes))

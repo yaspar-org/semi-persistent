@@ -2107,6 +2107,9 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
 {
+    // TODO(abs-saturation-engine): an abstract guard (`within`, `nonzero`, declared by #1) reads
+    // the class value of its bound variable, not a literal; both callers (`run_step` and the
+    // cursor's `Step::CheckPred`) route here, see egraph/doc/future/abstract-engine-task.md §2
     let v = eval_pred_expr(&guard.expr, eg, env)?;
     Ok((guard.truthy)(&v))
 }

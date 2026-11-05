@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; An abstract guard in a rule body and a refine in its head (eclass-analysis.md
+;; §6, tier 3). scale is uninterpreted, so only the rule gives its result a
+;; value: x in [0, 9] makes the guard hold, and the head seeds r with [0, 99].
+(sort Int :interp int :domains (interval))
+(sort Obs)
+(function scale (Int) Int)
+(function X () Int)
+(function In (Int) Obs)
+(function Yes () Obs)
+(let x (X))
+(refine x (interval 0 9))
+(let r (scale x))
+(rule ((= s (scale y)) (within y 0 9)) ((refine s (interval 0 99))))
+(rule ((= s (scale y)) (within s 0 99)) ((union (In s) (Yes))))
+(run 4)
+(check-eq (In r) (Yes))

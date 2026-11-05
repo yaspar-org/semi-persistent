@@ -1,0 +1,21 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; MESSAGE: abstract conflict
+;; A conflict found inside a lazy-AC check transaction (abstract-engine-task.md
+;; §6). Completion derives (Add z z) = (Add 6 (Neg y) 6 (Neg y)); the two classes
+;; hold [0, 4] and [10, 20]. The equality is entailed by the program, so the
+;; check reports the conflict instead of discarding it with the transaction.
+(set-option :check-completion on)
+(sort Int :interp int :domains (interval))
+(function Add (Int) Int :assoc-comm)
+(function Neg (Int) Int)
+(function Z () Int)
+(function Y () Int)
+(let z (Z))
+(let y (Y))
+(union z (Add 6 (Neg y)))
+(let zz (Add z z))
+(refine zz (interval 0 4))
+(refine (Add 6 (Neg y) 6 (Neg y)) (interval 10 20))
+(check-eq zz (Add 6 (Neg y) 6 (Neg y)))
