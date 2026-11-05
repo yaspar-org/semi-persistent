@@ -1606,10 +1606,10 @@ where
         + crate::store_policy::PlainFamily<A, usize, TRACK>,
     A: Copy + core::default::Default,
 {
-    // TODO(abs-class-storage): add the abstract-value pool view to Model and archive, and its depth to the lockstep checks, see containers-verus/doc/design/21-abstract-value-pool.md §4
     /// Roots, ring partition, ring cells, class data, the repr set's sparse
-    /// and index columns, the use lists' partition, and the pool.
-    type Model = (Seq<usize>, Seq<Seq<usize>>, Seq<crate::circular_list::CircularListNode<crate::opt::Opt<K>, T>>, Seq<crate::eclasses::ClassData<L, T>>, Seq<<T as crate::opt::DenseId>::Index>, Seq<<T as crate::opt::DenseId>::Index>, Seq<Seq<usize>>, Seq<crate::opt::Opt<T>>);
+    /// and index columns, the use lists' partition, the min-monomial pool,
+    /// and the abstract-value pool.
+    type Model = (Seq<usize>, Seq<Seq<usize>>, Seq<crate::circular_list::CircularListNode<crate::opt::Opt<K>, T>>, Seq<crate::eclasses::ClassData<L, T>>, Seq<<T as crate::opt::DenseId>::Index>, Seq<<T as crate::opt::DenseId>::Index>, Seq<Seq<usize>>, Seq<crate::opt::Opt<T>>, Seq<A>);
 
     open spec fn wf(&self) -> bool {
         &&& crate::eclasses::EClasses::wf(self)
@@ -1625,7 +1625,7 @@ where
         &&& crate::eclasses::EClasses::depth_spec(self) < u32::MAX as nat
     }
 
-    open spec fn model(&self) -> (Seq<usize>, Seq<Seq<usize>>, Seq<crate::circular_list::CircularListNode<crate::opt::Opt<K>, T>>, Seq<crate::eclasses::ClassData<L, T>>, Seq<<T as crate::opt::DenseId>::Index>, Seq<<T as crate::opt::DenseId>::Index>, Seq<Seq<usize>>, Seq<crate::opt::Opt<T>>) {
+    open spec fn model(&self) -> (Seq<usize>, Seq<Seq<usize>>, Seq<crate::circular_list::CircularListNode<crate::opt::Opt<K>, T>>, Seq<crate::eclasses::ClassData<L, T>>, Seq<<T as crate::opt::DenseId>::Index>, Seq<<T as crate::opt::DenseId>::Index>, Seq<Seq<usize>>, Seq<crate::opt::Opt<T>>, Seq<A>) {
         (
             self.roots_view(),
             self.entries_model_view(),
@@ -1635,10 +1635,11 @@ where
             self.reprs_indices_view(),
             self.uses_model_view(),
             self.pool_view(),
+            self.abs_pool_view(),
         )
     }
 
-    open spec fn archive(&self) -> Seq<(Seq<usize>, Seq<Seq<usize>>, Seq<crate::circular_list::CircularListNode<crate::opt::Opt<K>, T>>, Seq<crate::eclasses::ClassData<L, T>>, Seq<<T as crate::opt::DenseId>::Index>, Seq<<T as crate::opt::DenseId>::Index>, Seq<Seq<usize>>, Seq<crate::opt::Opt<T>>)> {
+    open spec fn archive(&self) -> Seq<(Seq<usize>, Seq<Seq<usize>>, Seq<crate::circular_list::CircularListNode<crate::opt::Opt<K>, T>>, Seq<crate::eclasses::ClassData<L, T>>, Seq<<T as crate::opt::DenseId>::Index>, Seq<<T as crate::opt::DenseId>::Index>, Seq<Seq<usize>>, Seq<crate::opt::Opt<T>>, Seq<A>)> {
         Seq::new(self.pool_archive().len(), |k: int| (
             self.roots_archive_view()[k],
             self.entries_model_archive()[k],
@@ -1648,6 +1649,7 @@ where
             self.reprs_indices_archive()[k],
             self.uses_model_archive()[k],
             self.pool_archive()[k],
+            self.abs_pool_archive()[k],
         ))
     }
 

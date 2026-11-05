@@ -671,6 +671,14 @@ where
         self.min_pool.snapshots_view()
     }
 
+    pub open(crate) spec fn abs_pool_view(&self) -> Seq<A> {
+        self.abs_pool.view()
+    }
+
+    pub open(crate) spec fn abs_pool_archive(&self) -> Seq<Seq<A>> {
+        self.abs_pool.snapshots_view()
+    }
+
     /// Mark depth (spec): the number of live frames.
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.min_pool.snapshots_view().len()
@@ -711,13 +719,24 @@ where
                 self.uses.nodes_snapshots_view(),
                 self.min_pool.snapshots_view(),
                 self.min_width as nat)
-        // TODO(abs-class-storage): add `abs_pool.wf()`, pass the abs pool to both predicates, bound its archived lengths, see containers-verus/doc/design/21-abstract-value-pool.md §4
+        // TODO(abs-class-storage): pass the abs pool to both predicates (W8 per archived frame), see containers-verus/doc/design/21-abstract-value-pool.md §4
         // archived pool lengths never exceed the live pool (outside the
         // opaque predicate: the live length changes on row allocation, and
         // an opaque argument change would not transfer by congruence).
         &&& (forall|k: int| 0 <= k < self.min_pool.snapshots_view().len()
                 ==> (#[trigger] self.min_pool.snapshots_view()[k]).len()
                     <= self.min_pool.view().len())
+        // The abstract-value pool keeps one snapshot per frame, its archived
+        // lengths are monotone, and none exceeds the live pool (outside the
+        // opaque predicate, as for min_pool: a first-use allocation grows
+        // the live length).
+        &&& self.abs_pool.snapshots_view().len() == self.min_pool.snapshots_view().len()
+        &&& (forall|k1: int, k2: int| 0 <= k1 <= k2 < self.abs_pool.snapshots_view().len()
+                ==> (#[trigger] self.abs_pool.snapshots_view()[k1]).len()
+                    <= (#[trigger] self.abs_pool.snapshots_view()[k2]).len())
+        &&& (forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                ==> (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len())
     }
 
     pub fn new() -> (e: Self)
@@ -2981,7 +3000,6 @@ where
     A: Copy + core::default::Default,
 {
 
-    // TODO(abs-class-storage): push the abstract-value pool in lockstep and ensure its archive grows by its view, see containers-verus/doc/design/21-abstract-value-pool.md §4
     /// Push a frame on every component without minting (what a typed group
     /// drives): `mark` minus the token bundling, over the components' own
     /// structural pushes.
@@ -3009,6 +3027,8 @@ where
             final(self).reprs_indices_archive() == old(self).reprs_indices_archive().push(old(self).reprs_indices_view()),
             final(self).uses_model_archive() == old(self).uses_model_archive().push(old(self).uses_model_view()),
             final(self).pool_archive() == old(self).pool_archive().push(old(self).pool_view()),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive().push(old(self).abs_pool_view()),
     {
         let ghost o = *old(self);
         let d = self.min_pool.depth_exec();
@@ -3019,7 +3039,8 @@ where
             && self.uf.parent.depth_exec() == d
             && self.uf.rank.depth_exec() == d
             && self.uses.heads.depth_exec() == d
-            && self.uses.nodes.depth_exec() == d)
+            && self.uses.nodes.depth_exec() == d
+            && self.abs_pool.depth_exec() == d)
         {
             crate::guard::refuse("EClasses: components out of step");
         }
@@ -3056,11 +3077,15 @@ where
         if !self.min_pool.can_mark() {
             crate::guard::refuse("EClasses::push_frames: pool cannot open another frame");
         }
+        if !self.abs_pool.can_mark() {
+            crate::guard::refuse("EClasses::push_frames: abstract-value pool cannot open another frame");
+        }
         self.entries.push_frames(shrink);
         self.reprs.push_frames(shrink);
         self.uf.push_frames(shrink);
         self.uses.push_frames(shrink);
         self.min_pool.push_frame(shrink);
+        self.abs_pool.push_frame(shrink);
         proof {
             reveal(eg_archive_agrees);
             assert(eg_archive_agrees::<T, K, L, N>(
@@ -3150,6 +3175,31 @@ where
                         <= o.min_pool.view().len());
                 }
             }
+            // the same two facts for the abstract-value pool.
+            assert forall|k1: int, k2: int|
+                0 <= k1 <= k2 < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k1]).len()
+                    <= (#[trigger] self.abs_pool.snapshots_view()[k2]).len() by {
+                if k2 < k_new {
+                    assert(self.abs_pool.snapshots_view()[k1]
+                        == o.abs_pool.snapshots_view()[k1]);
+                    assert(self.abs_pool.snapshots_view()[k2]
+                        == o.abs_pool.snapshots_view()[k2]);
+                } else if k1 < k_new {
+                    assert(self.abs_pool.snapshots_view()[k1]
+                        == o.abs_pool.snapshots_view()[k1]);
+                    assert(self.abs_pool.snapshots_view()[k1].len()
+                        <= o.abs_pool.view().len());
+                }
+            }
+            assert forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len() by {
+                if k < k_new {
+                    assert(self.abs_pool.snapshots_view()[k]
+                        == o.abs_pool.snapshots_view()[k]);
+                }
+            }
         }
     }
 
@@ -3157,7 +3207,6 @@ where
 
 
 
-    // TODO(abs-class-storage): reset the abstract-value pool to its snapshot at `target` in lockstep, see containers-verus/doc/design/21-abstract-value-pool.md §4
     /// Semantics B, token-free (what a typed group drives): every component
     /// resets to its snapshot at `target` and keeps that frame open; the
     /// aggregate's archive at `target` is the jointly valid state it lands in.
@@ -3190,6 +3239,8 @@ where
                 &&& final(self).uses_model_archive() == old(self).uses_model_archive().subrange(0, f + 1)
                 &&& final(self).pool_view() == old(self).pool_archive()[f]
                 &&& final(self).pool_archive() == old(self).pool_archive().subrange(0, f + 1)
+                &&& final(self).abs_pool_view() == old(self).abs_pool_archive()[f]
+                &&& final(self).abs_pool_archive() == old(self).abs_pool_archive().subrange(0, f + 1)
             }),
     {
         let d = self.min_pool.depth_exec();
@@ -3200,7 +3251,8 @@ where
             && self.uf.parent.depth_exec() == d
             && self.uf.rank.depth_exec() == d
             && self.uses.heads.depth_exec() == d
-            && self.uses.nodes.depth_exec() == d)
+            && self.uses.nodes.depth_exec() == d
+            && self.abs_pool.depth_exec() == d)
         {
             crate::guard::refuse("EClasses: components out of step");
         }
@@ -3245,6 +3297,7 @@ where
         self.uf.reset_frames(target);
         self.uses.reset_frames(target);
         self.min_pool.reset_frame(target);
+        self.abs_pool.reset_frame(target);
         proof {
             reveal(eg_archive_agrees);
             // restored views are the archived frame-f views.
@@ -3311,13 +3364,30 @@ where
                 assert(o.min_pool.snapshots_view()[k].len()
                     <= o.min_pool.snapshots_view()[f].len());
             }
+            // the same two facts for the abstract-value pool.
+            assert forall|k1: int, k2: int|
+                0 <= k1 <= k2 < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k1]).len()
+                    <= (#[trigger] self.abs_pool.snapshots_view()[k2]).len() by {
+                assert(self.abs_pool.snapshots_view()[k1]
+                    == o.abs_pool.snapshots_view()[k1]);
+                assert(self.abs_pool.snapshots_view()[k2]
+                    == o.abs_pool.snapshots_view()[k2]);
+            }
+            assert forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len() by {
+                assert(self.abs_pool.snapshots_view()[k]
+                    == o.abs_pool.snapshots_view()[k]);
+                assert(o.abs_pool.snapshots_view()[k].len()
+                    <= o.abs_pool.snapshots_view()[f].len());
+            }
         }
     }
 
 
 
 
-    // TODO(abs-class-storage): restore the abstract-value pool and ensure its view equals its archive at `target`, see containers-verus/doc/design/21-abstract-value-pool.md §4
     /// The legacy pop-restore, token-free (what a typed group drives): every
     /// component restores to its snapshot at `target` and drops that frame
     /// with everything above it.
@@ -3349,6 +3419,8 @@ where
                 &&& final(self).uses_model_archive() == old(self).uses_model_archive().subrange(0, f)
                 &&& final(self).pool_view() == old(self).pool_archive()[f]
                 &&& final(self).pool_archive() == old(self).pool_archive().subrange(0, f)
+                &&& final(self).abs_pool_view() == old(self).abs_pool_archive()[f]
+                &&& final(self).abs_pool_archive() == old(self).abs_pool_archive().subrange(0, f)
             }),
     {
         let d = self.min_pool.depth_exec();
@@ -3359,7 +3431,8 @@ where
             && self.uf.parent.depth_exec() == d
             && self.uf.rank.depth_exec() == d
             && self.uses.heads.depth_exec() == d
-            && self.uses.nodes.depth_exec() == d)
+            && self.uses.nodes.depth_exec() == d
+            && self.abs_pool.depth_exec() == d)
         {
             crate::guard::refuse("EClasses: components out of step");
         }
@@ -3404,6 +3477,7 @@ where
         self.uf.restore_frames(target);
         self.uses.restore_frames(target);
         self.min_pool.restore_frame(target);
+        self.abs_pool.restore_frame(target);
         proof {
             reveal(eg_archive_agrees);
             // restored views are the archived frame-f views.
@@ -3469,6 +3543,24 @@ where
                     <= self.min_pool.view().len() by {
                 assert(o.min_pool.snapshots_view()[k].len()
                     <= o.min_pool.snapshots_view()[f].len());
+            }
+            // the same two facts for the abstract-value pool.
+            assert forall|k1: int, k2: int|
+                0 <= k1 <= k2 < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k1]).len()
+                    <= (#[trigger] self.abs_pool.snapshots_view()[k2]).len() by {
+                assert(self.abs_pool.snapshots_view()[k1]
+                    == o.abs_pool.snapshots_view()[k1]);
+                assert(self.abs_pool.snapshots_view()[k2]
+                    == o.abs_pool.snapshots_view()[k2]);
+            }
+            assert forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len() by {
+                assert(self.abs_pool.snapshots_view()[k]
+                    == o.abs_pool.snapshots_view()[k]);
+                assert(o.abs_pool.snapshots_view()[k].len()
+                    <= o.abs_pool.snapshots_view()[f].len());
             }
         }
     }
