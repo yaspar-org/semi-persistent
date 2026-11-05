@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Control for stop_self_union_mints.egg: the same program with an insert in place of
+;; the self-union. The insert counted its minted node as a change, so this passed before
+;; the stop-test fix too.
+(datatype E (F E) (a) (b))
+(let t (a))
+(rule ((a)) ((F (a))))
+(rule ((F x)) ((union (F x) (b))))
+(run 10)
+(check-eq (F (a)) (b))

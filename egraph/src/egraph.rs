@@ -4086,6 +4086,20 @@ where
         self.nodes.routing().len()
     }
 
+    /// The graph's size as `(node count, live class count)`, both O(1). Within one
+    /// saturation round's action phase nodes are only created and classes only merged, so
+    /// the stamp differs before and after iff a node was created or two classes merged:
+    /// creation moves the node count, and a merge without creation moves the class count.
+    /// The saturation loops compare it around the action phase to decide the fixpoint,
+    /// rather than trusting each action's own count (a `union` whose sides were already
+    /// equal can still have built the nodes it names).
+    pub fn size_stamp(&self) -> (usize, usize) {
+        (
+            self.node_count(),
+            crate::containers::IndexLike::as_usize(self.classes.num_classes()),
+        )
+    }
+
     pub fn class_repr(&self, id: Cfg::G) -> Cfg::G {
         self.classes.find_const(id)
     }

@@ -399,6 +399,8 @@ where
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
             IndexStore::build_with(eg, scratch)
         };
+        // The fixpoint test compares the graph, not the actions' counts: see `size_stamp`.
+        let stamp = eg.size_stamp();
         let mut changes = 0;
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
@@ -434,7 +436,8 @@ where
         index.recycle_into(scratch, true);
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
         crate::phase_timing::round_line("naive");
-        if changes == 0 {
+        // `changes` still carries what the stamp cannot see: a `:subsume` flag newly set.
+        if changes == 0 && eg.size_stamp() == stamp {
             return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
         }
     }
@@ -949,6 +952,8 @@ where
         eg.clear_touched();
 
         let match_timer = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
+        // The fixpoint test compares the graph, not the actions' counts: see `size_stamp`.
+        let stamp = eg.size_stamp();
         let mut changes = 0;
         match &delta {
             // Round 0: naive — the whole graph is new.
@@ -1047,7 +1052,8 @@ where
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
         crate::phase_timing::round_line(if had_delta { "semi" } else { "semi-r0" });
 
-        if changes == 0 {
+        // `changes` still carries what the stamp cannot see: a `:subsume` flag newly set.
+        if changes == 0 && eg.size_stamp() == stamp {
             return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
         }
     }
@@ -1088,6 +1094,7 @@ where
         let index = IndexStore::build(eg);
         let stats = crate::schedule::IndexStats::from_index(&index);
         let vindex = crate::index::VariantIndex::naive(&index);
+        let stamp = eg.size_stamp();
         let mut changes = 0;
         for (label, rule) in rules {
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
@@ -1143,7 +1150,7 @@ where
                 changes += applied.map_err(|e| crate::apply::name_fault(e, rule, eg))?;
             }
         }
-        if changes == 0 {
+        if changes == 0 && eg.size_stamp() == stamp {
             eprintln!("-- fixpoint after {total_iter} iterations --");
             return Ok(sat_result(total_iter, true, false, steps_base));
         }

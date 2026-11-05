@@ -530,6 +530,10 @@ egg_test!(
     semi_merge_membership_delta,
     "semi_merge_membership_delta.egg"
 );
+// The stop test: a round that minted nodes is not a fixpoint (fidelity row SA11).
+egg_test!(stop_self_union_mints, "stop_self_union_mints.egg");
+egg_test!(stop_assoc_flatten_mints, "stop_assoc_flatten_mints.egg");
+egg_test!(stop_insert_control, "stop_insert_control.egg");
 egg_test!(rhs_mult_expr, "rhs_mult_expr.egg");
 egg_test!(rhs_mult_expr_underflow, "rhs_mult_expr_underflow.egg");
 egg_test!(rhs_comprehensions, "rhs_comprehensions.egg");
