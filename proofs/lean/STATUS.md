@@ -45,10 +45,31 @@ its two children classes merge (`NoCollapse`).
   `C5 = c1c3²`, which needs `c1c4² = c0²` plus two copies of `c4 = c0c3`.
   The engine now runs `lattice_round` at the completion fixpoint: classes
   whose vectors differ by a member of the lattice the equations span are
-  merged, which is the cancelative congruence on the classes present. The
-  lattice argument is not formalized; the certified fixtures
-  (`cancel_lattice.egg`, `cancel_crit_pair.egg`,
-  `nilpotent_group_lattice.egg`, `cancel_lattice_lazy.egg`) pin it.
+  merged. `Lattice.lean` formalizes the argument: `E_mem_lattice` (theory
+  equality implies lattice membership, every law set), `E_of_mem_lattice`
+  (the converse when `CancelClosed`, from `cancelClosed_of_cancellative` or
+  `cancelClosed_of_nil`), `combined_E_iff` (identity, nilpotent and inverse
+  laws: exactly the rows `lattice_round` builds), `latticeClosed_of_engineFixed`
+  (the step's fixpoint gives `LatticeClosed`), `lattice_merge_sound` (a lattice
+  merge preserves I2), and `completion_complete_cancellative_engine`
+  (`completion_complete_at_convergence` with `hcancel` replaced by
+  `LatticeClosed`). `hcancel` itself does not follow from lattice closure:
+  `hcancel_not_derivable` is a converged, lattice-closed state where two
+  joinable sums cancel to distinct normal forms, because `hcancel`
+  quantifies over every monomial and lattice closure over the nodes present.
+  The Lean `E` does not encode flattening (a class equal to its node's
+  children), which the engine rows `e_c − vec M` do. Fixtures:
+  `cancel_lattice.egg`, `cancel_crit_pair.egg`, `nilpotent_group_lattice.egg`,
+  `cancel_lattice_lazy.egg`.
+- `ARound.lean`: the A-only inter-reduction `a_round`. `rewrite_left_sound`,
+  `rewrite_right_sound` (offset 0 of a left fold, the last offset of a right
+  fold, every magma), `rewrite_both_sound` (any offset, every semigroup),
+  `left_off_spine_unsound`, `right_off_spine_unsound` (a counter-model in ℤ
+  with subtraction for every other offset, so the step before commit
+  `7beed39f` is unsound), and `aRound_sound` (a spine-restricted merge
+  preserves I2). Not modelled: orientation, the choice of the least
+  spelling, termination, first-occurrence selection, hash-consing, and nested
+  same-op children.
 - `Countermodel.lean`: `not_E_of_separates`, `E_sound`. A valuation into a
   commutative monoid that satisfies the asserted pairs and the law
   instances, and is cancellative when the operator is, separates only pairs
@@ -212,8 +233,7 @@ its two children classes merge (`NoCollapse`).
 ## Not modelled
 
 View bounds `MAX_VIEWS`/`MAX_WORK`/`MAX_ELEMS` and multiplicity widths
-(hypotheses only); cross-round delta
-completeness; the galloping cursor (Verus, containers-verus); faults inside
+(hypotheses only); the galloping cursor (Verus, containers-verus); faults inside
 sequence sub-queries; `Nodup` of emitted lists (membership only); the
 build-time spelling of a right-hand side's AC term (`flatten_mset_children`
 reads each argument class's `atomic` bit and minimal monomial):

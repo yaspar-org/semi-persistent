@@ -36,7 +36,8 @@ if [ -z "$checks" ]; then
 fi
 for f in $checks; do
   out=$(lake env lean "$f" 2>&1) || { echo "$out"; echo "::error::$f failed to elaborate"; fail=1; continue; }
-  lines=$(echo "$out" | grep "depends on axioms" || true)
+  # Lean wraps a long axiom list across lines; join the output before parsing.
+  lines=$(echo "$out" | tr '\n' ' ' | grep -oE "depends on axioms: \[[^]]*\]" || true)
   n=$(echo "$lines" | grep -c "depends on axioms" || true)
   if [ "$n" -eq 0 ]; then
     echo "::error::$f prints no axiom report"
