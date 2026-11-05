@@ -1,0 +1,137 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; semper-conform-cc-cert seed=1 case=30 family=slot bound=3 classes=5
+;; Every check-neq pair is separated by a countermodel of the declared laws and the
+;; asserted equations (SemperProofs/CC/Countermodel.lean: not_E_of_separates); its
+;; certificate precedes it. check-eq pairs are =_E (bounded oracle).
+;; candidates: 120, certified check-neq: 40, uncertified: 0, check-eq: 34
+;; MODEL N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+;; MODEL N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(sort E)
+(function C0 () E)
+(function C1 () E)
+(function C2 () E)
+(function C3 () E)
+(function C4 () E)
+(function Zero () E)
+(function Add (E) E :assoc-comm :identity (Zero) :cancellative)
+(set-option :completion eager)
+(union (Add (C0) (C4)) (Add (C1) (C2) (C3)))
+(union (C1) (Zero))
+(union (Add (C0) (C1):2) (Add (C2):2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C4)) (Zero))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C1) (C2) (C3)) (Zero))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C4)) (C0))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C1) (C2) (C3)) (C0))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C4)) (C2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C1) (C2) (C3)) (C2))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C0) (C4)) (C3))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C1) (C2) (C3)) (C3))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C0) (C4)) (C4))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C1) (C2) (C3)) (C4))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C4)) (Add (C0):2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C1) (C2) (C3)) (Add (C0):2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C4)) (Add (C0) (C2)))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C1) (C2) (C3)) (Add (C0) (C2)))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C0) (C4)) (Add (C0) (C3)))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C1) (C2) (C3)) (Add (C0) (C3)))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C4)) (Add (C3):2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C1) (C2) (C3)) (Add (C3):2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C4)) (Add (C3) (C4)))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C1) (C2) (C3)) (Add (C3) (C4)))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C4)) (Add (C4):2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C1) (C2) (C3)) (Add (C4):2))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (C1) (C0))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (C1) (C2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (C1) (C3))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (C1) (C4))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (C1) (Add (C0):2))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (C1) (Add (C0) (C2)))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (C1) (Add (C0) (C3)))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (C1) (Add (C0) (C4)))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (C1) (Add (C3):2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (C1) (Add (C3) (C4)))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (C1) (Add (C4):2))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C0) (C1):2) (Zero))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C2):2) (Zero))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C0) (C1):2) (C2))
+;; CERT N^1 C0=2 C1=0 C2=1 C3=1 C4=0
+(check-neq (Add (C2):2) (C2))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C1):2) (C3))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C2):2) (C3))
+;; CERT N^1 C0=0 C1=0 C2=0 C3=1 C4=1
+(check-neq (Add (C0) (C1):2) (C4))
+(check-eq (Zero) (C1))
+(check-eq (C0) (Add (C0) (C1)))
+(check-eq (Zero) (Add (C1):2))
+(check-eq (C2) (Add (C1) (C2)))
+(check-eq (C3) (Add (C1) (C3)))
+(check-eq (C4) (Add (C1) (C4)))
+(check-eq (C0) (Add (C2):2))
+(check-eq (Add (C0) (C4)) (Add (C2) (C3)))
+(check-eq (C3) (Add (C2) (C4)))
+(check-eq (Add (C0):2) (Add (C0):2 (C1)))
+(check-eq (C0) (Add (C0) (C1):2))
+(check-eq (Add (C0) (C2)) (Add (C0) (C1) (C2)))
+(check-eq (Add (C0) (C3)) (Add (C0) (C1) (C3)))
+(check-eq (Add (C0) (C4)) (Add (C0) (C1) (C4)))
+(check-eq (Add (C0):2) (Add (C0) (C2):2))
+(check-eq (Add (C0):2 (C4)) (Add (C0) (C2) (C3)))
+(check-eq (Add (C0) (C3)) (Add (C0) (C2) (C4)))
+(check-eq (Add (C3):2) (Add (C0) (C4):2))
+(check-eq (Zero) (Add (C1):3))
+(check-eq (C2) (Add (C1):2 (C2)))
+(check-eq (C3) (Add (C1):2 (C3)))
+(check-eq (C4) (Add (C1):2 (C4)))
+(check-eq (C0) (Add (C1) (C2):2))
+(check-eq (Add (C0) (C4)) (Add (C1) (C2) (C3)))
+(check-eq (C3) (Add (C1) (C2) (C4)))
+(check-eq (Add (C3):2) (Add (C1) (C3):2))
+(check-eq (Add (C3) (C4)) (Add (C1) (C3) (C4)))
+(check-eq (Add (C4):2) (Add (C1) (C4):2))
+(check-eq (Add (C0) (C2)) (Add (C2):3))
+(check-eq (Add (C0) (C3)) (Add (C2):2 (C3)))
+(check-eq (Add (C0) (C4)) (Add (C2):2 (C4)))
+(check-eq (Add (C0) (C3) (C4)) (Add (C2) (C3):2))
+(check-eq (Add (C3):2) (Add (C2) (C3) (C4)))
+(check-eq (Add (C3) (C4)) (Add (C2) (C4):2))

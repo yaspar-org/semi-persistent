@@ -15,10 +15,13 @@
 //! `CC/BoundedOracle.lean`. The files under `tests/egg/conform-rounds/` were
 //! written by `semper-conform-rounds` (`proofs/lean/Conform/Rounds`): rules that
 //! build terms over several rounds, checked against the model's fired-instance
-//! invariant on the engine's own snapshot. The directories are scanned: a file
+//! invariant on the engine's own snapshot. The files under
+//! `tests/egg/conform-cc-cert/` were written by `semper-conform-cc-cert`
+//! (`proofs/lean/Conform/CC/Cert.lean`): every `check-neq` there is separated by a
+//! countermodel (`SemperProofs/CC/Countermodel.lean`). The directories are scanned: a file
 //! needs no registration. Each directory's `README.md` names the seed and the
 //! regeneration command; the Lean workflow regenerates the matching, `:flatten`
-//! and completion samples and fails when a committed file differs. The rounds
+//! completion and certified completion samples and fails when a committed file differs. The rounds
 //! sample is not regenerated in CI, because its oracle reads the engine's dumps.
 //!
 //! The runner is the one of `egg_tests.rs`, reduced to the directives these files
@@ -142,4 +145,9 @@ fn conform_cc_fixtures_agree_with_the_model() {
 #[test]
 fn conform_rounds_fixtures_agree_with_the_model() {
     check_dir("tests/egg/conform-rounds");
+}
+
+#[test]
+fn conform_cc_cert_fixtures_agree_with_the_model() {
+    check_dir("tests/egg/conform-cc-cert");
 }

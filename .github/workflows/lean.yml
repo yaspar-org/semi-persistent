@@ -6,6 +6,7 @@ on:
       - 'egraph/tests/egg/conform/**'
       - 'egraph/tests/egg/conform-flatten/**'
       - 'egraph/tests/egg/conform-cc/**'
+      - 'egraph/tests/egg/conform-cc-cert/**'
       - '.github/workflows/lean.yml'
   push:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - 'egraph/tests/egg/conform/**'
       - 'egraph/tests/egg/conform-flatten/**'
       - 'egraph/tests/egg/conform-cc/**'
+      - 'egraph/tests/egg/conform-cc-cert/**'
       - '.github/workflows/lean.yml'
   workflow_dispatch:
 
@@ -138,6 +140,31 @@ jobs:
           out=$(mktemp -d)
           lake exe semper-conform-cc 1 200 "$out"
           fixtures=../../egraph/tests/egg/conform-cc
+          status=0
+          for f in "$fixtures"/*.egg; do
+            name=$(basename "$f")
+            if ! diff -u "$f" "$out/$name"; then
+              echo "::error::$name differs from the generator's output"
+              status=1
+            fi
+          done
+          if [ "$(ls "$out" | wc -l)" -ne "$(ls "$fixtures"/*.egg | wc -l)" ]; then
+            echo "::error::the generator writes $(ls "$out" | wc -l) files, the fixtures hold $(ls "$fixtures"/*.egg | wc -l)"
+            status=1
+          fi
+          exit $status
+
+      # The fixtures under egraph/tests/egg/conform-cc-cert are the output of the
+      # certifying generator (proofs/lean/Conform/CC/Cert.lean) for seed 1, written
+      # with --fixture. Every check-neq is separated by a countermodel
+      # (SemperProofs/CC/Countermodel.lean). Same check as above.
+      - name: Regenerate the certified AC-congruence closure conformance fixtures
+        run: |
+          set -euo pipefail
+          lake build semper-conform-cc-cert
+          out=$(mktemp -d)
+          lake exe semper-conform-cc-cert 1 200 "$out" --fixture
+          fixtures=../../egraph/tests/egg/conform-cc-cert
           status=0
           for f in "$fixtures"/*.egg; do
             name=$(basename "$f")

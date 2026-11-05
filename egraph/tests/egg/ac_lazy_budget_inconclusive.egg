@@ -8,8 +8,9 @@
 ;; rebuild, never the rule rounds, and one completion round over ~19,000 rules and ~22,000
 ;; targets ran for minutes while minting almost nothing. The decision now charges every node
 ;; minted since it opened and bounds each completion round's work (design 06 §13), so the
-;; check-neq reports the budget stop as inconclusive within seconds
-;; (`lazy_budget_check_returns_promptly` in egg_tests.rs).
+;; check-neq reports the budget stop as inconclusive, which this fixture checks. No test
+;; bounds its wall-clock time: a regression of either budget hangs it, and the CI job's
+;; timeout reports that (design 13 §5 item 21).
 (sort E)
 (function A () E) (function B () E) (function C () E) (function D () E)
 (function Min (E) E :assoc-comm-idem)

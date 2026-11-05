@@ -2594,14 +2594,14 @@ where
     /// `uᵢ − vᵢ`: the quotient is cancelative, so it embeds in its universal group, which is
     /// `ℤⁿ / L`. Kapur's §5 inferences (cancel-close each rule, superpose disjoint pairs)
     /// cancel the common part of one equation at a time and do not reach every member of
-    /// `L`: in conform-cc/cancel_lattice.egg `c1c3² = ∅` needs
+    /// `L`: in tests/egg/cancel_lattice.egg `c1c3² = ∅` needs
     /// `c1c4² = c0²` added to two copies of `c4 = c0c3`, and no rule pair yields it.
     ///
     /// The step reads every node of the op (collapsed ones included: their equations still
     /// hold) as the row `e_class − Σ mult·e_child`, adds `e_unit` for a declared identity,
     /// `order·e_x` for every class under `:nilpotent` (which requires `:identity`, so the
     /// structure is a group of exponent `order`, cancelative whether or not `:cancellative`
-    /// is declared; conform-cc/nilpotent_group_lattice.egg), and
+    /// is declared; tests/egg/nilpotent_group_lattice.egg), and
     /// `e_x + e_inv(x)` for every inverse node. It brings the rows to echelon form over ℤ
     /// with exact integers, reduces each `e_class` to its coset representative (the entry at
     /// each pivot column in `[0, pivot)`), and merges classes with equal representatives.
@@ -3876,7 +3876,7 @@ where
                 // child. Two disjoint left-hand sides have a trivially joinable critical pair
                 // (each reduct rewrites to the other by the other rule), so the pair is skipped
                 // rather than assumed absent; containment is handled by the (A′) normalize
-                // pass. conform-cc/cc1_0143.egg (`:identity` with `:nilpotent 3`) reaches a
+                // pass. tests/egg/cc_disjoint_partner.egg (`:identity` with `:nilpotent 3`) reaches a
                 // disjoint pair; an earlier `debug_assert` here failed on it in debug builds.
                 if multiset_disjoint(a, m) || multiset_subset(a, m) || multiset_subset(m, a) {
                     continue;

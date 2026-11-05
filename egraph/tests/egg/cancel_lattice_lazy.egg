@@ -31,7 +31,6 @@
 (union (Add (C1):2) (Add (C1) (C5)))
 (union (Add (C1):2 (C5)) (Add (C0) (C5)))
 (union (Add (C0):2) (C1))
-(dump-egraph (C0) :file "DUMPFILE")
 ;; CERT Z2^1 C0=0 C1=0 C2=1 C3=0 C4=1 C5=0
 (check-neq (Add (C0) (C2) (C5)) (Zero))
 ;; CERT Z2^1 C0=0 C1=0 C2=1 C3=0 C4=1 C5=0

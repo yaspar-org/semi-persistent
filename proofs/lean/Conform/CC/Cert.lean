@@ -256,8 +256,13 @@ def certChecks (cs : CCase) (maxNeq : Nat) : CertChecks := Id.run do
 
 def certFileName (seed idx : Nat) : String := s!"cs{seed}_{pad4 idx}.egg"
 
-def certProgram (cs : CCase) (ck : CertChecks) : String :=
+/-- The program text. `dump` keeps the `dump-egraph` line the soundness runner
+reads (it writes `DUMPFILE` relative to the working directory); a committed
+fixture omits it, so running the test suite writes no file into the tree. -/
+def certProgram (cs : CCase) (ck : CertChecks) (dump : Bool := true) : String :=
   let header := [
+    ";; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+    ";; SPDX-License-Identifier: Apache-2.0",
     ";; EXPECT: ok",
     ";; TYPES: machine",
     s!";; semper-conform-cc-cert seed={cs.seed} case={cs.idx} family={cs.family} bound={cs.B} classes={cs.nC}",
@@ -268,7 +273,7 @@ def certProgram (cs : CCase) (ck : CertChecks) : String :=
     ck.found.toList.map (fun c => s!";; MODEL {c.show cs.nC}")
   "\n".intercalate (header ++ cs.decls ++ ["(set-option :completion eager)"] ++
     cs.acts.map cs.act ++
-    ["(dump-egraph (C0) :file \"DUMPFILE\")"] ++
+    (if dump then ["(dump-egraph (C0) :file \"DUMPFILE\")"] else []) ++
     ck.neqs.flatMap (fun ((p, q), c) =>
       [s!";; CERT {c.show cs.nC}", s!"(check-neq {cs.mono p} {cs.mono q})"]) ++
     ck.eqs.map (fun (p, q) => s!"(check-eq {cs.mono p} {cs.mono q})")) ++ "\n"

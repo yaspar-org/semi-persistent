@@ -1,0 +1,141 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; semper-conform-cc-cert seed=1 case=157 family=wide bound=3 classes=6
+;; Every check-neq pair is separated by a countermodel of the declared laws and the
+;; asserted equations (SemperProofs/CC/Countermodel.lean: not_E_of_separates); its
+;; certificate precedes it. check-eq pairs are =_E (bounded oracle).
+;; candidates: 315, certified check-neq: 40, uncertified: 3, check-eq: 35
+;; MODEL N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+;; MODEL N^1 C0=1 C1=1 C2=2 C3=0 C4=1 C5=0
+;; MODEL T2^2 C0=(0,2) C1=(0,2) C2=(0,0) C3=(0,0) C4=(0,2) C5=(0,1)
+(sort E)
+(function C0 () E)
+(function C1 () E)
+(function C2 () E)
+(function C3 () E)
+(function C4 () E)
+(function C5 () E)
+(function Zero () E)
+(function Add (E) E :assoc-comm :identity (Zero))
+(set-option :completion eager)
+(union (C0) (Add (C0) (C5)))
+(union (Add (C3):2 (C4)) (C1))
+(union (C4) (C0))
+(union (Add (C2) (C3) (C5):2) (Add (C0) (C1) (C5)))
+;; CERT N^1 C0=1 C1=1 C2=2 C3=0 C4=1 C5=0
+(check-neq (C0) (Zero))
+;; CERT N^1 C0=1 C1=1 C2=2 C3=0 C4=1 C5=0
+(check-neq (Add (C0) (C5)) (Zero))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (C1))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (C1))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (C2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (C2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (C3))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (C3))
+;; CERT N^1 C0=1 C1=1 C2=2 C3=0 C4=1 C5=0
+(check-neq (C0) (C5))
+;; CERT N^1 C0=1 C1=1 C2=2 C3=0 C4=1 C5=0
+(check-neq (Add (C0) (C5)) (C5))
+;; CERT N^1 C0=1 C1=1 C2=2 C3=0 C4=1 C5=0
+(check-neq (C0) (Add (C0):2))
+;; CERT N^1 C0=1 C1=1 C2=2 C3=0 C4=1 C5=0
+(check-neq (Add (C0) (C5)) (Add (C0):2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C0) (C1)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C0) (C1)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C0) (C2)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C0) (C2)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C0) (C3)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C0) (C3)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C1):2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C1):2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C1) (C2)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C1) (C2)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C1) (C3)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C1) (C3)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C1) (C5)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C1) (C5)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C2):2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C2):2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C2) (C3)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C2) (C3)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C2) (C5)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C2) (C5)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C3):2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C3):2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C0) (Add (C3) (C5)))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C0) (C5)) (Add (C3) (C5)))
+;; CERT N^1 C0=1 C1=1 C2=2 C3=0 C4=1 C5=0
+(check-neq (C0) (Add (C5):2))
+;; CERT N^1 C0=1 C1=1 C2=2 C3=0 C4=1 C5=0
+(check-neq (Add (C0) (C5)) (Add (C5):2))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (Add (C3):2 (C4)) (Zero))
+;; CERT N^1 C0=0 C1=2 C2=1 C3=1 C4=0 C5=0
+(check-neq (C1) (Zero))
+(check-eq (C0) (C4))
+(check-eq (Add (C0):2) (Add (C0) (C4)))
+(check-eq (C0) (Add (C0) (C5)))
+(check-eq (Add (C0) (C1)) (Add (C1) (C4)))
+(check-eq (Add (C0) (C2)) (Add (C2) (C4)))
+(check-eq (Add (C0) (C3)) (Add (C3) (C4)))
+(check-eq (Add (C0):2) (Add (C4):2))
+(check-eq (C0) (Add (C4) (C5)))
+(check-eq (Add (C0):3) (Add (C0):2 (C4)))
+(check-eq (Add (C0):2) (Add (C0):2 (C5)))
+(check-eq (Add (C0):2 (C1)) (Add (C0) (C1) (C4)))
+(check-eq (Add (C0) (C1)) (Add (C0) (C1) (C5)))
+(check-eq (Add (C0):2 (C2)) (Add (C0) (C2) (C4)))
+(check-eq (Add (C0) (C2)) (Add (C0) (C2) (C5)))
+(check-eq (C1) (Add (C0) (C3):2))
+(check-eq (Add (C0):2 (C3)) (Add (C0) (C3) (C4)))
+(check-eq (Add (C0) (C3)) (Add (C0) (C3) (C5)))
+(check-eq (Add (C0):3) (Add (C0) (C4):2))
+(check-eq (Add (C0):2) (Add (C0) (C4) (C5)))
+(check-eq (C0) (Add (C0) (C5):2))
+(check-eq (Add (C0) (C1):2) (Add (C1):2 (C4)))
+(check-eq (Add (C0) (C1) (C2)) (Add (C1) (C2) (C4)))
+(check-eq (Add (C0) (C1) (C3)) (Add (C1) (C3) (C4)))
+(check-eq (Add (C0):2 (C1)) (Add (C1) (C4):2))
+(check-eq (Add (C0) (C1)) (Add (C1) (C4) (C5)))
+(check-eq (Add (C0) (C2):2) (Add (C2):2 (C4)))
+(check-eq (Add (C0) (C2) (C3)) (Add (C2) (C3) (C4)))
+(check-eq (Add (C0):2 (C2)) (Add (C2) (C4):2))
+(check-eq (Add (C0) (C2)) (Add (C2) (C4) (C5)))
+(check-eq (C1) (Add (C3):2 (C4)))
+(check-eq (Add (C0):2 (C3)) (Add (C3) (C4):2))
+(check-eq (Add (C0) (C3)) (Add (C3) (C4) (C5)))
+(check-eq (Add (C0):3) (Add (C4):3))
+(check-eq (Add (C0):2) (Add (C4):2 (C5)))
+(check-eq (C0) (Add (C4) (C5):2))

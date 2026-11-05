@@ -623,6 +623,7 @@ egg_test!(cancel_crit_pair, "cancel_crit_pair.egg");
 egg_test!(cancel_lattice_lazy, "cancel_lattice_lazy.egg");
 egg_test!(nilpotent_group_lattice, "nilpotent_group_lattice.egg");
 egg_test!(ac_collapsed_recanon, "ac_collapsed_recanon.egg");
+egg_test!(cc_disjoint_partner, "cc_disjoint_partner.egg");
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");
@@ -709,6 +710,11 @@ egg_test!(flatten_laws_nilpotent, "flatten_laws_nilpotent.egg");
 egg_test!(flatten_laws_inverse_leaf, "flatten_laws_inverse_leaf.egg");
 // A fold opens only its spine under `:flatten`.
 egg_test!(flatten_fold_spine, "flatten_fold_spine.egg");
+// A binary pattern does not match a flattened fold; a rest variable does.
+egg_test!(
+    flatten_fold_binary_pattern,
+    "flatten_fold_binary_pattern.egg"
+);
 egg_test!(flatten_laws_assoc_unit, "flatten_laws_assoc_unit.egg");
 // Regression for the leapfrog_join target-clear bug: a rule with two same-op AC atoms +
 // rest-vars (the bound-node ByRepr re-join cleared a target bound upstream). Completion off.
