@@ -33,7 +33,7 @@ use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::{MachineLit, MachineModel};
 use semi_persistent_egraph::multiplicity::MultiplicityLike;
 use semi_persistent_egraph::nodes::DefaultConfig;
-use semi_persistent_egraph::registry::OpKind;
+use semi_persistent_egraph::registry::{AssocDir, OpKind};
 use semi_persistent_egraph::resolve::GlobalCtx;
 use semi_persistent_egraph::schedule::{IndexStats, schedule_with_stats};
 
@@ -79,6 +79,8 @@ struct Node {
 struct Model {
     members: BTreeMap<Class, Vec<Node>>,
     kinds: BTreeMap<OpId, Kind>,
+    /// Each sequence operator's fold direction: a fold opens only its spine.
+    dirs: BTreeMap<OpId, AssocDir>,
     names: BTreeMap<String, OpId>,
     /// Each operator's laws, its unit resolved to a model class: the input of the one
     /// normalization (`nary_canon::normalize`), which the reference calls.
@@ -94,6 +96,7 @@ impl Model {
                 .to_usize() as Class
         };
         let mut kinds = BTreeMap::new();
+        let mut dirs = BTreeMap::new();
         let mut laws = BTreeMap::new();
         let mut names = BTreeMap::new();
         let mut members: BTreeMap<Class, Vec<Node>> = BTreeMap::new();
@@ -111,6 +114,9 @@ impl Model {
                 _ => Kind::Plain,
             };
             kinds.insert(op, kind);
+            if let OpKind::A { dir, .. } = &eg.ops().info(op).kind {
+                dirs.insert(op, *dir);
+            }
             names.insert(eg.node_op_name(id).to_string(), op);
             let l = eg.nary_laws(op);
             laws.insert(
@@ -154,6 +160,7 @@ impl Model {
         Model {
             members,
             kinds,
+            dirs,
             names,
             laws,
         }
@@ -196,7 +203,9 @@ type Leaves = Vec<Leaf>;
 /// options. A child class is always kept whole as one option; an `f` member of it is
 /// opened as another, unless the class is already open on the path
 /// (`doc/goal-canonical-flatten-views.md`, decision 2: only a needed opening makes a
-/// match, so keeping is never excluded).
+/// match, so keeping is never excluded), or the child is off a fold's spine (the first
+/// child for `:assoc-left`, the last for `:assoc-right`; a nesting elsewhere is
+/// grouping the fold keeps).
 fn raw_views(
     model: &Model,
     n: &Node,
@@ -205,10 +214,16 @@ fn raw_views(
     path: &BTreeSet<Class>,
 ) -> Vec<(View, RawLeaves)> {
     let mut acc: Vec<(View, RawLeaves)> = vec![(Vec::new(), Vec::new())];
-    for &(x, j) in &n.kids {
+    let last = n.kids.len().saturating_sub(1);
+    for (i, &(x, j)) in n.kids.iter().enumerate() {
         let k = mult * j;
         let mut opts: Vec<(View, RawLeaves)> = vec![(vec![(x, k)], Vec::new())];
-        if !path.contains(&x) {
+        let on_spine = match model.dirs.get(&f) {
+            Some(AssocDir::Left) => i == 0,
+            Some(AssocDir::Right) => i == last,
+            _ => true,
+        };
+        if on_spine && !path.contains(&x) {
             let mut p = path.clone();
             p.insert(x);
             for m in model.members(x).iter().filter(|m| m.op == f) {
@@ -1609,4 +1624,57 @@ fn rest_only_chain_matches() {
         at_root, 9,
         "one match per choice of x and of the classes it opens"
     );
+}
+
+/// A fold opens only its spine: `Sub` (`:assoc-left`) opens a nested first child and
+/// `Pow` (`:assoc-right`) a nested last child, never the other end, where the nesting is
+/// grouping the fold keeps (`Sub(a, Sub(b, c))` is not `Sub(a, b, c)`). The reference
+/// (`raw_views`) and the engine agree, and each three-item pattern matches exactly the
+/// one node whose nesting lies on the spine (`flatten_fold_spine.egg`; the Lean
+/// counter-model `fold_open_off_spine_unsound` and `otLeft_sound`/`otRight_sound`).
+#[test]
+fn fold_views_open_only_the_spine() {
+    let src = "\
+(sort E)
+(function A () E) (function B () E) (function C () E)
+(function K1 () E) (function K2 () E) (function K3 () E) (function K4 () E)
+(function Sub (E) E :assoc-left)
+(function Pow (E) E :assoc-right)
+(let k1 (K1))
+(union k1 (Sub (B) (C)))
+(let k2 (K2))
+(union k2 (Sub (A) (B)))
+(let n1 (Sub (A) k1))
+(let n2 (Sub k2 (C)))
+(let k3 (K3))
+(union k3 (Pow (B) (C)))
+(let k4 (K4))
+(union k4 (Pow (A) (B)))
+(let n3 (Pow (A) k3))
+(let n4 (Pow k4 (C)))
+";
+    let eg = build(src);
+    let index = IndexStore::build(&eg);
+    let model = Model::read(&eg, &index);
+    for (op, three) in [("Sub", 1usize), ("Pow", 1usize)] {
+        let p = nary(op, vec![v("x0"), v("x1"), v("x2")]);
+        let want = reference(&model, &p, true);
+        let got = engine(&eg, &index, &p, true);
+        assert_eq!(got, want, "pattern {}", surface(&p));
+        assert_eq!(
+            want.values().sum::<usize>(),
+            three,
+            "{op}: one three-item view, on the spine"
+        );
+    }
+    for p in [
+        nary_suf("Sub", vec![v("x0")], "r"),
+        nary_pre("Sub", vec![v("x0")], "r"),
+        nary_suf("Pow", vec![v("x0")], "r"),
+        nary_pre("Pow", vec![v("x0")], "r"),
+    ] {
+        let want = reference(&model, &p, true);
+        let got = engine(&eg, &index, &p, true);
+        assert_eq!(got, want, "pattern {}", surface(&p));
+    }
 }

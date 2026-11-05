@@ -10,7 +10,9 @@
 //! - for each `f` member `m` of `X`, the view of `m`'s children, recursively, unless `X`
 //!   is already open on the path from `n`. The root's own class is not on the path, so a
 //!   node can be opened once through its own class; the cut is what makes a cyclic class
-//!   (`C ∋ f{a, C}`) finite.
+//!   (`C ∋ f{a, C}`) finite. A fold opens only the children on its spine ([`spine`]): the
+//!   first of every node for `:assoc-left`, the last for `:assoc-right`, since a nesting
+//!   elsewhere is grouping the operator keeps.
 //!
 //! An opening must be needed (`doc/goal-canonical-flatten-views.md`, decision 2): each
 //! view records the leaf groups of every opening tree that gives it, each with the class
@@ -108,8 +110,10 @@ pub const BEYOND_U64: &str =
 #[derive(Clone, Copy, Debug)]
 enum Task<G, M> {
     /// Choose an option for this child class, with this multiplicity, directly under
-    /// this opening instance (`None`: the root's own children).
-    Child(G, M, Option<usize>),
+    /// this opening instance (`None`: the root's own children); the flag says whether
+    /// the child's position lies on the operator's spine, where an opening is allowed
+    /// ([`spine`]).
+    Child(G, M, Option<usize>, bool),
     /// Every task an opened member pushed is done: the class leaves the path, and the
     /// opening instance is complete.
     Close(G, usize),
@@ -640,6 +644,24 @@ pub trait Members<G, O, M> {
     fn laws(&self, op: O) -> crate::nary_canon::NaryLaws<G, O>;
     /// The class of the node `inv(x)`, if this view holds one.
     fn inverse_class(&self, inv: O, x: G) -> Option<G>;
+    /// `op`'s fold direction: `Left` for `:assoc-left`, `Right` for `:assoc-right`, and
+    /// `Both` for `:assoc` and every other operator ([`spine`]).
+    fn assoc_dir(&self, op: O) -> crate::registry::AssocDir;
+}
+
+/// Whether position `i` of `len` children lies on the spine of an operator of fold
+/// direction `dir`, the only positions whose nesting the operator flattens: a left
+/// fold `f(f(a,b),c)` is `f(a,b,c)`, but `f(a,f(b,c))` keeps its grouped right child
+/// (`doc/book/src/04-declaring-algebra.md`, and `apply.rs`'s `eval_seq_args` on a
+/// right-hand side). Opening a child off the spine would match the view as a
+/// different term. `:assoc` and the multiset kinds open every position.
+pub fn spine(dir: crate::registry::AssocDir, i: usize, len: usize) -> bool {
+    use crate::registry::AssocDir;
+    match dir {
+        AssocDir::Both => true,
+        AssocDir::Left => i == 0,
+        AssocDir::Right => i + 1 == len,
+    }
 }
 
 /// The round's snapshot: members are `by_repr` buckets, operators the round's, and
@@ -698,6 +720,27 @@ where
             .iter()
             .find(|&&n| full.round_op(n) == Some(inv))
             .map(|&n| crate::ematch::round_canon(self.index, self.eg, n))
+    }
+
+    fn assoc_dir(&self, op: Cfg::O) -> crate::registry::AssocDir {
+        assoc_dir(self.eg, op)
+    }
+}
+
+/// `op`'s fold direction ([`Members::assoc_dir`]), read from the operator registry.
+pub fn assoc_dir<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    op: Cfg::O,
+) -> crate::registry::AssocDir
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    match eg.ops().info(op).kind {
+        crate::registry::OpKind::A { dir, .. } => dir,
+        _ => crate::registry::AssocDir::Both,
     }
 }
 
@@ -762,10 +805,12 @@ where
     s.root = Some(node);
     s.kind = kind;
     let laws = src.laws(op);
+    let dir = src.assoc_dir(op);
     src.children(node, kind, &mut s.kids, &mut s.ids);
-    for i in (0..s.kids.len()).rev() {
+    let len = s.kids.len();
+    for i in (0..len).rev() {
         let (c, m) = s.kids[i];
-        s.pending.push(Task::Child(c, m, None));
+        s.pending.push(Task::Child(c, m, None, spine(dir, i, len)));
     }
     let mut leaves = 0usize;
     let mut work = 0usize;
@@ -777,7 +822,7 @@ where
                     return Err(OVER_BOUND);
                 }
                 s.record(&laws, |inv, x| src.inverse_class(inv, x))?;
-                if !backtrack(src, op, kind, &takeable, s, &mut work)? {
+                if !backtrack(src, op, kind, dir, &takeable, s, &mut work)? {
                     break;
                 }
             }
@@ -795,13 +840,14 @@ where
                             && hits == 0
                             && !(kind == FlatKind::Ac && takeable(x))
                             && !s.may_be_non_inert(inst, &laws)
-                            && !backtrack(src, op, kind, &takeable, s, &mut work)?
+                            && !backtrack(src, op, kind, dir, &takeable, s, &mut work)?
                         {
                             break;
                         }
                     }
-                    Task::Child(x, k, parent) => {
-                        let same = src.members(x).iter().any(|&m| src.op(m) == Some(op));
+                    Task::Child(x, k, parent, on_spine) => {
+                        let same =
+                            on_spine && src.members(x).iter().any(|&m| src.op(m) == Some(op));
                         s.choices.push(Choice {
                             class: x,
                             mult: k,
@@ -811,8 +857,8 @@ where
                             cursor: 0,
                             mark: s.trail.len(),
                         });
-                        if !advance(src, op, kind, &takeable, s, &mut work)?
-                            && !backtrack(src, op, kind, &takeable, s, &mut work)?
+                        if !advance(src, op, kind, dir, &takeable, s, &mut work)?
+                            && !backtrack(src, op, kind, dir, &takeable, s, &mut work)?
                         {
                             break;
                         }
@@ -830,6 +876,7 @@ fn advance<G, O, M, Src>(
     src: &Src,
     op: O,
     kind: FlatKind,
+    dir: crate::registry::AssocDir,
     takeable: &impl Fn(G) -> bool,
     s: &mut FlattenScratch<G, M>,
     work: &mut usize,
@@ -907,9 +954,11 @@ where
         s.trail.push(Undo::Opened(x));
         let base = s.pending.len();
         s.pending.push(Task::Close(x, inst));
-        for i in (0..s.kids.len()).rev() {
+        let len = s.kids.len();
+        for i in (0..len).rev() {
             let (y, j) = s.kids[i];
-            s.pending.push(Task::Child(y, times(k, j)?, Some(inst)));
+            s.pending
+                .push(Task::Child(y, times(k, j)?, Some(inst), spine(dir, i, len)));
         }
         s.trail.push(Undo::Pushed(s.pending.len() - base));
         return Ok(true);
@@ -923,6 +972,7 @@ fn backtrack<G, O, M, Src>(
     src: &Src,
     op: O,
     kind: FlatKind,
+    dir: crate::registry::AssocDir,
     takeable: &impl Fn(G) -> bool,
     s: &mut FlattenScratch<G, M>,
     work: &mut usize,
@@ -938,7 +988,7 @@ where
             return Ok(false);
         };
         s.undo_to(mark);
-        if advance(src, op, kind, takeable, s, work)? {
+        if advance(src, op, kind, dir, takeable, s, work)? {
             return Ok(true);
         }
         s.choices.pop();

@@ -1,0 +1,32 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; `:flatten` on folds (doc/book/src/04-declaring-algebra.md): a left fold flattens a
+;; nested FIRST child only, `Sub(Sub(a, b), c) = Sub(a, b, c)`, while `Sub(a, Sub(b, c))`
+;; keeps its grouped right child; a right fold is the mirror image. A view may therefore
+;; open a nested same-operator child only on the fold's spine. Opening the right child
+;; of `Sub(a, Sub(b, c))` gave the view [a, b, c], which `(Sub x y z)` matched as
+;; `Sub(Sub(a, b), c)` and the rewrite merged the two different terms.
+;; Lean: fold_open_off_spine_unsound, otLeft_sound, otRight_sound (Flatten/Fold.lean).
+(sort E)
+(function A () E) (function B () E) (function C () E)
+(function Sub (E) E :assoc-left)
+(function Pow (E) E :assoc-right)
+(function Tri (E E E) E)
+(function Rtri (E E E) E)
+(let n (Sub (A) (Sub (B) (C))))
+(let m (Sub (Sub (A) (B)) (C)))
+(let p (Pow (Pow (A) (B)) (C)))
+(let q (Pow (A) (Pow (B) (C))))
+(check-neq n m)
+(check-neq p q)
+(rewrite (Sub x y z) (Tri x y z) :flatten)
+(rewrite (Pow x y z) (Rtri x y z) :flatten)
+(run 1)
+(check-eq m (Tri (A) (B) (C)))
+(check-neq n (Tri (A) (B) (C)))
+(check-eq q (Rtri (A) (B) (C)))
+(check-neq p (Rtri (A) (B) (C)))
+(check-neq n m)
+(check-neq p q)

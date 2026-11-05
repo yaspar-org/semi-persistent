@@ -2068,6 +2068,10 @@ where
     fn inverse_class(&self, inv: Cfg::O, x: Cfg::G) -> Option<Cfg::G> {
         self.eg.inverse_class(inv, x)
     }
+
+    fn assoc_dir(&self, op: Cfg::O) -> crate::registry::AssocDir {
+        crate::flatten::assoc_dir(self.eg, op)
+    }
 }
 
 /// Route 1's rows: each item's pattern matched against the live e-graph.

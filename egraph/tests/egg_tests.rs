@@ -644,6 +644,8 @@ egg_test!(flatten_laws_inverse, "flatten_laws_inverse.egg");
 egg_test!(flatten_laws_identity, "flatten_laws_identity.egg");
 egg_test!(flatten_laws_nilpotent, "flatten_laws_nilpotent.egg");
 egg_test!(flatten_laws_inverse_leaf, "flatten_laws_inverse_leaf.egg");
+// A fold opens only its spine under `:flatten`.
+egg_test!(flatten_fold_spine, "flatten_fold_spine.egg");
 egg_test!(flatten_laws_assoc_unit, "flatten_laws_assoc_unit.egg");
 // Regression for the leapfrog_join target-clear bug: a rule with two same-op AC atoms +
 // rest-vars (the bound-node ByRepr re-join cleared a target bound upstream). Completion off.
