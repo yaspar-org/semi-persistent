@@ -3452,10 +3452,16 @@ where
                 }
                 let m = &rules[ti].lhs;
                 let a = &rules[pi].lhs;
-                // Shared by construction; skip the non-overlap / containment cases
-                // (containment is handled by the (A′) normalize pass).
-                debug_assert!(!multiset_disjoint(a, m));
-                if multiset_subset(a, m) || multiset_subset(m, a) {
+                // Partners come from the use lists of `m`'s children, which over-approximate
+                // the rules sharing a class with `m`: a rule's left-hand side is the node's
+                // children read through the clamp (unit drop, nilpotent reduction, inverse
+                // cancellation), which can remove a class the stored node still lists as a
+                // child. Two disjoint left-hand sides have a trivially joinable critical pair
+                // (each reduct rewrites to the other by the other rule), so the pair is skipped
+                // rather than assumed absent; containment is handled by the (A′) normalize
+                // pass. conform-cc/cc1_0143.egg (`:identity` with `:nilpotent 3`) reaches a
+                // disjoint pair; an earlier `debug_assert` here failed on it in debug builds.
+                if multiset_disjoint(a, m) || multiset_subset(a, m) || multiset_subset(m, a) {
                     continue;
                 }
                 multiset_lcm_into(&mut ab_buf, m, a);
