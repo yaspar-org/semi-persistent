@@ -43,6 +43,10 @@ that on a 4-core runner, plus the cache download.
   statements that were false and how they were corrected, and what is not
   modelled.
 
+The implementation invariants these proofs and the conformance generators
+found, each with the engine section that explains it, are listed in
+`egraph/doc/design/13-soundness.md`, §5.
+
 ## repro/
 
 Each program fails `check-eq` on the engine before the named commit and

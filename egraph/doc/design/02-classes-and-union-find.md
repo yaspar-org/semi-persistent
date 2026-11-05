@@ -236,5 +236,21 @@ order-sensitive runs can expose different operational paths. Performance
 comparisons between policies belong in Criterion reports for the revision and
 workload being evaluated.
 
+**Correction (2026-11-04).** The first sentence of the previous paragraph is false for two
+consumers of the survivor's id; each interaction has its own rule.
+
+- *Survivor policy and the completion order.* `monomial_cmp` orders AC monomials by the
+  representative ids of their children, so a merge that keeps the larger id makes every node
+  over the absorbed class grow in that order. The class's stored minimal monomial can then
+  stop being its least active monomial, and eager completion misses consequences: the
+  `grow_wa` program of Chapter 6 §9c fails when `(union (w) (a))` keeps `w`. The rule is to
+  order monomials by a per-class key that a merge only lowers, so the result does not depend
+  on which id survives. *Pending: the fix is in progress on branch `fix/stop-and-slot-growth`;
+  until it lands, the survivor policy changes which equalities eager completion derives.*
+- *Survivor policy and the semi-naive delta.* When the survivor is the id the parents already
+  store, the merge recanonicalizes no parent, and only the absorbed members recorded in the
+  touched log carry the change to the next round (§9.2, "The touched log and merges that keep
+  the stored id"; `semi_merge_membership_delta.egg`, Lean `delta_incomplete_untracked`).
+
 ---
 [← Ch 1: Node Storage](01-node-storage.md) · [Table of Contents](00-table-of-contents.md) · [Ch 3: Hash-Consing Caches →](03-hash-consing-caches.md)

@@ -208,7 +208,14 @@ During rebuild, after a merge changes canonical representatives:
    `FLAG_CONGRUENT_DUP`.
 5. A changed node is pushed onto `touched`. Under AC and ACI the unit class is dropped
    and the clamp applied; a result that is the unit or a single class (`Normal::Unit`,
-   `Normal::Single`) becomes a merge in rebuild.
+   `Normal::Single`) becomes a merge in rebuild. A result that is still a node can be
+   smaller than its class's stored minimal monomial, and rebuild then refreshes that
+   entry (`refresh_min_monomial`, Chapter 6 §9c).
+
+`NodeStore::add` probes once, at insertion; `recanonize_node` probes again only for a node
+that rebuild reaches through an absorbed class's use list and whose children change. A caller
+of `add` therefore passes a canonical key (Chapter 4, "The hash-cons lookup is the only
+collision check a fresh node gets").
 
 ## `EGraphConfig` — Type Bundle
 

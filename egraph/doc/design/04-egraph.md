@@ -61,12 +61,29 @@ pub struct EGraph<Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS:
 1. Look up `op` → `OpInfo` (kind, arity, sorts).
 2. Canonize children via `find()` (path-halving), then apply the
    operator's structural normal form: pair reorder, sequence flattening, or
-   multiset/set flattening and count clamp.
+   multiset/set flattening and count clamp. Flattening splices in the stored
+   children of another node, and each spliced child goes through `find()` too
+   (§5.2, "The spliced children are found at build").
 3. Resolve associative/AC degenerate arity, or dispatch to the corresponding
    `NodeStore` cache to probe and insert.
 4. If fresh: create a singleton e-class via `classes.add_singleton()`,
    add the new node to the use-lists of each child class.
 5. Return the global id (existing or new).
+
+#### The hash-cons lookup is the only collision check a fresh node gets
+
+The mechanisms that interact are `add`'s probe and rebuild's probe-on-change. Rebuild
+visits a node only through the use list of a class that a merge absorbed, and re-probes the
+cache only when `find` changes one of the node's stored children (`recanonize_node` returns
+early otherwise, Chapter 3). A fresh node whose stored key is canonical has neither, so a
+collision with an existing node of equal content is detected by `add`'s probe or by nothing. `add`
+must therefore probe with the fully canonical key. A key with a non-canonical child is worse
+than a missed probe: `add` registers no use for an absorbed id (`repr_id` returns `None`), so no
+rebuild ever revisits the node, and the graph keeps two nodes of equal content in two classes.
+Commit `222ba64d` fixed the one path that built such keys, the splice of a nested
+same-operator child; `seq_hashcons_miss_min.egg` and `flatten_stale_splice_*.egg` are the
+regressions, and §5.2 gives the failing program. A new path that builds a node's key, or a
+cache operation that stores content other than what was probed, has to keep this rule.
 
 ### `add_lit(op, lit_val_id) → G`
 
@@ -77,8 +94,12 @@ nodes, with no children to canonize and no use-list entries to create.
 
 1. `merge_in_classes(a, b)`: return `None` if `find_const(a) == find_const(b)`;
    otherwise choose the survivor by the `--union-by` policy and call `classes.merge`
-   (or a directed or justified variant) → `MergeInfo`.
+   (or a directed or justified variant) → `MergeInfo`. With `track_merge_members`
+   set, it first records the absorbed class's members in the touched log; every
+   semi-naive path sets it (§9.2, "The touched log and merges that keep the stored id").
 2. Fold the absorbed class's min-monomial row into the survivor's (`fold_min_monomial`).
+   The fold alone does not keep the stored minimal monomial least: rebuild refreshes it
+   after recanonization (Chapter 6 §9c).
 3. Push `(absorbed_uses, survivor)` onto worklist.
 4. Return the merged pair.
 
@@ -116,6 +137,8 @@ rebuild():
             normal = nodes.recanonize_node(parent, find_const, unit_of, .., &mut collisions)
             if normal names an existing class (Unit or Single):
                 collisions.push((parent, that class))
+            else if normal is Node and the span changed:
+                refresh_min_monomial(parent)   // keep the stored minimal monomial least (Ch 6 §9c)
 
         // Splice absorbed use-list into survivor's use-list
         classes.splice_uses(survivor_list, absorbed_uses)
@@ -134,8 +157,8 @@ entries), and guaranteed to terminate (each merge reduces the number
 of distinct classes).
 
 The pseudo-code above is the plain-congruence pass. With completion off, `rebuild`
-alternates it with `canon_repair_round`, the inverse-pair cancellation repair, until
-neither changes anything. Under a completion
+alternates it with `canon_repair_round`, the inverse-pair cancellation repair and the
+cross-node inverse rules R1-R5 (§5.2), until neither changes anything. Under a completion
 mode (`--derive-ac-eqs`, or inside a lazy check's transaction), `rebuild`
 interleaves that pass with AC completion rounds and the A-only
 inter-reduction round to a joint fixpoint, polls the completion goal pair

@@ -96,6 +96,14 @@ During rebuild:
    hint for the new content. A flagged node gets no hint, so a probe never returns
    one and every collision's survivor is unflagged.
 
+Steps 3 and 5 are why the probe at insertion matters. Rebuild re-probes a node only when it
+reaches the node through the use list of an absorbed class and `find` changes a stored child.
+A node inserted under a non-canonical key misses the existing node of the same canonical
+content, and when no use list leads back to it (an absorbed child gets no use entry), rebuild
+never re-probes it: it stays a second copy in a second class. Chapter 4, "The hash-cons lookup is
+the only collision check a fresh node gets", states the rule this places on every caller of
+`probe_or_insert`.
+
 ### `reset_frame(depth)` (formerly `restore(token)`)
 
 The hint index is derived state and takes no part in the semi-persistence protocol:

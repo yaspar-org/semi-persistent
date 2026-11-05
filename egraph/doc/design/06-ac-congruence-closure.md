@@ -13,6 +13,15 @@ correct and terminating (§6b, §10). The implementation has focused tests and d
 for the corresponding mechanisms, but the correspondence and its composition into
 termination/completeness remain a paper argument rather than a verified theorem.
 
+**Correction (2026-11-04).** The previous sentence is out of date for the model. The Lean
+development in `proofs/lean/SemperProofs/CC/` proves soundness (`completion_sound`),
+termination (`kapur_termination`) and completeness at convergence
+(`completion_complete_at_convergence`) for a model of the completion state, under the
+hypotheses listed in `proofs/lean/STATUS.md`. No theorem connects that model to the Rust
+code: the conformance generators and the fixtures named in §9c check the engine against it on
+finite programs. Checking the engine against the model found the rules of §9c, which this
+chapter did not state before.
+
 This is the single design reference for the AC completeness story. Part I derives the
 problem from first principles (§0 is the short framing); Part II gives the algorithm and the
 argument for why it works. For where we stand and what remains, see
@@ -45,7 +54,10 @@ At convergence the system is confluent and terminating, so every term has a uniq
 form, and two terms are equal exactly when their normal forms agree (Newman's lemma).
 That is the completeness claim. It is a conditional paper argument with open proof
 obligations, not a verified theorem. Only a `Converged` outcome claims it; a budget exit
-is explicitly incomplete.
+is explicitly incomplete. (Correction, 2026-11-04: for a model of the completion state the
+claim is now a Lean theorem, `completion_complete_at_convergence`; the engine meets its
+hypotheses only if it keeps the rules of §9c, and the correspondence to the Rust code is
+tested, not proved.)
 
 Completion is off by default:
 - `--derive-ac-eqs` runs it eagerly;
@@ -389,6 +401,9 @@ rule's RHS explicitly constructs `+{b,c}`, no such node is created.
 This is how the intended maximum-partition e-matching relation and the
 congruence boundary differ. Focused tests support matcher soundness, while
 completeness for that relation remains open ([§7.5](07-rules-and-pattern-matching.md#75-matching-a-ac-aci-and-c-operators)).
+(Correction, 2026-11-04: completeness for that relation is no longer open in the model.
+`ematch_complete` and `engine_plan_complete` in `proofs/lean/SemperProofs/EMatch/` prove it
+for the reference plan and for every plan the scheduler produces; §7.5 states the scope.)
 Rest bindings can represent residual multisets transiently; they do not keep
 sub-sums as nodes that can trigger later congruence merges.
 
@@ -734,7 +749,8 @@ Chore B.** Two ways to get it wrong:
   retired a node before its equality was re-established elsewhere, losing information.
   (Because collapse keeps the node matchable this is less dangerous than under subsume,
   but the merge must still land first so the reduced form exists. The §5b cancellation
-  case depends on the reduced node existing before matching proceeds.)
+  case depends on the reduced node existing before matching proceeds.) The Lean
+  completeness proof needs this order as invariant I3 (§9c).
 - **Eager within the round.** The flag must gate Chore B *in the same round* the node
   becomes reducible. If this round's superposition pass still sees it, it breeds anyway.
   (The flag takes effect only when the next round rebuilds the active set, so within the
@@ -790,7 +806,10 @@ superposition bounded, and locate the real explosion elsewhere.
    *existing* constants (`larger → smaller`, never `→ κ`), and substitutes a class by
    its degree-lex-minimal monomial, never by a class-as-atom. The implementation uses the
    maintained class-member candidate only when the read-time orientation guard
-   makes a decreasing rule; exact minimality is the §9b proof gap. Then, in the
+   makes a decreasing rule; exact minimality is the §9b proof gap. (Correction,
+   2026-11-04: exact minimality is not optional. A stored minimal monomial that is not the
+   class's least active monomial drops the class's rule and loses consequences; §9c states
+   the rules that keep it least.) Then, in the
    abstract example, `+{b,c,d} → +{a,b,e} → +{c,e}` (via `+{a,b}→c`) joins the other
    reduct `+{c,e}`: the pair is trivial, nothing new is added, and the §4b system
    converges to three rules over `{a,b,c,d,e}` with no new constant ever introduced.
@@ -873,7 +892,10 @@ plus normalization against the oriented rule set is the step that cannot be skip
    the class minimum. The implementation instead reads a class-member candidate and emits a
    rule only when it is decreasing; proving that this weaker representation preserves
    the abstract termination/completeness argument is open (§9b). It never invents a
-   fresh class id solely as a synthetic RHS summand.
+   fresh class id solely as a synthetic RHS summand. (Correction, 2026-11-04: the weaker
+   representation does not preserve the argument. `min-slot-gap.egg` is a state where the
+   candidate is not the class minimum and completion misses a consequence; the engine now
+   keeps the stored minimal monomial equal to the class minimum, §9c.)
 
 Diagnostic traces can compare `|active|`, total AC nodes, generated critical pairs,
 and the reported completion outcome. Such traces are reproducers, not evidence that
@@ -909,7 +931,7 @@ history. A canonical form that depends on merge order is not canonical. This is 
 
 The resolution is to flatten on a **representative-independent, per-class property**: the
 class's *canonical summand form*, which is exactly what the completion machinery already
-maintains in the per-class slot (§9a) and reads via the rule-RHS function:
+maintains as the class's stored minimal monomial (§9a) and reads via the rule-RHS function:
 
 ```
 summand_form(class, f) = if atomic(class)               { {class} }   // a real atom: keep
@@ -928,6 +950,8 @@ Three cases, not two, and the second argument matters:
    can contribute oriented completion rules. The candidate is a deterministic field of the
    implementation state, but §9b explains why the implementation has not proved that it is always
    the globally least same-op member or that the resulting system has a unique normal form.
+   (Correction, 2026-11-04: it must be the least active same-op member, invariant I5; §9c gives
+   the rules that keep it so and the reproducers that show what is lost otherwise.)
 3. **Non-atomic with only other-op monomials** (a `*`-sum used inside a `+`-sum): the `f`
    column is empty, the class id is kept opaque: Kapur's purification, the class id playing
    the fresh-constant role shared between the two AC theories.
@@ -1024,7 +1048,11 @@ coalesced, `flatten_mset_children` (the AC path, from `add_mset`) or `flatten_ac
 (the ACI path, from `add`) replaces each child by its `summand_form` (`{c}` if atomic,
 else `min_monomial(c)`) and splices the non-atomic ones, to a fixpoint. On the AC path the
 spliced counts multiply with a checked product, and a product past the multiplicity width
-is the reported error `MultOverflow`.
+is the reported error `MultOverflow`. The spliced elements are the stored children of the
+stored minimal monomial's node, canonical only as of the last rebuild, so both functions
+`find` each one as they emit it (commit `222ba64d`; §5.2, "The spliced children are found at
+build", gives the failing program and the regressions `flatten_stale_splice_ac.egg` and
+`flatten_stale_splice_aci.egg`).
 
 The implementation argument says recanonicalization does **not** need a
 flattening pass. The following lemma and proof are on paper, not machine checked.
@@ -1224,6 +1252,15 @@ relation, because class payloads are merge-folded. It does change dense ids,
 monomial order, basis shape, and operational work; budgeted or otherwise incomplete
 runs may therefore expose different intermediate outcomes. Finite differential
 tests compare the survivor policies, but there is no end-to-end equivalence theorem.
+
+**Correction (2026-11-04).** The first sentence of the previous paragraph does not hold for
+completion. Representative choice changes the monomial order, because `monomial_cmp`
+compares children by representative id, and a merge that keeps the larger id makes nodes
+over the absorbed class grow in that order. The stored minimal monomial then stops being the
+class's least active monomial and completion misses consequences (`grow_wa`, §9c). The fix,
+ordering by a per-class key that a merge only lowers, is in progress; until it lands, the
+survivor policy changes which equalities eager completion derives.
+
 What matters next is a kind of rule the union-find never fires.
 
 Recanonicalization already fires the node-rules, but only the *single-child* kind.
@@ -1344,8 +1381,11 @@ inverse-pair cancellation. Their code↔paper correspondence lives in the normat
 ```rust
 // In rebuild(), per AC op f, to fixpoint, alongside recanonize_node.
 // Each ACTIVE AC e-node can yield a ground rule f(M) -> f(rhs(class(M))).
-// The implementation reads a class-member candidate and keeps the rule only when the
-// degree-lex guard proves M > rhs. Exact global minimality is not assumed here.
+// The implementation reads the class's stored minimal monomial and keeps the rule only
+// when the degree-lex guard proves M > rhs. Completeness needs that stored monomial to be
+// the class's least active monomial (I5, §9c); the guard alone does not give it.
+// (This comment used to say "Exact global minimality is not assumed here"; §9b records
+// why that design was wrong.)
 // EXCEPTION: a class that IS the op's identity has the EMPTY monomial as RHS
 // (Kapur's f({}) = e) — the atom form {e} would leak unit summands into reducts that
 // normalization (no f(x,e)=x law) can never remove. See §S1.
@@ -1461,7 +1501,8 @@ one optional node id per completion op, and the class also stores `atomic`. On a
 `fold_min_monomial` walks every populated completion column, canonicalizes the two
 candidate nodes into reusable buffers, and retains the `monomial_cmp`-smaller
 candidate. Its cost is `O(number of completion columns + monomial elements compared)`,
-not `O(1)`.
+not `O(1)`. Rebuild also writes the pool: `refresh_min_monomial` replaces a class's stored
+minimal monomial when recanonization shrinks a node below it (§9c).
 
 The pool is one of the e-classes' semi-persistent components, so a group
 mark/restore rolls its logical contents back
@@ -1469,8 +1510,8 @@ without a separate field in `EGraphToken`. That does not make rollback free: the
 container's normal diff replay, capture-flag maintenance, and any transient-index
 reconstruction still apply.
 
-**The rule RHS is not always the stored `min_monomial`: an `atomic` flag rounds out the
-slot.** The implementation selects a usable representative for the class. The
+**The rule RHS is not always the stored `min_monomial`: an `atomic` flag completes the
+per-class data.** The implementation selects a usable representative for the class. The
 size-1 monomial `{classid}` is smaller than any multi-element sum, but it is a legal
 monomial only if the class is **atomic-usable**; otherwise the selected per-op pool
 candidate is used. Global leastness is the diagnostic/open obligation described below.
@@ -1510,11 +1551,11 @@ own monomial `{a,b}`, the rule would be the trivial `+{a,b} → +{a,b}` and thos
 pairs would never fire; completion would silently lose the equalities it exists to derive.
 
 **Why it needs a stored flag.** "Atomic-usable" cannot be recovered from `min_monomial` (a single
-stored node id): no node in a pure-sum class has the monomial `{classid}`, so the slot has
-no way to encode the atom representative. And "becomes referenced as a child" flips on
-`add_use` (when a parent node is built over the class), an add-time event, not a merge, so
-merge-only maintenance of `min_monomial` cannot observe it either. We therefore store a third
-field in the slot, `atomic: bool`, and the rule RHS is:
+stored node id): no node in a pure-sum class has the monomial `{classid}`, so the stored
+minimal monomial has no way to encode the atom representative. And "becomes referenced as a
+child" flips on `add_use` (when a parent node is built over the class), an add-time event, not
+a merge, so merge-only maintenance of `min_monomial` cannot observe it either. We therefore
+store a third field in the class data, `atomic: bool`, and the rule RHS is:
 
 ```
 rhs(class) = if atomic(class) { {classid} }      // size-1 atom, atomic-usable
@@ -1523,14 +1564,14 @@ rhs(class) = if atomic(class) { {classid} }      // size-1 atom, atomic-usable
 
 `atomic` is set when the class gains a non-AC node (`register_if_fresh`) and on every
 `add_use` (any child reference grounds `{classid}`), OR-combined on merge
-(`survivor.atomic |= absorbed.atomic`), and rolls back with the slot under the group
+(`survivor.atomic |= absorbed.atomic`), and rolls back with the pool under the group
 `History`.
 So the class data contains `{ use_list, min_row, atomic, ... }`; `atomic` and the pool
-ride the class-layer token machinery. Selecting the slot is O(1), while reconstructing
-its current monomial is linear in that node's distinct child entries.
+ride the class-layer token machinery. Reading the stored minimal monomial's node id is O(1),
+while reconstructing its current monomial is linear in that node's distinct child entries.
 
 One subtlety: at merge time the children of these candidate nodes are mid-cascade, so
-their canonical multisets can be momentarily stale. The stored slot is therefore a
+their canonical multisets can be momentarily stale. The stored minimal monomial is therefore a
 *candidate hint*. Completion re-`find`s and canonicalizes that selected node on read,
 then emits a rule only if the read-time orientation guard sees `LHS ≫ RHS`. This
 confirms the selected candidate's current monomial and its orientation; it does **not**
@@ -1538,16 +1579,26 @@ compare it with every same-op member of the class or prove that it is the global
 minimum. `cc_min_used_nonminimal` performs that finite diagnostic when basis checks are
 enabled.
 
-**Why the slot is a per-op pool, not a single slot.** The candidate monomial is
-per-(class, *op*): a class may hold both
+**Correction (2026-11-04).** The previous paragraph treated a non-minimal candidate as
+harmless once the orientation guard has run. It is not harmless: when the candidate is not the
+class's least active monomial, the least node is mis-oriented against it and dropped, the
+candidate itself is no rule, and the class contributes no rule at all (`min-slot-gap.egg`,
+`grow_wa`). The stored minimal monomial must be the class's least active monomial at every
+round, invariant I5; §9c gives the rules that maintain it. `cc_slot_nonminimal`, added with
+the refresh in commit `bb961302`, checks it per class, independently of whether a rule exists:
+the older `cc_min_used_nonminimal` reads active rules only and reported 0 on the failing
+program.
+
+**Why the minimal monomial is stored per op in a pool, not once per class.** The candidate
+monomial is per-(class, *op*): a class may hold both
 a `+`-monomial and a `*`-monomial (assert `a+b = a*b`), and a `+`-rule's normal form must be
-a `+`-monomial. A single `min_monomial` slot per class would therefore support only one
+a `+`-monomial. A single stored `min_monomial` per class would therefore support only one
 AC op per e-graph, a real but strictly narrower design: multi-symbol completion is no
 harder *algorithmically* (Kapur's multi-symbol algorithm is just
 the single-symbol loop run independently per op, sharing only constants, and the e-graph's
 union-find already dissolves his one cross-symbol case: a constant with two normal forms is
 simply one e-class holding a `+`-node and a `*`-node, both with the same `find` as their RHS;
-no fresh constant needed), so the only thing a single slot gives up is *storage
+no fresh constant needed), so the only thing a single stored entry gives up is *storage
 generality*. The shipped design is the vectorized form: `ClassData::min_row` is an offset
 into a flat `min_pool` of `nb_completion`-wide rows (one structure, backtracked whole; merge
 does an element-wise candidate selection from two rows), retaining one per-(class, op)
@@ -1579,21 +1630,21 @@ so the choice is not re-litigated later.
 #### Axis 1: how the per-(class, op) candidate monomial is stored
 
 The abstract rule RHS is a class's `≫_f`-least monomial. The implementation reads one maintained
-candidate from a constant-time slot and checks orientation; exact leastness is Axis 2.
+candidate in constant time and checks orientation; exact leastness is Axis 2.
 The candidate is per *(class, op)* because a class can hold monomials of several AC
 symbols (`a+b = a*b`).
 
 | Option | Storage | Reads | Multi-op? | Verdict |
 |---|---|---|---|---|
-| **1. Single-op slot** | one extra `DenseId` widened into the e-class `SparseSet` value (`{use_list, min_monomial}`) | O(1) slot read | no (one slot holds one op's min) | Historical alternative; not shipped. |
+| **1. Single-op field** | one extra `DenseId` widened into the e-class `SparseSet` value (`{use_list, min_monomial}`) | O(1) read | no (one field holds one op's min) | Historical alternative; not shipped. |
 | **2. Multi-op, use-list walk** | none (recompute) | O(class size) per read | yes, for free (filter the walk by op) | Rejected. Correct, zero storage, but turns each RHS/normalize read into a class scan, reintroducing the per-query cost §9a exists to remove. |
-| **3. Multi-op, pool** | `min_row` indexes a flat pool of `nb_completion`-wide rows; merge folds columns element-wise | O(1) slot read; merge is O(columns + compared monomial elements) | yes | **Shipped.** Covers MSet and Set completion ops without a per-class heap allocation. |
+| **3. Multi-op, pool** | `min_row` indexes a flat pool of `nb_completion`-wide rows; merge folds columns element-wise | O(1) read; merge is O(columns + compared monomial elements) | yes | **Shipped.** Covers MSet and Set completion ops without a per-class heap allocation. |
 
 Multi-op is **not** algorithmically harder than single-op (Kapur's multi-symbol
 algorithm is the single-symbol loop run independently per op, sharing only constants; the
 union-find dissolves his one cross-symbol "shared constant with two normal forms" case,
 that being just one e-class holding a `+`-node and a `*`-node with the same `find`). So the
-axis is purely *storage*: 1 and 3 differ only in whether the slot holds one op's candidate
+axis is purely *storage*: 1 and 3 differ only in whether the class stores one op's candidate
 or a row of per-op candidates; 2 trades all storage for a scan. Distributivity (`*` over `+`) is a
 user rewrite rule (Kapur §6, Gröbner), **not** AC-CC, and is out of scope for all three.
 
@@ -1614,18 +1665,92 @@ does, precisely (a rule is `+M → R` with `R = min_monomial`):
   by a **mandatory read-time orientation guard** (one `monomial_cmp`, linear in the two
   monomials' entries): emit `+M → R` only if `M ≫ R`
   (else `M` is itself the smaller one: it is the normal form, not a rule). The guard runs
-  at the read site, where finds are settled, so it is exact regardless of slot staleness.
+  at the read site, where finds are settled, so it is exact regardless of how stale the
+  stored minimal monomial is.
 
 | Option | Guarantee | Cost | Verdict |
 |---|---|---|---|
-| **(a) Best-effort + orientation guard** | Selected RHS may be non-minimal; each emitted rule is decreasing (`M ≫ R`) | merge folds all completion columns; one comparison guard per read | **Shipped.** Prevents a growing normalization step; universal termination/completeness remains an open refinement obligation. |
-| **(b) Exact minimum** | RHS is the true current same-op class minimum | rescan or incrementally maintain all affected class members after recanonicalization | Not shipped. Basis diagnostics compute this independently on finite test states. |
+| **(a) Best-effort + orientation guard** | Selected RHS may be non-minimal; each emitted rule is decreasing (`M ≫ R`) | merge folds all completion columns; one comparison guard per read | **Rejected** (shipped until commit `bb961302`): incomplete, see the correction below. |
+| **(b) Exact minimum** | RHS is the true current same-op class minimum | incrementally maintain it: the merge fold, the refresh after a shrinking recanonization, and an order that a merge cannot make a node grow in | **Required** (I5). The fold and the refresh ship; the order is in progress (§9c). |
 
 The orientation guard in (a) is mandatory: without it normalization could apply a
 growing rule. Collapse and duplicate-LHS filtering target an LHS antichain, while the
 guard targets per-step decrease. The companion (§S1, §3)
 records finite diagnostics for global RHS minimality and LHS reducedness; those
 diagnostics are evidence, not universal proofs.
+
+**Correction (2026-11-04).** This subsection recorded option (a) as shipped and the first
+bullet above treated a non-minimal RHS as a question for the termination proof only. A
+non-minimal stored minimal monomial loses consequences: the least active node `N` of the class
+is mis-oriented against the stored `R` (`N ≺ R`) and dropped by the guard, `R`'s own node is no
+rule (`M = R`), so the class contributes no rule and two equal terms normalize to different
+normal forms. `proofs/repro/min-slot-gap.egg` is the failing program for a shrinking
+recanonization (fixed by commit `bb961302`) and `grow_wa` for a growing one (fix in
+progress). The guard is exact about orientation and says nothing about minimality. The Lean
+completeness theorem assumes I5 (`CC/Defs.lean`); §9c gives the rules that maintain it.
+
+### 9c. Rules the completion state must keep
+
+`completion_complete_at_convergence` (`proofs/lean/SemperProofs/CC/Main.lean`) holds for a
+model of the completion state under invariants the engine has to maintain. Checking the engine
+against that model, and against the completion-oracle generator, gave the four rules below.
+Each arises from the interaction of two mechanisms, named in its first sentence; a change to
+either mechanism has to keep the rule. In the Lean files, `SlotState` (`CC/Slot.lean`) models
+the stored minimal monomials, one per class for one operator.
+
+**Refresh the stored minimal monomial when recanonization shrinks a node.** The mechanisms are
+the merge fold (`fold_min_monomial`, at `merge`) and in-place recanonization
+(`recanonize_parent` and the absorbed-uses sweep of `rebuild_congruence`). The fold compares
+candidates only when two classes merge; recanonization later rewrites a stored node's span
+(coalescing, unit drop, clamp after a child merge) and can make the node smaller than its
+class's stored minimal monomial. Without a comparison at that point the stored minimal
+monomial is not the class's least active monomial, and the class loses its rule (§9b,
+correction). `refresh_min_monomial` (commit `bb961302`) compares every recanonized active
+completion node with its class's stored minimal monomial and replaces it when the node is
+smaller, through the tracked pool, so `restore` rolls the write back. Failing program,
+`proofs/repro/min-slot-gap.egg`: under `Add` AC with `:identity (Zero)`,
+`(union (Add a b) (Add p q r))` then `(union r (Zero))` shrinks `Add{p,q,r}` to `Add{p,q}`,
+below the stored `Add{a,b}`, and `(check-eq (Add a b z) (Add p q z))` failed; with the two
+unions in the other order it passed. Regression: `tests/egg/ac_min_slot_refresh.egg`. Lean:
+`reachable_I5` (the operations with the refresh preserve I5) and `shrinkNoRefresh_breaks_I5`
+(the reproducer state), `CC/Slot.lean`.
+
+**Order monomials by a per-class key that a merge only lowers.** *(Pending: the fix is in
+progress on branch `fix/stop-and-slot-growth`; this note changes when the fix lands, to name
+the fixture and the Lean theorem.)* The mechanisms are the survivor policy of the union-find
+(Chapter 2, `--union-by`) and the completion order `monomial_cmp`, which compares monomials
+by the representative ids of their children. A merge that keeps the larger id renames a child
+upward: every node over the absorbed class grows in degree-lex without changing size. The
+refresh above does not repair this: it compares a recanonized node with the stored one, and
+when the grown node is the stored one, the class member that is now least was not
+recanonized and is never compared. The stored minimal monomial then names a node that is no
+longer the least of its class. Failing program (`grow_wa`): `Add` AC,
+`(union (Add a b) (Add c e))` stores `Add{a,b}`; `(union (w) (a))` keeps `w`, the later and
+larger id, so `Add{a,b}` recanonizes to `Add{b,w}`, above `Add{c,e}`; `Add{b,w}` is then no
+rule, `Add{c,e}` is mis-oriented, and `(check-eq (Add c e y) (Add b w y))` fails. The
+completion-oracle generator found 12 divergences of this kind, plain AC among them. The rule:
+compare monomials by a key per class that a merge sets to the minimum of the two classes'
+keys, so a merge never raises a child's key and no stored node grows.
+
+**Merge a node's normal form into its class before flagging the node collapsed.** The
+mechanisms are the (A′) inter-reduction merge and `FLAG_AC_COLLAPSED`, which removes the node
+from the rule set the next round reads. §6b states the order ("merge before mark"); the Lean
+proof needs it as invariant I3 (`CC/Defs.lean`: every retired node rewrites, in at least one
+step, to a node of its class), which `completion_complete_at_convergence` assumes and
+`CC/Laws/InvRulesMain.lean` uses (`nodes_reduce_all`). A node flagged before its reduct is
+merged is a retired node whose reduct is in no class with it, and the equality it carried is
+lost. `cc_round` calls `do_merge` and then `set_cc_collapsed` in the (A′) loop. No reproducer
+exists, because the engine has always merged first; the rule is recorded so that reordering
+the two calls is not taken for a refactoring.
+
+**Read the rule set off the state; never store it.** The mechanisms are class merges and the
+rules of the two merged classes. A rule is an active completion node read with its class's
+right-hand side: `cc_round` rebuilds `rules` every round from `completion_node_ids()` and
+`class_rhs_into`, and the Lean model defines `State.rules` the same way (`CC/Defs.lean`). A
+merge therefore changes the right-hand side of every rule of both classes, through `find` and
+the folded stored minimal monomial, without visiting any rule. A stored rule table would need
+each of those rules rewritten at every merge, and a rule it missed would keep a right-hand side
+that names an absorbed class.
 
 ### 10. Conditional completeness argument and open obligations
 
@@ -1637,6 +1762,16 @@ satisfies every hypothesis those theorems need, so treat §10 and the §12 compl
 as a proof plan and conditional paper argument, not a verified guarantee (the verification plan is in
 [Future Work](A3-future-work.md)). Soundness is separate, argued in §12, and does not depend
 on this argument.
+
+**Correction (2026-11-04).** "Not yet discharged in a proof assistant" no longer describes
+the model. `proofs/lean/SemperProofs/CC/` discharges the argument for a model whose constants
+are class ids, whose constant rules are a `find` function, and whose rule set is read off the
+nodes (`completion_sound`, `kapur_termination`, `confluent_modulo`,
+`completion_complete_at_convergence`; hypotheses in `proofs/lean/STATUS.md`). Two of those
+hypotheses are engine obligations this section did not list: I5, the stored minimal monomial
+is the class's least active monomial, and I3, every retired node rewrites to a node of its
+class (§9c). The obligations below remain open for the Rust code itself, where the
+conformance generators and the fixtures are the evidence.
 
 The intended argument has three obligations. If all three hold for the implemented
 state relation, Newman's Lemma closes the abstract result.
@@ -1999,6 +2134,13 @@ are the intended storage properties, while the read-time **orientation
 guard** (emit `+M → r` only if `monomial_cmp(M,r)=Greater`) is the executable
 protection against a stale ordering decision.
 
+**Correction (2026-11-04).** The previous paragraph is wrong in two places. (P2) is not a
+quality property that may lag: completion needs it at every round (I5), because a
+non-minimal stored minimal monomial drops the class's rule (§9b, correction). And "a later
+merge refreshes it" is false for the case that broke: no merge follows a recanonization that
+shrinks a node, so `bb961302` added a refresh at recanonization, and a growing node needs the
+per-class key order that is in progress. §9c states both rules.
+
 This is precisely where we are weaker than Kapur. Kapur's **reduced** system (§3) requires
 that **neither the left nor the right side** of any rule be reducible by the others; his
 SingleACCompletion step 4(ii) fully normalizes each RHS. Our option (a) targets the LHS
@@ -2092,7 +2234,8 @@ theorem.
 | identity-class rule RHS = the empty monomial; unit-drop at build AND recanonize (`CanonMode`) | `f({}) = e` (§2.4); Lemma 4.3's standing normalization `f(x,e) → x` | ✓ |
 | (C1) rule cancel-close + (C2) cancelative disjoint superposition + §5.2(iii)(b) per-constant closure over the summand pool | §5.1–§5.3: CancelClose, cancelative disjoint superposition (SC2 / Example 4 fixtures) | ✓ for the named static fixtures; late constants are covered by an implemented full-round net whose focused interleaving regression remains open |
 | `:inverse` ⟹ cancelative; inverse-pair cancellation at build, in the round (hash-cons probe), and after merges in every mode (`canon_repair_round`, `Justification::InverseCancel`) | §5.4's group law at pair level (`x ∘ inv(x) = e`) | partial by design: full §5.4 (Gaussian elimination) is unsupported; pairs whose `inv(x)` node was never built are not seen |
-| `min_monomial` best-effort RHS | step 4(ii) fully normalizes RHS (reduced) | **partial: §S1.2 gap** |
+| inverse law across nodes, R1-R5 (`inverse_law_repair` at rebuild; R3 as `AxiomCp` pairs in `cc_round`), commit `e1e6aec8` | the hypotheses `InvMatching`, `InvUnitFree`, `InverseAxiomCP`, `NilpotentInverseCP` of the Lean completeness proof | ✓ in the model (`completion_complete_inverse_engine`, `CC/Laws/InvRulesMain.lean`); §5.2 states the rules |
+| `min_monomial` best-effort RHS | step 4(ii) fully normalizes RHS (reduced) | **partial: §S1.2 gap** (corrected 2026-11-04: best-effort is not enough for completeness; the stored minimal monomial must be the class minimum, §9c) |
 
 #### S3.2 Finite reduced-basis diagnostics
 
@@ -2136,7 +2279,10 @@ oriented by the read-time guard but global RHS minimality is not established by
 construction. `cc_min_used_nonminimal` has returned zero on the maintained
 `CHECK_AC_BASIS` fixtures. That is finite evidence only; it does not justify
 the former universal claim that merge-only maintenance always computes the
-exact minimum.
+exact minimum. (Correction, 2026-11-04: merge-only maintenance does not compute it, and the
+zero count did not detect that: `cc_min_used_nonminimal` reads active rules only, and on
+`min-slot-gap.egg` the class has no active rule. `cc_slot_nonminimal` checks every class, and
+the egg harness asserts it under `CHECK_AC_BASIS` since commit `bb961302`; §9c.)
 
 **Duplicate LHSs.** Congruent nodes can expose the same `(op,LHS)` rule more
 than once. The reducer/superposition set deduplicates that key while retaining
@@ -2165,7 +2311,8 @@ currently assert RHS irreducibility.
 **Conclusion.** The implementation has a detailed, tested correspondence with
 Kapur's construction, including explicit partial support for the group facet.
 The composition of those rows into soundness, termination, and AC/ACI
-completeness remains a paper argument. Only
+completeness remains a paper argument (corrected 2026-11-04: for a model of the state it is
+the Lean development of §10's correction, under the engine obligations of §9c). Only
 `CompletionOutcome::Converged` claims the implementation reached its joint
 fixpoint; budget and goal exits are intentionally incomplete. `AbortedOverflow` is
 incomplete too, and it records a width error that ends the run. Plain mode is the

@@ -22,6 +22,13 @@ The guarantees differ in strength, and the sections keep them apart:
 - extraction optimality is proved per instance by the solver, and certified by VeriPB
   on the pseudo-Boolean path.
 
+(Correction, 2026-11-04: the second and third items understate what is proved. For models of
+the matcher and of the completion state, `proofs/lean` proves matching completeness, the
+`:flatten` demand rule, and completion completeness at convergence. Checking the engine against
+those models found rules this chapter did not state: §5.2, "The spliced children are found at
+build" and "The inverse law across nodes"; Chapter 6 §9c; and the list in Chapter 13 §5. The
+correspondence between the models and the Rust code is tested, not proved.)
+
 ## 5.1 Canonical forms
 
 Every n-ary node passes through one function, `nary_canon::normalize`. It runs at four
@@ -43,7 +50,8 @@ canonical form can express. A recanonicalized node that equals an existing one i
 
 Construction also flattens the nested same-operator children it builds itself. It does
 not flatten structure that appears later through merges; that is the business of
-§7.5 and Chapter 6.
+§7.5 and Chapter 6. The children it splices in are stored children of another node, and
+`add` must `find` each of them: §5.2, "The spliced children are found at build".
 
 Details: [§5.2, Canonization Algorithms](#52-canonization-algorithms), in particular "`MSetCanon`",
 "`SetCanon`", "A-Only Operators", and "What flattening erases"; the book chapter
@@ -180,6 +188,54 @@ Cancellation is purely subtractive, so unlike the flattening laws it can never g
 monomial: each repair merge strictly reduces the class count and the fixpoint needs no growth
 budget. Covered by `inverse_cancel_after_merge.egg` and its control.
 
+#### The inverse law across nodes (R1-R5)
+
+Pair cancellation applies `x ∘ g(x) = e` inside one stored monomial. Five consequences of the
+same law relate different nodes, and before commit `e1e6aec8` the engine asserted none of them:
+the Lean completeness proof for `:inverse` (`proofs/lean/SemperProofs/CC/Laws/`) has four
+hypotheses, `InvMatching`, `InvUnitFree`, `InverseAxiomCP` and `NilpotentInverseCP`, that the
+engine did not establish, and completion missed their consequences. For an operator with
+`:inverse g` the engine now asserts:
+
+- R1: `g(a) = g(c)` gives `a = c`, and the node `g(g(x))` equals `x`;
+- R2, with `:identity e`: `g(x) = e` gives `x = e`, and `x = e` gives `g(x) = e`;
+- R3: for each completion rule `A → B` and `a ∈ A` with `g(a)` in class `y`, the critical
+  pair `(B + {y}, A − {a})`, and symmetrically for `y ∈ A` the class of some `g(x)`;
+- R4, with `:nilpotent k`: `g(x) = x^(k−1)`, self-inverse classes included (for odd `k`,
+  `x^(k−1) = e`, so `x = e`);
+- R5, with `:nilpotent k`: for `g(x)` in class `y ≠ x`, `y^(k−1) = x`, whether or not the node
+  `g(y)` exists.
+
+Each is `{x, g(x)} = ∅` combined with another instance of itself, the unit drop, a rule, or
+`x^k = ∅`, so every merge is in `=_T` (`inv_rules_sound`). `inverse_law_repair` applies R1, R2,
+R4 and R5 at every rebuild in every mode, from `canon_repair_round` next to
+`inverse_cancel_repair`; R3 joins the per-rule axiom critical pairs of `cc_round` (Chapter 6
+§S3.1). Failing program for R1 (`tests/egg/ac_inverse_matching.egg`): after
+`(union (Neg (A)) (Neg (C)))`, the node `(Add (A) (Neg (A)) (C))` cancels one pair and equals
+`C`, and `(check-eq (A) (C))` holds only through R1. Regressions: `ac_inverse_matching.egg` and
+`ac_inverse_involution.egg` (R1), `ac_inverse_unit_free.egg` and `ac_inverse_unit_node.egg`
+(R2), `ac_inverse_rule_cp.egg` (R3), `ac_inverse_nilpotent.egg` and
+`ac_inverse_nilpotent_self.egg` (R4), `ac_inverse_nilpotent_absent.egg` (R5); the original
+reproducers are `proofs/repro/{inv-into-unit,unit-inverse,non-matching,rule-inverse-cp,z3-inverse}.egg`.
+Lean: `completion_complete_inverse_engine` (`CC/Laws/InvRulesMain.lean`).
+
+**Scan every inverse node, not the touched log.** The mechanisms are the touched log, which
+names the nodes a merge recanonicalized, and R1's premise, a merge of two classes that each
+hold an inverse node. That merge changes no child of either inverse node, so neither is
+recanonicalized and neither enters the touched log; a pass driven by the log never sees the
+premise. `inverse_law_repair` therefore reads the whole unary partition for the inverse nodes
+(`inverse_nodes`), over a snapshot of the union-find. It costs nothing for a graph with no
+`:inverse` operator and runs only when `canon_repair_round` sees a change.
+
+**The unit drop runs before cancellation, so R2 is required.** The mechanisms are two steps of
+`nary_canon::normalize`: it drops the unit class, then cancels inverse pairs. When `g(x)` is in
+the unit's class, the occurrence of `g(x)` in `{x, g(x)}` is the unit, and the drop removes it
+before cancellation can pair it with `x`: `{x, e}` with `g(x) = e` normalizes to `{x}`, not to
+the unit. The consequence `x = e` is then derived by R2 alone. Failing program
+(`proofs/repro/inv-into-unit.egg`, regression `ac_inverse_unit_free.egg`):
+`(union (Neg (A)) (Zero))` then `(check-eq (A) (Zero))` failed before `e1e6aec8`. A change to
+the order of the laws in `normalize` has to keep R2, or show the consequence some other way.
+
 ### `SetCanon` — Set Canonization
 
 For ACI operators: children are deduplicated ids, stored in sorted order.
@@ -247,6 +303,30 @@ spelling it out is forced, and a class that also holds an atom is left alone.
 That case is not hypothetical: once a rule proves `gmul(b, inv(b)) = I`, the
 identity's class holds a `Seq` node, and splicing it into every later sequence
 would rewrite uphill and grow terms without bound.
+
+#### The spliced children are found at build
+
+`add` flattens a nested same-operator child by splicing in the stored children of one node of
+that child's class: the least pure sequence node for `:assoc`, `:assoc-left` and
+`:assoc-right` (`flatten_seq_children`), and the class's stored minimal monomial for
+`:assoc-comm` and `:assoc-comm-idem` (`flatten_mset_children`, `flatten_ac_children`; Chapter 6
+§6c). Those stored children are canonical as of the last rebuild. The mechanisms that interact
+are this splice and the deferred rebuild: a saturation round applies all its actions before
+the next rebuild, and a command after `(run …)` builds its terms before rebuilding, so a union
+applied since the last rebuild leaves the spliced node's stored children non-canonical. `add`
+therefore `find`s each spliced child as it emits it (commit `222ba64d`). Before that commit the
+new node was keyed by a non-canonical child list, and `add` registered no use for the absorbed
+child (`repr_id` of an absorbed id is `None`), so no rebuild ever recanonicalized the node; a
+later `add` of the canonical spelling missed the hash-cons and made a second node in a second
+class (Chapter 4, "The hash-cons lookup is the only collision check a fresh node gets").
+Failing program (`tests/egg/seq_hashcons_miss_min.egg`, minimized from the rounds generator,
+seed 1, case 581): after `(run 3)` the class of `(C3)` holds the node `(Cat c c c c)`, yet
+building `(Cat (C0) (C0) (C0) (C0))` made a fresh node in a fresh class and the `check-eq`
+failed, naive and semi-naive. One regression per operator kind:
+`flatten_stale_splice_{assoc,assoc_left,assoc_right,ac,aci}.egg`. Lean, in the semper-paper
+development (`EMatch/Engine/Rounds/SeqSplice.lean`): `recanon_normalizeSeq`, the key the fixed
+`add` stores is a fixpoint of rebuild's recanonization, and `raw_breaks_dedup`, the unfixed
+build breaks the round model's `Round.WF.dedup`.
 
 #### `:identity` on an A-only operator
 
@@ -502,6 +582,8 @@ nilpotent = MSet with clamp Nilpotent, and identity on MSet or Set. Group is "sh
 at the descriptor level: the `:inverse` tag validates and stores, and the shipped
 inference is inverse-PAIR cancellation (`x ∘ inv(x) = e`), not signed counts: the
 signed-count representation sketched later in this section is a postponed design.
+(Corrected 2026-11-04: pair cancellation is not the only shipped inference; since commit
+`e1e6aec8` the engine also asserts the five cross-node consequences R1-R5, §5.2.)
 
 See the SMT-LIB operator survey at the end of this doc for which real operators land in each
 representation.
@@ -613,6 +695,7 @@ not a measured performance claim.
 `OpKind::MSet { clamp: Nilpotent }` (XOR), and identity on either. Group: the `:inverse`
 tag is validated and consumed at pair-cancellation level; the signed-count
 representation this section sketches is the POSTPONED full-group design, not shipped.
+(Corrected 2026-11-04: `inverse_op` is also read by the cross-node rules R1-R5, §5.2.)
 
 ### Storage: one pool of node ids, fixed-width rows over a strongly-typed op array
 
@@ -625,6 +708,10 @@ dereferencing the id (`node_monomial_into` -> `mset_children` for MSet,
 It is a merge-maintained **candidate**, not a verified exact minimum after arbitrary merge
 cascades; the completion orientation guard filters candidates that no longer produce a
 decreasing rule, and the optional basis diagnostic searches for non-minimal candidates.
+(Correction, 2026-11-04: a candidate that is not the class's least active monomial is not
+filtered harmlessly; the class then contributes no rule and completion misses consequences.
+The entry must be the exact minimum, invariant I5; Chapter 6 §9c gives the rules that keep it
+so: the merge fold, the refresh at recanonization, and the per-class key order in progress.)
 Rationale:
 
 - The id is the canonical handle: children are read through `find_const`, so multiplicities and
@@ -736,6 +823,9 @@ on the first write.
    per-op min regardless of kind. It is not per-op.
 5. **Staleness is guarded.** A stored candidate may cease to be minimal under a merge cascade; the
    read-time orientation guard (design §9b axis-2) already makes that safe and is unchanged.
+   **Corrected 2026-11-04:** the guard does not make it safe. It prevents a growing rule, and
+   a non-minimal entry still drops the class's rule (`proofs/repro/min-slot-gap.egg`). The
+   invariant is that the entry is the class's least active monomial; Chapter 6 §9c.
 
 ### How AC uses the pool
 
@@ -744,8 +834,11 @@ Storage reads and writes index by op through `completion_column`.
 - **RHS read** (`class_rhs_into`): the empty monomial if the class is the op's identity
   class (Kapur's `f({}) = e`: the normative RHS definition is Chapter 6 §S1);
   else if `atomic` → `{class}`; else the stored candidate in the node op's column → emit that
-  node's monomial. For a real rule, the `node` is itself a column-`i` node, so the slot is
-  non-absent.
+  node's monomial. For a real rule, the `node` is itself a column-`i` node, so the stored
+  minimal monomial is non-absent.
+- **Recanonization refresh** (`refresh_min_monomial`): when rebuild recanonizes an active
+  completion node and it still forms a node, the node is compared with its class's entry and
+  replaces it if smaller (Chapter 6 §9c).
 - **Merge fold** (`fold_min_monomial`): element-wise over the row (invariant 3), OR the `atomic`
   bool. `MergeInfo` carries the absorbed class's row number so the survivor can fold it.
 - **Completion loop**: builds rules from all MSet and Set nodes. Each `Rule` carries its op,
@@ -971,7 +1064,9 @@ constant `true` (available today), never as an inverse on `and`.
 
 All property tags are wired end to end: `:identity` and `:nilpotent` run in canonization
 AND completion; `:cancellative` drives the Kapur §5 cancel-closure; `:inverse` (which
-implies cancelative) drives inverse-pair cancellation. Full Abelian-group completion
+implies cancelative) drives inverse-pair cancellation and, since commit `e1e6aec8`, the
+cross-node rules R1-R5 (§5.2; this paragraph named pair cancellation only before
+2026-11-04). Full Abelian-group completion
 (§5.4 signed counts / Gaussian elimination) is postponed indefinitely. The pre-combined
 aliases `:assoc-comm` / `:assoc-comm-idem` remain accepted for compatibility and expand
 to the basic tags.
@@ -1061,7 +1156,8 @@ associative** (rounding), so they are not AC and get no completion.
 
 Implemented: set-idempotent (ACI: `and`, `or`, …), multiset (AC: `+`, `*`, …), and the
 nilpotent family (MSet + mod-n clamp + declared unit). The signed-count group representation
-remains out of scope (shipped group support is inverse-PAIR cancellation).
+remains out of scope (shipped group support is inverse-PAIR cancellation plus the cross-node
+rules R1-R5 of §5.2; corrected 2026-11-04, the parenthesis named pair cancellation only).
 
 ---
 [← Ch 4: The E-Graph](04-egraph.md) · [Table of Contents](00-table-of-contents.md) · [Ch 6: AC Congruence Closure →](06-ac-congruence-closure.md)

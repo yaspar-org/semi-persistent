@@ -174,7 +174,11 @@ tagged rule whose pattern has no n-ary operator is installed with a warning that
 the tag has no effect. The matching mode is `Step::Flatten` for ordinary rules
 (§7.5, "Flattened Matching") and the view assembly of `Collect` for sequence
 rules (§7.6). An operator that is only `:comm` has no flattened form, and the
-tag leaves it as it is.
+tag leaves it as it is. (Correction, 2026-11-04: "a child class ... also contributes that
+node's children" holds for `:assoc` and the multiset kinds only. Under `:assoc-left` and
+`:assoc-right` a view opens a nested child only on the fold's spine, the first or the last
+position, because opening any other position spells a different term; §7.5, "Folds open only
+their spine".)
 
 ### Functions and Constructors
 
@@ -742,7 +746,11 @@ for the resulting properties has to be stated separately:
   differential tests, including
   `ematch::match_set_is_independent_of_join_order` and
   `nonlinear_check_uses_the_rounds_classes`. There is no machine-checked
-  theorem that every plan emits the same bindings.
+  theorem that every plan emits the same bindings. (Correction, 2026-11-04: for a model of
+  the plans there is. `engine_plan_sound` and `engine_plan_complete` cover every plan the
+  scheduler can produce, and `runND_matches` and `runND_indep` runtime scheduling, in
+  `proofs/lean/SemperProofs/EMatch/Engine/`; the generated fixtures under
+  `tests/egg/conform/` check the engine against the model.)
 - **Monotonicity argument.** A snapshot equality remains an equality in the
   live e-graph because actions merge classes but do not split them. Thus a
   binding accepted using the snapshot's classes remains valid when its action
@@ -755,7 +763,11 @@ for the resulting properties has to be stated separately:
   touched log and uses documented full-scan fallbacks for constraints whose
   enabling merge is not represented by a relation delta. Finite differential
   tests exercise this accounting. There is no end-to-end proof that the two
-  drivers terminate at the same semantic least fixpoint.
+  drivers terminate at the same semantic least fixpoint. (Correction, 2026-11-04: in the
+  Lean round model, `saturation_complete` proves that at a round that changed nothing every
+  match of every rule is fired, for tracked semi-naive and naive routing; §9.1 lists what the
+  model leaves out, and §9.1, "The stop test and action counting", the engine defects found
+  against it.)
 
 ### `Match` — Binding Environment
 
@@ -893,6 +905,36 @@ nilpotent clamp is dropped by the demand rule, and a degenerate stored node (`An
 demand rule" below). Patterns are matched as written: a pattern that construction would
 store in another form (an identity child, an inverse pair, a repeated element, a nested
 same-operator application, a single element) matches nothing, without a warning.
+
+**Correction (2026-11-04).** The previous paragraph is out of date in three places. It is
+machine-proved for a model: `demand_engine_complete_{ac,aci,assoc}`
+(`proofs/lean/SemperProofs/EMatch/Flatten/EngineComplete.lean`) proves the engine's demand rule
+complete under any combination of identity, nilpotent and inverse laws (sets under
+`TwoClassesL`), and `flatten_plan_complete` the flattened plan. The first known exception, an
+opening that contributes only by inverse cancellation or the nilpotent clamp, was a defect, fixed
+by commit `96279a6f` ("The demand rule and refolding", below). And views were also unsound on
+folds until commit `f995e5d6` ("Folds open only their spine", below). The degenerate-node
+exception stands.
+
+What the completeness theorem states is fixed by three results of the proofs, and a test or a
+claim that contradicts one of them is wrong, not the engine:
+
+- **Completeness is over the e-nodes present, with the result on the class.** For every rule
+  and every pair of theory-equal active nodes, every match at one node is fired and its root
+  binds the class of the other (`engine_match_modulo_complete`, `saturation_modulo_complete`).
+  The per-node statement, that a match at a node transfers to every theory-equal node with the
+  same bindings, is false: `per_node_form_fails` (`CC/Bridge/Modulo.lean`) is the counterexample.
+- **Completeness is "at least once".** A commutative pattern on a pair with equal children
+  emits the same binding twice, in the reference and in the engine (`comm_pair_duplicate`,
+  `EMatch/Env/Main.lean`). A test may assert that a match is present, not how many times.
+- **Maximum partition drops a two-item match when the two children's classes merge.** The
+  pattern `(Add x y)` matches `Add{a, b}`; after `(union (a) (b))` the node is `Add{a:2}`, which
+  an unannotated two-item pattern does not match. In saturation the match fires in the round
+  that finds it, before a later merge collapses the node, so the transport theorem assumes
+  this does not happen within a round (`Round.NoCollapse`,
+  `EMatch/Engine/Saturate/Transport.lean`). A program that merges before the first round
+  never fires the rule, by design: `proofs/repro/ac_collapse.egg` is that probe, and its
+  `check-eq` fails on purpose.
 
 Details: below, "Sub-Multiset Matching
 (AC operators)", "The matching relation we implement", and "Flattened Matching
@@ -1052,6 +1094,11 @@ Every emitted substitution is intended to satisfy both this relation and the
 corresponding classical multiset equation, but this is an algorithmic argument
 backed by finite unit, property, and differential tests, not a verified
 theorem. Completeness is open even for the stated maximum-partition relation.
+(Correction, 2026-11-04: both are now Lean theorems for a model of the matcher,
+`ematch_sound` and `ematch_complete` for the reference plan and `engine_plan_sound` and
+`engine_plan_complete` for every scheduled plan, `proofs/lean/SemperProofs/EMatch/`. The
+generated fixtures under `tests/egg/conform/` check the engine against the model; no theorem
+connects the model to `ematch.rs`.)
 The implementation deliberately does not enumerate the additional
 sub-multiplicity distributions admitted by classical AC matching, so it is not
 complete for classical AC matching by design. AC matching in that broader
@@ -1083,7 +1130,7 @@ operands does not match, because construction flattened only what it built. A ru
 tagged `:flatten` matches every flattened view of the node instead ("Flattened
 Matching" below), which restores completeness over nesting for A, AC, and ACI
 operators without storing a flat node, with the two exceptions stated in the guarantee
-above.
+above (one since commit `96279a6f`; see the correction there).
 
 ### Subset Matching (ACI operators)
 
@@ -1115,6 +1162,24 @@ deduplication, the identity drop, the nilpotent clamp, and inverse-pair cancella
 with multiplicities multiplied through each opened member. A view whose canonical form
 is not a node (a single class, the unit, or empty) is not matched.
 
+**Folds open only their spine.** The mechanisms that interact are the view walk and fold
+semantics. `:assoc-left` and `:assoc-right` declare a nesting, not associativity: a left fold
+stores `f(f(a, b), c)` as `[a, b, c]` and `f(a, f(b, c))` as `[a, f[b, c]]`, because
+`a - (b - c)` is not `(a - b) - c`. Opening a nested child in a position the fold does not
+flatten spells a different term, and a rewrite on that view merges two terms the theory keeps
+apart: an unsound equality, not a missed one. The walk therefore opens a child only where
+`flatten::spine` holds: the first position of the root and of every opened member for
+`:assoc-left`, the last for `:assoc-right`, every position for `:assoc` and the multiset kinds
+(commit `f995e5d6`; the direction comes from `Members::assoc_dir`). Before that commit the
+scheduler passed `FlatKind::Assoc` for a fold and every position was opened. Failing program
+(`tests/egg/flatten_fold_spine.egg`): with `Sub` declared `:assoc-left`,
+`(rewrite (Sub x y z) (Tri x y z) :flatten)` matched `Sub(a, Sub(b, c))` through the view
+`[a, b, c]`, and `(check-neq (Sub (A) (Sub (B) (C))) (Tri (A) (B) (C)))` failed with "terms are
+equal". The sequence-rule walk (`views_u64`) had the same defect and the same fix. Lean:
+`fold_open_off_spine_unsound`, the counter-model, and `otLeft_sound`/`otRight_sound`, every
+spine-only view denotes the node's term (`EMatch/Flatten/Fold.lean`). Keeping a class whole is
+unchanged, so the demand rule below is unaffected.
+
 **The demand rule** (`doc/goal-canonical-flatten-views.md` in the ltl-eqsat repository,
 decision 2). A class is
 opened only when an item takes an element from inside it. Each raw view carries its
@@ -1136,6 +1201,52 @@ items have their elements. The walk is pruned by the same rule: an instance that
 as a leaf with no takeable element abandons the branch. Per-instance counters make the
 check constant-time. An element is takeable when the decomposition's items are all
 bound and it is one of their classes; otherwise every element is.
+
+**Correction (2026-11-04).** The paragraph above states the demand rule as first shipped.
+Its keep condition, "every leaf directly holds a class the items take", loses matches, and the
+first of its "two cases that escape the rule" is no longer an escape: commits `d95883f5` and
+`96279a6f` added the clauses below, which keep those matches. The degenerate-node case stands.
+
+**The demand rule and refolding.** The mechanisms are the demand rule and refolding, the
+argument that justifies it: a match that takes nothing from a leaf's group is also a match on
+the less-opened view that keeps the leaf's class closed. Closing replaces the group by one
+occurrence of the opened class with the folded count, and normalizes again. Each clause below is
+a case where the refolded view does not carry the match, so the rule must keep the match on
+the opened view. A leaf is satisfied when one of these holds, and the rule keeps a match when
+some opening tree giving its view has every leaf satisfied (`Demand::accepts`):
+
+1. the leaf directly holds a class the items take (the original rule);
+2. for a multiset, the class the leaf opened is taken (`Demand::merge_on_close`, commit
+   `d95883f5`). Closing then coalesces the closed occurrence with the taken one into one entry
+   of higher count, which an unannotated item cannot take. Failing program
+   (`proofs/repro/demand-gap.egg`, regression `tests/egg/flatten_demand_refold.egg`):
+   `n = Plus{Y, Z}`, `Z ∋ Plus{Y, d}`, `Y ∋ Plus{X, c}`; `(Plus (Yc) (Dc) ..rest)` matches the
+   view `{X, c, Y, d}` with `rest = {X, c}`, the leaf `[X, c]` takes nothing, and the
+   less-opened view `{Y:2, d}` has `Y` with count 2. A set deduplicates the two occurrences
+   and a sequence keeps them apart, so the clause is multiset-only. For sets the original rule
+   is complete only because rebuild merges a one-child member into its child's class
+   (`demand_orig_complete_aci` under `TwoClasses`); if that merge stops, sets need the clause
+   too. Lean: `demand_fix_complete_ac` (`EMatch/Flatten/FixMain.lean`);
+3. closing the leaf is not inert under the operator's laws (`Leaf::non_inert`, commit
+   `96279a6f`): for a multiset, the opened class is the unit, or under `:nilpotent k` its
+   refolded count is 0 mod `k`, or under `:inverse` a class the refold touches has its inverse
+   among the classes present or the reverse, self-inverse included; for a set, the opened class
+   is the unit; for a sequence, it is the unit or every element of the group is. The refolded
+   view then loses elements or is no node. Failing program
+   (`tests/egg/flatten_laws_nilpotent.egg`): `xor` nilpotent of order 2, `n = xor{X, Y}`,
+   `Y ∋ xor{X, t}`, `X ∋ xor{b, c}`; `(xor (Tc) ..rest)` matches the view `{b, c, X, t}` with
+   `rest = {b, c, X}`, and closing the leaf `(X, [b, c])` gives `{X, X, t}`, which clamps to
+   `{t}`, not a node. The other counterexamples of the proof are
+   `flatten_laws_{inverse,inverse_leaf,identity,assoc_unit}.egg`. Lean:
+   `demand_laws_complete_{ac,aci,assoc}` (`Flatten/LawsMain.lean`); for the engine's own flag
+   and rule, `nonInertEng_eq` and `demand_engine_complete_{ac,aci,assoc}`.
+
+The walk prunes with the same rule, so it must not prune a leaf that a later choice of the rest
+of the view could make non-inert (`FlattenScratch::may_be_non_inert`). The unit and sequence
+tests read the leaf alone; the clamp and cancel tests read the whole view, so under
+`:nilpotent` or `:inverse` no multiset leaf is pruned. Lean: `prune_engine`
+(`Flatten/EngineRule.lean`). The reference in `tests/flatten_differential.rs` computes the
+same flag; `flattened_matches_reference_laws` fails at seed 18 with the flag forced off.
 
 The walk follows the e-graph's nesting, so it is an explicit-stack depth-first search
 over pending tasks, the view so far, the open classes and instances, and an undo trail.
@@ -1545,7 +1656,10 @@ a set (`seq_collect::assemble_views`), under the node's match bound. Each view i
 canonized by the one normalization (`nary_canon::normalize`, §5.2). A match is
 kept by the demand rule: for some opening tree giving its view, every leaf of the
 tree directly holds a class that a filter or a simple item takes, that is, one the
-bare sequences do not hold (§7.5, "Flattened Matching"). A view bound counts as
+bare sequences do not hold (§7.5, "Flattened Matching"). (Correction, 2026-11-04: that is
+the first clause only; `assemble_views` calls the same `Demand::accepts`, which also keeps a
+leaf whose opened class is taken, for multisets, and a non-inert leaf; §7.5, "The demand rule
+and refolding". The views also open folds only on their spine.) A view bound counts as
 a skipped node, as the match bound does. Filter bases and simple items are plain
 patterns, so no sub-query is flattened.
 

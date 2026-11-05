@@ -214,7 +214,10 @@ restricted to the `touched` node set. During semi-naive saturation that log
 contains fresh nodes, recanonicalized nodes, newly subsumed nodes, and members of an
 absorbed class
 whose class assignment changed even when their node representation did not; it
-may contain duplicates, which `build_delta` removes. Semi-naive evaluation
+may contain duplicates, which `build_delta` removes. The absorbed members are in the log only
+when merge tracking is on, and every semi-naive path turns it on: a delta built without them
+misses the matches a merge that keeps the stored id enables (§9.2, "The touched log and merges
+that keep the stored id"). Semi-naive evaluation
 pairs a full index with a delta index in a `VariantIndex`, which selects, per
 query atom, whether that atom scans the full index, the delta, or
 `full ∖ delta`. See §9.2.
