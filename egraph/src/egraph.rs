@@ -209,6 +209,15 @@ pub struct EGraph<
     /// a union joined). Folded into `width_error` by the next check: atomic so a shared
     /// read can record it and the e-graph stays `Sync`.
     monomial_overflow: std::sync::atomic::AtomicBool,
+    /// Counts the events that change how a build spells an AC term: a class holding a
+    /// completion monomial turns `atomic` (the build stops splicing it), or a merge changes
+    /// a class's minimal monomial for an op (the build splices a different monomial).
+    /// Neither event changes a node, so neither enters the semi-naive delta; the semi-naive
+    /// loop reads this counter instead and, in plain mode, re-matches in full the rules
+    /// whose right-hand side builds an AC term (design §9.2, "A build-time choice the delta
+    /// cannot see"). Monotone, and not rolled back by `restore`: a spurious increase only
+    /// costs a full match.
+    spelling_epoch: u64,
     /// Goal pair for goal-directed completion (the lazy-check transaction):
     /// the completion loop polls it between passes and inside a round's apply
     /// loops, and stops with [`CompletionOutcome::GoalMet`] as soon as the
@@ -466,6 +475,7 @@ where
             width_error: None,
             no_value: 0,
             monomial_overflow: std::sync::atomic::AtomicBool::new(false),
+            spelling_epoch: 0,
             cc_goal: None,
             cc_start_nodes: 0,
             decision_start: None,
@@ -556,6 +566,22 @@ where
             self.decision_spent
                 || self.node_count() > start.saturating_add(self.completion_node_budget)
         })
+    }
+
+    /// Whether the class holds a completion monomial for some op.
+    fn class_has_monomial(&self, repr: Cfg::ClassKey) -> bool {
+        self.key_col()
+            .is_some_and(|k| (0..k).any(|col| self.classes.min_monomial(repr, col).is_some()))
+    }
+
+    /// The count of build-spelling changes (see the `spelling_epoch` field).
+    pub fn spelling_epoch(&self) -> u64 {
+        self.spelling_epoch
+    }
+
+    /// Whether AC completion runs in `rebuild` (any completion mode).
+    pub fn cc_enabled(&self) -> bool {
+        self.cc
     }
 
     /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
@@ -1229,6 +1255,14 @@ where
         if result.is_fresh() {
             for &child in &self.g_buf {
                 if let Some(repr) = self.classes.repr_id(child) {
+                    if !self.classes.atomic(repr)
+                        && (0..self.classes.min_width().saturating_sub(1))
+                            .any(|col| self.classes.min_monomial(repr, col).is_some())
+                    {
+                        // A class holding a completion monomial turns `atomic`: from now on
+                        // a build keeps it nested (see the `spelling_epoch` field).
+                        self.spelling_epoch += 1;
+                    }
                     self.classes.add_use(repr, id);
                 }
             }
@@ -1323,6 +1357,14 @@ where
         if result.is_fresh() {
             for c in &self.mset_buf {
                 if let Some(repr) = self.classes.repr_id(Cfg::mset_child_id(c)) {
+                    if !self.classes.atomic(repr)
+                        && (0..self.classes.min_width().saturating_sub(1))
+                            .any(|col| self.classes.min_monomial(repr, col).is_some())
+                    {
+                        // A class holding a completion monomial turns `atomic`: from now on
+                        // a build keeps it nested (see the `spelling_epoch` field).
+                        self.spelling_epoch += 1;
+                    }
                     self.classes.add_use(repr, id);
                 }
             }
@@ -1634,12 +1676,31 @@ where
             Some(r) => r,
             None => return,
         };
+        let Some(key_col) = self.key_col() else {
+            if absorbed_atomic {
+                self.classes.set_atomic(surv_repr);
+            }
+            return;
+        };
+        let surv_atomic = self.classes.atomic(surv_repr);
+        if surv_atomic != absorbed_atomic {
+            // The joined class is atomic; the side that was not had its monomials spliced.
+            let was_spliced = if surv_atomic {
+                (0..key_col).any(|col| {
+                    self.classes
+                        .min_monomial_at_row(absorbed_min_row, col)
+                        .is_some()
+                })
+            } else {
+                self.class_has_monomial(surv_repr)
+            };
+            if was_spliced {
+                self.spelling_epoch += 1;
+            }
+        }
         if absorbed_atomic {
             self.classes.set_atomic(surv_repr);
         }
-        let Some(key_col) = self.key_col() else {
-            return;
-        };
         // The merged class's key is the lesser of the two. A class with no stored key has
         // its root as key: it has not merged since keys were first kept (the first
         // completion node), and its root has not changed since. Written only when the
@@ -1667,6 +1728,7 @@ where
                 None => {
                     // survivor had no monomial for this op; take the absorbed one.
                     self.classes.set_min_monomial(surv_repr, col, absorbed_min);
+                    self.spelling_epoch += 1;
                 }
                 Some(surv_min) if surv_min != absorbed_min => {
                     self.node_monomial_into(surv_min, &mut a);
@@ -1674,6 +1736,9 @@ where
                     if self.monomial_cmp_key(&b, &a) == std::cmp::Ordering::Less {
                         self.classes.set_min_monomial(surv_repr, col, absorbed_min);
                     }
+                    // Either side's references now splice one monomial where they spliced
+                    // two different ones.
+                    self.spelling_epoch += 1;
                 }
                 Some(_) => {} // equal; nothing to do
             }
@@ -2505,6 +2570,12 @@ where
                 // A full round that also finds nothing is the implemented fixpoint reported
                 // by CompletionOutcome::Converged.
                 if was_full {
+                    // The exact cancelative closure runs at the fixpoint only: it merges
+                    // classes without adding nodes, and each merge reopens completion.
+                    if self.lattice_round() {
+                        full = false;
+                        continue;
+                    }
                     self.completion_outcome = Some(CompletionOutcome::Converged { rounds: round });
                     return;
                 }
@@ -2514,6 +2585,194 @@ where
             // Made progress: stay incremental for the next round.
             full = false;
         }
+    }
+
+    /// The exact closure of a cancelative operator's equations, run when a full completion
+    /// round finds nothing. Over the commutative semigroup (or monoid) freely generated by
+    /// the classes, the cancelative congruence generated by equations `uᵢ = vᵢ` relates `x`
+    /// and `y` exactly when `x − y` lies in the lattice `L ⊆ ℤⁿ` spanned by the vectors
+    /// `uᵢ − vᵢ`: the quotient is cancelative, so it embeds in its universal group, which is
+    /// `ℤⁿ / L`. Kapur's §5 inferences (cancel-close each rule, superpose disjoint pairs)
+    /// cancel the common part of one equation at a time and do not reach every member of
+    /// `L`: in conform-cc/cancel_lattice.egg `c1c3² = ∅` needs
+    /// `c1c4² = c0²` added to two copies of `c4 = c0c3`, and no rule pair yields it.
+    ///
+    /// The step reads every node of the op (collapsed ones included: their equations still
+    /// hold) as the row `e_class − Σ mult·e_child`, adds `e_unit` for a declared identity,
+    /// `order·e_x` for every class under `:nilpotent` (which requires `:identity`, so the
+    /// structure is a group of exponent `order`, cancelative whether or not `:cancellative`
+    /// is declared; conform-cc/nilpotent_group_lattice.egg), and
+    /// `e_x + e_inv(x)` for every inverse node. It brings the rows to echelon form over ℤ
+    /// with exact integers, reduces each `e_class` to its coset representative (the entry at
+    /// each pivot column in `[0, pivot)`), and merges classes with equal representatives.
+    /// Two vectors in one coset reduce to one representative because a nonzero member of
+    /// `L` has a leading entry that is a nonzero multiple of that column's pivot.
+    ///
+    /// Each merge is a consequence of the declared laws, so the step is sound; it adds no
+    /// node, so it cannot grow the graph. A merge reopens completion: the caller runs
+    /// another round, and the next fixpoint runs this step again.
+    fn lattice_round(&mut self) -> bool {
+        use num_bigint::BigInt;
+        use num_traits::{Signed, Zero};
+        let mut ops: Vec<Cfg::O> = self
+            .completion_node_ids()
+            .map(|g| self.node_op(g))
+            .filter(|&op| {
+                self.op_cancellative(op)
+                    || matches!(self.op_clamp(op), CompletionClamp::Nilpotent { .. })
+            })
+            .collect();
+        ops.sort_unstable();
+        ops.dedup();
+        let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
+        let mut mono: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        for op in ops {
+            let mut var: std::collections::HashMap<Cfg::G, usize> = Default::default();
+            let mut classes: Vec<Cfg::G> = Vec::new();
+            let mut sparse: Vec<Vec<(usize, BigInt)>> = Vec::new();
+            let mut index = |g: Cfg::G, var: &mut std::collections::HashMap<Cfg::G, usize>| {
+                *var.entry(g).or_insert_with(|| {
+                    classes.push(g);
+                    classes.len() - 1
+                })
+            };
+            let nodes: Vec<Cfg::G> = self
+                .completion_node_ids()
+                .filter(|&g| self.node_op(g) == op)
+                .collect();
+            for node in nodes {
+                mono.clear();
+                self.node_monomial_into(node, &mut mono);
+                let mut row = vec![(
+                    index(self.classes.find_const(node), &mut var),
+                    BigInt::from(1),
+                )];
+                for &(c, m) in &mono {
+                    let k = index(self.classes.find_const(c), &mut var);
+                    row.push((k, -BigInt::from(m.to_biguint())));
+                }
+                sparse.push(row);
+            }
+            if let Some(u) = self.unit_node(op) {
+                sparse.push(vec![(
+                    index(self.classes.find_const(u), &mut var),
+                    BigInt::from(1),
+                )]);
+            }
+            if let Some(inv) = self.inverse_op(op) {
+                for (y, x) in self.inverse_classes(inv) {
+                    let a = index(self.classes.find_const(y), &mut var);
+                    let b = index(self.classes.find_const(x), &mut var);
+                    sparse.push(vec![(a, BigInt::from(1)), (b, BigInt::from(1))]);
+                }
+            }
+            let n = classes.len();
+            if let CompletionClamp::Nilpotent { order } = self.op_clamp(op) {
+                for k in 0..n {
+                    sparse.push(vec![(k, BigInt::from(order))]);
+                }
+            }
+            let mut rows: Vec<Vec<BigInt>> = sparse
+                .into_iter()
+                .map(|r| {
+                    let mut d = vec![BigInt::zero(); n];
+                    for (k, v) in r {
+                        d[k] += v;
+                    }
+                    d
+                })
+                .filter(|d| d.iter().any(|v| !v.is_zero()))
+                .collect();
+            // Echelon form by Euclid's algorithm per column.
+            let mut pivots: Vec<(usize, Vec<BigInt>)> = Vec::new();
+            for col in 0..n {
+                loop {
+                    let mut best: Option<usize> = None;
+                    for (i, r) in rows.iter().enumerate() {
+                        if !r[col].is_zero()
+                            && best.is_none_or(|b| r[col].abs() < rows[b][col].abs())
+                        {
+                            best = Some(i);
+                        }
+                    }
+                    let Some(b) = best else { break };
+                    let mut pivot = rows.swap_remove(b);
+                    if pivot[col].is_negative() {
+                        pivot.iter_mut().for_each(|v| *v = -&*v);
+                    }
+                    let mut reduced_all = true;
+                    for r in rows.iter_mut() {
+                        if r[col].is_zero() {
+                            continue;
+                        }
+                        let q = &r[col] / &pivot[col];
+                        for k in col..n {
+                            let t = &q * &pivot[k];
+                            r[k] -= t;
+                        }
+                        if !r[col].is_zero() {
+                            reduced_all = false;
+                        }
+                    }
+                    rows.retain(|r| r.iter().any(|v| !v.is_zero()));
+                    if reduced_all {
+                        pivots.push((col, pivot));
+                        break;
+                    }
+                    rows.push(pivot);
+                }
+            }
+            let mut by_rep: std::collections::HashMap<Vec<BigInt>, Cfg::G> = Default::default();
+            for (k, &g) in classes.iter().enumerate() {
+                let mut v = vec![BigInt::zero(); n];
+                v[k] = BigInt::from(1);
+                for (col, pivot) in &pivots {
+                    let p = &pivot[*col];
+                    let mut q = &v[*col] / p;
+                    if (&v[*col] - &q * p).is_negative() {
+                        q -= 1;
+                    }
+                    if !q.is_zero() {
+                        for j in *col..n {
+                            let t = &q * &pivot[j];
+                            v[j] -= t;
+                        }
+                    }
+                }
+                match by_rep.entry(v) {
+                    std::collections::hash_map::Entry::Occupied(e) => merges.push((*e.get(), g)),
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(g);
+                    }
+                }
+            }
+        }
+        let mut changed = false;
+        for (x, y) in merges {
+            if self.classes.find_const(x) == self.classes.find_const(y) {
+                continue;
+            }
+            let just = Justification::Cancellative {
+                node_a: x,
+                node_b: y,
+            };
+            let m = if PROOFS {
+                self.merge_in_classes(x, y, Some(just))
+            } else {
+                self.merge_in_classes(x, y, None)
+            };
+            if let Some(m) = m {
+                self.fold_min_monomial(
+                    m.survivor,
+                    m.absorbed,
+                    m.absorbed_min_row,
+                    m.absorbed_atomic,
+                );
+                self.worklist.push((m.absorbed_uses, m.survivor));
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Stop completion on the node budget: drain the pending congruence work so the
@@ -4269,6 +4528,14 @@ where
             if result.is_fresh() {
                 for &child in &canonical {
                     if let Some(repr) = self.classes.repr_id(child) {
+                        if !self.classes.atomic(repr)
+                            && (0..self.classes.min_width().saturating_sub(1))
+                                .any(|col| self.classes.min_monomial(repr, col).is_some())
+                        {
+                            // A class holding a completion monomial turns `atomic`: from now on
+                            // a build keeps it nested (see the `spelling_epoch` field).
+                            self.spelling_epoch += 1;
+                        }
                         self.classes.add_use(repr, id);
                     }
                 }
@@ -4287,6 +4554,14 @@ where
                 let id = self.register_if_fresh(Added::Fresh(dup), op);
                 for &child in &canonical {
                     if let Some(repr) = self.classes.repr_id(child) {
+                        if !self.classes.atomic(repr)
+                            && (0..self.classes.min_width().saturating_sub(1))
+                                .any(|col| self.classes.min_monomial(repr, col).is_some())
+                        {
+                            // A class holding a completion monomial turns `atomic`: from now on
+                            // a build keeps it nested (see the `spelling_epoch` field).
+                            self.spelling_epoch += 1;
+                        }
                         self.classes.add_use(repr, id);
                     }
                 }
@@ -4300,6 +4575,14 @@ where
                 if result.is_fresh() {
                     for &child in &canonical {
                         if let Some(repr) = self.classes.repr_id(child) {
+                            if !self.classes.atomic(repr)
+                                && (0..self.classes.min_width().saturating_sub(1))
+                                    .any(|col| self.classes.min_monomial(repr, col).is_some())
+                            {
+                                // A class holding a completion monomial turns `atomic`: from now on
+                                // a build keeps it nested (see the `spelling_epoch` field).
+                                self.spelling_epoch += 1;
+                            }
                             self.classes.add_use(repr, id);
                         }
                     }

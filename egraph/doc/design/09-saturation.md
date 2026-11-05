@@ -545,22 +545,27 @@ round 2, builds the nested `Add{[A+B],C}`, and the second rule's nested pattern 
 it: `(W (C))` holds. Semi-naive never builds the nested spelling, and the check fails.
 Every completion mode derives `(W (C))` under both strategies
 (`semi_naive_atomic_eager.egg` for eager), because completion joins the flat and nested
-spellings. The two strategies therefore agree at the fixpoint only modulo the §6c order
-dependence in plain mode; with completion on they agree.
+spellings. Before the fix below, the two strategies therefore agreed at the fixpoint only modulo the
+§6c order dependence in plain mode.
 
-Three fixes are open, and the choice is the user's:
+Three fixes were considered: route every rule whose right-hand side builds an AC term to
+naive matching, log the changes into the delta, or accept and document. The engine logs the
+changes (2026-11-05), because the first gives up the delta saving on every AC-building rule
+in every round, and the third leaves the two strategies at different fixpoints.
 
-1. **Route to naive.** Extend `needs_naive_match` to every rule whose right-hand side
-   builds an AC term with a nested same-op argument, so those rules re-fire every round as
-   under naive. It gives up the delta saving on those rules.
-2. **Log atomic flips into the delta.** Record each class whose `atomic` bit flips, and
-   re-fire the matches whose right-hand side builds through it. The pattern does not name
-   that class (in the reproducer the first rule matches `(P y)`), so the record has to be
-   keyed by right-hand side, not by pattern atom; it keeps the delta saving elsewhere and
-   adds a write on the three flip paths.
-3. **Accept and document.** Plain mode is defined as canonization plus congruence, and the
-   same order dependence already separates two statement orders (§6c). This is the
-   current state: the fixtures pin it and 13-soundness.md §5 lists it.
+**Log spelling changes.** Two inputs decide the spelling: whether an argument's class is
+`atomic`, and which monomial is its minimal one. `spelling_epoch` counts the events that
+change either for a class holding a completion monomial: a child use that turns `atomic` on
+(the five `add_use` sites), and a merge that joins an atomic and a non-atomic side or changes
+a minimal monomial (`fold_min_monomial`). The pattern does not name the class (in the
+reproducer the first rule matches `(P y)`), so the semi-naive loop does not key the event to
+an atom: in plain mode, when the epoch moved since the previous delta was cut, every rule
+whose right-hand side builds an AC term (`rhs_builds_ac`) matches in full that round, as
+under naive. Completion modes skip this, since completion joins the spellings.
+`semi_naive_atomic_semi.egg` (the `atomic` event) and `semi_naive_minmono.egg` (the
+minimal-monomial event) failed under semi-naive alone before the change and pass now. The
+counter is monotone and over-approximates (a pool row may hold only the order key), so a
+spurious increase costs one full match round, never a missed match.
 
 ### The K-Variant Decomposition
 

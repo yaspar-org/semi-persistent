@@ -39,6 +39,22 @@ its two children classes merge (`NoCollapse`).
   `idOrder_grow_breaks_I5`: under the id order a node grows and I5 fails
   (`grow_wa.egg`).
 - `kapur_termination`, `run_stabilizes`, `confluent_modulo`, `newman`.
+- `hcancel` (joinability cancels a common summand) is a hypothesis, and the
+  engine's Kapur §5 inferences (cancel-close each rule, superpose disjoint
+  pairs) do not establish it: `cancel_lattice.egg` converged without
+  `C5 = c1c3²`, which needs `c1c4² = c0²` plus two copies of `c4 = c0c3`.
+  The engine now runs `lattice_round` at the completion fixpoint: classes
+  whose vectors differ by a member of the lattice the equations span are
+  merged, which is the cancelative congruence on the classes present. The
+  lattice argument is not formalized; the certified fixtures
+  (`cancel_lattice.egg`, `cancel_crit_pair.egg`,
+  `nilpotent_group_lattice.egg`, `cancel_lattice_lazy.egg`) pin it.
+- `Countermodel.lean`: `not_E_of_separates`, `E_sound`. A valuation into a
+  commutative monoid that satisfies the asserted pairs and the law
+  instances, and is cancellative when the operator is, separates only pairs
+  that are not `=_E`-equal. `semper-conform-cc-cert` (`Conform/CC/Cert.lean`)
+  emits `check-neq` only on pairs such a model separates, so a failing
+  `check-neq` there is an engine unsoundness.
 - `Laws/`: concrete instances `identity`, `nilpotent`, `idempotent`,
   `inverse` (the engine's one-directional walk `invWalk`, proved normalizing
   by `invNormal_invWalk`), `combined`; `hlaw` and `hnf_ax` discharged;
@@ -199,10 +215,10 @@ View bounds `MAX_VIEWS`/`MAX_WORK`/`MAX_ELEMS` and multiplicity widths
 (hypotheses only); cross-round delta
 completeness; the galloping cursor (Verus, containers-verus); faults inside
 sequence sub-queries; `Nodup` of emitted lists (membership only); the
-build-time `atomic` choice of a right-hand side's AC spelling
-(`flatten_mset_children`): `saturation_complete` is about matches, and in
-plain mode naive and semi-naive reach the same fixpoint only modulo the
-order dependence of design §6c, since naive rebuilds an old match's
-right-hand side after a class turns atomic and semi-naive does not
-(`semi_naive_atomic_naive.egg` / `semi_naive_atomic_semi.egg`; the
-completion modes agree, `semi_naive_atomic_eager.egg`).
+build-time spelling of a right-hand side's AC term (`flatten_mset_children`
+reads each argument class's `atomic` bit and minimal monomial):
+`saturation_complete` is about matches, not about the nodes a right-hand
+side builds. In plain mode a change to either input changes no node, so no
+delta records it; the engine counts such changes (`spelling_epoch`) and the
+next semi-naive round matches the rules that build an AC term in full, as
+naive does (`semi_naive_atomic_semi.egg`, `semi_naive_minmono.egg`).

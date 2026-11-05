@@ -2,16 +2,17 @@
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EVAL: naive
 ;; Plain-mode order dependence (design §6c) seen as a strategy difference. The companion
-;; `semi_naive_atomic_semi.egg` is the same program under semi-naive, where the check fails;
-;; `semi_naive_atomic_eager.egg` runs it under eager completion, where both strategies pass.
+;; `semi_naive_atomic_semi.egg` is the same program under semi-naive, which reaches the same
+;; fixpoint since the engine logs `atomic` flips (design §9.2); `semi_naive_atomic_eager.egg`
+;; runs it under eager completion.
 ;;
 ;; Round 1 fires the first rule while `[Add(A,B)]` is not yet `atomic`, so its Q argument is
 ;; built flat, `Add{A,B,C}`, and the second rule's nested pattern does not match it. The same
 ;; round's H action makes `[Add(A,B)]` atomic (a non-same-op child). Naive re-fires the old
 ;; (P (C)) match in round 2, `add` now keeps `[Add(A,B)]` nested, and the nested spelling
-;; `Add{[A+B],C}` matches the second rule: (W (C)) holds. Semi-naive never re-fires a match
-;; whose nodes did not change (the atomic flip is not in the delta), so the nested spelling
-;; never appears.
+;; `Add{[A+B],C}` matches the second rule: (W (C)) holds. Semi-naive does not re-fire a match
+;; whose nodes did not change, so it re-matches in full the rules that build an AC term after
+;; a round that flipped an `atomic` bit.
 (sort E)
 (function A () E) (function B () E) (function C () E)
 (function Add (E) E :assoc-comm)

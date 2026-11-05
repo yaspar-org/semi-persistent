@@ -232,6 +232,10 @@ beyond direct congruence. Each is sound:
 - A semantic-axiom critical pair merges two reducts obtained from the same
   overlap between an asserted rule and the declared idempotent or nilpotent
   law. Each reduct is therefore equal to that overlap in `=_T`.
+- `lattice_round` merges two classes only when their vectors differ by an integer
+  combination of the operator's equations (and of `e_unit`, `order·e_x`, `e_x + e_inv(x)`
+  when declared). The cancelative congruence of a commutative semigroup is exactly that
+  lattice relation, so each merge is in `=_T`; it adds no node.
 - Cancel-closure removes a common summand only for an operator declared
   cancellative. Its merge is justified by the conditional cancellation
   inference included in `=_T`.
@@ -508,14 +512,14 @@ is fixed on this branch.
     states one (§3.4; [Chapter 6 §14](06-ac-congruence-closure.md#14-the-a-only-transfer-inter-reduction-for-sequences-and-where-it-must-stop)).
 21. Every `tests/egg` fixture is registered by hand in `egg_tests.rs` and no test depends on
     machine speed ([Developer Guide](A2-developer-guide.md#regression-fixtures-and-tests)).
-22. Naive and semi-naive agree at the fixpoint only modulo the §6c order dependence in plain
-    mode: a class that turns `atomic` after a match fired changes the spelling naive rebuilds
-    when it re-fires the match, and semi-naive does not re-fire it
-    (`semi_naive_atomic_naive.egg` / `semi_naive_atomic_semi.egg`). Every completion mode
-    agrees across strategies. Route to naive, log atomic flips into the delta, or accept and
-    document are the open fixes; the third is the current state
-    ([§9.2](09-saturation.md#a-build-time-choice-the-delta-cannot-see);
-    [Chapter 6 §6c](06-ac-congruence-closure.md#6c-continuous-flattening-what-to-flatten-and-the-representative-trap)).
-
+22. Naive and semi-naive agree at the fixpoint in plain mode only because the semi-naive
+    loop re-matches the AC-building rules after a spelling change: an `atomic` flip or a
+    minimal-monomial change alters the node a right-hand side builds and enters no delta
+    (`spelling_epoch`; `semi_naive_atomic_semi.egg`, `semi_naive_minmono.egg`;
+    [§9.2](09-saturation.md#a-build-time-choice-the-delta-cannot-see)).
+23. Cancelative completeness needs lattice membership, not per-equation cancelation: Kapur's
+    §5 inferences converge without `c1c3² = ∅` in `cancel_lattice.egg`. `lattice_round`
+    runs at every completion fixpoint, also for `:identity` with `:nilpotent`, which is a
+    group (`nilpotent_group_lattice.egg`).
 ---
 [← Ch 12: Anti-Unification](12-anti-unification.md) · [Table of Contents](00-table-of-contents.md) · [Ch 14: Proof Logging →](14-proof-logging.md)

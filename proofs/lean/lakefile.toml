@@ -27,3 +27,7 @@ root = "Conform.CC.Main"
 [[lean_exe]]
 name = "semper-conform-flatten"
 root = "Conform.Flatten.Main"
+
+[[lean_exe]]
+name = "semper-conform-cc-cert"
+root = "Conform.CC.CertMain"

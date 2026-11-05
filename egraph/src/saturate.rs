@@ -600,6 +600,55 @@ pub(crate) fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::Va
 ///
 /// The root-binding pattern form `(= v pat)` is what produces such constraints; a rule
 /// that does not use it is unaffected, so this costs the existing corpus nothing.
+/// Whether a rule's right-hand side builds a term of an AC operator, whose spelling
+/// depends on the arguments' `atomic` bits and minimal monomials at build time (see
+/// `respelled` in the semi-naive loop).
+fn rhs_builds_ac<Cfg, L, S, const T: bool, const P: bool>(
+    rule: &PreparedRule<Cfg::O, S, L>,
+    eg: &EGraph<Cfg, L, T, P>,
+) -> bool
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    use crate::apply::{CompiledAction, RhsArg, RhsOp};
+    fn op_builds<Cfg, L, const T: bool, const P: bool>(
+        e: &RhsOp<Cfg::O, L>,
+        eg: &EGraph<Cfg, L, T, P>,
+    ) -> bool
+    where
+        Cfg: EGraphConfig,
+        L: LitVal,
+        Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+        MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    {
+        let RhsOp::App { op, args } = e else {
+            return false;
+        };
+        eg.ops().completion_column(*op).is_some()
+            || args.iter().any(|a| match a {
+                RhsArg::One(b) => op_builds(b, eg),
+                RhsArg::OneMult { body, .. } => op_builds(body, eg),
+                RhsArg::SetComp { body, filter, .. }
+                | RhsArg::MsetComp { body, filter, .. }
+                | RhsArg::SeqComp { body, filter, .. } => {
+                    op_builds(body, eg) || filter.as_deref().is_some_and(|f| op_builds(f, eg))
+                }
+                RhsArg::SpliceSeq(_) | RhsArg::SpliceSet(_) | RhsArg::SpliceMset(_) => false,
+            })
+    }
+    rule.actions.iter().any(|a| match a {
+        CompiledAction::Union(_, x, y) => op_builds(x, eg) || op_builds(y, eg),
+        CompiledAction::Insert(x) => op_builds(x, eg),
+        CompiledAction::Set { args, value, .. } => {
+            args.iter().any(|x| op_builds(x, eg)) || op_builds(value, eg)
+        }
+        CompiledAction::Subsume(_) => false,
+    })
+}
+
 pub(crate) fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> bool {
     // A flattened atom's views change when a class below its node gains a member of
     // the node's operator, and that event is a tuple of the nested node's relation,
@@ -927,6 +976,8 @@ where
     // Outside the round loop, and shared by every variant of every rule: a
     // round runs one query per (rule, join atom), all of similar match count.
     let mut pool = MatchPool::new();
+    // The spelling epoch when the previous round's delta was cut (see `respelled` below).
+    let mut epoch_at_cut = eg.spelling_epoch();
     for i in 0..limit {
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
@@ -973,6 +1024,15 @@ where
             (Vec::new(), Vec::new())
         };
         eg.clear_touched();
+        // In plain mode the node a right-hand side builds for an AC term depends on the
+        // `atomic` bit and the minimal monomial of each argument's class (design §6c), and
+        // a change to either changes no node, so it enters no delta. Naive re-fires every
+        // old match and rebuilds under the new state; semi-naive would not, and the two
+        // reached different fixpoints (`semi_naive_atomic_semi.egg`). When the state
+        // changed since the last cut, the rules that build an AC term match in full this
+        // round. Completion modes join the two spellings, so they need no re-match.
+        let respelled = !eg.cc_enabled() && eg.spelling_epoch() != epoch_at_cut;
+        epoch_at_cut = eg.spelling_epoch();
 
         let match_timer = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
         // The fixpoint test compares the graph, not the actions' counts: see `size_stamp`.
@@ -1027,7 +1087,10 @@ where
                     .filter(|r| r.ruleset == spec.ruleset)
                 {
                     let jatoms = join_atom_indices(&rule.query);
-                    if jatoms.is_empty() || needs_naive_match(&rule.query) {
+                    if jatoms.is_empty()
+                        || needs_naive_match(&rule.query)
+                        || (respelled && rhs_builds_ac(rule, eg))
+                    {
                         // No scanning atoms (e.g. a bare-literal rule), or a
                         // constraint between two atoms' node variables, whose
                         // enabling merge no delta records: run it naive so its
