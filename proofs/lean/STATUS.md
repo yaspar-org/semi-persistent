@@ -57,8 +57,14 @@ its two children classes merge (`NoCollapse`).
   `hcancel_not_derivable` is a converged, lattice-closed state where two
   joinable sums cancel to distinct normal forms, because `hcancel`
   quantifies over every monomial and lattice closure over the nodes present.
-  The Lean `E` does not encode flattening (a class equal to its node's
-  children), which the engine rows `e_c − vec M` do. Fixtures:
+  The merges the engine performs are covered: `stateLattice_eq_closure`
+  shows the model lattice is the span of the engine rows (`nodeEqs`, the
+  class equals its node's monomial, and `classEqs`, classmates), and
+  `engine_merge_E` / `lattice_merge_sound` show each merge is a theory
+  consequence and preserves I2 under `FlatSound` (every node and classmate
+  equation holds in `E L S`; a hypothesis, not derived from the engine
+  steps). Coset representatives are modelled as lattice membership only.
+  Fixtures:
   `cancel_lattice.egg`, `cancel_crit_pair.egg`, `nilpotent_group_lattice.egg`,
   `cancel_lattice_lazy.egg`.
 - `ARound.lean`: the A-only inter-reduction `a_round`. `rewrite_left_sound`,
@@ -67,9 +73,20 @@ its two children classes merge (`NoCollapse`).
   `left_off_spine_unsound`, `right_off_spine_unsound` (a counter-model in ℤ
   with subtraction for every other offset, so the step before commit
   `7beed39f` is unsound), and `aRound_sound` (a spine-restricted merge
-  preserves I2). Not modelled: orientation, the choice of the least
-  spelling, termination, first-occurrence selection, hash-consing, and nested
-  same-op children.
+  preserves I2). `ARound/Choice.lean`: the least spelling is unique
+  (`isLeastSpelling_unique`), every other spelling is oriented towards it
+  (`rule_of_ne_least`), an oriented rewrite decreases in shortlex
+  (`rewriteAt_shortlex`, `orientedRewrite_wf`), and the engine's
+  first-occurrence choice is an allowed step that exists whenever an
+  occurrence does (`firstRule_theq`, `firstRule_complete`). `ARound/Store.lean`:
+  hash-consing, a rewrite to an existing node merges its class, preserves I2
+  (`aRoundH_sound`), and merges from a finite node set terminate
+  (`aRoundH_wf`, `aRoundH_chain_bound`). `ARound/Nested.lean`: spine
+  splicing preserves the denotation (`splice_den_left/right/both`), off-spine
+  splicing has counter-models. Not modelled: recanonicalization by rebuild
+  (termination rests on a fixed alphabet), termination of `a_round`
+  interleaved with AC rounds and congruence, the one-element collapse in
+  `add`.
 - `Countermodel.lean`: `not_E_of_separates`, `E_sound`. A valuation into a
   commutative monoid that satisfies the asserted pairs and the law
   instances, and is cancellative when the operator is, separates only pairs

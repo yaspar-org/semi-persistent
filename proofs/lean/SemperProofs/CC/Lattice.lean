@@ -28,19 +28,29 @@ connects it to the completeness theorem.
   `:nilpotent k`, `:inverse`), `=_E` is membership in the lattice spanned
   by the asserted pairs, `e_u`, `k • e_a` for every class `a`, and
   `e_x + e_y` for every inverse pair: the rows of `lattice_round`.
+* `nodeEqs st`: the node equations `({c}, M)` for every node `(M, c)`
+  (flattening); `classEqs st`: `({c}, {d})` for two members of one class;
+  `flatEqs st` is their union. `engineRows_eq`: the rows of `lattice_round`
+  (`e_c - vec M` per node, `e_c - e_d` for classmates, the law rows) are
+  the difference vectors of `flatEqs st` and the law instances, and
+  `stateLattice L st` is the lattice they span.
+* `engine_merge_E`: a merge of `lattice_round` (`e_c - e_d` in the row
+  lattice) is an equation `{c} = {d}` of the extended theory
+  `E L (S ∪ flatEqs st)` when that theory cancels; `engine_E_iff` is the
+  converse when the asserted pairs are pairs of classmates.
+* `FlatSound L S st`: the state's equations hold in `E L S`. Under it the
+  extended theory is the theory (`E_flat_iff`), and `lattice_merge_sound`:
+  a merge of `lattice_round` is `=_E`-sound and keeps `FlatSound` and I2.
 * `LatticeClosed L st`: two active nodes whose vectors are congruent modulo
-  the lattice of the state's class pairs and the law instances are in one
-  class. `latticeClosed_of_engineFixed` derives it from the fixpoint
-  condition of `lattice_round` (`EngineFixed`), stated on the engine's rows
-  `e_c - vec M`.
-* `lattice_merge_sound`: a lattice merge preserves I2 under
-  `CancelClosed`.
+  the state's lattice are in one class. `latticeClosed_of_engineFixed`
+  derives it from the fixpoint condition of `lattice_round`
+  (`EngineFixed`).
 * `complete_of_latticeClosed`: at a lattice-closed state in which every
-  asserted pair is a pair of classmates, `=_E`-equal active nodes are in
-  one class. `completion_complete_cancellative_engine` is the completeness
-  theorem of `Main.lean` with `hcancel` replaced by
+  asserted pair is a pair of classmates, active nodes equal in the extended
+  theory are in one class. `completion_complete_cancellative_engine` is the
+  completeness theorem of `Main.lean` with `hcancel` replaced by
   `L.cancellative → LatticeClosed L st`.
-* `hcancel_not_derivable`: a converged, lattice-closed state of a
+* `hcancel_not_derivable`: a converged fixpoint of `lattice_round` for a
   cancellative operator at which the conclusion of `hcancel` fails. The
   hypothesis quantifies over every monomial, and lattice closure constrains
   only the classes present, so the completeness theorem for cancellative
@@ -272,16 +282,232 @@ theorem combined_E_iff (u : Fin n) (k : ℕ) (hk : 2 ≤ k) (inv : Fin n → Opt
     pairVecs_union, ← pairVecs_combined_gen u k hk inv cancel hu]
   rfl
 
-/-! ## Lattice closure of a state -/
+/-! ## The equations `lattice_round` reads off a state -/
 
-/-- Pairs of nodes in one class (retired nodes included: their equations
-still hold, and `lattice_round` reads them). -/
-def classPairs (st : State n) : Set (Monomial n × Monomial n) :=
-  {p | ∃ c d, (p.1, c) ∈ st.nodes ∧ (p.2, d) ∈ st.nodes ∧ st.find c = st.find d}
+/-- The node equations (flattening): a class, read as a one-element
+monomial, equals the monomial of each of its nodes. Retired nodes are
+included: `lattice_round` reads collapsed nodes too. -/
+def nodeEqs (st : State n) : Set (Monomial n × Monomial n) :=
+  {p | ∃ M c, (M, c) ∈ st.nodes ∧ p = (({c} : Monomial n), M)}
 
-/-- The lattice of a state: class pairs and law instances. -/
+/-- The partition equations: two members of one class are equal as
+one-element monomials. `lattice_round` indexes its columns by
+representative, which identifies the columns of one class. -/
+def classEqs (st : State n) : Set (Monomial n × Monomial n) :=
+  {p | ∃ c d, st.find c = st.find d ∧ p = (({c} : Monomial n), ({d} : Monomial n))}
+
+/-- The equations of a state that `lattice_round` reads: node equations
+and partition equations. -/
+def flatEqs (st : State n) : Set (Monomial n × Monomial n) := nodeEqs st ∪ classEqs st
+
+/-- The rows `lattice_round` builds: `e_c - vec M` for every node `(M, c)`,
+`e_c - e_d` for classmates (columns are indexed by representative), and
+the law rows. -/
+def engineRows (L : Laws n) (st : State n) : Set (Fin n → ℤ) :=
+  {w | ∃ M c, (M, c) ∈ st.nodes ∧ w = Pi.single c 1 - vec M} ∪
+    {w | ∃ c d, st.find c = st.find d ∧ w = Pi.single c 1 - Pi.single d 1} ∪
+    pairVecs (lawPairs L)
+
+/-- The engine's rows are the difference vectors of the state's equations
+and the law instances. -/
+theorem engineRows_eq (L : Laws n) (st : State n) :
+    engineRows L st = pairVecs (flatEqs st ∪ lawPairs L) := by
+  rw [pairVecs_union, flatEqs, pairVecs_union, engineRows]
+  congr 2
+  · ext w
+    constructor
+    · rintro ⟨M, c, hM, rfl⟩
+      exact ⟨_, ⟨M, c, hM, rfl⟩, by rw [vec_single]⟩
+    · rintro ⟨_, ⟨M, c, hM, rfl⟩, rfl⟩
+      exact ⟨M, c, hM, by rw [vec_single]⟩
+  · ext w
+    constructor
+    · rintro ⟨c, d, hcd, rfl⟩
+      exact ⟨_, ⟨c, d, hcd, rfl⟩, by rw [vec_single, vec_single]⟩
+    · rintro ⟨_, ⟨c, d, hcd, rfl⟩, rfl⟩
+      exact ⟨c, d, hcd, by rw [vec_single, vec_single]⟩
+
+/-- The lattice of a state: the lattice of its equations and the law
+instances. -/
 def stateLattice (L : Laws n) (st : State n) : AddSubgroup (Fin n → ℤ) :=
-  latticeOf (classPairs st ∪ lawPairs L)
+  latticeOf (flatEqs st ∪ lawPairs L)
+
+/-- The state's lattice is the lattice the engine's rows span. -/
+theorem stateLattice_eq_closure (L : Laws n) (st : State n) :
+    stateLattice L st = AddSubgroup.closure (engineRows L st) := by
+  rw [engineRows_eq]; rfl
+
+theorem node_row_mem {L : Laws n} {st : State n} {M : Monomial n} {c : Fin n}
+    (h : (M, c) ∈ st.nodes) : Pi.single c 1 - vec M ∈ stateLattice L st := by
+  have := pair_mem_latticeOf (P := flatEqs st ∪ lawPairs L) (Or.inl (Or.inl ⟨M, c, h, rfl⟩))
+  rwa [vec_single] at this
+
+theorem class_row_mem {L : Laws n} {st : State n} {c d : Fin n}
+    (h : st.find c = st.find d) : Pi.single c 1 - Pi.single d 1 ∈ stateLattice L st := by
+  have := pair_mem_latticeOf (P := flatEqs st ∪ lawPairs L) (Or.inl (Or.inr ⟨c, d, h, rfl⟩))
+  rwa [vec_single, vec_single] at this
+
+/-- Two nodes of one class differ by a member of the state's lattice. -/
+theorem classmates_mem {L : Laws n} {st : State n} {M N : Monomial n} {c d : Fin n}
+    (hM : (M, c) ∈ st.nodes) (hN : (N, d) ∈ st.nodes) (hcd : st.find c = st.find d) :
+    vec M - vec N ∈ stateLattice L st := by
+  have e : vec M - vec N = Pi.single d 1 - vec N - (Pi.single c 1 - vec M) +
+      (Pi.single c 1 - Pi.single d 1) := by abel
+  exact e ▸ add_mem (sub_mem (node_row_mem hN) (node_row_mem hM)) (class_row_mem hcd)
+
+/-- When every asserted pair is a pair of classmates, the lattice of the
+asserted pairs, the state's equations and the law instances is the state's
+lattice. -/
+theorem lattice_le_state {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.nodes ∧ (N, d) ∈ st.nodes ∧ st.find c = st.find d) :
+    latticeOf ((S ∪ flatEqs st) ∪ lawPairs L) ≤ stateLattice L st := by
+  rw [latticeOf, AddSubgroup.closure_le]
+  rintro w ⟨⟨P, Q⟩, (hp | hp) | hp, rfl⟩
+  · obtain ⟨c, d, hP, hQ, hcd⟩ := hS P Q hp
+    exact classmates_mem hP hQ hcd
+  · exact pair_mem_latticeOf (Or.inl hp)
+  · exact pair_mem_latticeOf (Or.inr hp)
+
+/-! ## The engine's merges are consequences of the extended theory -/
+
+/-- **A lattice merge is a consequence of the state's equations.** Two
+monomials whose difference lies in the lattice of the engine's rows are
+equal in the theory extended by the node and partition equations, when
+that theory cancels. With `x = {c}`, `y = {d}` this is a merge of
+`lattice_round`. Cancellation holds for a cancellative operator
+(`cancelClosed_of_cancellative`) and for a group of exponent `k`
+(`cancelClosed_of_nil`). -/
+theorem E_flat_of_mem {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hc : CancelClosed L (S ∪ flatEqs st)) {x y : Monomial n}
+    (h : vec x - vec y ∈ AddSubgroup.closure (engineRows L st)) :
+    E L (S ∪ flatEqs st) x y := by
+  rw [← stateLattice_eq_closure] at h
+  refine E_of_mem_latticeOf hc ?_ h
+  rintro p (hp | hp)
+  · exact E.ax (Or.inr hp)
+  · exact E.law hp
+
+/-- The merge of `lattice_round`: classes `c`, `d` with `e_c - e_d` in the
+lattice of the engine's rows are equal in the extended theory. -/
+theorem engine_merge_E {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hc : CancelClosed L (S ∪ flatEqs st)) {c d : Fin n}
+    (h : Pi.single c 1 - Pi.single d 1 ∈ AddSubgroup.closure (engineRows L st)) :
+    E L (S ∪ flatEqs st) {c} {d} :=
+  E_flat_of_mem hc (by rwa [vec_single, vec_single])
+
+/-- **The extended theory is lattice membership on the engine's rows.**
+When every asserted pair is a pair of classmates (the asserted equations
+are in the graph and merged) and the extended theory cancels, two
+monomials are equal in it exactly when their difference lies in the
+lattice of the engine's rows. So `lattice_round` merges exactly the
+classes the extended theory equates. -/
+theorem engine_E_iff {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.nodes ∧ (N, d) ∈ st.nodes ∧ st.find c = st.find d)
+    (hc : CancelClosed L (S ∪ flatEqs st)) (x y : Monomial n) :
+    E L (S ∪ flatEqs st) x y ↔ vec x - vec y ∈ AddSubgroup.closure (engineRows L st) := by
+  refine ⟨fun h => ?_, E_flat_of_mem hc⟩
+  rw [← stateLattice_eq_closure]
+  exact lattice_le_state hS (E_mem_lattice h)
+
+/-! ## The extended theory is the original one under the node invariant -/
+
+/-- A theory contains its extension by equations it already proves. -/
+theorem E_of_E_union {L : Laws n} {S T : Set (Monomial n × Monomial n)}
+    (hT : ∀ p ∈ T, E L S p.1 p.2) {x y : Monomial n} (h : E L (S ∪ T) x y) : E L S x y := by
+  induction h with
+  | ax h => exact h.elim E.ax (hT _)
+  | refl M => exact E.refl M
+  | symm _ ih => exact ih.symm
+  | trans _ _ ih₁ ih₂ => exact ih₁.trans ih₂
+  | congr X _ ih => exact E.congr X ih
+  | law h => exact E.law h
+  | cancel hc _ ih => exact E.cancel hc ih
+
+theorem E_union_left {L : Laws n} {S T : Set (Monomial n × Monomial n)} {x y : Monomial n}
+    (h : E L S x y) : E L (S ∪ T) x y := by
+  induction h with
+  | ax h => exact E.ax (Or.inl h)
+  | refl M => exact E.refl M
+  | symm _ ih => exact ih.symm
+  | trans _ _ ih₁ ih₂ => exact ih₁.trans ih₂
+  | congr X _ ih => exact E.congr X ih
+  | law h => exact E.law h
+  | cancel hc _ ih => exact E.cancel hc ih
+
+/-- The flattening invariant: the state's equations hold in the theory.
+Every class id is `=_E`-equal to the monomial of each node it carries, and
+two members of one class are `=_E`-equal. In the engine a node's id is the
+class created for its term, so `{c} = M` is the definition of `c`; the
+model states it here because its theory treats class ids as free summands.
+The partition part holds because every union of `merge_in_classes` is
+justified by an equation of the theory; for class ids that carry nodes it
+follows from the node part and I2 (`flatSound_of_nodeEqs`). -/
+def FlatSound (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : State n) : Prop :=
+  ∀ p ∈ flatEqs st, E L S p.1 p.2
+
+/-- Under the flattening invariant the extended theory is the theory. -/
+theorem E_flat_iff {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hf : FlatSound L S st) (x y : Monomial n) : E L (S ∪ flatEqs st) x y ↔ E L S x y :=
+  ⟨E_of_E_union hf, E_union_left⟩
+
+/-- The partition part of the flattening invariant follows from the node
+equations and I2 for every pair of classmates that are both class ids of
+nodes; only a member of a class without a node of its own id (a leaf of
+another operator merged into the class) needs it separately. -/
+theorem flatSound_of_nodeEqs {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hnode : ∀ M c, (M, c) ∈ st.nodes → E L S {c} M) (h2 : I2 L S st)
+    (hids : ∀ c d, st.find c = st.find d → c ≠ d →
+      (∃ M, (M, c) ∈ st.nodes) ∧ ∃ N, (N, d) ∈ st.nodes) :
+    FlatSound L S st := by
+  rintro p (⟨M, c, hM, rfl⟩ | ⟨c, d, hcd, rfl⟩)
+  · exact hnode M c hM
+  · by_cases h : c = d
+    · subst h; exact E.refl _
+    · obtain ⟨⟨M, hM⟩, N, hN⟩ := hids c d hcd h
+      exact (hnode M c hM).trans ((h2 M c N d hM hN hcd).trans (hnode N d hN).symm)
+
+/-- The flattening invariant implies I2. -/
+theorem I2_of_flatSound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hf : FlatSound L S st) : I2 L S st := by
+  intro M c M' c' hM hM' hcc'
+  have h₁ : E L S {c} M := hf _ (Or.inl ⟨M, c, hM, rfl⟩)
+  have h₂ : E L S {c'} M' := hf _ (Or.inl ⟨M', c', hM', rfl⟩)
+  have h₃ : E L S {c} {c'} := hf _ (Or.inr ⟨c, c', hcc', rfl⟩)
+  exact h₁.symm.trans (h₃.trans h₂)
+
+/-- A merge of two `=_E`-equal classes keeps the flattening invariant. -/
+theorem merge_flatSound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hf : FlatSound L S st) {c d : Fin n} (hcd : E L S {c} {d}) :
+    FlatSound L S (st.merge c d) := by
+  have hcls : ∀ a b, st.find a = st.find b → E L S {a} {b} :=
+    fun a b h => hf _ (Or.inr ⟨a, b, h, rfl⟩)
+  rintro p (⟨M, a, hM, rfl⟩ | ⟨a, b, hab, rfl⟩)
+  · exact hf _ (Or.inl ⟨M, a, hM, rfl⟩)
+  · simp only [State.merge] at hab
+    show E L S {a} {b}
+    split_ifs at hab with ha hb hb
+    · exact (hcls a c ha).trans (hcls c b hb.symm)
+    · exact (hcls a c ha).trans (hcd.trans (hcls d b hab))
+    · exact (hcls a d hab).trans (hcd.symm.trans (hcls c b hb.symm))
+    · exact hcls a b hab
+
+/-- **A merge of `lattice_round` is sound.** Under the flattening
+invariant, when `=_E` cancels, classes `c`, `d` whose unit vectors are
+congruent modulo the lattice of the engine's rows are `=_E`-equal, and
+merging them keeps the flattening invariant and I2. -/
+theorem lattice_merge_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hf : FlatSound L S st) (hc : CancelClosed L S) {c d : Fin n}
+    (h : Pi.single c 1 - Pi.single d 1 ∈ AddSubgroup.closure (engineRows L st)) :
+    E L S {c} {d} ∧ FlatSound L S (st.merge c d) ∧ I2 L S (st.merge c d) := by
+  have hc' : CancelClosed L (S ∪ flatEqs st) := fun M N X h =>
+    (E_flat_iff hf M N).mpr (hc M N X ((E_flat_iff hf _ _).mp h))
+  have hE := (E_flat_iff hf _ _).mp (engine_merge_E hc' h)
+  have hf' := merge_flatSound hf hE
+  exact ⟨hE, hf', I2_of_flatSound hf'⟩
+
+/-! ## Lattice closure of a state -/
 
 /-- Lattice closure: active nodes whose vectors are congruent modulo the
 state's lattice are in one class. -/
@@ -289,85 +515,46 @@ def LatticeClosed (L : Laws n) (st : State n) : Prop :=
   ∀ M c N d, (M, c) ∈ st.active → (N, d) ∈ st.active →
     vec M - vec N ∈ stateLattice L st → st.find c = st.find d
 
-/-- The rows `lattice_round` builds: `e_c - vec M` for every node `(M, c)`,
-the law rows, and `e_c - e_d` for classmates (the engine indexes columns by
-representative, which identifies the columns of one class). -/
-def engineRows (L : Laws n) (st : State n) : Set (Fin n → ℤ) :=
-  {w | ∃ M c, (M, c) ∈ st.nodes ∧ w = Pi.single c 1 - vec M} ∪
-    {w | ∃ c d, st.find c = st.find d ∧ w = Pi.single c 1 - Pi.single d 1} ∪
-    pairVecs (lawPairs L)
-
 /-- The fixpoint condition of `lattice_round`: two node classes whose unit
-vectors are congruent modulo the row lattice are already one class (the
-step finds no merge). -/
+vectors are congruent modulo the lattice of the engine's rows are already
+one class (the step finds no merge). The engine's fixpoint also covers
+child classes; the completeness argument needs node classes only. -/
 def EngineFixed (L : Laws n) (st : State n) : Prop :=
   ∀ M c N d, (M, c) ∈ st.nodes → (N, d) ∈ st.nodes →
     Pi.single c 1 - Pi.single d 1 ∈ AddSubgroup.closure (engineRows L st) →
     st.find c = st.find d
 
-theorem stateLattice_le_engine (L : Laws n) (st : State n) :
-    stateLattice L st ≤ AddSubgroup.closure (engineRows L st) := by
-  rw [stateLattice, latticeOf, AddSubgroup.closure_le]
-  rintro w ⟨⟨M, N⟩, ⟨c, d, hM, hN, hcd⟩ | hl, rfl⟩
-  · have r₁ : Pi.single c 1 - vec M ∈ AddSubgroup.closure (engineRows L st) :=
-      AddSubgroup.subset_closure (Or.inl (Or.inl ⟨M, c, hM, rfl⟩))
-    have r₂ : Pi.single d 1 - vec N ∈ AddSubgroup.closure (engineRows L st) :=
-      AddSubgroup.subset_closure (Or.inl (Or.inl ⟨N, d, hN, rfl⟩))
-    have r₃ : Pi.single c 1 - Pi.single d 1 ∈ AddSubgroup.closure (engineRows L st) :=
-      AddSubgroup.subset_closure (Or.inl (Or.inr ⟨c, d, hcd, rfl⟩))
-    have e : vec M - vec N = Pi.single d 1 - vec N - (Pi.single c 1 - vec M) +
-        (Pi.single c 1 - Pi.single d 1) := by abel
-    exact e ▸ add_mem (sub_mem r₂ r₁) r₃
-  · exact AddSubgroup.subset_closure (Or.inr ⟨_, hl, rfl⟩)
-
 /-- **The engine's fixpoint is lattice-closed.** If `vec M - vec N` lies in
 the state's lattice, then `e_c - e_d = (e_c - vec M) - (e_d - vec N) +
-(vec M - vec N)` lies in the row lattice, and `EngineFixed` puts `c`, `d`
-in one class. -/
+(vec M - vec N)` lies in the lattice of the engine's rows, and
+`EngineFixed` puts `c`, `d` in one class. -/
 theorem latticeClosed_of_engineFixed {L : Laws n} {st : State n} (h : EngineFixed L st) :
     LatticeClosed L st := by
   intro M c N d hM hN hmem
   apply h M c N d hM.1 hN.1
-  have r₁ : Pi.single c 1 - vec M ∈ AddSubgroup.closure (engineRows L st) :=
-    AddSubgroup.subset_closure (Or.inl (Or.inl ⟨M, c, hM.1, rfl⟩))
-  have r₂ : Pi.single d 1 - vec N ∈ AddSubgroup.closure (engineRows L st) :=
-    AddSubgroup.subset_closure (Or.inl (Or.inl ⟨N, d, hN.1, rfl⟩))
-  have := add_mem (sub_mem r₁ r₂) (stateLattice_le_engine L st hmem)
+  rw [← stateLattice_eq_closure]
+  have := add_mem (sub_mem (node_row_mem (L := L) hM.1) (node_row_mem hN.1)) hmem
   convert this using 1
   abel
 
-/-- **A lattice merge is sound.** If the nodes of each class are
-`=_E`-equal (I2) and `=_E` cancels, two nodes whose vectors are congruent
-modulo the state's lattice are `=_E`-equal, and merging their classes
-preserves I2. -/
-theorem lattice_merge_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
-    (h2 : I2 L S st) (hc : CancelClosed L S) {M N : Monomial n} {c d : Fin n}
-    (hM : (M, c) ∈ st.nodes) (hN : (N, d) ∈ st.nodes) (hmem : vec M - vec N ∈ stateLattice L st) :
-    E L S M N ∧ I2 L S (st.merge c d) := by
-  have hE : E L S M N := by
-    refine E_of_mem_latticeOf hc ?_ hmem
-    rintro ⟨P, Q⟩ (⟨a, b, hP, hQ, hab⟩ | hl)
-    · exact h2 P a Q b hP hQ hab
-    · exact E.law hl
-  exact ⟨hE, merge_I2 h2 hM hN hE⟩
-
 /-! ## Completeness from lattice closure -/
 
-/-- **Completeness at a lattice-closed state.** If every asserted pair is a
-pair of active classmates, two `=_E`-equal active nodes are in one class.
-`E_mem_lattice` puts their difference in the lattice of the asserted pairs
-and the law instances, which is contained in the state's lattice. -/
+/-- **Completeness at a lattice-closed state, for the extended theory.** If
+every asserted pair is a pair of active classmates, two active nodes equal
+in the theory extended by the state's equations are in one class.
+`E_mem_lattice` puts their difference in the lattice of the asserted
+pairs, the state's equations and the law instances, which is the state's
+lattice (`lattice_le_state`). No cancellation is needed. -/
 theorem complete_of_latticeClosed {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} (hlat : LatticeClosed L st)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
-    (hMN : E L S M N) : st.find c = st.find d := by
-  refine hlat M c N d hM hN (latticeOf_mono ?_ (E_mem_lattice hMN))
-  rintro ⟨P, Q⟩ (h | h)
-  · obtain ⟨a, b, hP, hQ, hab⟩ := hS P Q h
-    exact Or.inl ⟨a, b, hP.1, hQ.1, hab⟩
-  · exact Or.inr h
+    (hMN : E L (S ∪ flatEqs st) M N) : st.find c = st.find d := by
+  refine hlat M c N d hM hN (lattice_le_state ?_ (E_mem_lattice hMN))
+  intro P Q h
+  obtain ⟨a, b, hP, hQ, hab⟩ := hS P Q h
+  exact ⟨a, b, hP.1, hQ.1, hab⟩
 
 /-- **Completeness at convergence without `hcancel`.** The hypotheses of
 `completion_complete_at_convergence`, with `hcancel` replaced by lattice
@@ -393,7 +580,7 @@ theorem completion_complete_cancellative_engine {L : Laws n}
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
     (hMN : E L S M N) : st.find c = st.find d := by
   by_cases hc : L.cancellative
-  · exact complete_of_latticeClosed (hlat hc) hS hM hN hMN
+  · exact complete_of_latticeClosed (hlat hc) hS hM hN (E_union_left hMN)
   · exact completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix hlaw hnf_ax hcp hcc
       hS (fun h => absurd h hc) hM hN hMN
 
@@ -418,131 +605,154 @@ theorem completion_complete_cancellative_engine' {L : Laws n}
   completion_complete_cancellative_engine h5₀ hrun ha h0 hcanon hfix hlaw hnf_ax hcp hcc hS
     (fun h => latticeClosed_of_engineFixed (hfixL h)) hM hN hMN
 
+/-- **The engine's fixpoint is complete for the extended theory.** At a
+fixpoint of `lattice_round` in which every asserted pair is a pair of
+active classmates, two active nodes equal in the theory extended by the
+state's equations are in one class, for every law set. With
+`lattice_merge_sound` (the extended theory is the theory under the
+flattening invariant, `E_flat_iff`), the engine's lattice merges are
+exactly the theory's consequences on the nodes present. -/
+theorem complete_of_engineFixed {L : Laws n} {S : Set (Monomial n × Monomial n)}
+    {st : State n} (hfixL : EngineFixed L st)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
+    (hMN : E L (S ∪ flatEqs st) M N) : st.find c = st.find d :=
+  complete_of_latticeClosed (latticeClosed_of_engineFixed hfixL) hS hM hN hMN
+
 /-! ## `hcancel` is not a consequence of lattice closure
 
 `hcancel` asks that joinability cancel a common summand for every triple of
 monomials, present in the state or not. Lattice closure constrains the
-nodes present only. The state below has the nodes `{c₂, c₀}` and
-`{c₁, c₀}` in class `c₀`, `{c₀³}` in class `c₁` and `{c₀⁴}` in class
-`c₂`, and the single rule `{c₂, c₀} → {c₁, c₀}`. It is converged and
-lattice-closed (every member of its lattice has `c₀`-coordinate zero, and
-the four nodes' `c₀`-counts separate the classes), and `{c₂} + {c₀}`,
-`{c₁} + {c₀}` are joinable while `{c₂}`, `{c₁}` are distinct normal forms.
-So the completeness theorem for a cancellative operator rests on lattice
-closure (`completion_complete_cancellative_engine`), not on `hcancel`.
-
-The model's `=_E` does not read a class as the sum of its node's children
-(flattening); `lattice_round` does, through its rows `e_c - vec M`, so the
-engine would merge more in this state. The witness concerns the abstract
-statement of `hcancel` only. -/
+nodes present only. The state below has the leaves `x = c₀`, `b = c₁`,
+`a = c₂`, each in its own class with the one-element node `{x}`, `{b}`,
+`{a}` (a node equation `{x} = {x}` constrains nothing), and the class `c₃`
+with the nodes `{a, a, x}` and `{b, b, x}`; the single rule is
+`{a, a, x} → {b, b, x}`. The lattice of the engine's rows is spanned by
+`e₃ - 2e₂ - e₀` and `2e₂ - 2e₁`: it contains `2(e_a - e_b)` but not
+`e_a - e_b`, and its members satisfy `w₀ + w₃ = 0`, `w₁` even and
+`w₁ + w₂ + 2w₃ = 0`, which no difference of two nodes of distinct classes
+and no `e_c - e_d` with `c ≠ d` satisfies. So the state is converged,
+lattice-closed and a fixpoint of `lattice_round`, and `{a, a} + {x}`,
+`{b, b} + {x}` are joinable while `{a, a}`, `{b, b}` are distinct normal
+forms. The completeness theorem for a cancellative operator therefore rests
+on lattice closure (`completion_complete_cancellative_engine`), not on
+`hcancel`. -/
 
 /-- AC with cancellation and no further law. -/
 def cancelAC (n : ℕ) : Laws n := { Laws.plainAC n with cancellative := True }
 
 /-- The witness state. -/
-def cexState : State 3 where
+def cexState : State 4 where
   find := id
-  nodes := {(({2, 0} : Monomial 3), 0), (({1, 0} : Monomial 3), 0),
-    (({0, 0, 0} : Monomial 3), 1), (({0, 0, 0, 0} : Monomial 3), 2)}
+  nodes := {(({2, 2, 0} : Monomial 4), 3), (({1, 1, 0} : Monomial 4), 3),
+    (({0} : Monomial 4), 0), (({1} : Monomial 4), 1), (({2} : Monomial 4), 2)}
   retired := ∅
-  rhs := ![{1, 0}, {0, 0, 0}, {0, 0, 0, 0}]
+  rhs := ![{0}, {1}, {2}, {1, 1, 0}]
 
-theorem cex_mem {M : Monomial 3} {c : Fin 3} (h : (M, c) ∈ cexState.nodes) :
-    (M = {2, 0} ∧ c = 0) ∨ (M = {1, 0} ∧ c = 0) ∨ (M = {0, 0, 0} ∧ c = 1) ∨
-      (M = {0, 0, 0, 0} ∧ c = 2) := by
+theorem cex_mem {M : Monomial 4} {c : Fin 4} (h : (M, c) ∈ cexState.nodes) :
+    (M = {2, 2, 0} ∧ c = 3) ∨ (M = {1, 1, 0} ∧ c = 3) ∨ (M = {0} ∧ c = 0) ∨
+      (M = {1} ∧ c = 1) ∨ (M = {2} ∧ c = 2) := by
   simpa only [cexState, Set.mem_insert_iff, Set.mem_singleton_iff, Prod.mk.injEq] using h
 
-theorem cex_active {M : Monomial 3} {c : Fin 3} : (M, c) ∈ cexState.active ↔
+theorem cex_active {M : Monomial 4} {c : Fin 4} : (M, c) ∈ cexState.active ↔
     (M, c) ∈ cexState.nodes := by
   simp [State.active, cexState]
 
-theorem cex_rules {p : Monomial 3 × Monomial 3} (h : p ∈ cexState.rules) :
-    p = (({2, 0} : Monomial 3), {1, 0}) := by
+theorem cex_rules {p : Monomial 4 × Monomial 4} (h : p ∈ cexState.rules) :
+    p = (({2, 2, 0} : Monomial 4), {1, 1, 0}) := by
   obtain ⟨c, c', hp, h2, hlt, -, -⟩ := h
-  rcases cex_mem (cex_active.mp hp) with ⟨h1, rfl⟩ | ⟨h1, rfl⟩ | ⟨h1, rfl⟩ | ⟨h1, rfl⟩
+  rcases cex_mem (cex_active.mp hp) with
+    ⟨h1, rfl⟩ | ⟨h1, rfl⟩ | ⟨h1, rfl⟩ | ⟨h1, rfl⟩ | ⟨h1, rfl⟩
   · exact Prod.ext h1 h2
   all_goals
     rw [h1, h2] at hlt
     exact absurd hlt (by decide)
 
-theorem cex_rule_mem : (({2, 0} : Monomial 3), ({1, 0} : Monomial 3)) ∈ cexState.rules :=
-  ⟨0, 0, cex_active.mpr (Or.inl rfl), rfl, by decide, Or.inr (Or.inl rfl), rfl⟩
+theorem cex_rule_mem :
+    (({2, 2, 0} : Monomial 4), ({1, 1, 0} : Monomial 4)) ∈ cexState.rules :=
+  ⟨3, 3, cex_active.mpr (Or.inl rfl), rfl, by decide, Or.inr (Or.inl rfl), rfl⟩
 
 /-- A step by the one rule, for any clamp-free reading. -/
-theorem cex_step {L : Laws 3} (hL : ∀ M, L.clamp M = M) {R : Rules 3}
-    (hR : ∀ p ∈ R, p = (({2, 0} : Monomial 3), {1, 0})) {M P : Monomial 3}
-    (h : Rw L R M P) : ({2, 0} : Monomial 3) ≤ M ∧ P = M - {2, 0} + {1, 0} := by
+theorem cex_step {L : Laws 4} (hL : ∀ M, L.clamp M = M) {R : Rules 4}
+    (hR : ∀ p ∈ R, p = (({2, 2, 0} : Monomial 4), {1, 1, 0})) {M P : Monomial 4}
+    (h : Rw L R M P) : ({2, 2, 0} : Monomial 4) ≤ M ∧ P = M - {2, 2, 0} + {1, 1, 0} := by
   obtain ⟨A, B, hAB, hA, rfl⟩ := h
   obtain ⟨rfl, rfl⟩ := Prod.mk.inj (hR _ hAB)
   exact ⟨hA, hL _⟩
 
-theorem cex_R (p : Monomial 3 × Monomial 3) (h : p ∈ cexState.rules ∪ (cancelAC 3).axRules) :
-    p = (({2, 0} : Monomial 3), {1, 0}) := by
+theorem cex_R (p : Monomial 4 × Monomial 4) (h : p ∈ cexState.rules ∪ (cancelAC 4).axRules) :
+    p = (({2, 2, 0} : Monomial 4), {1, 1, 0}) := by
   rcases h with h | h
   · exact cex_rules h
   · exact h.elim
 
-theorem cex_normal {L : Laws 3} (hL : ∀ M, L.clamp M = M) {R : Rules 3}
-    (hR : ∀ p ∈ R, p = (({2, 0} : Monomial 3), {1, 0})) {M : Monomial 3}
-    (hM : ¬ ({2, 0} : Monomial 3) ≤ M) (P : Monomial 3) : ¬ Rw L R M P :=
+theorem cex_normal {L : Laws 4} (hL : ∀ M, L.clamp M = M) {R : Rules 4}
+    (hR : ∀ p ∈ R, p = (({2, 2, 0} : Monomial 4), {1, 1, 0})) {M : Monomial 4}
+    (hM : ¬ ({2, 2, 0} : Monomial 4) ≤ M) (P : Monomial 4) : ¬ Rw L R M P :=
   fun h => hM (cex_step hL hR h).1
 
-theorem cex_step_rule : Rw (cancelAC 3) cexState.rules ({2, 0} : Monomial 3) {1, 0} :=
+theorem cex_step_rule :
+    Rw (cancelAC 4) cexState.rules ({2, 2, 0} : Monomial 4) {1, 1, 0} :=
   ⟨_, _, cex_rule_mem, le_rfl, by
-    show ({1, 0} : Monomial 3) = ({2, 0} - {2, 0}) + {1, 0}
+    show ({1, 1, 0} : Monomial 4) = ({2, 2, 0} - {2, 2, 0}) + {1, 1, 0}
     rw [tsub_self, zero_add]⟩
 
-/-- Every member of the witness state's lattice has `c₀`-coordinate zero. -/
-theorem cex_lattice_zero {w : Fin 3 → ℤ} (hw : w ∈ stateLattice (cancelAC 3) cexState) :
-    w 0 = 0 := by
+/-- The linear invariants of the witness state's lattice. -/
+theorem cex_lattice_inv {w : Fin 4 → ℤ} (hw : w ∈ stateLattice (cancelAC 4) cexState) :
+    w 0 + w 3 = 0 ∧ w 1 % 2 = 0 ∧ w 1 + w 2 + 2 * w 3 = 0 := by
   induction hw using AddSubgroup.closure_induction with
   | mem w hw =>
-    obtain ⟨⟨M, N⟩, ⟨c, d, hM, hN, hcd⟩ | hl, rfl⟩ := hw
-    · change c = d at hcd
+    obtain ⟨⟨P, Q⟩, (⟨M, c, hM, he⟩ | ⟨c, d, hcd, he⟩) | hl, rfl⟩ := hw
+    · obtain ⟨rfl, rfl⟩ := Prod.mk.inj he
+      rcases cex_mem hM with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+        decide
+    · obtain ⟨rfl, rfl⟩ := Prod.mk.inj he
+      change c = d at hcd
       subst hcd
-      rcases cex_mem hM with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
-      rcases cex_mem hN with ⟨rfl, h⟩ | ⟨rfl, h⟩ | ⟨rfl, h⟩ | ⟨rfl, h⟩ <;>
-      first | exact absurd h (by decide) | decide
+      simp
     · exact hl.elim
-  | zero => rfl
-  | add w w' _ _ ih ih' => simp [ih, ih']
-  | neg w _ ih => simp [ih]
+  | zero => simp
+  | add w w' _ _ ih ih' => simp only [Pi.add_apply]; omega
+  | neg w _ ih => simp only [Pi.neg_apply]; omega
 
-/-- **`hcancel` fails at a converged, lattice-closed state of a cancellative
-operator.** The state satisfies `RoundFixed`, `I0Active`, `I5`, `hcc`,
-canonical right-hand sides, `hcp` (one rule, so no pair of distinct rules),
-`LatticeClosed`, and `hS` for `S = {({c₂, c₀}, {c₁, c₀})}`; the conclusion
-of `hcancel` fails for `M = {c₂}`, `N = {c₁}`, `X = {c₀}`. -/
+/-- **`hcancel` fails at a converged, lattice-closed fixpoint of
+`lattice_round` for a cancellative operator.** The state satisfies
+`RoundFixed`, `I0Active`, `I5`, `hcc`, canonical right-hand sides, `hcp`
+(one rule, so no pair of distinct rules), `LatticeClosed`, `EngineFixed`,
+and `hS` for `S = {({a, a, x}, {b, b, x})}`; the conclusion of `hcancel`
+fails for `M = {a, a}`, `N = {b, b}`, `X = {x}`. -/
 theorem hcancel_not_derivable :
-    (cancelAC 3).cancellative ∧ RoundFixed (cancelAC 3) cexState ∧ I0Active cexState ∧
-      I5 cexState ∧ (∀ c, (cancelAC 3).clamp (cexState.rhs c) = cexState.rhs c) ∧
+    (cancelAC 4).cancellative ∧ RoundFixed (cancelAC 4) cexState ∧ I0Active cexState ∧
+      I5 cexState ∧ (∀ c, (cancelAC 4).clamp (cexState.rhs c) = cexState.rhs c) ∧
       (∀ P c d, (P, c) ∈ cexState.nodes → (P, d) ∈ cexState.nodes →
         cexState.find c = cexState.find d) ∧
-      (∀ r₁ r₂, r₁ ∈ cexState.rules ∪ (cancelAC 3).axRules →
-        r₂ ∈ cexState.rules ∪ (cancelAC 3).axRules → r₁ ≠ r₂ → False) ∧
-      LatticeClosed (cancelAC 3) cexState ∧
-      (∀ M N, (M, N) ∈ ({(({2, 0} : Monomial 3), ({1, 0} : Monomial 3))} :
-          Set (Monomial 3 × Monomial 3)) →
+      (∀ r₁ r₂, r₁ ∈ cexState.rules ∪ (cancelAC 4).axRules →
+        r₂ ∈ cexState.rules ∪ (cancelAC 4).axRules → r₁ ≠ r₂ → False) ∧
+      LatticeClosed (cancelAC 4) cexState ∧ EngineFixed (cancelAC 4) cexState ∧
+      (∀ M N, (M, N) ∈ ({(({2, 2, 0} : Monomial 4), ({1, 1, 0} : Monomial 4))} :
+          Set (Monomial 4 × Monomial 4)) →
         ∃ c d, (M, c) ∈ cexState.active ∧ (N, d) ∈ cexState.active ∧
           cexState.find c = cexState.find d) ∧
-      ¬ (∀ M N X : Monomial 3,
-        Joinable (Rw (plain 3) (cexState.rules ∪ (cancelAC 3).axRules)) (M + X) (N + X) →
-        Joinable (Rw (plain 3) (cexState.rules ∪ (cancelAC 3).axRules)) M N) := by
-  have nrm : ∀ {M : Monomial 3}, ¬ ({2, 0} : Monomial 3) ≤ M →
-      ∀ P, ¬ Rw (cancelAC 3) cexState.rules M P :=
+      ¬ (∀ M N X : Monomial 4,
+        Joinable (Rw (plain 4) (cexState.rules ∪ (cancelAC 4).axRules)) (M + X) (N + X) →
+        Joinable (Rw (plain 4) (cexState.rules ∪ (cancelAC 4).axRules)) M N) := by
+  have nrm : ∀ {M : Monomial 4}, ¬ ({2, 2, 0} : Monomial 4) ≤ M →
+      ∀ P, ¬ Rw (cancelAC 4) cexState.rules M P :=
     fun h => cex_normal (fun _ => rfl) (fun p hp => cex_rules hp) h
-  refine ⟨trivial, ⟨?_, ?_⟩, ?_, ?_, fun _ => rfl, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨trivial, ⟨?_, ?_⟩, ?_, ?_, fun _ => rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · -- `nf_present`: a normal form of a node is a node of its class
     intro M c N hM hMN hN
     have ha := cex_active.mp hM
-    rcases cex_mem ha with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+    rcases cex_mem ha with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
     · rcases hMN.cases_head with rfl | ⟨P, hP, hPN⟩
       · exact absurd (hN _) (not_not.mpr cex_step_rule)
       · obtain ⟨-, rfl⟩ := cex_step (fun _ => rfl) (fun p hp => cex_rules hp) hP
-        have e : ({2, 0} : Monomial 3) - {2, 0} + {1, 0} = {1, 0} := by rw [tsub_self, zero_add]
+        have e : ({2, 2, 0} : Monomial 4) - {2, 2, 0} + {1, 1, 0} = {1, 1, 0} := by
+          rw [tsub_self, zero_add]
         rw [e] at hPN
         rw [← rtg_of_normal (nrm (by decide)) hPN]
-        exact ⟨0, cex_active.mpr (Or.inr (Or.inl rfl)), rfl⟩
+        exact ⟨3, cex_active.mpr (Or.inr (Or.inl rfl)), rfl⟩
     all_goals
       rw [← rtg_of_normal (nrm (by decide)) hMN]
       exact ⟨_, hM, rfl⟩
@@ -551,33 +761,41 @@ theorem hcancel_not_derivable :
   · intro c
     refine ⟨c, cex_active.mpr ?_, rfl⟩
     fin_cases c
-    · exact Or.inr (Or.inl rfl)
     · exact Or.inr (Or.inr (Or.inl rfl))
-    · exact Or.inr (Or.inr (Or.inr rfl))
+    · exact Or.inr (Or.inr (Or.inr (Or.inl rfl)))
+    · exact Or.inr (Or.inr (Or.inr (Or.inr rfl)))
+    · exact Or.inr (Or.inl rfl)
   · intro M c hM
-    rcases cex_mem (cex_active.mp hM) with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+    rcases cex_mem (cex_active.mp hM) with
+      ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
     · exact Or.inr (by decide)
     all_goals exact Or.inl rfl
   · intro P c d hc hd
-    rcases cex_mem hc with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
-    rcases cex_mem hd with ⟨h, rfl⟩ | ⟨h, rfl⟩ | ⟨h, rfl⟩ | ⟨h, rfl⟩ <;>
+    rcases cex_mem hc with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+    rcases cex_mem hd with ⟨h, rfl⟩ | ⟨h, rfl⟩ | ⟨h, rfl⟩ | ⟨h, rfl⟩ | ⟨h, rfl⟩ <;>
     first | rfl | exact absurd h (by decide)
   · intro r₁ r₂ h₁ h₂ hne
     exact hne ((cex_R _ h₁).trans (cex_R _ h₂).symm)
   · intro M c N d hM hN hw
-    have h0 := cex_lattice_zero hw
-    rcases cex_mem hM.1 with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
-    rcases cex_mem hN.1 with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
-    first | rfl | exact absurd h0 (by decide)
+    have h := cex_lattice_inv hw
+    rcases cex_mem hM.1 with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+    rcases cex_mem hN.1 with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+    first | rfl | exact absurd h (by decide)
+  · intro M c N d hM hN hw
+    rw [← stateLattice_eq_closure] at hw
+    have h := cex_lattice_inv hw
+    rcases cex_mem hM with ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ <;>
+    rcases cex_mem hN with ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ <;>
+    first | rfl | exact absurd h (by decide)
   · intro M N h
     simp only [Set.mem_singleton_iff, Prod.mk.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
-    exact ⟨0, 0, cex_active.mpr (Or.inl rfl), cex_active.mpr (Or.inr (Or.inl rfl)), rfl⟩
+    exact ⟨3, 3, cex_active.mpr (Or.inl rfl), cex_active.mpr (Or.inr (Or.inl rfl)), rfl⟩
   · intro hcan
-    have hj : Joinable (Rw (plain 3) (cexState.rules ∪ (cancelAC 3).axRules))
-        ({2} + {0}) ({1} + {0}) :=
-      ⟨{1, 0}, ReflTransGen.single ⟨_, _, Or.inl cex_rule_mem, le_rfl, by
-        show ({1, 0} : Monomial 3) = ({2, 0} - {2, 0}) + {1, 0}
+    have hj : Joinable (Rw (plain 4) (cexState.rules ∪ (cancelAC 4).axRules))
+        ({2, 2} + {0}) ({1, 1} + {0}) :=
+      ⟨{1, 1, 0}, ReflTransGen.single ⟨_, _, Or.inl cex_rule_mem, le_rfl, by
+        show ({1, 1, 0} : Monomial 4) = ({2, 2, 0} - {2, 2, 0}) + {1, 1, 0}
         rw [tsub_self, zero_add]⟩, ReflTransGen.refl⟩
     obtain ⟨P, h₁, h₂⟩ := hcan _ _ _ hj
     have e₁ := rtg_of_normal (cex_normal (fun _ => rfl) cex_R (by decide)) h₁
