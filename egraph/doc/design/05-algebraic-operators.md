@@ -207,7 +207,9 @@ engine did not establish, and completion missed their consequences. For an opera
   `g(y)` exists.
 
 Each is `{x, g(x)} = ∅` combined with another instance of itself, the unit drop, a rule, or
-`x^k = ∅`, so every merge is in `=_T` (`inv_rules_sound`). `inverse_law_repair` applies R1, R2,
+`x^k = ∅`, so every merge is in `=_T` (`inv_rules_sound`, `CC/Laws/InvRules.lean`; the
+`semper-conform-cc` programs of the `inv` and `nil` families test the engine against the
+model). `inverse_law_repair` applies R1, R2,
 R4 and R5 at every rebuild in every mode, from `canon_repair_round` next to
 `inverse_cancel_repair`; R3 joins the per-rule axiom critical pairs of `cc_round` (Chapter 6
 §S3.1). Failing program for R1 (`tests/egg/ac_inverse_matching.egg`): after
@@ -605,6 +607,18 @@ ground-truth checker `cc_axiom_cps_nonjoinable`, asserted under `CHECK_AC_BASIS`
 Identity needs no axiom pairs (Lemma 4.3), provided the unit-drop also runs on the
 recanonize path (`CanonMode.unit` + the became-a-unit sweep in `rebuild_congruence`),
 not just at build.
+
+#### Cancelative operators: cancellation of one equation at a time is not complete
+
+Kapur's §5 inferences for a cancelative operator, cancel-closure of each rule and
+superposition of disjoint pairs, cancel the common part of one equation at a time. The
+cancelative congruence relates two monomials when their difference lies in the lattice that
+all the equations span over ℤ, and those inferences do not reach every member of it. The
+engine closes the gap with `lattice_round` at the completion fixpoint, also for `:identity`
+with `:nilpotent`, which is a group (commit `cdcb2186`). Chapter 6 §9c gives the mechanisms,
+the fixtures and the Lean theorems (`CC/Lattice.lean`: `completion_complete_cancellative_engine`
+replaces the hypothesis `hcancel` by lattice closure, which the step's fixpoint gives);
+Chapter 13 §5 item 23 states the invariant.
 
 ### Numbers for laws, ids for entities (why `order: u8`, why the unit is a node)
 
@@ -1067,7 +1081,10 @@ AND completion; `:cancellative` drives the Kapur §5 cancel-closure; `:inverse` 
 implies cancelative) drives inverse-pair cancellation and, since commit `e1e6aec8`, the
 cross-node rules R1-R5 (§5.2; this paragraph named pair cancellation only before
 2026-11-04). Full Abelian-group completion
-(§5.4 signed counts / Gaussian elimination) is postponed indefinitely. The pre-combined
+(§5.4 signed counts / Gaussian elimination) is postponed indefinitely. (Corrected 2026-11-05:
+`lattice_round`, commit `cdcb2186`, runs integer echelon form over the equations among the
+classes present and merges classes with equal coset representatives; signed counts and inverse
+nodes that were never built remain out of scope.) The pre-combined
 aliases `:assoc-comm` / `:assoc-comm-idem` remain accepted for compatibility and expand
 to the basic tags.
 

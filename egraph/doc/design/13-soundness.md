@@ -374,6 +374,13 @@ and cancellative critical pairs. Those are implemented correspondences to
 Kapur's constructions, supported by focused fixtures and finite invariant
 checks, not machine-checked completeness theorems. The validation obligation
 for cancellative completion when constants enter the pool late remains open.
+(Correction, 2026-11-05: the cancel-closure and cancelative critical pairs are not complete
+on their own. `cancel_lattice.egg` converged without `c1c3² = ∅`. Commit `cdcb2186` adds
+`lattice_round` (item 23 of §5). In Lean, `completion_complete_at_convergence` takes the
+cancelative case as the hypothesis `hcancel`; `completion_complete_cancellative_engine`
+(`CC/Lattice.lean`) replaces it by `LatticeClosed`, which the fixpoint of `lattice_round`
+gives (`latticeClosed_of_engineFixed`), and `hcancel_not_derivable` shows that `hcancel`
+itself does not follow from lattice closure.)
 
 Inverse support is narrower: the implementation cancels explicit
 `x`/`inv(x)` pairs that are represented in the graph. It does not implement
@@ -430,6 +437,34 @@ confirm the rule set is reduced at a fixpoint are in the
   `tests/egg/conform/`) and the fixtures named in §5 check the engine against the models on
   finite programs; associativity without commutativity has no complete terminating completion
   and is not claimed (`proofs/repro/assoc-incomplete.egg`, §3.4).
+- **Scope of the final theorems** (added 2026-11-05, from an audit of the Lean development).
+  `completion_complete_at_convergence`, the theorems of `CC/Bridge/` and
+  `saturation_modulo_complete` cover less of the engine than their names suggest, in four
+  ways. (H1) The hypothesis `I0Active` (`CC/Assemble.lean`) quantifies over every class of
+  `Fin n`, so the theorems cover graphs where every class holds an active node of the
+  operator; a graph with a leaf constant, whose class holds no such node, is outside them.
+  (H2) The theory `E` relates monomials over class ids and does not identify two child
+  classes that a merge joined, so the statements of the `CC/Bridge/` theorems are about the
+  monomials as the state stores them. (H3) The hypothesis that the stored minimal monomials
+  reach the final state by `SlotState.OpsStar` from a state satisfying I5 is met with the
+  initial state equal to the final one, so the main theorems in effect assume I5 at the final
+  state. (M5) The effects of rule actions are fields of `ActRound`
+  (`EMatch/Engine/Saturate/ActRound.lean`), assumed, not modelled from `apply.rs`. Chapters 6
+  §9c, 7 §7.5 and 9 §9.2 point here where they cite these theorems.
+- **Tested against the Lean model on generated programs** (added 2026-11-05). Five generators
+  in `proofs/lean/Conform` write programs the engine must agree with: `semper-conform`
+  (`tests/egg/conform/`), `semper-conform-flatten` (`tests/egg/conform-flatten/`),
+  `semper-conform-cc` (`tests/egg/conform-cc/`), `semper-conform-rounds`
+  (`tests/egg/conform-rounds/`), and `semper-conform-cc-cert` (`tests/egg/conform-cc-cert/`),
+  whose `check-neq` pairs `not_E_of_separates` certifies. Chapter 6 §9c, Chapter 7 §7.5 and
+  Chapter 9 §9.2 ("What is machine-checked") state what each one checks.
+- **Not modelled, evidence by fixtures only** (added 2026-11-05): in `lattice_round`, the
+  echelon form, coset representatives and the hypothesis `FlatSound` (§2.4; item 23 of §5);
+  in `a_round`, recanonicalization by rebuild, termination interleaved with AC rounds and
+  congruence, and the one-element collapse in `add` (§3.4; item 25); the use-list partner
+  search, incremental rounds and budgets of completion; `spelling_epoch` (item 22); the
+  soundness of actions at round level; and the correspondence of every model to the Rust
+  code.
 
 ## 5. Implementation invariants the correctness claims depend on
 
@@ -445,6 +480,7 @@ is fixed on this branch.
    whenever recanonization shrinks a node below it ([§9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
 2. A merge never makes a stored node grow in the completion order, so monomials are
    compared by a per-class key that a merge only lowers, not by the survivor's id
+   (`ab214e9c`, `ac_minmono_grow_wa.egg`, Lean `keyed_reachable_I5`)
    ([§9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep);
    [Chapter 2](02-classes-and-union-find.md#merge-survivor-policy---union-by)).
 3. Completion merges a node's normal form into its class before it flags the node collapsed
@@ -490,7 +526,8 @@ is fixed on this branch.
 
 13. A view opens a fold's nested child only on its spine, because any other opening spells a
     different term and makes the rewrite unsound
-    ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten)).
+    ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten); every fold caveat:
+    [§7.5, "Left- and right-associative operators"](07-rules-and-pattern-matching.md#left--and-right-associative-operators)).
 14. The demand rule keeps a match whose untaken leaf opened a taken class (multisets) or whose
     closing is not inert under the laws, because refolding that leaf does not carry the match
     ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten)).
@@ -517,18 +554,34 @@ is fixed on this branch.
     minimal-monomial change alters the node a right-hand side builds and enters no delta
     (`spelling_epoch`; `semi_naive_atomic_semi.egg`, `semi_naive_minmono.egg`;
     [§9.2](09-saturation.md#a-build-time-choice-the-delta-cannot-see)).
-23. Cancelative completeness needs lattice membership, not per-equation cancelation: Kapur's
-    §5 inferences converge without `c1c3² = ∅` in `cancel_lattice.egg`. `lattice_round`
-    runs at every completion fixpoint, also for `:identity` with `:nilpotent`, which is a
-    group (`nilpotent_group_lattice.egg`).
-24. A collapsed node must leave the rule set only while a rule reduces it. Collapse marks
-    the node object (`FLAG_AC_COLLAPSED`), and hash-consing can return that object as the
-    normal form a later collapse or critical pair materializes, after its monomial changed
-    or the reducing rule was retired. The materialization and the recanonicalization clear
-    the flag; otherwise the irreducible rule is never superposed and `C5 = C5·C5` is not
-    derived (`ac_collapsed_recanon.egg`). Kapur's Algorithm 1 step 4(i) and Conchon et al.'s
-    Collapse return the reduced rule to the equation set for the same reason, and the Lean
-    model keys `retired` by monomial, so `RoundFixed.nf_present` (normal forms are active)
-    states the requirement.
+23. Cancelative completeness needs lattice membership, not per-equation cancelation, so
+    `lattice_round` runs at every completion fixpoint, also for `:identity` with `:nilpotent`
+    (`cancel_lattice.egg`, `nilpotent_group_lattice.egg`; Lean
+    `completion_complete_cancellative_engine`;
+    [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+    (Shortened 2026-11-05: this item and the next gave the mechanisms, which §9c now holds.)
+24. A collapsed node leaves the rule set only while a rule reduces it, so materialization and
+    recanonicalization clear `FLAG_AC_COLLAPSED` (`ac_collapsed_recanon.egg`, Lean
+    `RoundFixed.nf_present`; [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+25. `a_round` rewrites a fold's spelling only on its spine, a prefix for `:assoc-left` and a
+    suffix for `:assoc-right`, because any other run spells no subterm and the merge is unsound
+    (`7beed39f`, `ac_fold_completion_spine.egg`, Lean `aRound_sound`, `left_off_spine_unsound`;
+    [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep); every
+    fold caveat:
+    [§7.5, "Left- and right-associative operators"](07-rules-and-pattern-matching.md#left--and-right-associative-operators)).
+26. Completion skips a partner whose left-hand side is disjoint from the rule's, because the use
+    lists list stored children and the clamp can remove one of them (`e97b80e0`,
+    `conform-cc/cc1_0143.egg`; [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+27. A lazy decision charges every node it mints to one budget and meters each completion round,
+    because otherwise a lazy check does not return (`4ee0cf45`,
+    `ac_lazy_budget_inconclusive.egg`; [Chapter 6 §13](06-ac-congruence-closure.md#13-lazy-completion-on-demand-search-paid-per-query)).
+28. An index filter excludes a node only when its content is unmatchable, because the delta
+    holds a content's only witness when a merge flags it `FLAG_CONGRUENT_DUP`
+    (`index::tests::congruent_dup_is_the_only_delta_representative`;
+    [§9.2](09-saturation.md#a-soundness-requirement-on-every-index-filter)).
+29. A rule that references a let-bound global in a child or element position matches the full
+    index every round, because the global's class can grow by absorbing a class that no atom of
+    the rule scans (`semi_recanon_parent_delta.egg`;
+    [§9.2](09-saturation.md#the-touched-log-and-merges-that-keep-the-stored-id)).
 ---
 [← Ch 12: Anti-Unification](12-anti-unification.md) · [Table of Contents](00-table-of-contents.md) · [Ch 14: Proof Logging →](14-proof-logging.md)

@@ -755,7 +755,13 @@ for the resulting properties has to be stated separately:
   live e-graph because actions merge classes but do not split them. Thus a
   binding accepted using the snapshot's classes remains valid when its action
   runs. This is an implementation argument, not a verified matcher-soundness
-  theorem.
+  theorem. (Corrected 2026-11-05: `engine_plan_sound` proves matching against the snapshot
+  sound for the model, and `saturation_modulo_sound` (`Final/Main.lean`) states the matching
+  side at a fixpoint. The soundness of the actions, that every node or merge present after a
+  round comes from a fired instance or from completion, is not in the model, as the
+  docstring of `saturation_modulo_sound` says. `denN_sound`, `firedN_sound` and
+  `union_recorded_sound` (`Fidelity/Sound.lean`) prove that what an action builds denotes the
+  right-hand side in every model of the graph and the laws.)
 - **Next-round visibility.** Nodes and merges produced by an earlier rule are
   absent from the current index. If the round changed the graph, the next
   iteration rebuilds a full index containing the new state. The naive driver
@@ -915,6 +921,42 @@ opening that contributes only by inverse cancellation or the nilpotent clamp, wa
 by commit `96279a6f` ("The demand rule and refolding", below). And views were also unsound on
 folds until commit `f995e5d6` ("Folds open only their spine", below). The degenerate-node
 exception stands.
+
+**What is machine-checked, what is tested against the model, and what is not modelled.**
+
+- Machine-checked for a model of the matcher (`proofs/lean/SemperProofs/EMatch/`):
+  maximum-partition matching for A, AC and ACI patterns, `ematch_sound` and `ematch_complete`
+  (`Main.lean`); every plan the scheduler can produce, `engine_plan_sound` and
+  `engine_plan_complete` (`Engine/Main.lean`); `:flatten` views, `views_sound` and
+  `views_complete` (`Flatten/Enum.lean`) and `flatten_match_{sound,complete}_{ac,aci,assoc}`;
+  the engine's demand rule, `demand_engine_complete_{ac,aci,assoc}`
+  (`Flatten/EngineComplete.lean`), sets under `TwoClassesL`; pruning, `prune_engine`
+  (`Flatten/EngineRule.lean`); the flattened plan with one view register per n-ary atom,
+  `flatten_plan_sound` and `flatten_plan_complete` (`Flatten/Plan.lean`); folds,
+  `otLeft_sound`, `otRight_sound` and the counter-model `fold_open_off_spine_unsound`
+  (`Flatten/Fold.lean`). Modulo the theory, over the e-nodes present:
+  `engine_match_modulo_complete` and `engine_match_modulo_sound` (`CC/Bridge/Modulo.lean`).
+- Hypotheses not visible in the statements above: the view bounds (`MAX_VIEWS`, `MAX_WORK`,
+  `MAX_ELEMS`) and multiplicity widths are hypotheses of the model, so a node over a bound,
+  which the engine skips and reports, is outside the theorems; and the model compares emitted
+  lists by membership, not `Nodup` (`proofs/lean/STATUS.md`, "Not modelled"). The theorems
+  modulo the theory, and `saturation_modulo_complete` below, have the scope limits stated in
+  [Chapter 13 §4](13-soundness.md#4-what-is-proved-argued-and-assumed) (2026-11-05): every
+  class holds an active node of the operator (`I0Active`), the theory does not identify merged
+  child classes, so the statements are about monomials as stored, I5 is in effect assumed at
+  the final state, and `ActRound` assumes the effects of rule actions.
+- Tested against the model on generated programs: `lake exe semper-conform`
+  (`proofs/lean/Conform`) writes `tests/egg/conform/`, and `lake exe semper-conform-flatten`
+  (`Conform/Flatten`) writes `tests/egg/conform-flatten/`, with nested atoms, laws at two
+  levels, cycles and folds (commit `267d8f46`). `tests/conform.rs` runs each file under both
+  evaluation strategies and both atom-scheduling choices; the Lean workflow regenerates both
+  directories and fails on a difference. The brute-force references of
+  `tests/flatten_differential.rs` and `tests/seq_reference.rs` are a second, independent check.
+- Not modelled: the galloping cursor; faults inside sequence sub-queries; literals,
+  sequence-filter patterns and predicates in the base model (`EMatch/Defs.lean` header);
+  `:flatten` and sequence rules across rounds, which the engine matches against the full
+  index each round (§9.2); and the correspondence of the model to `ematch.rs` and
+  `flatten.rs`.
 
 What the completeness theorem states is fixed by three results of the proofs, and a test or a
 claim that contradicts one of them is wrong, not the engine:
@@ -1141,7 +1183,10 @@ are structurally 1 due to idempotency).
 Each pattern element must match a distinct child. The rest variable
 captures the unmatched children. This is the set analogue of the
 maximum-partition relation above; its implementation has finite test evidence,
-not a soundness or completeness theorem.
+not a soundness or completeness theorem. (Corrected 2026-11-05: the Lean model includes ACI
+patterns, `MatchN.aci` in `EMatch/Defs.lean` and `decomposeACI` in `EMatch/Ref.lean`, so
+`ematch_sound`, `ematch_complete`, `engine_plan_sound` and `engine_plan_complete` cover
+subset matching for the model; the correspondence to `ematch.rs` is tested, not proved.)
 
 ### Flattened Matching (`:flatten`)
 
@@ -1178,7 +1223,8 @@ scheduler passed `FlatKind::Assoc` for a fold and every position was opened. Fai
 equal". The sequence-rule walk (`views_u64`) had the same defect and the same fix. Lean:
 `fold_open_off_spine_unsound`, the counter-model, and `otLeft_sound`/`otRight_sound`, every
 spine-only view denotes the node's term (`EMatch/Flatten/Fold.lean`). Keeping a class whole is
-unchanged, so the demand rule below is unaffected.
+unchanged, so the demand rule below is unaffected. "Left- and right-associative operators",
+below, collects every fold caveat.
 
 **The demand rule** (`doc/goal-canonical-flatten-views.md` in the ltl-eqsat repository,
 decision 2). A class is
@@ -1286,6 +1332,49 @@ rule's id, as any rewrite's does (`flatten_differential::a_flattened_union_cites
 The rule's left-hand side instance equals the root node only modulo associativity. Semper's
 proofs are explanation steps and replay no instance, so they need no associativity step.
 
+#### Left- and right-associative operators
+
+Added 2026-11-05. The caveats below hold for every operator declared `:assoc-left` or
+`:assoc-right`; each names its evidence.
+
+- **A fold declares a nesting, not associativity.** The tag fixes which nested same-operator
+  child the store flattens; it does not assert `f(f(a, b), c) = f(a, f(b, c))`. For
+  subtraction, `a - (b - c)` is not `(a - b) - c`, and the engine keeps the two terms in
+  different classes unless a rule or a `union` joins them (`flatten_fold_spine.egg`, its
+  first two `check-neq`).
+- **Build-time flattening follows the spine only.** `add` splices a nested same-operator
+  child into a left fold only at the first position and into a right fold only at the last
+  (`flatten_seq_children`;
+  [Chapter 5, "A-Only Operators"](05-algebraic-operators.md#a-only-operators--flattening-and-singleton-collapse)).
+  A left fold stores `f(f(a, b), c)` as `[a, b, c]` and `f(a, f(b, c))` as `[a, f[b, c]]`.
+- **A `:flatten` view opens the spine only.** Opening any other nested child spells a
+  different term, and a rewrite on that view merges two terms that are not equal. "Folds open
+  only their spine", above, gives the mechanism (commit `f995e5d6`,
+  `tests/egg/flatten_fold_spine.egg`; Lean `fold_open_off_spine_unsound`, `otLeft_sound`,
+  `otRight_sound` in `EMatch/Flatten/Fold.lean`).
+- **Completion rewrites a prefix of a left fold and a suffix of a right fold.** `a_round`
+  rewrites a class's larger spelling to its least one inside other sequence nodes. On a fold,
+  any other run spells no subterm, and the rewrite merges terms that are not equal (commit
+  `7beed39f`, `tests/egg/ac_fold_completion_spine.egg`; Lean `rewrite_left_sound`,
+  `rewrite_right_sound`, `left_off_spine_unsound`, `right_off_spine_unsound`, `aRound_sound`
+  and `aRoundH_sound` in `CC/ARound/`;
+  [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+- **A binary pattern does not match a flattened fold.** `(Sub x y)` binds one child per
+  variable, so it matches a stored node of two elements only. The store holds `(a - b) - c`
+  as `[a, b, c]`, and neither plain matching nor a `:flatten` view regroups the run `[a, b]`
+  into one child: a view opens nested children and never closes a run. After
+  `(rewrite (Sub x y) (T2 x y))`, with or without `:flatten`,
+  `(check-eq t (T2 (Sub (A) (B)) (C)))` reports "terms are not equal". Write the pattern at
+  the stored arity, `(Sub x y z)`, or with a rest variable, `(Sub ..p y)`, which binds `p` to
+  `[a, b]` and `y` to `c`. Fixture: `tests/egg/flatten_fold_binary_pattern.egg`, which pins
+  the miss with `check-neq` and the two working forms with `check-eq`, under both strategies.
+- **A fold combines with none of `:comm`, `:identity`, `:nilpotent`, `:inverse`.** The sort
+  checker rejects `:comm` with a fold
+  (`:assoc-left/:assoc-right cannot be combined with :comm`), and the three laws, with
+  `:idempotent`, require `:comm` (`:idempotent/:nilpotent/:identity/:inverse require :comm`)
+  (`sortcheck.rs`;
+  [Chapter 5, "Validation at registration"](05-algebraic-operators.md#validation-at-registration)).
+
 #### Alternatives considered and rejected
 
 - **AC completion to supply the flat node.** Completion orients toward the reduced
@@ -1325,7 +1414,10 @@ chain, the view bound, and proofs mode. The egg programs are `flatten_nested.egg
 `flatten_rest_only.egg`, each with a `_control`; `flatten_cycle.egg`,
 `flatten_two_members.egg`, `flatten_assoc.egg`, `flatten_ac_mult.egg`,
 `mult_flatten_view_overflow.egg`, `flatten_with_nary_no_warning.egg`, and
-`flatten_without_nary_warns.egg`; and the `seq_flatten*.egg` programs.
+`flatten_without_nary_warns.egg`; `flatten_fold_spine.egg` and
+`flatten_fold_binary_pattern.egg` for folds; and the `seq_flatten*.egg` programs. The 200
+programs of `tests/egg/conform-flatten/` come from the Lean model (`semper-conform-flatten`;
+"What is machine-checked" above).
 
 ## 7.6 Sequence Patterns in the Relational Matcher
 

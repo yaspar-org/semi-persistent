@@ -723,6 +723,9 @@ sources), while leaving it fully hash-consed, in its class for parents, and **ma
 (Nodes are immutable and shared, and `mark`/`restore` rolls the node store back to a
 token; deleting would corrupt that history. The flag is part of the rolled-back node
 state, so a node collapsed after a `mark` is un-collapsed on `restore`.)
+The flag is also cleared when the node becomes irreducible: when hash-consing returns it as a
+newly materialized normal form, or when recanonization changes its monomial (commit
+`e06360e5`, §9c "Clear the collapsed flag when a node becomes irreducible").
 
 **Two distinct flags, two distinct concepts.** It is tempting to reuse `FLAG_SUBSUMED`
 for collapse, but they mean different things and the conflation hides a bug:
@@ -1704,7 +1707,9 @@ completeness theorem assumes I5 (`CC/Defs.lean`); §9c gives the rules that main
 
 `completion_complete_at_convergence` (`proofs/lean/SemperProofs/CC/Main.lean`) holds for a
 model of the completion state under invariants the engine has to maintain. Checking the engine
-against that model, and against the completion-oracle generator, gave the four rules below.
+against that model, and against the completion-oracle generator, gave the rules below
+(corrected 2026-11-05: this sentence said "the four rules"; the last five rules come from
+commits `e06360e5`, `cdcb2186`, `7beed39f`, `e97b80e0` and `4ee0cf45`, each named in its rule).
 Each arises from the interaction of two mechanisms, named in its first sentence; a change to
 either mechanism has to keep the rule. In the Lean files, `SlotState` (`CC/Slot.lean`) models
 the stored minimal monomials, one per class for one operator.
@@ -1770,6 +1775,178 @@ the folded stored minimal monomial, without visiting any rule. A stored rule tab
 each of those rules rewritten at every merge, and a rule it missed would keep a right-hand side
 that names an absorbed class.
 
+**Clear the collapsed flag when a node becomes irreducible.** The mechanisms are collapse,
+which flags the node object (`FLAG_AC_COLLAPSED`), and two events that change what that
+object denotes as a rule: hash-consing returns the flagged object when a later collapse or
+critical pair materializes its monomial, and `recanonize_parent` rewrites its monomial in
+place. After either event no rule may reduce the node. Completion never superposes a flagged
+node, so it misses that node's consequences. In `tests/egg/ac_collapsed_recanon.egg` (reduced from
+`semper-conform-cc-cert` seed 1004, case 655), the normal form `c2²c5` of `c2c4c5` was such a
+node, and `C5 = C5·C5` was not derived after `C2 = C3`. Commit `e06360e5` clears the flag
+when `cc_round` materializes a node and when `recanonize_parent` shrinks one. A reactivation
+counts as a change of the round, so the next round runs, and that round collapses the node
+again if a rule still reduces it. Kapur's Algorithm 1 step 4(i) returns a reduced rule to the
+equation set for the same reason. Lean: the model keys retired nodes by monomial, and
+`RoundFixed.nf_present` (`CC/Defs.lean`) requires the normal form of every active monomial to
+be an active node of the same class. Chapter 13 §5 item 24 states the invariant.
+
+**Close a cancelative operator with `lattice_round` at the completion fixpoint.** The
+mechanisms are Kapur's §5 inferences, which cancel the common part of one equation at a time
+(cancel-closure of each rule, superposition of disjoint pairs), and the cancelative
+congruence, which relates two monomials when their difference lies in the lattice the
+equations span over ℤ. The inferences do not reach every lattice member. In
+`tests/egg/cancel_lattice.egg` completion converged without `c1c3² = ∅`, which needs
+`c1c4² = c0²` plus two copies of `c4 = c0c3`. Completeness for a cancelative operator then
+fails. Commit `cdcb2186` runs `lattice_round` when a full round finds nothing: it brings the
+operator's equations to echelon form over ℤ, with `e_unit` for a declared identity, `order·e_x`
+under `:nilpotent` and `e_x + e_inv(x)` for each inverse node, and merges classes with equal
+coset representatives. Each merge is in `=_T` (Chapter 13 §2.4) and adds no node. A merge
+reopens completion. The step also runs for `:identity` with `:nilpotent`, which is a group
+and therefore cancelative (`tests/egg/nilpotent_group_lattice.egg`). Regressions, each failing
+without the step: `cancel_lattice.egg`, `cancel_crit_pair.egg`, `cancel_lattice_lazy.egg`,
+`nilpotent_group_lattice.egg`. Lean (`CC/Lattice.lean`): theory equality implies lattice
+membership for every law set (`E_mem_lattice`), and the converse holds when the theory cancels
+(`E_of_mem_lattice`); for the identity, nilpotent and inverse laws the equations
+`lattice_round` builds give exactly the theory (`combined_E_iff`). The model's lattice is the
+span of the equations the engine builds, one per node (the class equals the node's monomial)
+and one per pair of classmates (`stateLattice_eq_closure`). Each merge is a theory consequence
+and keeps I2 (`engine_merge_E`, `lattice_merge_sound`) under the hypothesis `FlatSound`, that
+every node and classmate equation holds in the theory; no theorem derives `FlatSound` from the
+engine's steps. The step's fixpoint gives `LatticeClosed` (`latticeClosed_of_engineFixed`), and
+`completion_complete_cancellative_engine` is `completion_complete_at_convergence` with the
+hypothesis `hcancel` (joinability cancels a common summand) replaced by `LatticeClosed`.
+`hcancel` itself does not follow from lattice closure: `hcancel_not_derivable` is a converged,
+lattice-closed state where it fails, because `hcancel` quantifies over every monomial and
+lattice closure over the nodes present. The model represents coset representatives as lattice
+membership only. Chapter 13 §5 item 23.
+
+**In `a_round`, rewrite a fold's spelling only where it spells a subterm.** The mechanisms
+are the A-only inter-reduction of §14, which rewrites an occurrence of a class's larger
+spelling inside another sequence node, and fold semantics. `:assoc-left` stores
+`f(f(x, c), d)` as `[x, c, d]`, so the run `[c, d]` spells no subterm. Before commit
+`7beed39f`, `a_round` rewrote a matching run at any offset. From `A - B = C - D` it derived
+`(X - A) - B = (X - C) - D`, which is false for `5 - 3 = 2 - 0`. That is an unsound merge,
+under eager, derived and lazy completion. A left fold now rewrites only a prefix and a right
+fold only a suffix. `:assoc` is unchanged, because every contiguous run spells a subterm.
+Regression: `tests/egg/ac_fold_completion_spine.egg`, which keeps the two spine equalities as
+`check-eq` and the two off-spine ones as `check-neq`. The matching twin of this rule is
+"Folds open only their spine" in Chapter 7 §7.5 (`flatten::spine`), and
+[Chapter 7 §7.5, "Left- and right-associative operators"](07-rules-and-pattern-matching.md#left--and-right-associative-operators)
+collects the fold caveats. Lean (`CC/ARound/`): a rewrite at a prefix of a left fold or a
+suffix of a right fold is sound in every magma (`rewrite_left_sound`, `rewrite_right_sound`),
+at any offset under `:assoc` in every semigroup (`rewrite_both_sound`), and every other offset
+of a fold has a counter-model in ℤ with subtraction (`left_off_spine_unsound`,
+`right_off_spine_unsound`); a spine-restricted merge keeps I2 (`aRound_sound`). The least
+spelling is unique (`isLeastSpelling_unique`), every other spelling rewrites towards it
+(`rule_of_ne_least`), an oriented rewrite decreases in shortlex (`rewriteAt_shortlex`,
+`orientedRewrite_wf`), and the engine's first-occurrence choice is an allowed step that exists
+whenever an occurrence does (`firstRule_theq`, `firstRule_complete`). With hash-consing, a
+rewrite to an existing node merges its class and keeps I2 (`aRoundH_sound`), and merges from a
+finite node set terminate (`aRoundH_wf`, `aRoundH_chain_bound`). Splicing a nested child keeps
+the denotation on the spine (`splice_den_left`, `splice_den_right`, `splice_den_both`) and has
+counter-models off it (`splice_off_spine_unsound_left`, `splice_off_spine_unsound_right`). Not
+modelled: recanonicalization by rebuild, termination of `a_round` interleaved with AC rounds
+and congruence, and the one-element collapse in `add`.
+
+**Skip a partner whose left-hand side is disjoint from the rule's.** The mechanisms are the
+class use lists, which list a node's stored children, and the clamp, which reads the
+left-hand side through the unit drop, the nilpotent reduction and inverse cancellation and can
+remove a class that the stored node still lists. A partner gathered from the use lists can
+therefore have a disjoint left-hand side. Before commit `e97b80e0` a `debug_assert` rejected
+that case, and the debug test jobs of CI failed on `tests/egg/conform-cc/cc1_0143.egg`
+(`:identity` with `:nilpotent 3`). Two disjoint left-hand sides have a trivially joinable
+critical pair, so `cc_round` now skips the pair together with the containment cases. No
+derived equality changes. Lean: not modelled; the model enumerates overlapping pairs
+(`RoundFixed.cp_joinable` quantifies over `Overlap r₁.1 r₂.1`).
+
+**Charge every node a lazy decision mints to one budget, and meter each completion round.**
+The mechanisms are the lazy decision, which alternates rule rounds with completion rebuilds,
+and the per-rebuild node budget, which reset at each rebuild. Before commit `4ee0cf45` the
+nodes the rule rounds minted were never charged, and one completion round over 19,315 rules
+could run for minutes while minting few nodes. A lazy check then did not return. §13 ("One
+node budget per decision", "A work budget per completion round") gives the two budgets and
+their defaults. Fixture: `tests/egg/ac_lazy_budget_inconclusive.egg`, whose `check-neq`
+reports the stop as inconclusive. No test bounds its wall-clock time (`egg_tests.rs`, the
+comment above `ac_lazy_budget_inconclusive`); a regression shows as a CI timeout. A budget
+stop is not `Converged`, so the completeness theorem makes no claim about it. Lean: not
+modelled.
+
+#### What is machine-checked, what is tested against the model, and what is not modelled
+
+**Machine-checked for a model of the completion state** (`proofs/lean/SemperProofs/CC/`; the
+whole list with hypotheses is `proofs/lean/STATUS.md`):
+
+- Soundness: `completion_sound` (`CC/Main.lean`): every inference step keeps I2, nodes of one
+  class are `=_E`-equal. `inv_rules_sound` (`CC/Laws/InvRules.lean`) extends it to R1-R5,
+  `lattice_merge_sound` (`CC/Lattice.lean`) to `lattice_round` under `FlatSound`, and
+  `aRound_sound`, `aRoundH_sound` (`CC/ARound/`) to the spine-restricted `a_round`.
+- Termination of the unbudgeted relation: `kapur_termination` (`CC/Lemmas.lean`).
+- Confluence: `confluent_modulo` (`CC/Main.lean`).
+- Completeness at convergence: `completion_complete_at_convergence` (`CC/Main.lean`):
+  `=_E`-equal active nodes are in one class. Its hypotheses are: the stored minimal monomials
+  satisfy I5 initially and every later operation keeps it (`SlotState.I5`,
+  `SlotState.OpsStar`, `SlotState.Agrees`; `reachable_I5` in `CC/Slot.lean` and
+  `keyed_reachable_I5` in `CC/MinMonoKey.lean` discharge this for the engine's operations);
+  `I0Active` (every class holds an active node, `CC/Assemble.lean`); `hcanon` (every class
+  right-hand side is clamped); `RoundFixed` (`CC/Defs.lean`) with `nf_present` (the normal
+  form of an active monomial is an active node of the same class) and `cp_joinable` (the
+  critical pair of two distinct overlapping rules is joinable); the law facts `hlaw` and
+  `hnf_ax`; `hcp` (critical pairs with the law rules are joinable); `hcc` (two nodes with one
+  monomial are in one class); `hS` (active nodes of one class spell every asserted pair); and
+  `hcancel` (for a cancelative operator, joinability cancels a common summand).
+- Cancelative operators: `completion_complete_cancellative_engine` (`CC/Lattice.lean`)
+  replaces `hcancel` by `LatticeClosed`, which the fixpoint of `lattice_round` gives
+  (`latticeClosed_of_engineFixed`); `hcancel` itself does not follow
+  (`hcancel_not_derivable`). The rule above lists the lattice theorems.
+- Per law: `completion_complete_{identity,nilpotent,idempotent,inverse,combined}`
+  (`CC/Laws/`) discharge `hlaw` and `hnf_ax`. `completion_complete_inverse_engine` and
+  `completion_complete_combined_engine` (`CC/Laws/InvRulesMain.lean`) replace the four
+  `:inverse` hypotheses by the engine's R1-R5 (Chapter 5 §5.2).
+- Order keys: `keyed_reachable_I5` and the counter-model `idOrder_grow_breaks_I5`
+  (`CC/MinMonoKey.lean`).
+- `a_round` on folds: the theorems of `CC/ARound/` listed in the rule above.
+- Separation: `not_E_of_separates` (`CC/Countermodel.lean`): a commutative-monoid valuation that
+  satisfies the asserted pairs and the law instances, cancelative when the operator is,
+  separates only pairs that are not `=_E`-equal.
+- Bridge to matching: `ac_equal_same_class_graph` and `engine_match_modulo_complete`
+  (`CC/Bridge/`), used by Chapter 7 §7.5 and Chapter 9.
+
+Scope (2026-11-05): `I0Active` asks every class to hold an active node of the operator, the
+theory does not identify merged child classes, the minimal-monomial history is met with an
+initial state equal to the final one, and `ActRound` assumes the effects of rule actions;
+[Chapter 13 §4](13-soundness.md#4-what-is-proved-argued-and-assumed) states these limits.
+
+**Tested against the model on generated programs, not proved for the Rust code:**
+
+- `lake exe semper-conform-cc` (`proofs/lean/Conform/CC`) writes `tests/egg/conform-cc/`
+  (cases 0-199 of seed 1). Its oracle is a bounded closure of the theory, proved sound by
+  `run_sound` and `run_sound_nf` (`CC/BoundedOracle.lean`), so a failing `check-eq` is an
+  engine completeness gap. The generator separates its `check-neq` pairs only at bounds B and
+  B+2, so a failing `check-neq` there is evidence, not proof, of unsoundness.
+  `tests/conform.rs` (`conform_cc_fixtures_agree_with_the_model`) runs every file under both
+  evaluation strategies, and the Lean workflow regenerates the directory and fails on a
+  difference (`tests/egg/conform-cc/README.md`).
+- `lake exe semper-conform-cc-cert` (`Conform/CC/CertMain.lean`) emits `check-neq` only on
+  pairs that a countermodel separates, so a failing `check-neq` is an engine unsoundness by
+  `not_E_of_separates`. It writes `tests/egg/conform-cc-cert/`, which `tests/conform.rs`
+  (`conform_cc_cert_fixtures_agree_with_the_model`) runs and the Lean workflow regenerates.
+  `ac_collapsed_recanon.egg`,
+  `cancel_lattice.egg`, `cancel_crit_pair.egg`, `cancel_lattice_lazy.egg` and
+  `nilpotent_group_lattice.egg` come from its programs by reduction (commits `e06360e5`,
+  `cdcb2186`).
+- The regressions named in each rule of this section.
+
+**Not modelled** (the evidence is the fixtures alone):
+
+- In `lattice_round`: the echelon form and coset representatives (the model states lattice
+  membership), and `FlatSound`, a hypothesis no theorem derives from the engine's steps.
+- In `a_round`: recanonicalization by rebuild, termination interleaved with AC rounds and
+  congruence, and the one-element collapse in `add`.
+- The use-list partner search, touched-delta rounds and the final full round, which are the
+  "search coverage" obligation of §10.
+- `add_monomial` materialization, the node and work budgets, and `AbortedOverflow`.
+- The correspondence of the model's operations to `egraph.rs`.
+
 ### 10. Conditional completeness argument and open obligations
 
 This section gives the completeness argument for the algorithm of §6–9. It adapts Kapur's
@@ -1789,7 +1966,14 @@ nodes (`completion_sound`, `kapur_termination`, `confluent_modulo`,
 hypotheses are engine obligations this section did not list: I5, the stored minimal monomial
 is the class's least active monomial, and I3, every retired node rewrites to a node of its
 class (§9c). The obligations below remain open for the Rust code itself, where the
-conformance generators and the fixtures are the evidence.
+conformance generators and the fixtures are the evidence. §9c, "What is machine-checked",
+lists every hypothesis of `completion_complete_at_convergence`; the engine meets
+`RoundFixed.nf_present`, `RoundFixed.cp_joinable` and, for a cancelative operator,
+`LatticeClosed` (in place of `hcancel`, `completion_complete_cancellative_engine`) only through
+the rules of §9c: reactivation, the full round and `lattice_round`. No theorem establishes
+`hcancel` itself (`hcancel_not_derivable`). The final theorems also have the scope limits
+stated in [Chapter 13 §4](13-soundness.md#4-what-is-proved-argued-and-assumed)
+(corrected 2026-11-05).
 
 The intended argument has three obligations. If all three hold for the implemented
 state relation, Newman's Lemma closes the abstract result.
@@ -1924,6 +2108,12 @@ reflexive/symmetric/transitive, and closed under
   `ACCC(S)`-equal. This is a local paper argument and focused tests reconstruct
   representative proof paths; no Verus theorem currently establishes it for every
   transition of the implementation.
+  (Correction, 2026-11-05: for a model of the completion state the invariant is a Lean
+  theorem, `completion_sound` (`CC/Main.lean`), and `inv_rules_sound`
+  (`CC/Laws/InvRules.lean`) covers R1-R5. `lattice_merge_sound` (`CC/Lattice.lean`) covers a
+  `lattice_round` merge under the hypothesis `FlatSound`, and `aRound_sound` and
+  `aRoundH_sound` (`CC/ARound/`) cover a spine-restricted `a_round` merge. `a_round` was
+  unsound on folds until commit `7beed39f` (§9c).)
 - **Conditional completeness.** If the three §10 obligations hold, Kapur's
   critical-pair lemma and Newman's Lemma yield confluence and unique normal forms.
   Neither an unchanged full round nor the finite basis diagnostics by themselves
@@ -2004,9 +2194,13 @@ Three properties of the lazy mode:
   `ac_lazy_budget_inconclusive.egg` is the program that needs both budgets: its
   rule rounds grow the graph about 8 times per round, and one completion round
   at 29,597 nodes (19,315 rules, 22,239 targets) used to run for minutes while
-  minting almost nothing. Its check-neq now reports the stop as inconclusive in
-  under a second in a release build (`lazy_budget_check_returns_promptly`);
-  with the node budget alone it still runs past 100 s.
+  minting almost nothing. Its check-neq now reports the stop as inconclusive,
+  which the fixture checks (`EXPECT: check-failed`, message "disequality is
+  inconclusive"). No test bounds its wall-clock time; a regression of either
+  budget hangs the fixture, and the CI job's timeout reports it (Chapter 13 §5
+  item 21). The message of commit `4ee0cf45` records 0.55 s in a release build,
+  and past 100 s with the node budget alone. (Corrected 2026-11-05: this
+  paragraph cited a wall-clock test by name; no such test exists.)
 
 Focused lazy-mode tests cover transaction sharing, goal polling, growth aborts,
 and restoration. This chapter makes no fixed timing, node-count, or speedup
@@ -2047,6 +2241,13 @@ termination argument for one finite round follows that measure. Rounds run
 under the same budget and goal polls as the AC pass. The three
 `a_interreduction_*` fixtures pin the gap (plain mode fails, by design) and
 the repair under both eager and lazy completion.
+(Correction, 2026-11-05: "the first contiguous occurrence" holds for `:assoc` only. For a
+fold, `a_round` rewrites only a prefix of an `:assoc-left` node and only a suffix of an
+`:assoc-right` node, because any other run spells no subterm. Before commit `7beed39f` it
+rewrote at any offset and merged terms that are not equal; `ac_fold_completion_spine.egg`
+pins the fix, and `CC/ARound/` proves the spine rewrite sound and the off-spine rewrite
+unsound (§9c). [Chapter 7 §7.5, "Left- and right-associative operators"](07-rules-and-pattern-matching.md#left--and-right-associative-operators)
+collects the fold caveats.)
 
 **Where it must stop, and why this is a boundary rather than a debt.** The AC
 pass has a completeness theorem to aim for because ground AC completion is
@@ -2060,6 +2261,8 @@ run forever without a bound to point to. So `a_round` deliberately closes the
 single-substitution gap above and does not chase critical pairs. Its merges have
 the intended equality-substitution justification and focused proof-log tests;
 there is no machine-checked soundness theorem for every transition of the implementation.
+(Correction, 2026-11-05: for a model of `a_round` on folds there is, `aRound_sound` and
+`aRoundH_sound` in `CC/ARound/`; the correspondence to the Rust code is tested, not proved.)
 A complete solver for arbitrary finitely presented monoids is not attainable in
 general, and the contrast (ground AC decidability versus the monoid word problem)
 is a property of the theories, not of this implementation.
@@ -2264,19 +2467,19 @@ theorem.
 | Our code | Kapur 2023 | Match |
 |---|---|---|
 | AC node `+M` in class `c` = rule `+M → r(c)` | f-monomial rule `f(A₁) → f(A₂)` (§3) | ✓ |
-| `monomial_cmp` (degree-lex: size, then lex from the LARGEST class id down), orientation guard | admissible ordering `≫_f`, orient `f(A₁) ≫ f(A₂)` (§3) | ✓ |
+| `monomial_cmp` (degree-lex: size, then lex from the LARGEST class id down), orientation guard | admissible ordering `≫_f`, orient `f(A₁) ≫ f(A₂)` (§3) | ✓ (corrected 2026-11-05: since commit `ab214e9c` the order is `monomial_cmp_key`, degree-lex over per-class order keys, not over class ids; §9c) |
 | `ab = multiset_lcm(m,a)`; reducts `(ab−m)⊎rhs_m`, `(ab−a)⊎rhs_a` | `AB = (A₁∪B₁)−(A₁∩B₁)`; critical pair `(f((AB−A₁)∪A₂), f((AB−B₁)∪B₂))` (Def 3.2) | ✓ (lcm = componentwise max = his `AB`) |
-| disjoint partners skipped | "if A₁,B₁ disjoint, their critical pair is trivial" (§3) | ✓ |
+| disjoint partners skipped | "if A₁,B₁ disjoint, their critical pair is trivial" (§3) | ✓ (a partner the use lists return can be disjoint after the clamp; `cc_round` skips it, commit `e97b80e0`, §9c) |
 | trivial-pair filter (normal forms equal ⟹ skip) | "nontrivial iff normal forms ... not the same" (§3) | ✓ |
 | close pair = merge both normalized reducts | Lemma 3.3 (joinable critical pairs ⟺ locally confluent) | ✓ |
-| `FLAG_AC_COLLAPSED` on LHS reducible by another rule | step 4(i): remove `l→r` whose LHS is reduced by new rule | ✓ (flag, not delete; equality preserved via the merged reduct) |
+| `FLAG_AC_COLLAPSED` on LHS reducible by another rule | step 4(i): remove `l→r` whose LHS is reduced by new rule | ✓ (flag, not delete; equality preserved via the merged reduct; `cc_round` and `recanonize_parent` clear the flag when the node becomes irreducible, which is step 4(i)'s return of the reduced rule, commit `e06360e5`) |
 | dedup reducer/superposition set by (op, LHS) | step 2: "if equal, discard the equation" (keep one) | ✓ (duplicate *nodes* stay in `targets`, so their merges are not lost) |
 | incremental (B): superpose only pairs with at least one delta rule | step 3 + fn 3: CPs of the new rule vs existing, "incrementally ... instead of all critical pairs" | ✓ |
 | LHS collapse plus a separate growth budget | Thm 3.4 (Dickson's Lemma on noncomparable LHSs) | partial evidence: collapse is tested; the budget is a resource exit, not Kapur's termination theorem |
 | per-rule axiom critical pairs: idempotent `(f(N⊎{a}), f(N))`, nilpotent `(f(N⊎{a:n−m}), f(M−{a:m}))` | Lemma 4.1(ii); Lemma 4.2(ii)/4.5 (superpose each rule with the op's own axiom) | ✓ (checker `cc_axiom_cps_nonjoinable` under `CHECK_AC_BASIS`) |
 | identity-class rule RHS = the empty monomial; unit-drop at build AND recanonize (`CanonMode`) | `f({}) = e` (§2.4); Lemma 4.3's standing normalization `f(x,e) → x` | ✓ |
 | (C1) rule cancel-close + (C2) cancelative disjoint superposition + §5.2(iii)(b) per-constant closure over the summand pool | §5.1–§5.3: CancelClose, cancelative disjoint superposition (SC2 / Example 4 fixtures) | ✓ for the named static fixtures; late constants are covered by an implemented full-round net whose focused interleaving regression remains open. Not complete on its own (corrected 2026-11-05): per-equation cancelation misses lattice combinations such as `c1c3² = ∅` from `c1c4² = c0²` and two copies of `c4 = c0c3` (`cancel_lattice.egg`) |
-| `lattice_round` at the completion fixpoint: echelon form over ℤ of the op's equations (plus `e_unit`, `order·e_x` under `:nilpotent`, `e_x + e_inv(x)`), classes with equal coset representatives merged | §5.4's Gaussian elimination, over ℤ: the cancelative congruence of a commutative semigroup is membership in the lattice its equations span | ✓ on the fixtures `cancel_lattice.egg`, `cancel_crit_pair.egg`, `cancel_lattice_lazy.egg`, `nilpotent_group_lattice.egg` (each fails without the step); the lattice argument is not formalized in Lean |
+| `lattice_round` at the completion fixpoint: echelon form over ℤ of the op's equations (plus `e_unit`, `order·e_x` under `:nilpotent`, `e_x + e_inv(x)`), classes with equal coset representatives merged | §5.4's Gaussian elimination, over ℤ: the cancelative congruence of a commutative semigroup is membership in the lattice its equations span | ✓ on the fixtures `cancel_lattice.egg`, `cancel_crit_pair.egg`, `cancel_lattice_lazy.egg`, `nilpotent_group_lattice.egg` (each fails without the step); the lattice argument is not formalized in Lean (corrected 2026-11-05: it is, for a model, in `CC/Lattice.lean`: `lattice_merge_sound` under `FlatSound`, `completion_complete_cancellative_engine`; §9c) |
 | `:inverse` ⟹ cancelative; inverse-pair cancellation at build, in the round (hash-cons probe), and after merges in every mode (`canon_repair_round`, `Justification::InverseCancel`) | §5.4's group law at pair level (`x ∘ inv(x) = e`) | partial: pairs whose `inv(x)` node was never built are not seen; the equalities among present classes are closed by `lattice_round` (row below the R1-R5 row; corrected 2026-11-05, this row said full §5.4 was unsupported) |
 | inverse law across nodes, R1-R5 (`inverse_law_repair` at rebuild; R3 as `AxiomCp` pairs in `cc_round`), commit `e1e6aec8` | the hypotheses `InvMatching`, `InvUnitFree`, `InverseAxiomCP`, `NilpotentInverseCP` of the Lean completeness proof | ✓ in the model (`completion_complete_inverse_engine`, `CC/Laws/InvRulesMain.lean`); §5.2 states the rules |
 | `min_monomial` best-effort RHS | step 4(ii) fully normalizes RHS (reduced) | **partial: §S1.2 gap** (corrected 2026-11-04: best-effort is not enough for completeness; the stored minimal monomial must be the class minimum, §9c) |
