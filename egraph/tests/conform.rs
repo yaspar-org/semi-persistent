@@ -5,10 +5,14 @@
 //! Every `.egg` file under `tests/egg/conform/` was written by `semper-conform`
 //! (`proofs/lean/Conform`), which builds a small e-graph, matches one pattern with
 //! the model's reference interpreter and checks the matches it found (`check-eq`)
-//! and a sample of the candidates it rejected (`check-neq`). The directory is
-//! scanned: a file needs no registration. `tests/egg/conform/README.md` names the
-//! seed and the regeneration command; the Lean workflow regenerates the sample
-//! and fails when a committed file differs.
+//! and a sample of the candidates it rejected (`check-neq`). The files under
+//! `tests/egg/conform-flatten/` were written by `semper-conform-flatten`
+//! (`proofs/lean/Conform/Flatten`), whose `:flatten` rules nest n-ary
+//! applications and are matched by the model's flattened plan (every n-ary atom
+//! with its own view register). The directories are scanned: a file needs no
+//! registration. Each directory's `README.md` names the seed and the
+//! regeneration command; the Lean workflow regenerates both samples and fails
+//! when a committed file differs.
 //!
 //! The runner is the one of `egg_tests.rs`, reduced to the directives these files
 //! use (`;; EXPECT: ok`, `;; TYPES: machine`): every file runs under both
@@ -17,8 +21,6 @@
 use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::*;
 use semi_persistent_egraph::saturate::SaturationStrategy;
-
-const DIR: &str = "tests/egg/conform";
 
 fn run_source(src: &str, strategy: SaturationStrategy) -> String {
     let surface_cmds = match semi_persistent_egraph::parser::parse_program_v2(src) {
@@ -65,15 +67,16 @@ fn directives(src: &str) -> (String, String) {
     (expect, types)
 }
 
-#[test]
-fn conform_fixtures_agree_with_the_model() {
-    let mut paths: Vec<_> = std::fs::read_dir(DIR)
-        .unwrap_or_else(|e| panic!("cannot read {DIR}: {e}"))
+/// Runs every `.egg` file of `dir` under both evaluation strategies and both
+/// atom-scheduling modes; panics with the list of disagreements.
+fn check_dir(dir: &str) {
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {dir}: {e}"))
         .map(|e| e.expect("directory entry").path())
         .filter(|p| p.extension().is_some_and(|x| x == "egg"))
         .collect();
     paths.sort();
-    assert!(!paths.is_empty(), "{DIR} holds no .egg file");
+    assert!(!paths.is_empty(), "{dir} holds no .egg file");
     let mut failures = Vec::new();
     for path in &paths {
         let src = std::fs::read_to_string(path)
@@ -112,4 +115,14 @@ fn conform_fixtures_agree_with_the_model() {
         paths.len(),
         failures.join("\n")
     );
+}
+
+#[test]
+fn conform_fixtures_agree_with_the_model() {
+    check_dir("tests/egg/conform");
+}
+
+#[test]
+fn conform_flatten_fixtures_agree_with_the_model() {
+    check_dir("tests/egg/conform-flatten");
 }

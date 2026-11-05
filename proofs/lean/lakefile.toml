@@ -15,3 +15,7 @@ name = "Conform"
 [[lean_exe]]
 name = "semper-conform"
 root = "Conform.Main"
+
+[[lean_exe]]
+name = "semper-conform-flatten"
+root = "Conform.Flatten.Main"

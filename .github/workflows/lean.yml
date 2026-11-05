@@ -4,12 +4,14 @@ on:
     paths:
       - 'proofs/lean/**'
       - 'egraph/tests/egg/conform/**'
+      - 'egraph/tests/egg/conform-flatten/**'
       - '.github/workflows/lean.yml'
   push:
     branches: [main]
     paths:
       - 'proofs/lean/**'
       - 'egraph/tests/egg/conform/**'
+      - 'egraph/tests/egg/conform-flatten/**'
       - '.github/workflows/lean.yml'
   workflow_dispatch:
 
@@ -94,4 +96,29 @@ jobs:
               status=1
             fi
           done
+          exit $status
+
+      # The fixtures under egraph/tests/egg/conform-flatten are the output of
+      # the `:flatten` generator (proofs/lean/Conform/Flatten) for seed 2,
+      # whose expected matches come from the model's flattened plan
+      # (SemperProofs/EMatch/Flatten/PlanDefs.lean). Same check as above.
+      - name: Regenerate the :flatten conformance fixtures
+        run: |
+          set -euo pipefail
+          lake build semper-conform-flatten
+          out=$(mktemp -d)
+          lake exe semper-conform-flatten 2 200 "$out"
+          fixtures=../../egraph/tests/egg/conform-flatten
+          status=0
+          for f in "$fixtures"/*.egg; do
+            name=$(basename "$f")
+            if ! diff -u "$f" "$out/$name"; then
+              echo "::error::$name differs from the generator's output"
+              status=1
+            fi
+          done
+          if [ "$(ls "$out" | wc -l)" -ne "$(ls "$fixtures"/*.egg | wc -l)" ]; then
+            echo "::error::the generator writes $(ls "$out" | wc -l) files, the fixtures hold $(ls "$fixtures"/*.egg | wc -l)"
+            status=1
+          fi
           exit $status
