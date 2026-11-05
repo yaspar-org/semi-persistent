@@ -317,11 +317,20 @@ pub fn monomial_cmp<G: Copy + Ord, M: MultiplicityLike>(
     a: &[Pair<G, M>],
     b: &[Pair<G, M>],
 ) -> std::cmp::Ordering {
+    monomial_size_cmp(a, b).then_with(|| a.iter().rev().cmp(b.iter().rev()))
+}
+
+/// The first criterion of [`monomial_cmp`]: total size. Shared with the e-graph's
+/// key-ordered comparison (`EGraph::monomial_cmp_key`), which breaks the tie by order keys
+/// instead of class ids.
+pub fn monomial_size_cmp<G: Copy, M: MultiplicityLike>(
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> std::cmp::Ordering {
     match (small_size(a), small_size(b)) {
         (Some(x), Some(y)) => x.cmp(&y),
         _ => multiset_size(a).cmp(&multiset_size(b)),
     }
-    .then_with(|| a.iter().rev().cmp(b.iter().rev()))
 }
 
 /// A ground AC rewrite rule `+lhs → +rhs`, both monomials, oriented `lhs ≫ rhs` by
@@ -421,19 +430,17 @@ impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
     }
 }
 
-/// Applicability test for the unindexed path, with the orientation check the indexed path
+/// Applicability test for the unindexed path, with the empty-left-side check the indexed path
 /// performs once at [`NfIndex::rebuild`] time instead.
 #[inline]
 fn rule_applies_linear<G: Copy + Ord, M: MultiplicityLike>(
     r: &NfRuleRef<'_, G, M>,
     out: &[Pair<G, M>],
 ) -> bool {
-    // Orientation is only meaningful for a rule the normalizers can apply: `monomial_cmp`
-    // reports Equal for an empty pair, so the emptiness guard has to come first.
+    // An empty left side is contained in everything: never a rule.
     if r.lhs.is_empty() {
         return false;
     }
-    debug_assert!(monomial_cmp(r.lhs, r.rhs) == std::cmp::Ordering::Greater);
     multiset_subset(r.lhs, out)
 }
 
@@ -527,12 +534,10 @@ impl<G: Copy + Ord> NfIndex<G> {
             .iter()
             .enumerate()
             .filter(|(_, r)| {
-                // Empty-LHS rules are dropped before the orientation check: `monomial_cmp`
-                // reports Equal for an empty pair, and the normalizers never apply them.
+                // Empty-LHS rules are dropped: the normalizers never apply them.
                 if r.lhs.is_empty() {
                     return false;
                 }
-                debug_assert!(monomial_cmp(r.lhs, r.rhs) == std::cmp::Ordering::Greater);
                 true
             })
             .map(|(i, r)| {
@@ -580,6 +585,11 @@ impl<G: Copy + Ord> NfIndex<G> {
 /// return value.
 const GUARD_MAX_REWRITES: usize = 1_000_000;
 
+/// The normalizers do not check orientation: the e-graph orients its rules by completion
+/// order keys (`EGraph::monomial_cmp_key`), which this module cannot see, and
+/// [`monomial_cmp`] by class id would reject rules that are correctly oriented by key. The
+/// rewrite guard bounds every loop instead.
+///
 /// Normalize a monomial to a fixpoint by AC rewriting (Kapur Def. 3): while some rule
 /// `+A → +B` has `A ⊆ ms`, replace `A` by `B` (`ms := (ms − A) ⊎ B`). Every rule is
 /// oriented `A ≫ B` ([`monomial_cmp`]), so each step strictly lowers `ms` in the
@@ -627,8 +637,6 @@ fn normalize_ms_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
             rewrites < max_rewrites,
             "normalize_ms_into exceeded its rewrite guard before reaching a normal form"
         );
-        #[cfg(debug_assertions)]
-        let before = out.clone();
         // Apply the rule as many times as `out` contains its left side, at once: q copies
         // of `lhs` come out and q of `rhs` go in. Each single step only adds `rhs`, so the
         // rule still applies at every intermediate step, and the batch is exactly q single
@@ -648,11 +656,6 @@ fn normalize_ms_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
             multiset_subtract_into(scratch, out, &scaled(rule.lhs)?);
             try_multiset_union_into(out, scratch, &scaled(rule.rhs)?)?;
         }
-        #[cfg(debug_assertions)]
-        debug_assert!(
-            monomial_cmp(out, &before) == std::cmp::Ordering::Less,
-            "rewrite step failed to lower the host monomial (order not admissible?)"
-        );
         rewrites += 1;
     }
     Ok(())
@@ -741,19 +744,12 @@ fn normalize_set_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
             rewrites < max_rewrites,
             "normalize_set_into exceeded its rewrite guard before reaching a normal form"
         );
-        #[cfg(debug_assertions)]
-        let before = out.clone();
         // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
         multiset_subtract_into(scratch, out, rule.lhs);
         try_multiset_union_into(out, scratch, rule.rhs)?;
         clamp_idempotent(out);
-        // Strictness survives the clamp: the multiset step is strict (admissible
-        // order + lhs ≫ rhs) and the clamp only lowers counts (can(t) ≼ t).
-        #[cfg(debug_assertions)]
-        debug_assert!(
-            monomial_cmp(out, &before) == std::cmp::Ordering::Less,
-            "idempotent rewrite step failed to lower the host monomial"
-        );
+        // The step stays strict through the clamp (admissible order, lhs ≫ rhs, and the
+        // clamp only lowers counts), so the loop terminates.
         rewrites += 1;
     }
     Ok(())
@@ -832,19 +828,12 @@ fn normalize_nilpotent_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
             rewrites < max_rewrites,
             "normalize_nilpotent_into exceeded its rewrite guard before reaching a normal form"
         );
-        #[cfg(debug_assertions)]
-        let before = out.clone();
         // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
         multiset_subtract_into(scratch, out, rule.lhs);
         try_multiset_union_into(out, scratch, rule.rhs)?;
         clamp_nilpotent(out, order);
-        // Strictness survives the clamp: the multiset step is strict (admissible
-        // order + lhs ≫ rhs) and the mod-n clamp only lowers counts (can(t) ≼ t).
-        #[cfg(debug_assertions)]
-        debug_assert!(
-            monomial_cmp(out, &before) == std::cmp::Ordering::Less,
-            "nilpotent rewrite step failed to lower the host monomial"
-        );
+        // The step stays strict through the mod-n clamp (admissible order, lhs ≫ rhs,
+        // and the clamp only lowers counts), so the loop terminates.
         rewrites += 1;
     }
     Ok(())

@@ -534,6 +534,27 @@ egg_test!(
 egg_test!(stop_self_union_mints, "stop_self_union_mints.egg");
 egg_test!(stop_assoc_flatten_mints, "stop_assoc_flatten_mints.egg");
 egg_test!(stop_insert_control, "stop_insert_control.egg");
+// The minimal monomial under node growth (fidelity row EG1), and the twelve
+// AC-congruence conformance cases it failed.
+egg_test!(ac_minmono_grow_wa, "ac_minmono_grow_wa.egg");
+egg_test!(ac_minmono_grow_aw, "ac_minmono_grow_aw.egg");
+egg_test!(ac_key_survivor_lowered, "ac_key_survivor_lowered.egg");
+egg_test!(
+    ac_key_survivor_lowered_control,
+    "ac_key_survivor_lowered_control.egg"
+);
+egg_test!(ac_minmono_cc1_0007, "ac_minmono_cc1_0007.egg");
+egg_test!(ac_minmono_cc1_0039, "ac_minmono_cc1_0039.egg");
+egg_test!(ac_minmono_cc1_0073, "ac_minmono_cc1_0073.egg");
+egg_test!(ac_minmono_cc1_0344, "ac_minmono_cc1_0344.egg");
+egg_test!(ac_minmono_cc1_0425, "ac_minmono_cc1_0425.egg");
+egg_test!(ac_minmono_cc1_0798, "ac_minmono_cc1_0798.egg");
+egg_test!(ac_minmono_cc1_0856, "ac_minmono_cc1_0856.egg");
+egg_test!(ac_minmono_cc1_0897, "ac_minmono_cc1_0897.egg");
+egg_test!(ac_minmono_cc1_1299, "ac_minmono_cc1_1299.egg");
+egg_test!(ac_minmono_cc1_1550, "ac_minmono_cc1_1550.egg");
+egg_test!(ac_minmono_cc1_1904, "ac_minmono_cc1_1904.egg");
+egg_test!(ac_minmono_cc1_1941, "ac_minmono_cc1_1941.egg");
 egg_test!(rhs_mult_expr, "rhs_mult_expr.egg");
 egg_test!(rhs_mult_expr_underflow, "rhs_mult_expr_underflow.egg");
 egg_test!(rhs_comprehensions, "rhs_comprehensions.egg");

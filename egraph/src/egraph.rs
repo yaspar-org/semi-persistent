@@ -241,6 +241,12 @@ pub struct EGraph<
     /// sweep, refreshed into the min-monomial pool after the sweep releases the use-list
     /// borrow. Round-local, never restored.
     refresh_buf: Vec<Cfg::G>,
+    /// Classes whose completion order key a merge lowered (`fold_min_monomial`): the
+    /// survivor took the absorbed side's lesser key. Every completion node holding such a
+    /// class as a child shrank in the key order with no change to its span, so no
+    /// recanonization refreshes it; `rebuild_congruence` refreshes those parents. Cleared
+    /// by `restore` with the worklist.
+    key_lowered: Vec<Cfg::G>,
     cmp_buf_b: Vec<(Cfg::G, Cfg::M)>,
     /// Reusable scratch for flattening nested same-op AC children (`WF_flat`,
     /// design §6c). Worklist of children still to expand; never grown per add.
@@ -420,6 +426,7 @@ where
             basis_checks: std::env::var_os("AC_BASIS_DUMP").is_some(),
             cmp_buf_a: Vec::new(),
             refresh_buf: Vec::new(),
+            key_lowered: Vec::new(),
             cmp_buf_b: Vec::new(),
             flatten_buf: Vec::new(),
             mset_flatten_buf: Vec::new(),
@@ -1521,28 +1528,53 @@ where
         node.map(|n| self.classes.find_const(n))
     }
 
-    /// After a merge, fold the absorbed class's per-class AC data into the survivor's,
-    /// per completion column: keep the `monomial_cmp`-least min-monomial node for each op, and
-    /// OR-in the `atomic` flag (§9a). O(nb_completion) columns, each O(1) plus a monomial read,
-    /// into reusable buffers. Done here, not in `EClasses`, because the comparison needs node
-    /// (AC-children) access and the op→column map. Best-effort under merge-cascade staleness;
-    /// completion's read-time orientation guard makes that safe (§9b).
+    /// After a merge, fold the absorbed class's per-class AC data into the survivor's:
+    /// the merged class takes the lesser of the two completion order keys (`order_key`),
+    /// then, per completion column, keeps the `monomial_cmp_key`-least min-monomial node
+    /// for each op and ORs in the `atomic` flag (§9a). The key is folded first, so the
+    /// two minimal monomials are compared in the order as it stands after the merge. O(nb_completion)
+    /// columns, each O(1) plus a monomial read, into reusable buffers. Done here, not in
+    /// `EClasses`, because the comparison needs node (AC-children) access and the
+    /// op→column map. Best-effort under merge-cascade staleness; completion's read-time
+    /// orientation guard makes that safe (§9b).
     fn fold_min_monomial(
         &mut self,
         survivor: Cfg::G,
+        absorbed: Cfg::G,
         absorbed_min_row: Option<<Cfg::G as DenseId>::Index>,
         absorbed_atomic: bool,
     ) {
-        let surv_repr = match self.classes.repr_id(self.classes.find_const(survivor)) {
+        let surv_root = self.classes.find_const(survivor);
+        let surv_repr = match self.classes.repr_id(surv_root) {
             Some(r) => r,
             None => return,
         };
         if absorbed_atomic {
             self.classes.set_atomic(surv_repr);
         }
+        let Some(key_col) = self.key_col() else {
+            return;
+        };
+        // The merged class's key is the lesser of the two. A class with no stored key has
+        // its root as key: it has not merged since keys were first kept (the first
+        // completion node), and its root has not changed since. Written only when the
+        // absorbed side's key is the lesser, so a merge that keeps the survivor's key
+        // allocates no pool row.
+        let surv_key = self
+            .classes
+            .min_monomial(surv_repr, key_col)
+            .unwrap_or(surv_root);
+        let abs_key = self
+            .classes
+            .min_monomial_at_row(absorbed_min_row, key_col)
+            .unwrap_or(absorbed);
+        if abs_key < surv_key {
+            self.classes.set_min_monomial(surv_repr, key_col, abs_key);
+            self.key_lowered.push(surv_root);
+        }
         let mut a = std::mem::take(&mut self.cmp_buf_a);
         let mut b = std::mem::take(&mut self.cmp_buf_b);
-        for col in 0..self.classes.min_width() {
+        for col in 0..key_col {
             let Some(absorbed_min) = self.classes.min_monomial_at_row(absorbed_min_row, col) else {
                 continue; // absorbed class has no monomial for this op
             };
@@ -1554,7 +1586,7 @@ where
                 Some(surv_min) if surv_min != absorbed_min => {
                     self.node_monomial_into(surv_min, &mut a);
                     self.node_monomial_into(absorbed_min, &mut b);
-                    if crate::multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
+                    if self.monomial_cmp_key(&b, &a) == std::cmp::Ordering::Less {
                         self.classes.set_min_monomial(surv_repr, col, absorbed_min);
                     }
                 }
@@ -1565,14 +1597,76 @@ where
         self.cmp_buf_b = b;
     }
 
+    /// The pool column of the completion order key: the last one, after one column per
+    /// completion op. `None` before the first completion node, when no class keeps a key
+    /// and completion has nothing to order.
+    fn key_col(&self) -> Option<usize> {
+        self.classes.min_width().checked_sub(1)
+    }
+
+    /// The completion order key of `g`'s class. Completion orders monomials by keys, not
+    /// by class ids (`monomial_cmp_key`): a fresh class's key is its id, and a merged
+    /// class takes the lesser of the two keys (`fold_min_monomial`), so keys are distinct
+    /// across live classes and a merge only ever lowers the key of the classes it joins.
+    /// The union-find keeps its own survivor policy (rank, size, `--union-by`), and the
+    /// representative id can be the larger one. Ordering by representative id made a
+    /// node grow when a child merged into a class with a larger representative, which left
+    /// the class's stored minimal monomial above another member (I5) and lost completion
+    /// consequences (`ac_minmono_grow_wa.egg`; Lean `idOrder_grow_breaks_I5`). With keys a
+    /// child's key only goes down, so recanonization never grows a node and the shrink
+    /// refresh (`refresh_min_monomial`) keeps I5. The key lives in the classes' tracked
+    /// min-monomial pool, so `restore` rolls it back.
+    pub(crate) fn order_key(&self, g: Cfg::G) -> Cfg::G {
+        let root = self.classes.find_const(g);
+        if let Some(col) = self.key_col()
+            && let Some(repr) = self.classes.repr_id(root)
+            && let Some(k) = self.classes.min_monomial(repr, col)
+        {
+            return k;
+        }
+        root
+    }
+
+    /// Degree-lex over completion order keys: total size first, then the `(key, count)`
+    /// entries from the largest key down, the larger count winning at the first
+    /// difference. This is `multiset::monomial_cmp` with each class replaced by its
+    /// `order_key`; stored monomials stay sorted by class id (the hash-cons, the
+    /// decompositions and the indexes depend on that), so each side is copied and sorted
+    /// by key into an inline buffer, with no allocation up to 16 distinct classes. Every
+    /// order completion uses goes through here: rule orientation, the minimal monomial
+    /// (fold, refresh) and the basis diagnostics, so orientation and the minimal monomial
+    /// agree.
+    pub(crate) fn monomial_cmp_key(
+        &self,
+        a: &[(Cfg::G, Cfg::M)],
+        b: &[(Cfg::G, Cfg::M)],
+    ) -> std::cmp::Ordering {
+        type Keyed<G, M> = smallvec::SmallVec<[(G, M); 16]>;
+        crate::multiset::monomial_size_cmp(a, b).then_with(|| {
+            let keyed = |m: &[(Cfg::G, Cfg::M)]| -> Keyed<Cfg::G, Cfg::M> {
+                let mut v: Keyed<Cfg::G, Cfg::M> =
+                    m.iter().map(|&(g, k)| (self.order_key(g), k)).collect();
+                v.sort_unstable();
+                v
+            };
+            let (ka, kb) = (keyed(a), keyed(b));
+            ka.iter().rev().cmp(kb.iter().rev())
+        })
+    }
+
     /// Keep the min-monomial slot least after an in-place recanonization. Invariant (I5):
     /// the slot of a class in `id`'s op column is the degree-lex-least *active* same-op
     /// monomial of that class. The slot is written at creation (`register_if_fresh`) and
     /// folded on merge (`fold_min_monomial`); recanonization rewrites a stored node's span
     /// in place (coalesce, unit drop, clamp after a child merge) and can shrink `id` below
-    /// the slot. The trap: with a stale slot the old minimum is not a rule (`M = r(c)`) and
-    /// the shrunk node is dropped by the orientation guard (`M ≺ r(c)`), so the class yields
-    /// no rule and completion misses `a+b+z = p+q+z` from `a+b = p+q+r`, `r = 0`.
+    /// the stored minimum. It never grows `id`: completion orders by `order_key`, and a merge
+    /// only lowers keys, so this one-sided update keeps the stored minimum least. A key
+    /// lowered on the
+    /// survivor's side shrinks parents without rewriting them; `refresh_key_lowered` calls
+    /// this for those. The trap: with a stale minimum the old minimum is not a rule
+    /// (`M = r(c)`) and the shrunk node is dropped by the orientation guard (`M ≺ r(c)`), so
+    /// the class yields no rule and completion misses `a+b+z = p+q+z` from `a+b = p+q+r`,
+    /// `r = 0`.
     /// O(1) plus two monomial reads; the write goes through the tracked pool, so `restore`
     /// rolls it back with the recanonization.
     fn refresh_min_monomial(&mut self, id: Cfg::G) {
@@ -1593,7 +1687,7 @@ where
                 let mut b = std::mem::take(&mut self.cmp_buf_b);
                 self.node_monomial_into(cur, &mut a);
                 self.node_monomial_into(id, &mut b);
-                if crate::multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
+                if self.monomial_cmp_key(&b, &a) == std::cmp::Ordering::Less {
                     self.classes.set_min_monomial(repr, col, id);
                 }
                 self.cmp_buf_a = a;
@@ -1619,7 +1713,12 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.merge_in_classes(a, b, None)?;
-        self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+        self.fold_min_monomial(
+            m.survivor,
+            m.absorbed,
+            m.absorbed_min_row,
+            m.absorbed_atomic,
+        );
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -1794,7 +1893,12 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.merge_in_classes(a, b, Some(just))?;
-        self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+        self.fold_min_monomial(
+            m.survivor,
+            m.absorbed,
+            m.absorbed_min_row,
+            m.absorbed_atomic,
+        );
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -2376,6 +2480,35 @@ where
         }
     }
 
+    /// Refresh the minimal monomial for every completion parent of a class whose order
+    /// key a merge lowered (`key_lowered`). Lowering a child's key shrinks the parent in
+    /// the key order without touching its span, so the recanonization sweep, which visits
+    /// the absorbed side's parents only, does not see it; each such parent is folded into
+    /// its class's minimal monomial as an in-place shrink (`refresh_min_monomial`). The walk covers
+    /// the merged class's whole use list: the absorbed side's parents were refreshed
+    /// already, and a second refresh of them changes nothing.
+    fn refresh_key_lowered(&mut self) {
+        while let Some(class) = self.key_lowered.pop() {
+            let root = self.classes.find_const(class);
+            let Some(repr) = self.classes.repr_id(root) else {
+                continue;
+            };
+            let mut refresh = std::mem::take(&mut self.refresh_buf);
+            refresh.clear();
+            let list = self.classes.use_list_id(repr);
+            refresh.extend(
+                self.classes
+                    .uses()
+                    .iter(list)
+                    .filter(|&p| self.ops.completion_column(self.node_op(p)).is_some()),
+            );
+            for &parent in &refresh {
+                self.refresh_min_monomial(parent);
+            }
+            self.refresh_buf = refresh;
+        }
+    }
+
     /// Ordinary worklist-driven congruence closure: drain the merge worklist,
     /// recanonicalizing the parents of each absorbed class and merging the
     /// resulting hash-cons collisions, to a fixpoint.
@@ -2433,6 +2566,7 @@ where
             let surv_repr = self.classes.repr_id(current_surv).unwrap();
             let surv_list = self.classes.use_list_id(surv_repr);
             self.classes.splice_uses(surv_list, absorbed_uses);
+            self.refresh_key_lowered();
 
             // If this merge made the merged class an op's identity (unit) class, the
             // unit-drop law now applies to EVERY parent holding this class as a summand —
@@ -2472,11 +2606,18 @@ where
                     self.merge_in_classes(a, b, None)
                 };
                 if let Some(m) = m {
-                    self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+                    self.fold_min_monomial(
+                        m.survivor,
+                        m.absorbed,
+                        m.absorbed_min_row,
+                        m.absorbed_atomic,
+                    );
                     self.worklist.push((m.absorbed_uses, m.survivor));
                 }
             }
         }
+        // A key lowered by a merge that pushed no worklist entry of its own.
+        self.refresh_key_lowered();
     }
 
     /// One A-only (`Seq`) inter-reduction round: the transfer of the AC
@@ -2685,7 +2826,12 @@ where
         };
         match m {
             Some(m) => {
-                self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+                self.fold_min_monomial(
+                    m.survivor,
+                    m.absorbed,
+                    m.absorbed_min_row,
+                    m.absorbed_atomic,
+                );
                 self.worklist.push((m.absorbed_uses, m.survivor));
                 true
             }
@@ -2952,7 +3098,6 @@ where
             out
         };
 
-        use crate::multiset::monomial_cmp;
         use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
 
         // Completion's active set excludes nodes that are user-subsumed (not matchable)
@@ -2991,7 +3136,7 @@ where
                 continue;
             }
             // Read-time orientation guard (§9b): only `M ≫ rhs` is a rule.
-            if monomial_cmp(&lhs, &rhs_buf) == std::cmp::Ordering::Greater {
+            if self.monomial_cmp_key(&lhs, &rhs_buf) == std::cmp::Ordering::Greater {
                 rules.push(Rule {
                     op,
                     lhs,
@@ -3082,7 +3227,12 @@ where
             };
             match m {
                 Some(m) => {
-                    eg.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+                    eg.fold_min_monomial(
+                        m.survivor,
+                        m.absorbed,
+                        m.absorbed_min_row,
+                        m.absorbed_atomic,
+                    );
                     eg.worklist.push((m.absorbed_uses, m.survivor));
                     true
                 }
@@ -3832,6 +3982,7 @@ where
         // outcome computed for the discarded scope.
         self.completion_outcome = token.completion_outcome;
         self.worklist.clear();
+        self.key_lowered.clear();
         self.collisions.clear();
         self.touched.clear();
         // Merges captured before this restore belong to the discarded scope.
@@ -3875,6 +4026,7 @@ where
         }
         self.completion_outcome = token.completion_outcome;
         self.worklist.clear();
+        self.key_lowered.clear();
         self.collisions.clear();
         self.touched.clear();
         self.repair_state = None;
@@ -3901,6 +4053,7 @@ where
         let ok = self.history.pop_member(&mut members);
         assert!(ok, "pop_scope: the members are in step with the history");
         self.worklist.clear();
+        self.key_lowered.clear();
         self.collisions.clear();
         self.touched.clear();
         self.repair_state = None;
@@ -4001,7 +4154,12 @@ where
                 }),
             );
             if let Some(m) = m {
-                self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+                self.fold_min_monomial(
+                    m.survivor,
+                    m.absorbed,
+                    m.absorbed_min_row,
+                    m.absorbed_atomic,
+                );
                 self.worklist.push((m.absorbed_uses, m.survivor));
             }
         }
@@ -4055,7 +4213,10 @@ where
                     // Ops are declared before terms (declare-before-build), so the count is
                     // stable here; `set_min_width` is idempotent when unchanged and rejects a
                     // change once rows exist.
-                    self.classes.set_min_width(self.ops.completion_op_count());
+                    // One column per completion op, plus the completion order key
+                    // (`order_key`) in the last one.
+                    self.classes
+                        .set_min_width(self.ops.completion_op_count() + 1);
                     self.classes.set_min_monomial(repr, col, id);
                 }
                 None => self.classes.set_atomic(repr),

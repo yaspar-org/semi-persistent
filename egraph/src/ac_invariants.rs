@@ -14,7 +14,7 @@
 //!  - **irreducible**: no active rule's LHS is reducible by *another* active rule
 //!    (equivalent phrasing of the antichain; the §6b property collapse must keep);
 //!  - **min_monomial consistency**: a non-atomic class's stored `min_monomial` really is the
-//!    `monomial_cmp`-least AC monomial among that class's nodes.
+//!    `monomial_cmp_key`-least AC monomial among that class's nodes.
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
@@ -22,7 +22,7 @@ use crate::containers::DenseId;
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
-use crate::multiset::{NfRule, monomial_cmp, multiset_subset, normalize_ms};
+use crate::multiset::{NfRule, multiset_subset, normalize_ms};
 use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
 use crate::typed_routing::NodeRef;
 use std::collections::BTreeMap;
@@ -118,7 +118,7 @@ where
             let lhs = self.cc_invariant_monomial(gid);
             let rhs = self.cc_invariant_rhs(gid);
             // A node is a rule iff its own monomial is strictly greater than its RHS.
-            if monomial_cmp(&lhs, &rhs) == std::cmp::Ordering::Greater {
+            if self.monomial_cmp_key(&lhs, &rhs) == std::cmp::Ordering::Greater {
                 rules.push(BasisRule {
                     node: gid,
                     op: self.node_op(gid),
@@ -161,7 +161,7 @@ where
     ///
     /// `cc_basis_report` reads `rhs` exactly as completion does (`class_rhs_into`: `{class}`
     /// if atomic, else the stored `min_monomial`). Here we instead brute-force, per (class, op),
-    /// the `monomial_cmp`-least monomial over *all* active AC nodes of that op in the class,
+    /// the `monomial_cmp_key`-least monomial over *all* active AC nodes of that op in the class,
     /// and compare. A mismatch means the RHS completion used was **not** minimal at the point
     /// of use (the §1.4 best-effort gap, or, more seriously, the single-op-slot conflating two
     /// AC ops, §9b axis-1). Returns the count of rules whose used RHS is non-minimal, and the
@@ -183,7 +183,7 @@ where
             truemin
                 .entry(key)
                 .and_modify(|cur| {
-                    if monomial_cmp(&m, cur) == std::cmp::Ordering::Less {
+                    if self.monomial_cmp_key(&m, cur) == std::cmp::Ordering::Less {
                         *cur = m.clone();
                     }
                 })
@@ -201,7 +201,7 @@ where
             let op = self.node_op(gid);
             let lhs = self.cc_invariant_monomial(gid);
             let rhs = self.cc_invariant_rhs(gid);
-            if monomial_cmp(&lhs, &rhs) != std::cmp::Ordering::Greater {
+            if self.monomial_cmp_key(&lhs, &rhs) != std::cmp::Ordering::Greater {
                 continue; // not a rule
             }
             // The used RHS is non-minimal iff a strictly smaller same-op monomial exists in
@@ -212,7 +212,7 @@ where
                 continue; // RHS is `{class}`, the genuine size-1 minimum; not an min_monomial question
             }
             if let Some(tm) = truemin.get(&(self.class_repr(gid), op))
-                && monomial_cmp(tm, &rhs) == std::cmp::Ordering::Less
+                && self.monomial_cmp_key(tm, &rhs) == std::cmp::Ordering::Less
             {
                 nonminimal += 1;
                 offenders.push((gid, op));
@@ -223,11 +223,13 @@ where
     }
 
     /// GROUND-TRUTH check 1b (I5): for every (class, op) with at least one active completion
-    /// node, is the stored `min_monomial` slot the `monomial_cmp`-least active same-op node?
+    /// node, is the stored `min_monomial` the `monomial_cmp_key`-least active same-op node?
     /// Unlike `cc_min_used_nonminimal` this does not depend on any rule existing: the gap it
     /// catches is a class whose slot is stale after an in-place shrink, where the old minimum
     /// is not a rule and the shrunk node is dropped by the orientation guard, so no rule is
-    /// read at all. Unit and atomic classes are skipped: their RHS is `{}` or `{class}`, and
+    /// read at all, or after the node holding it grew under the id order
+    /// (`ac_minmono_grow_wa.egg`). Unit and atomic classes are skipped: their RHS is `{}` or
+    /// `{class}`, and
     /// the slot is not read. Returns the count and the worst offenders `(class repr, op)`.
     pub fn cc_slot_nonminimal(&self) -> (usize, Vec<(Cfg::G, Cfg::O)>) {
         let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
@@ -243,7 +245,7 @@ where
             truemin
                 .entry(key)
                 .and_modify(|cur| {
-                    if monomial_cmp(&m, cur) == std::cmp::Ordering::Less {
+                    if self.monomial_cmp_key(&m, cur) == std::cmp::Ordering::Less {
                         *cur = m.clone();
                     }
                 })
@@ -262,10 +264,22 @@ where
             // The slot of the class in `op`'s column, read through any member: `cls` is a
             // class representative, which `class_min_monomial` accepts as an id only if it
             // is a node of `op`; find one through the stored slot of a member instead.
-            let stale = match self.slot_monomial(*cls, *op) {
-                None => true,
-                Some(sm) => monomial_cmp(tm, &sm) == std::cmp::Ordering::Less,
-            };
+            // Besides a stored minimal monomial above the least active member, one whose node
+            // left the class, has another op, or is AC-collapsed is stale: a collapsed node is
+            // not a rule, so completion must not orient the class's rules toward it. One on a
+            // subsumed node is not flagged: its monomial is still the class's least, and the
+            // rules it orients are the ones an active node would.
+            let min_node = self.class_min_monomial_of_op(*cls, *op);
+            let misplaced = min_node.is_some_and(|s| {
+                self.class_repr(s) != *cls
+                    || self.node_op(s) != *op
+                    || self.node_flags(s) & FLAG_AC_COLLAPSED != 0
+            });
+            let stale = misplaced
+                || match self.slot_monomial(*cls, *op) {
+                    None => true,
+                    Some(sm) => self.monomial_cmp_key(tm, &sm) == std::cmp::Ordering::Less,
+                };
             if stale {
                 nonminimal += 1;
                 offenders.push((*cls, *op));
@@ -373,7 +387,7 @@ where
             if !self.class_rhs_into(gid, &mut rhs_buf) {
                 continue;
             }
-            if monomial_cmp(&lhs_buf, &rhs_buf) == std::cmp::Ordering::Greater {
+            if self.monomial_cmp_key(&lhs_buf, &rhs_buf) == std::cmp::Ordering::Greater {
                 rules.push(AxRule {
                     node: gid,
                     op: self.node_op(gid),

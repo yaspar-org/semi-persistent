@@ -1,0 +1,16 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; CHECK_AC_BASIS: on
+;; Control for ac_key_survivor_lowered.egg: (union P W) keeps p, so w is the absorbed side,
+;; Add{y,w} is recanonicalized and refreshed by the sweep. Passes without the survivor-side
+;; refresh.
+(sort E)
+(function p () E) (function x () E) (function y () E) (function z () E)
+(function w () E) (function q () E)
+(function Add (E) E :assoc-comm)
+(set-option :completion eager)
+(let P (p)) (let X (x)) (let Y (y)) (let Z (z)) (let W (w))
+(union (Add X Z) (Add Y W))
+(union P W)
+(check-eq (Add X Z (q)) (Add Y W (q)))
+(check-eq (Add X Z (q)) (Add Y P (q)))
