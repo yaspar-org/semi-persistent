@@ -3,11 +3,13 @@ on:
   pull_request:
     paths:
       - 'proofs/lean/**'
+      - 'egraph/tests/egg/conform/**'
       - '.github/workflows/lean.yml'
   push:
     branches: [main]
     paths:
       - 'proofs/lean/**'
+      - 'egraph/tests/egg/conform/**'
       - '.github/workflows/lean.yml'
   workflow_dispatch:
 
@@ -70,3 +72,26 @@ jobs:
 
       - name: Build and gate
         run: bash scripts/check-proofs.sh
+
+      # The conformance fixtures under egraph/tests/egg/conform are the
+      # output of the model's generator (proofs/lean/Conform) for seed 1.
+      # They are regenerated here and compared file by file, so that a
+      # change to the model's executable definitions or to the generator
+      # shows up as a diff of the committed fixtures, which must then be
+      # regenerated (egraph/tests/egg/conform/README.md).
+      - name: Regenerate the conformance fixtures
+        run: |
+          set -euo pipefail
+          lake build semper-conform
+          out=$(mktemp -d)
+          lake exe semper-conform 1 2000 "$out"
+          fixtures=../../egraph/tests/egg/conform
+          status=0
+          for f in "$fixtures"/*.egg; do
+            name=$(basename "$f")
+            if ! diff -u "$f" "$out/$name"; then
+              echo "::error::$name differs from the generator's output"
+              status=1
+            fi
+          done
+          exit $status

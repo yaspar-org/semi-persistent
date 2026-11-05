@@ -8,3 +8,10 @@ rev = "v4.35.0"
 
 [[lean_lib]]
 name = "SemperProofs"
+
+[[lean_lib]]
+name = "Conform"
+
+[[lean_exe]]
+name = "semper-conform"
+root = "Conform.Main"
