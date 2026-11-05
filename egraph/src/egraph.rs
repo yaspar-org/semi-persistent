@@ -2846,6 +2846,15 @@ where
         // node: keep the class's min-monomial slot least (I5).
         if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before {
             self.refresh_min_monomial(parent);
+            // A collapse retired the node because another rule's left-hand side was
+            // contained in its old monomial; the new monomial may contain none, and then
+            // the node is a rule completion must superpose. Reactivate it: the next round
+            // re-tests reducibility and collapses it again if a rule still reduces it.
+            // Left set, `Add{c2,c3,c5}` collapsed by `c2c4 → c2c3` became `Add{c2²,c5}` at
+            // `C2 = C3`, and `C5 = C5·C5` was never derived (`ac_collapsed_recanon.egg`).
+            if self.node_flags(parent) & crate::node_types::FLAG_AC_COLLAPSED != 0 {
+                self.clear_node_flag(parent, crate::node_types::FLAG_AC_COLLAPSED);
+            }
         }
         // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
         // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
@@ -3622,9 +3631,24 @@ where
         // scratch. The combinators that form these monomials (`multiset_union`) already
         // panic on a sum past the width, so an overflow here is the same condition.
         let mut mat_buf: Vec<Cfg::C> = Vec::new();
+        // A materialized monomial is a normal form under the round's rules. If hash-consing
+        // returns a node an earlier round collapsed (against a rule since retired or
+        // reoriented), that node is irreducible now and must be a rule again: otherwise
+        // its superpositions are never generated. `ac_collapsed_recanon.egg`: the normal
+        // form `c2²c5` of `c2c4c5` was such a node, and `C5 = C5·C5` was never derived.
+        // Reactivation counts as a change, so the round loop does not report a fixpoint
+        // before the node is processed.
+        let reactivated = std::cell::Cell::new(false);
         let materialize =
             |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::C>| {
-                eg.add_monomial(op, ms, buf).ok()
+                let id = eg.add_monomial(op, ms, buf).ok()?;
+                if matches!(eg.node_ref(id), NodeRef::MSet(_) | NodeRef::Set(_))
+                    && eg.node_flags(id) & crate::node_types::FLAG_AC_COLLAPSED != 0
+                {
+                    eg.clear_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
+                    reactivated.set(true);
+                }
+                Some(id)
             };
         let do_merge = |eg: &mut Self, x: Cfg::G, y: Cfg::G, just: Justification<Cfg::G>| -> bool {
             if eg.classes.find_const(x) == eg.classes.find_const(y) {
@@ -4281,7 +4305,7 @@ where
         if overflow.get() {
             self.cc_overflow = true;
         }
-        changed
+        changed || reactivated.get()
     }
 
     /// Always sequential: a mark is a per-member frame push, and the fan-out

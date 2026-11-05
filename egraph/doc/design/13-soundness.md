@@ -521,5 +521,14 @@ is fixed on this branch.
     §5 inferences converge without `c1c3² = ∅` in `cancel_lattice.egg`. `lattice_round`
     runs at every completion fixpoint, also for `:identity` with `:nilpotent`, which is a
     group (`nilpotent_group_lattice.egg`).
+24. A collapsed node must leave the rule set only while a rule reduces it. Collapse marks
+    the node object (`FLAG_AC_COLLAPSED`), and hash-consing can return that object as the
+    normal form a later collapse or critical pair materializes, after its monomial changed
+    or the reducing rule was retired. The materialization and the recanonicalization clear
+    the flag; otherwise the irreducible rule is never superposed and `C5 = C5·C5` is not
+    derived (`ac_collapsed_recanon.egg`). Kapur's Algorithm 1 step 4(i) and Conchon et al.'s
+    Collapse return the reduced rule to the equation set for the same reason, and the Lean
+    model keys `retired` by monomial, so `RoundFixed.nf_present` (normal forms are active)
+    states the requirement.
 ---
 [← Ch 12: Anti-Unification](12-anti-unification.md) · [Table of Contents](00-table-of-contents.md) · [Ch 14: Proof Logging →](14-proof-logging.md)

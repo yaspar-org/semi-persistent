@@ -622,6 +622,7 @@ egg_test!(cancel_lattice, "cancel_lattice.egg");
 egg_test!(cancel_crit_pair, "cancel_crit_pair.egg");
 egg_test!(cancel_lattice_lazy, "cancel_lattice_lazy.egg");
 egg_test!(nilpotent_group_lattice, "nilpotent_group_lattice.egg");
+egg_test!(ac_collapsed_recanon, "ac_collapsed_recanon.egg");
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");
