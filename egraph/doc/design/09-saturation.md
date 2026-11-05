@@ -202,9 +202,13 @@ defects below are differences between the engine's test and that predicate.
   now counts a change only when the node count grew, and `Subsume` only when the flag was not
   already set. Regression: `tests/saturate_insert_fixpoint.rs`, which checks `saturated` after
   two rounds.
-- **Not counting nodes built inside a union of already-equal sides stops early.** *(Pending:
-  the fix is in progress on branch `fix/stop-and-slot-growth`; this note changes when the fix
-  lands.)* `Union` evaluates both sides, which can create nodes, and returns 0 when the two
+- **Not counting nodes built inside a union of already-equal sides stops early.** Fixed in
+  commit `38632dc4`: the loops compare `EGraph::size_stamp()`, the pair (node count, live
+  class count), before and after the action phase, and stop only when no action counted a
+  change and the stamp did not move. Regressions: `stop_self_union_mints.egg`,
+  `stop_assoc_flatten_mints.egg`, control `stop_insert_control.egg`. Lean:
+  `engine_stop_unchanged` (`proofs/lean/SemperProofs/Fidelity/StopTest.lean`), the engine's
+  stop test implies the model's `Unchanged`. Before the fix, `Union` evaluated both sides, which can create nodes, and returns 0 when the two
   sides end in one class. In the program below the first rule builds `(F (a))` on both sides
   of its union, the round reports no change although it created a node, and the loop stops
   before the second rule can match that node; the check fails under naive and semi-naive

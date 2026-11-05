@@ -245,8 +245,8 @@ consumers of the survivor's id; each interaction has its own rule.
   stop being its least active monomial, and eager completion misses consequences: the
   `grow_wa` program of Chapter 6 §9c fails when `(union (w) (a))` keeps `w`. The rule is to
   order monomials by a per-class key that a merge only lowers, so the result does not depend
-  on which id survives. *Pending: the fix is in progress on branch `fix/stop-and-slot-growth`;
-  until it lands, the survivor policy changes which equalities eager completion derives.*
+  on which id survives. Commit `ab214e9c` does this (Chapter 6 §9c); before it, the survivor
+  policy changed which equalities eager completion derived.
 - *Survivor policy and the semi-naive delta.* When the survivor is the id the parents already
   store, the merge recanonicalizes no parent, and only the absorbed members recorded in the
   touched log carry the change to the next round (§9.2, "The touched log and merges that keep

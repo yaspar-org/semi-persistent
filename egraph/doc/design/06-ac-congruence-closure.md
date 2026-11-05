@@ -1715,9 +1715,16 @@ unions in the other order it passed. Regression: `tests/egg/ac_min_slot_refresh.
 `reachable_I5` (the operations with the refresh preserve I5) and `shrinkNoRefresh_breaks_I5`
 (the reproducer state), `CC/Slot.lean`.
 
-**Order monomials by a per-class key that a merge only lowers.** *(Pending: the fix is in
-progress on branch `fix/stop-and-slot-growth`; this note changes when the fix lands, to name
-the fixture and the Lean theorem.)* The mechanisms are the survivor policy of the union-find
+**Order monomials by a per-class key that a merge only lowers.** Commit `ab214e9c`: each
+class carries an order key in an extra column of the min-monomial pool, a merge gives the
+merged class the lesser key, and `monomial_cmp_key` compares size first, then (key, count)
+from the largest key down. A merge that lowers the survivor's key shrinks every node over the
+survivor without changing its span, so rebuild also walks the survivor's parents and
+refreshes them (`refresh_key_lowered`). Regressions: `ac_minmono_grow_wa.egg`,
+`ac_minmono_grow_aw.egg`, `ac_key_survivor_lowered.egg` with its control, and the twelve
+`ac_minmono_cc1_*.egg` programs the completion conformance generator found. Lean:
+`keyed_reachable_I5` and `idOrder_grow_breaks_I5` (`proofs/lean/SemperProofs/CC/MinMonoKey.lean`).
+Before the fix, the mechanisms are the survivor policy of the union-find
 (Chapter 2, `--union-by`) and the completion order `monomial_cmp`, which compares monomials
 by the representative ids of their children. A merge that keeps the larger id renames a child
 upward: every node over the absorbed class grows in degree-lex without changing size. The

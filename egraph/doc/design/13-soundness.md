@@ -431,14 +431,14 @@ confirm the rule set is reduced at a fixpoint are in the
 The models of §4 hold only if the engine keeps the invariants below. A Lean proof or a
 conformance generator found each one, most as a confirmed defect, and each arises from two
 mechanisms interacting, so a change to either one can break it. One sentence each; the linked
-section gives the mechanisms, the failing program, the regression and the theorem. Two are
-pending: the rule is stated, and the fix is in progress on branch `fix/stop-and-slot-growth`.
+section gives the mechanisms, the failing program, the regression and the theorem. Every one
+is fixed on this branch.
 
 **Completion state** ([Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)):
 
 1. A class's stored minimal monomial is its least active monomial (I5), so rebuild refreshes it
    whenever recanonization shrinks a node below it ([§9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
-2. *Pending.* A merge never makes a stored node grow in the completion order, so monomials are
+2. A merge never makes a stored node grow in the completion order, so monomials are
    compared by a per-class key that a merge only lowers, not by the survivor's id
    ([§9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep);
    [Chapter 2](02-classes-and-union-find.md#merge-survivor-policy---union-by)).
@@ -458,8 +458,7 @@ pending: the rule is stated, and the fix is in progress on branch `fix/stop-and-
    gets ([Chapter 4](04-egraph.md#the-hash-cons-lookup-is-the-only-collision-check-a-fresh-node-gets)).
 7. A round counts a change exactly when it created a node, merged two classes or newly set a
    subsume flag, because the loop stops on the first round with no counted change
-   ([§9.1](09-saturation.md#the-stop-test-and-action-counting); *pending* for nodes created
-   inside a union of already-equal sides).
+   ([§9.1](09-saturation.md#the-stop-test-and-action-counting)).
 
 **Semi-naive matching** ([§9.2](09-saturation.md#92-semi-naive-evaluation)):
 
