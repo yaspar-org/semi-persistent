@@ -534,6 +534,8 @@ egg_test!(
 egg_test!(stop_self_union_mints, "stop_self_union_mints.egg");
 egg_test!(stop_assoc_flatten_mints, "stop_assoc_flatten_mints.egg");
 egg_test!(stop_insert_control, "stop_insert_control.egg");
+// Completion over a fold rewrites only on its spine (soundness hunt).
+egg_test!(ac_fold_completion_spine, "ac_fold_completion_spine.egg");
 // The minimal monomial under node growth (fidelity row EG1), and the twelve
 // AC-congruence conformance cases it failed.
 egg_test!(ac_minmono_grow_wa, "ac_minmono_grow_wa.egg");

@@ -2709,9 +2709,26 @@ where
                 if *op != g_op || lhs.len() > buf.len() {
                     continue;
                 }
-                let Some(s) =
-                    (0..=buf.len() - lhs.len()).find(|&s| &buf[s..s + lhs.len()] == lhs.as_slice())
-                else {
+                // Where `lhs` may be replaced: only at an offset where it spells a subterm of
+                // the stored term. `:assoc` is associative, so every contiguous run is one.
+                // A fold is not: `:assoc-left` stores `f(f(a, b), c)` as `[a, b, c]` and keeps
+                // `f(a, f(b, c))` as `[a, f[b, c]]`, so in `[x, c, d]`, which is
+                // `f(f(x, c), d)`, the run `[c, d]` spells no subterm, and the only run that
+                // does is a prefix. Rewriting `[c, d]` there would derive `(x - c) - d =
+                // (x - a) - b` from `a - b = c - d`: an unsound equality. A right fold keeps
+                // only suffixes. The same rule bounds `:flatten` views (`flatten::spine`).
+                let last = buf.len() - lhs.len();
+                let allowed = match self.ops().info(*op).kind {
+                    crate::registry::OpKind::A { dir, .. } => dir,
+                    _ => crate::registry::AssocDir::Both,
+                };
+                let at = |s: usize| &buf[s..s + lhs.len()] == lhs.as_slice();
+                let found = match allowed {
+                    crate::registry::AssocDir::Both => (0..=last).find(|&s| at(s)),
+                    crate::registry::AssocDir::Left => at(0).then_some(0),
+                    crate::registry::AssocDir::Right => at(last).then_some(last),
+                };
+                let Some(s) = found else {
                     continue;
                 };
                 new_children.clear();
