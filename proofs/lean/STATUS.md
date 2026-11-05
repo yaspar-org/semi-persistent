@@ -29,6 +29,15 @@ its two children classes merge (`NoCollapse`).
   `RoundFixed`, law facts `hlaw`/`hnf_ax`/`hcp`, `hcc`, `hS`, `hcancel`.
 - `reachable_I5`, `fix_sufficient`, `shrinkNoRefresh_breaks_I5`: the
   min-monomial refresh keeps I5; the unrefreshed shrink is the repro state.
+- `MinMonoKey.lean` (row EG1): completion orders monomials by per-class order
+  keys (`keyDegLex`; a merged class takes the lesser key, `key_merge`), not by
+  representative id. `rename_key_le`, `survivor_key_le`: at a merge every
+  node's keyed monomial stays or shrinks, so each recanonization is a no-op or
+  an `Op.shrink` (`merge_recanon_op`) and `reachable_I5` covers the engine
+  (`keyed_reachable_I5`). `keyDegLex_wf`, `keyDegLex_add_right`,
+  `keyDegLex_total` (keys distinct, `key_merge_injOn`).
+  `idOrder_grow_breaks_I5`: under the id order a node grows and I5 fails
+  (`grow_wa.egg`).
 - `kapur_termination`, `run_stabilizes`, `confluent_modulo`, `newman`.
 - `Laws/`: concrete instances `identity`, `nilpotent`, `idempotent`,
   `inverse` (the engine's one-directional walk `invWalk`, proved normalizing
@@ -80,6 +89,15 @@ its two children classes merge (`NoCollapse`).
   `delta_incomplete_untracked` (why the merge-membership delta exists).
   Not modelled: `:flatten` and sequence rules across rounds, action
   application, the transport of bindings through later merges.
+- `Engine/Rounds/SeqSplice.lean`: the key `add` stores for a sequence
+  node whose same-operator child is spliced (`flatten_seq_children`; the AC
+  and ACI twins splice the same way). `normalizeSeq` (spliced elements
+  `find`'d) is canonical, so `add` and recanonicalization agree
+  (`recanon_normalizeSeq`); `addSeq_preserves` keeps canonical keys and one
+  id per key, and `dedup_of_inv` derives `Round.WF.dedup` from them.
+  Counter-model `raw_breaks_dedup`: the unfixed build, which kept the
+  stored (stale) children of the spliced node, leaves two nodes of equal
+  content in two classes (`seq_hashcons_miss_min.egg`, `r1_0581`).
 - `Engine/Saturate/`: the saturation loop. Actions (`insert`, `union`,
   `subsume` as apply.rs runs them), `Den` (a right-hand-side term built in
   the graph), `Fired`, the transport of a binding through a round's merges
@@ -139,9 +157,45 @@ its two children classes merge (`NoCollapse`).
   `env_refine` (set equality with the reference interpreter under `WF`),
   `comm_pair_duplicate`, `ac_nodup`, `RoundSnapshot`.
 
+## Fidelity: rows closed against the engine (`SemperProofs/Fidelity/`)
+
+- `Index.lean`: the index is a filter on the store by the skip predicates
+  of `index.rs:521-537` (subsumed, shielded, unmatchable class);
+  `matches_index_iff`, `mem_runNaive_index_iff`.
+- `Subsume.lean`: saturation with `:subsume` runs, consequences read on the
+  store: `saturation_complete_store` (no `subsumed = ∅`).
+- `ByOpPolicy.lean`: `OpFilterPolicy`/`demote_by_op` as a parameter;
+  `policy_candidates_eq` (same candidates for every policy).
+- `Normalize.lean`, `NormalizeSat.lean`: right-hand sides present as the
+  normal forms `add` builds (`DenN`: splice, unit drop, nilpotent clamp,
+  inverse cancellation, degenerate arity); `DenN.persist`,
+  `fired_after_actions_N`, `saturation_complete_N` (store, `:subsume`, normal
+  forms); `den_misses_single`, the literal `Den` has no value for a
+  one-element AC right-hand side.
+- `Sound.lean`: `denN_sound`, `firedN_sound`, `union_recorded_sound`: what
+  the actions build denotes the right-hand side in every model of the graph
+  and the operator laws. The round-level converse of `Saturate.Inv` (with
+  the rebuild's merges) is open.
+- `StopTest.lean` (rows SA11, SA30): the action phase as mints, merges,
+  subsumes and hits with the node and class counts (`Phase.nodeCount`,
+  `Phase.classCount`); the engine's stop test (no reported change, the size
+  stamp `(node count, class count)` unmoved) implies `Unchanged`:
+  `engine_stop_unchanged` (and `_N`, `_round`); the converse
+  `Phase.stamp_ne`; `saturation_complete_engine`,
+  `saturation_complete_store_engine`, `saturation_complete_N_engine` take the
+  engine's stop condition. The engine stop test before the fix
+  (`changes == 0` alone, a union that minted nodes counting 0) is not
+  covered: fixed in the engine by `EGraph::size_stamp`.
+- Known divergences, not modelled: none of the stop test (closed by
+  `StopTest.lean` and the engine's size stamp) or of the minimal monomial
+  under node growth (closed by `CC/MinMonoKey.lean` and the engine's order
+  keys). `Round.Persist`/`StorePersist` assume recanonicalization
+  is a literal map, which a unit drop or degenerate collapse on rebuild
+  breaks.
+
 ## Not modelled
 
 View bounds `MAX_VIEWS`/`MAX_WORK`/`MAX_ELEMS` and multiplicity widths
-(hypotheses only); the index skip predicates; cross-round delta
+(hypotheses only); cross-round delta
 completeness; the galloping cursor (Verus, containers-verus); faults inside
 sequence sub-queries; `Nodup` of emitted lists (membership only).
