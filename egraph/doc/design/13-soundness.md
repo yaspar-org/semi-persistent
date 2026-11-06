@@ -337,13 +337,13 @@ Completeness of the corrected rule is a Lean theorem for a model,
 `demand_engine_complete_{ac,aci,assoc}`; [§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten).)
 
 Regrouped views under the operator's laws are sound in every model of the laws and are
-exactly the views chains of regroupings reach (`RegroupLaws.lean`). Relative to the
-laws they lose matches: a needed class that the normalization drops (the unit, a clamp
-to zero, a cancelled inverse) leaves a record no match satisfies, a defect of the
-demand (`regroup_unit_need_lost`, `flatten_regroup_laws_need.egg`); a normal form
-reached only by inserting the unit, a cancel pair or `k` nilpotent copies, and a set
-group kept beside its class, are not reached by any chain (`regroup_insert_unit_lost`,
-`regroup_idem_overlap_lost`).
+exactly the views chains of regroupings reach (`RegroupLaws.lean`). A needed class
+that the normalization drops (the unit, a clamp to zero, a cancelled inverse) used to
+leave a record no match satisfied; a regrouped record now needs only the classes its
+view holds (`regroup_drop_need_unit`, `flatten_regroup_laws_drop_need.egg`). Relative
+to the laws, a normal form reached only by inserting the unit, a cancel pair or `k`
+nilpotent copies, and a set group kept beside its class, are not reached by any chain
+(`regroup_insert_unit_lost`, `regroup_idem_overlap_lost`).
 [§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten), "Regrouped
 views", "Laws".
 

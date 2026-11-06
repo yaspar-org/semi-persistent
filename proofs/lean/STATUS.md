@@ -301,20 +301,23 @@ its two children classes merge (`NoCollapse`).
   `regroup_step_sound_{ac,aci,assoc}_laws`, `regroup_views_sound_{ac,aci,assoc}_laws`,
   `regroupSkip_views_sound_{ac,aci,assoc}_laws`. The exact characterization for any
   laws: `RegroupsToL` (the laws-free `RegroupsTo` to a canonical view, then the normal
-  form under the laws is a node), `RegroupStepL`, `RegroupChainL`; `regroupStepL_iff`
-  (a step is exactly a regrouping of the model), `regroupStepL_free_iff`,
-  `regroupChainL_iff`, `regroup_views_iff_laws`, `regroup_match_iff_laws`,
-  `regroupSkip_views_iff_laws`, `regroupSkip_match_iff_laws`,
-  `regroupSkip_match_complete_laws`, `regroupSkip_plan_complete_laws`. Relative to the
-  laws, chains lose three kinds of match: a needed class the normalization drops (the
-  unit, a clamp to zero, a cancelled inverse) leaves a record no match satisfies
-  (`needs_absent_rejects`, counter-model `regroup_unit_need_lost`, engine
-  `flatten_regroup_laws_need.egg`, also for a leaf that gains the dropped class; a
-  defect of the demand with a proposed local fix, design 07 §7.5, "Laws"); a normal
-  form reached only by inserting the unit (`regroup_insert_unit_lost`,
-  `flatten_regroup_laws_insert.egg`); a set group kept beside its class
-  (`regroup_idem_overlap_lost`, `flatten_regroup_laws_idem.egg`). Not modelled: a Lean
-  counter-model for the leaf case (the fixture only), and the proposed fix.
+  form under the laws is a node), `RegroupStepL`, `RegroupChainL`;
+  `fit_of_regroupsTo`, `regroupStepL_iff` (a step is exactly a regrouping of the
+  model), `regroupStepL_free_iff`, `regroupChainL_iff`, `regroup_views_iff_laws`,
+  `regroup_match_iff_laws`, `regroupSkip_views_iff_laws`,
+  `regroupSkip_match_iff_laws`, `regroupSkip_match_complete_laws`,
+  `regroupSkip_plan_complete_laws`. Classes the normalization drops (the unit, a clamp
+  to zero, a cancelled inverse; fixed in the engine and the model the same day):
+  `needsAfter` keeps only the needed classes the normalized view holds and `addG`
+  flags a leaf that gains a dropped class, so `reach_needs_held` (every needed class
+  of a reachable record is in its view) and `needs_taken_of_all`; `mayNonInert` keeps
+  every leaf under an identity, `canDrop_of_gone`, `mayNonInert_of_canDrop` and the
+  relaxed `LeafRel` keep `prune_regroup`;
+  `regroup_drop_need_{unit,nilpotent,inverse,leaf}` are the four matches of
+  `flatten_regroup_laws_drop_need.egg`. Beyond chains, two kinds of match stay lost: a
+  normal form reached only by inserting the unit (`regroup_insert_unit_lost`,
+  `flatten_regroup_laws_insert.egg`) and a set group kept beside its class
+  (`regroup_idem_overlap_lost`, `flatten_regroup_laws_idem.egg`).
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);

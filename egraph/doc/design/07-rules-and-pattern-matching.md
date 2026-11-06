@@ -1299,7 +1299,9 @@ some opening tree giving its view has every leaf satisfied (`Demand::accepts`):
 The walk prunes with the same rule, so it must not prune a leaf that a later choice of the rest
 of the view could make non-inert (`FlattenScratch::may_be_non_inert`). The unit and sequence
 tests read the leaf alone; the clamp and cancel tests read the whole view, so under
-`:nilpotent` or `:inverse` no multiset leaf is pruned. Lean: `prune_engine`
+`:nilpotent` or `:inverse` no multiset leaf is pruned. Under an `:identity` no leaf is pruned
+either, since a regrouping whose class the normalization drops flags the leaves that gain it
+("Regrouped views", "Laws"). Lean: `prune_engine`
 (`Flatten/EngineRule.lean`). The reference in `tests/flatten_differential.rs` computes the
 same flag; `flattened_matches_reference_laws` fails at seed 18 with the flag forced off.
 
@@ -1439,20 +1441,20 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   The generators already regroup under each case's laws. Relative to the laws, over the
   classes present, three kinds of match are lost; `(set-option :completion eager)` proves
   each equality below.
-  1. *A needed class the normalization drops.* The record still needs the group's class,
-     which its view no longer holds, so no item can take it (`needs_absent_rejects`). With
-     `zero ∋ add{A, B}`, `(add x y)` does not bind `x = C, y = D` in `add{A, B, C, D}`
-     (`regroup_unit_need_lost`); `flatten_regroup_laws_need.egg` pins the same loss under
-     `:nilpotent`, under `:inverse`, and for a leaf of the walk that gains the dropped
-     class. This is a defect of the demand, not of the views. Proposed fix, not applied:
-     after `need.push(g)` in `FlattenScratch::regroup`, keep only the needed classes the
-     normalized view holds, and flag a leaf that gains a dropped class as non-inert, in the
-     record and in its signature. A scratch build with both changes finds the four matches
-     of the fixture and leaves the other 52 `:flatten` programs of `tests/egg` unchanged;
-     among the 268 `:flatten` conformance programs it adds matches to four, and one
-     `check-neq` of `conform-flatten/f2_0095.egg`, a candidate the model's demand rejects,
-     then holds. Adopting it means the same change in the model's `regroupRec` and
-     regenerated samples.
+  1. *A needed class the normalization drops* (fixed 2026-11-06). The record needed the
+     group's class, which its view no longer held, so no item could take it, and a leaf that
+     gained the class could be satisfied only through it. A regrouped record now needs only
+     the classes its normalized view holds, and a leaf that gains a dropped class is flagged
+     non-inert, in the record and in its signature (`FlattenScratch::regroup`); the walk
+     keeps every leaf under an `:identity` (`may_be_non_inert`), since a later regrouping
+     may flag it. With `zero ∋ add{A, B}`, `(add x y)` binds `x = C, y = D` in `add{A, B, C,
+     D}`; `flatten_regroup_laws_drop_need.egg` pins the same under `:nilpotent`, under
+     `:inverse`, and for a leaf of the walk (Lean:
+     `regroup_drop_need_{unit,nilpotent,inverse,leaf}`, `reach_needs_held`). The model
+     changed the same way (`addG`, `needsAfter`, `mayNonInert`), and the regenerated
+     conformance samples changed in four programs (`conform/c1_0030.egg`,
+     `conform-flatten/f2_0011.egg`, `f2_0035.egg`, `f2_0095.egg`), which hold the new
+     matches.
   2. *A normal form reached only by inserting* the unit, a cancel pair, or `k` copies under
      `:nilpotent k`: with `zero ∋ add{B, D}`, `add{A, C}` equals `add{add{A, B}, add{C, D}}`
      (`regroup_insert_unit_lost`, `flatten_regroup_laws_insert.egg`). A chain opens and
