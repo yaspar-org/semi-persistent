@@ -47,26 +47,25 @@ const _: () = assert!(
     "e-class ring cell must stay two words at 31-bit ids"
 );
 
-// TODO(abs-class-storage): the `abs` handle breaks this 16-byte bound: widen and measure, or share a word, see containers-verus/doc/design/21-abstract-value-pool.md §5
-// The per-class slot: a use-list head, `min_row`, the member-count word (the
-// `--union-by` policy input, `T::Index`-wide so it follows the id
-// configuration), and two flags — 16 bytes at 31-bit ids. Was 12 before the
-// verified size counter landed; the count word is the deliberate growth.
+// The per-class slot has four configured-width words: use-list head, min-row,
+// abstract-value handle, and member count; plus four flags (row presence,
+// handle presence, atomic, matchable). Option A grows the 31-bit slot from
+// 16 to 20 bytes. Peak-memory and wall-time measurements are pending from Yuning.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
     core::mem::size_of::<<ClassData<crate::id::UseListId, crate::id::ENodeId> as Tagged>::Repr>()
-        == 16,
-    "per-class slot must stay 16 bytes at 31-bit ids"
+        == 20,
+    "per-class slot must stay 20 bytes at 31-bit ids"
 );
 
-// TODO(abs-class-storage): a separate `abs` word makes this slot 40 bytes, over the 32-byte bound, see containers-verus/doc/design/21-abstract-value-pool.md §5
-// The 63-bit configuration's slot: the same fields at 8-byte words.
+// The 63-bit configuration uses the same fields at 8-byte words, padded to
+// 40 bytes (previously 32). Benchmark measurements are pending from Yuning.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
     core::mem::size_of::<
         <ClassData<crate::nodes::UseListId64, crate::nodes::ENodeId64> as Tagged>::Repr,
-    >() <= 32,
-    "per-class slot exceeds 32 bytes at 63-bit ids"
+    >() <= 40,
+    "per-class slot exceeds 40 bytes at 63-bit ids"
 );
 
 #[cfg(test)]

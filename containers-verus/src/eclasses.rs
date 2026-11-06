@@ -35,7 +35,7 @@
 //! same thing: one archived mark level. The key stored in a ring payload is a
 //! configured bit-stealing `DenseId`, so the key and successor occupy one word
 //! each;
-//! the 16-byte class payload (`ClassData`) is pinned by the consumer's
+//! the 20-byte class payload representation at 31-bit ids (`ClassData`) is pinned by the consumer's
 //! compile-time asserts. This kernel is the production e-graph class layer:
 //! `egraph::EClasses` and `egraph::UnionFind` are type aliases of it.
 
@@ -59,13 +59,13 @@ verus! {
 // ClassData — per-class payload in the repr sparse set
 // ---------------------------------------------------------------------------
 
-// TODO(abs-class-storage): add `abs: Option<<T as DenseId>::Index>`, the class's handle into the abstract-value pool, see containers-verus/doc/design/21-abstract-value-pool.md §2
 /// Per-class data: the class's use-list id, its optional min-monomial pool
 /// row number, and the atomic flag (production's `ClassData`).
 #[derive(Copy)]
 pub struct ClassData<L: DenseId, T: DenseId> {
     pub use_list: L,
     pub min_row: Option<<T as DenseId>::Index>,
+    pub abs: Option<<T as DenseId>::Index>,
     pub atomic: bool,
     /// Whether this class participates in e-matching. `true` by default (a fresh
     /// singleton matches as today); a client sets it `false` to shield the whole
@@ -93,20 +93,30 @@ impl<L: DenseId, T: DenseId> crate::value_compressor::EqSpec for ClassData<L, T>
         ensures r == (self == other),
     {
         let ul = self.use_list.as_usize() == other.use_list.as_usize();
-        // TODO(abs-class-storage): compare `abs` here as `min_row` is compared, and extend the proof below, see containers-verus/doc/design/21-abstract-value-pool.md §7
         let mr = match (self.min_row, other.min_row) {
             (Option::None, Option::None) => true,
             (Option::Some(a), Option::Some(b)) => a.as_usize() == b.as_usize(),
             _ => false,
         };
+        let ab = match (self.abs, other.abs) {
+            (Option::None, Option::None) => true,
+            (Option::Some(a), Option::Some(b)) => a.as_usize() == b.as_usize(),
+            _ => false,
+        };
         let sz = self.size.as_usize() == other.size.as_usize();
-        let r = ul && mr && sz && (self.atomic == other.atomic)
+        let r = ul && mr && ab && sz && (self.atomic == other.atomic)
             && (self.matchable == other.matchable);
         proof {
             if r {
                 L::lemma_as_nat_injective(self.use_list, other.use_list);
                 <T as DenseId>::Index::lemma_as_nat_injective(self.size, other.size);
                 match (self.min_row, other.min_row) {
+                    (Option::Some(a), Option::Some(b)) => {
+                        <T as DenseId>::Index::lemma_as_nat_injective(a, b);
+                    }
+                    _ => {}
+                }
+                match (self.abs, other.abs) {
                     (Option::Some(a), Option::Some(b)) => {
                         <T as DenseId>::Index::lemma_as_nat_injective(a, b);
                     }
@@ -122,6 +132,7 @@ impl<L: DenseId, T: DenseId> crate::value_compressor::EqSpec for ClassData<L, T>
                     assert(ul);
                     assert(sz);
                     assert(mr);
+                    assert(ab);
                     assert(false);
                 }
                 assert(*self != *other);
@@ -139,13 +150,13 @@ impl<L: DenseId, T: DenseId> Clone for ClassData<L, T> {
     }
 }
 
-// TODO(abs-class-storage): the default payload carries `abs: None`, see containers-verus/doc/design/21-abstract-value-pool.md §2
 impl<L: DenseId, T: DenseId> core::default::Default for ClassData<L, T> {
     fn default() -> (r: ClassData<L, T>)
     {
         ClassData {
             use_list: L::default(),
             min_row: None,
+            abs: None,
             atomic: false,
             matchable: true,
             size: <T::Index as IndexLike>::min(),
@@ -153,9 +164,8 @@ impl<L: DenseId, T: DenseId> core::default::Default for ClassData<L, T> {
     }
 }
 
-// TODO(abs-class-storage): store `abs` as a (handle, present) pair or share a word; this decides the 16-byte budget, see containers-verus/doc/design/21-abstract-value-pool.md §5
 /// Repr for `ClassData`: the use-list word carries the capture tag
-/// (production's ordering); `min_row` is stored as `(row, present)` because
+/// (production's ordering); `min_row` and `abs` each use a `(word, present)` pair because
 /// `T::Index` has no spare niche. A named struct because Verus's
 /// trait-conflict checker rejects `Tagged` on tuples (the `ListNodeRepr`
 /// limitation).
@@ -164,6 +174,8 @@ pub struct ClassDataRepr<LR, I> {
     pub a: LR,
     pub row: I,
     pub present: bool,
+    pub abs_handle: I,
+    pub abs_present: bool,
     pub atomic: bool,
     pub matchable: bool,
     pub size: I,
@@ -178,10 +190,9 @@ impl<LR: Copy, I: Copy> Clone for ClassDataRepr<LR, I> {
 }
 
 /// `Tagged` for `ClassData`, delegating the capture tag to the use-list
-/// word. `repr_wf` pins the absent-row encoding to a canonical `(min, false)`
-/// — without that, two reprs differing only in a hidden dead `row` word would
+/// word. `repr_wf` pins absent rows and handles to canonical `(min, false)` pairs
+/// — without that, two reprs differing only in a hidden dead word would
 /// decode equal, violating the extensionality law.
-// TODO(abs-class-storage): extend value_of, repr_wf (canonical absent handle), lemma_repr_extensional, into_repr and from_repr with `abs`, see containers-verus/doc/design/21-abstract-value-pool.md §7
 impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
     type Repr = ClassDataRepr<<L as Tagged>::Repr, <T as DenseId>::Index>;
 
@@ -189,6 +200,7 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
         ClassData {
             use_list: L::value_of(r.a),
             min_row: if r.present { Some(r.row) } else { None },
+            abs: if r.abs_present { Some(r.abs_handle) } else { None },
             atomic: r.atomic,
             matchable: r.matchable,
             size: r.size,
@@ -200,6 +212,7 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
     open spec fn repr_wf(r: Self::Repr) -> bool {
         &&& L::repr_wf(r.a)
         &&& (!r.present ==> r.row == <T::Index as IndexLike>::min_spec())
+        &&& (!r.abs_present ==> r.abs_handle == <T::Index as IndexLike>::min_spec())
     }
 
     proof fn lemma_repr_extensional(r1: Self::Repr, r2: Self::Repr) {
@@ -209,6 +222,19 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
         if r1.present {
             assert(Self::value_of(r1).min_row == Some(r1.row));
         }
+        // Equal abstract-value options pin presence and the live handle;
+        // repr_wf pins both absent handles to the canonical min.
+        if r1.abs_present {
+            assert(Self::value_of(r1).abs == Some(r1.abs_handle));
+            assert(r2.abs_present);
+            assert(r1.abs_handle == r2.abs_handle);
+        } else {
+            assert(!r2.abs_present);
+            assert(r1.abs_handle == <T::Index as IndexLike>::min_spec());
+            assert(r2.abs_handle == <T::Index as IndexLike>::min_spec());
+        }
+        assert(r1.abs_present == r2.abs_present);
+        assert(r1.abs_handle == r2.abs_handle);
     }
 
     fn into_repr(self) -> (r: Self::Repr) {
@@ -216,11 +242,17 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
             Some(r) => (r, true),
             None => (<T::Index as IndexLike>::min(), false),
         };
+        let (abs_handle, abs_present) = match self.abs {
+            Some(h) => (h, true),
+            None => (<T::Index as IndexLike>::min(), false),
+        };
         proof { <T::Index as IndexLike>::lemma_min_as_nat(); }
         ClassDataRepr {
             a: self.use_list.into_repr(),
             row,
             present,
+            abs_handle,
+            abs_present,
             atomic: self.atomic,
             matchable: self.matchable,
             size: self.size,
@@ -230,6 +262,7 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
         ClassData {
             use_list: L::from_repr(&r.a),
             min_row: if r.present { Some(r.row) } else { None },
+            abs: if r.abs_present { Some(r.abs_handle) } else { None },
             atomic: r.atomic,
             matchable: r.matchable,
             size: r.size,
@@ -916,9 +949,8 @@ where
             Some(o) => o,
             None => crate::guard::refuse("EClasses::add_singleton: index width below 1"),
         };
-        // TODO(abs-class-storage): a fresh class carries `abs: None`, here and in the spec literal below, see containers-verus/doc/design/21-abstract-value-pool.md §2
         let raw_key = match self.reprs.try_add(ClassData {
-            use_list: list_id, min_row: None, atomic: false, matchable: true, size: one,
+            use_list: list_id, min_row: None, abs: None, atomic: false, matchable: true, size: one,
         }) {
             Ok(k) => k,
             Err(_) => crate::guard::refuse("EClasses::add_singleton: repr capacity exhausted"),
@@ -977,7 +1009,7 @@ where
             assert(self.reprs.contains_spec(raw_key));
             assert(ss_contains(sparse, indices, live, kn));
             assert(ss_value(dense, sparse, kn)
-                == ClassData::<L, T> { use_list: list_id, min_row: None, atomic: false, matchable: true, size: one });
+                == ClassData::<L, T> { use_list: list_id, min_row: None, abs: None, atomic: false, matchable: true, size: one });
 
             // survivors: old liveness and values carry over, id-for-nat
             assert forall|kk: nat| #[trigger] ss_contains(osparse, oindices, olive, kk)
