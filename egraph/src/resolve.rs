@@ -2514,14 +2514,19 @@ where
     use crate::ast::Action;
     let resolved = match action {
         Action::Union(a, b) => {
-            let ra = resolve_rhs(a, None, ops, sorts, model, ctx, globals)?;
-            let rb = resolve_rhs(b, None, ops, sorts, model, ctx, globals)?;
-            Ok(ResolvedAction::Union(ra, rb))
+        let ra = resolve_rhs(a, None, ops, sorts, model, ctx, globals)?;
+        let rb = resolve_rhs(b, None, ops, sorts, model, ctx, globals)?;
+        
+        // Validate that the target domains match the enabled sort domains
+        if ra.sort() != rb.sort() {
+            return Err(err(
+                format!("Domain validation error: incompatible sorts {:?} and {:?}", ra.sort(), rb.sort()),
+                Span::Dummy,
+            ));
         }
-        Action::Insert(t) => {
-            let rt = resolve_rhs(t, None, ops, sorts, model, ctx, globals)?;
-            Ok(ResolvedAction::Insert(rt))
-        }
+
+        Ok(ResolvedAction::Union(ra, rb))
+    }
         Action::Set { func, .. } => {
             // Lattice `set` parses but has no semantics yet (`apply.rs` would reach a
             // `todo!` when the rule fired). Refused here, when the rule is installed, so a
