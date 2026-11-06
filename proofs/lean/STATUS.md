@@ -261,10 +261,7 @@ its two children classes merge (`NoCollapse`).
   `fitsR_ac_complete`, `fitsR_aci_complete`, `fitsR_assoc_complete`,
   `fitsR_left_complete`, `fitsR_right_complete`. Not covered: operators
   with laws (identity, nilpotence, inverses) in the completeness theorems;
-  the engine's regrouping
-  bounds (`MAX_REGROUP_VIEWS`, 2^14 regrouped records added after the skips,
-  and `MAX_REGROUP_WORK`, 2^20 use-list entries and member children
-  examined, which also counts views no record reaches); soundness under laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
+  soundness under laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
   with a budget of 45,000 records per node; one committed `conform` sample
   (`c1_0052.egg`) is past it, and the engine stops regrouping a node of it at
   its own bounds too.
@@ -292,6 +289,39 @@ its two children classes merge (`NoCollapse`).
   `regroupSkip_match_complete`. The generators stay on `regroupLevels`: on the
   engine's loop they emit the same `check-eq` sets in another order, which
   changes the sampled `check-neq` candidates.
+  The engine's bounds (2026-11-06, `RegroupBoundsDefs.lean`,
+  `RegroupBounds.lean`): `BSt.run` is the loop with the engine's counters,
+  incremented and checked where `flatten.rs` does: `views` (records added
+  after the skips, checked against `MAX_REGROUP_VIEWS`, 2^14, before the
+  record is stored), `work` (the use-list lengths of the popped view's
+  distinct classes, then each candidate's children, checked against
+  `MAX_REGROUP_WORK`, 2^20, so a view no record reaches still costs), the
+  stored elements against `MAX_ELEMS` (`OVER_BOUND`: the node is skipped),
+  and the fits whose normalization overflows the width (`Ix.wide`). A run
+  stops at once and keeps its records. `regroupBounded_halt_iff`: the run
+  stops iff the run without bounds ends past a bound, wherever the bound is
+  crossed (`regroupBounded_halt_ok`, `regroupBounded_truncated_iff` for
+  which bound); `regroupBounded_exact`: a run that does not stop, without
+  overflow, ends with `regroupSkipG`'s records; `regroupBounded_sub`,
+  `regroupBounded_sub_skip`, `regroupBounded_reach`: a truncated run's
+  records are records of the run without bounds, and reachable.
+  `takeableRCap` is the takeable set with the engine's cap of 4,096 classes
+  on the closure (`regroupSkipCap_spec`). `runB` runs a flattened plan with
+  the bounded enumeration (`enumerateRDBounded`, which does not regroup when
+  the decomposition has no item) and sums `flatten_regroup_truncated`,
+  `flatten_skipped` and `flatten_overflowed` over its `Flatten`
+  evaluations: `regroupBounded_plan_sound` for any counters, and with the
+  three zero `regroupBounded_query_exact` / `regroupBounded_match_exact`:
+  exactly the bindings of `Enumerator.regroupSkip`, which
+  `regroupSkip_match_iff` characterizes. Every regrouping the engine runs on
+  the `conform` and `conform-flatten` samples has the counters of the
+  model's run on a node of the case (an instrumented engine against an
+  executable mirror of `BSt.run`, not committed); on `c1_0052.egg` both stop
+  at `MAX_REGROUP_VIEWS` (16,385 records). The generators keep
+  `regroupCap`: `BSt.run` reads its state through function updates and is too
+  slow for them. Not modelled: the walk's own bounds and overflows, which
+  skip or count the node before regrouping; a view size saturated past 2^64
+  under a 128-bit width.
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);

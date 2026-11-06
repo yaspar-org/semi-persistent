@@ -699,7 +699,11 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     /// skips below (a target with an unconditional record, a source with one, a derived
     /// record whose signature the target has) drop only records a kept record of the same
     /// view covers: the matches are those of the full enumeration (`proofs/lean`,
-    /// `RegroupSkip.lean`, `regroupSkipG_iff`).
+    /// `RegroupSkip.lean`, `regroupSkipG_iff`). The bounds are modelled as checked here
+    /// (`RegroupBounds.lean`): regrouping stops iff the run without bounds ends past a
+    /// bound, wherever it is crossed (`regroupBounded_halt_iff`), and a query whose
+    /// `flatten_regroup_truncated`, `flatten_skipped` and `flatten_overflowed` are zero
+    /// has the matches of the run without bounds (`regroupBounded_query_exact`).
     #[allow(clippy::too_many_arguments)]
     fn regroup<O, Src>(
         &mut self,
