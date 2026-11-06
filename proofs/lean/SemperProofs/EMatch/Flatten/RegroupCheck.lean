@@ -14,6 +14,7 @@ enumeration (`Plan.lean`). Expected: only `propext`, `Classical.choice`,
 #print axioms Semper.EMatch.Flatten.mem_dedupH
 #print axioms Semper.EMatch.Flatten.regroupLevelsCapped_eq
 #print axioms Semper.EMatch.Flatten.mem_regroupLevels_iff
+#print axioms Semper.EMatch.Flatten.mem_withinLimit
 #print axioms Semper.EMatch.Flatten.acceptsE_enumerateFromR
 #print axioms Semper.EMatch.Flatten.takeableR_down
 #print axioms Semper.EMatch.Flatten.takenOf_takeableR
@@ -58,8 +59,7 @@ enumeration (`Plan.lean`). Expected: only `propext`, `Classical.choice`,
 #print axioms Semper.EMatch.Flatten.regroup_views_iff
 #print axioms Semper.EMatch.Flatten.regroup_match_iff
 #print axioms Semper.EMatch.Flatten.regroupStep_ac_of
-#print axioms Semper.EMatch.Flatten.exNestInv_step
-#print axioms Semper.EMatch.Flatten.regroup_nested_limit_counter
+#print axioms Semper.EMatch.Flatten.regroup_nested_matches
 #print axioms Semper.EMatch.Flatten.regroup_fold_nested
 
 namespace Semper.EMatch.Flatten

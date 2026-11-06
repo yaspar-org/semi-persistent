@@ -17,26 +17,27 @@ every kind and fold direction:
   run on the spine (`:assoc`; a prefix of a left fold, a suffix of a right
   fold: `regroupsTo_left_iff`, `regroupsTo_right_iff`), of at least two
   entries, not the whole view;
-* `RegroupStep ctx dir limit r r'`: one regrouping of a record by an
+* `RegroupStep ctx dir r r'`: one regrouping of a record by an
   `f`-member, the leaves gaining `g` (`addG`) and the needed classes losing
-  those the group absorbs and gaining `g` (`needsAfter`), at most `limit`
-  of them; `RegroupChain` is any finite chain of steps;
+  those the group absorbs and gaining `g` (`needsAfter`); `RegroupChain` is
+  any finite chain of steps;
 * `regroupStep_mem`, `regroupChain_mem_levels`: a declarative step is a
   regrouping of the model and makes the view strictly smaller, so a chain
   lies within the levels the model runs; `regroupStep_of_mem`,
   `regroupChain_of_mem_levels`: conversely;
 * `regroup_view_complete`, `regroup_views_iff`: a view of `enumerateR`
-  accepts `taken` iff a chain from a walk record reaches it with its leaves
-  and needed classes satisfied;
+  accepts `taken` iff a chain from a walk record reaches it, ending on a
+  record that needs at most `limit` classes, with its leaves and needed
+  classes satisfied;
 * `regroup_match_complete`, `regroup_match_iff`: at the match level, an
   n-ary atom holds under `AtomSatG (Enumerator.regroup dir)` iff some chain
-  reaches a view the atom's shallow pattern matches; `regroup_plan_complete`
+  reaches a view the atom's shallow pattern matches, its last record needing
+  at most as many classes as the atom has items; `regroup_plan_complete`
   then emits the binding.
 
-The per-item limit (`Demand::needs`) bounds the needed classes at every step
-of the chain, as the engine checks it at every step: a chain whose last
-record needs few classes but whose intermediate records need more is not
-found (`regroup_nested_limit_counter`, `RegroupNested.lean`).
+The per-item limit (`Demand::needs`) bounds only the classes the last record
+of the chain needs: the records in between may need more, since a later
+regrouping may absorb them (`regroup_nested_matches`, `RegroupNested.lean`).
 -/
 
 namespace Semper.EMatch.Flatten
@@ -112,20 +113,19 @@ theorem regroupsTo_right_iff {w : List (C × Nat)} {g : C} {grp w' : List (C × 
 whose children `grp` do not hold `g` regroups the record's view
 (`RegroupsTo`); a leaf holding a class of the group also holds `g`
 (`addG`); the classes the record needs taken lose those the group absorbs
-and gain `g` (`needsAfter`), and there are at most `limit` of them. -/
-inductive RegroupStep (ctx : Ctx) (dir : Dir) (limit : Nat) : RecR → RecR → Prop
+and gain `g` (`needsAfter`). -/
+inductive RegroupStep (ctx : Ctx) (dir : Dir) : RecR → RecR → Prop
   | mk {r : RecR} {id : NodeId} {m : Node} {g : C} {w' : List (C × Nat)} :
       ctx.IsMember id m g → g ∉ (kids ctx.κ m.children).map Prod.fst →
       RegroupsTo ctx.κ dir r.1 g (kids ctx.κ m.children) w' →
-      (needsAfter g ((kids ctx.κ m.children).map Prod.fst) r.2.2).length ≤ limit →
-      RegroupStep ctx dir limit r
+      RegroupStep ctx dir r
         (w', r.2.1.map (addG g ((kids ctx.κ m.children).map Prod.fst)),
           needsAfter g ((kids ctx.κ m.children).map Prod.fst) r.2.2)
 
 /-- A finite chain of regroupings, each fitting the view the previous ones
-left, each within the per-item limit on needed classes. -/
-def RegroupChain (ctx : Ctx) (dir : Dir) (limit : Nat) : RecR → RecR → Prop :=
-  Relation.ReflTransGen (RegroupStep ctx dir limit)
+left. No bound applies to the needed classes along the chain. -/
+def RegroupChain (ctx : Ctx) (dir : Dir) : RecR → RecR → Prop :=
+  Relation.ReflTransGen (RegroupStep ctx dir)
 
 /-- The views regrouping starts from and keeps: canonical multisets (AC),
 canonical sets (ACI), positive counts (`:assoc`). -/
@@ -261,12 +261,11 @@ theorem viewSize_pos_ge {w : List (C × Nat)} (h : ∀ e ∈ w, 0 < e.2) : w.len
       omega
 
 /-- The AC step. -/
-theorem regroupStep_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {limit : Nat} {r : RecR}
+theorem regroupStep_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {r : RecR}
     {g : C} {grp w' : List (C × Nat)} (hgg : (g, grp) ∈ groupsOf ctx)
-    (hg : g ∉ grp.map Prod.fst) (hok : ViewOK .ac r.1) (h : RegroupsTo .ac dir r.1 g grp w')
-    (hle : (needsAfter g (grp.map Prod.fst) r.2.2).length ≤ limit) :
+    (hg : g ∉ grp.map Prod.fst) (hok : ViewOK .ac r.1) (h : RegroupsTo .ac dir r.1 g grp w') :
     (w', r.2.1.map (addG g (grp.map Prod.fst)), needsAfter g (grp.map Prod.fst) r.2.2) ∈
-        regroupRec ctx dir Laws.free limit r ∧
+        regroupRec ctx dir Laws.free r ∧
       ViewOK .ac w' ∧ viewSize w' < viewSize r.1 := by
   obtain ⟨h2, hsub, hne, rfl⟩ := h
   simp only [ViewOK] at hok
@@ -289,7 +288,7 @@ theorem regroupStep_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {limit : Nat
   have hn : normalize ctx.κ Laws.free (v ++ [(g, 1)]) =
       .node (Multiset.entries (ofEntries r.1 - ofEntries grp + {g})) := by
     rw [hκ, normalize_free_ac_node hcard, hw]
-  refine ⟨regroupRec_of hgg (hκ ▸ hfit) hn hle, ?_, ?_⟩
+  refine ⟨regroupRec_of hgg (hκ ▸ hfit) hn, ?_, ?_⟩
   · simp only [ViewOK]; unfold coalesce; rw [ofEntries_entries]
   · rw [viewSize_entries, viewSize_eq_card, Multiset.card_add, Multiset.card_singleton,
       Multiset.card_sub hsub]
@@ -329,12 +328,11 @@ theorem dedupAci_regrouped {w grp v : List (C × Nat)} {g : C} (hok : dedupAci w
   unfold dedupAci; rw [hraw]
 
 /-- The ACI step. -/
-theorem regroupStep_aci {ctx : Ctx} (hκ : ctx.κ = .aci) {dir : Dir} {limit : Nat} {r : RecR}
+theorem regroupStep_aci {ctx : Ctx} (hκ : ctx.κ = .aci) {dir : Dir} {r : RecR}
     {g : C} {grp w' : List (C × Nat)} (hgg : (g, grp) ∈ groupsOf ctx)
-    (hg : g ∉ grp.map Prod.fst) (hok : ViewOK .aci r.1) (h : RegroupsTo .aci dir r.1 g grp w')
-    (hle : (needsAfter g (grp.map Prod.fst) r.2.2).length ≤ limit) :
+    (hg : g ∉ grp.map Prod.fst) (hok : ViewOK .aci r.1) (h : RegroupsTo .aci dir r.1 g grp w') :
     (w', r.2.1.map (addG g (grp.map Prod.fst)), needsAfter g (grp.map Prod.fst) r.2.2) ∈
-        regroupRec ctx dir Laws.free limit r ∧
+        regroupRec ctx dir Laws.free r ∧
       ViewOK .aci w' ∧ viewSize w' < viewSize r.1 := by
   obtain ⟨h2, hsub, hne, hF, rfl⟩ := h
   simp only [ViewOK] at hok
@@ -363,7 +361,7 @@ theorem regroupStep_aci {ctx : Ctx} (hκ : ctx.κ = .aci) {dir : Dir} {limit : N
       have := congrArg List.length h0
       simp only [List.length_map, hlen, List.length_singleton] at this
       omega
-  refine ⟨regroupRec_of hgg (hκ ▸ hfit) hn hle, ?_, ?_⟩
+  refine ⟨regroupRec_of hgg (hκ ▸ hfit) hn, ?_, ?_⟩
   · simp only [ViewOK]
     rw [← hd, dedupAci_dedupAci]
   · rw [viewSize_ones (fun e he => by
@@ -376,12 +374,11 @@ theorem regroupStep_aci {ctx : Ctx} (hκ : ctx.κ = .aci) {dir : Dir} {limit : N
     omega
 
 /-- The `:assoc` step, every fold direction. -/
-theorem regroupStep_assoc {ctx : Ctx} (hκ : ctx.κ = .assoc) {dir : Dir} {limit : Nat} {r : RecR}
+theorem regroupStep_assoc {ctx : Ctx} (hκ : ctx.κ = .assoc) {dir : Dir} {r : RecR}
     {g : C} {grp w' : List (C × Nat)} (hgg : (g, grp) ∈ groupsOf ctx)
-    (hg : g ∉ grp.map Prod.fst) (hok : ViewOK .assoc r.1) (h : RegroupsTo .assoc dir r.1 g grp w')
-    (hle : (needsAfter g (grp.map Prod.fst) r.2.2).length ≤ limit) :
+    (hg : g ∉ grp.map Prod.fst) (hok : ViewOK .assoc r.1) (h : RegroupsTo .assoc dir r.1 g grp w') :
     (w', r.2.1.map (addG g (grp.map Prod.fst)), needsAfter g (grp.map Prod.fst) r.2.2) ∈
-        regroupRec ctx dir Laws.free limit r ∧
+        regroupRec ctx dir Laws.free r ∧
       ViewOK .assoc w' ∧ viewSize w' < viewSize r.1 := by
   obtain ⟨p, h2, hlt, hp, hsp, hrun, rfl⟩ := h
   simp only [ViewOK] at hok
@@ -395,7 +392,7 @@ theorem regroupStep_assoc {ctx : Ctx} (hκ : ctx.κ = .assoc) {dir : Dir} {limit
     simp only [List.length_append, List.length_take, List.length_cons, List.length_drop,
       List.length_nil] at this
     omega
-  refine ⟨regroupRec_of hgg (hκ ▸ hfit) hn hle, ?_, ?_⟩
+  refine ⟨regroupRec_of hgg (hκ ▸ hfit) hn, ?_, ?_⟩
   · simp only [ViewOK]
     intro e he
     rcases List.mem_append.1 he with he | he
@@ -424,52 +421,54 @@ theorem regroupStep_assoc {ctx : Ctx} (hκ : ctx.κ = .assoc) {dir : Dir} {limit
 /-- **One declarative step is one regrouping of the model**, laws-free, every
 kind and fold direction: the record is among `regroupRec`'s, its view is
 canonical again, and it is strictly smaller. -/
-theorem regroupStep_mem {ctx : Ctx} {dir : Dir} {limit : Nat} {r r' : RecR}
-    (hok : ViewOK ctx.κ r.1) (h : RegroupStep ctx dir limit r r') :
-    r' ∈ regroupRec ctx dir Laws.free limit r ∧ ViewOK ctx.κ r'.1 ∧ viewSize r'.1 < viewSize r.1 := by
-  obtain ⟨hm, hg, hto, hle⟩ := h
+theorem regroupStep_mem {ctx : Ctx} {dir : Dir} {r r' : RecR}
+    (hok : ViewOK ctx.κ r.1) (h : RegroupStep ctx dir r r') :
+    r' ∈ regroupRec ctx dir Laws.free r ∧ ViewOK ctx.κ r'.1 ∧ viewSize r'.1 < viewSize r.1 := by
+  obtain ⟨hm, hg, hto⟩ := h
   have hgg := mem_groupsOf_of_member hm
-  generalize kids ctx.κ _ = grp at hgg hg hto hle ⊢
+  generalize kids ctx.κ _ = grp at hgg hg hto ⊢
   cases hκ : ctx.κ <;> rw [hκ] at hok hto <;> dsimp only
-  · exact regroupStep_assoc hκ hgg hg hok hto hle
-  · exact regroupStep_ac hκ hgg hg hok hto hle
-  · exact regroupStep_aci hκ hgg hg hok hto hle
+  · exact regroupStep_assoc hκ hgg hg hok hto
+  · exact regroupStep_ac hκ hgg hg hok hto
+  · exact regroupStep_aci hκ hgg hg hok hto
 
 /-- A chain of declarative steps from a canonical record lies within as many
 levels of the model's regrouping as the record's view has entries. -/
-theorem regroupChain_mem_levels {ctx : Ctx} {dir : Dir} {limit : Nat} {r₀ r : RecR}
-    (hok : ViewOK ctx.κ r₀.1) (h : RegroupChain ctx dir limit r₀ r) :
-    r ∈ regroupLevels ctx dir Laws.free limit (viewSize r₀.1) [r₀] := by
+theorem regroupChain_mem_levels {ctx : Ctx} {dir : Dir} {r₀ r : RecR}
+    (hok : ViewOK ctx.κ r₀.1) (h : RegroupChain ctx dir r₀ r) :
+    r ∈ regroupLevels ctx dir Laws.free (viewSize r₀.1) [r₀] := by
   induction h using Relation.ReflTransGen.head_induction_on with
-  | refl => exact mem_regroupLevels_of_mem ctx dir Laws.free limit _ (List.mem_singleton_self _)
+  | refl => exact mem_regroupLevels_of_mem ctx dir Laws.free _ (List.mem_singleton_self _)
   | head hs _ ih =>
       obtain ⟨h1, hok', hlt⟩ := regroupStep_mem hok hs
       have := mem_regroupLevels_succ h1 (ih hok')
-      exact regroupLevels_fuel_mono ctx dir Laws.free limit (by omega) this
+      exact regroupLevels_fuel_mono ctx dir Laws.free (by omega) this
 
 /-! ## Completeness -/
 
 /-- **Completeness of regrouped views, chains.** For a laws-free operator of
 any kind and fold direction: the view a chain of regroupings reaches from a
-walk record is enumerated, and its demand accepts every `taken` that takes
-the classes the chain's record still needs and satisfies its leaves. -/
+walk record, ending on a record that needs at most `limit` classes, is
+enumerated, and its demand accepts every `taken` that takes the classes the
+chain's record still needs and satisfies its leaves. -/
 theorem regroup_view_complete {ctx : Ctx} {dir : Dir} {limit : Nat} {n : Node} {r₀ r : RecR}
-    (h₀ : r₀ ∈ baseRecsR ctx dir Laws.free n) (hch : RegroupChain ctx dir limit r₀ r)
+    (h₀ : r₀ ∈ baseRecsR ctx dir Laws.free n) (hch : RegroupChain ctx dir r₀ r)
+    (hlim : r.2.2.length ≤ limit)
     {taken : List C} (hacc : ∀ l ∈ r.alt, l.okE ctx.κ taken) :
     ∃ d, (r.1, d) ∈ enumerateR ctx dir Laws.free limit n ∧ d.acceptsE ctx.κ taken := by
   have hlev := regroupChain_mem_levels (viewOK_base h₀) hch
-  have hmem : r ∈ regroupAll ctx dir Laws.free limit (regroupFuel (baseRecsR ctx dir Laws.free n))
+  have hmem : r ∈ regroupAll ctx dir Laws.free (regroupFuel (baseRecsR ctx dir Laws.free n))
       (baseRecsR ctx dir Laws.free n) :=
-    (mem_regroupLevels_iff ctx dir Laws.free limit _ _ r).2
-      ⟨r₀, h₀, regroupLevels_fuel_mono ctx dir Laws.free limit (viewSize_le_regroupFuel h₀) hlev⟩
-  exact (acceptsE_enumerateFromR (κ := ctx.κ)).2 ⟨r, hmem, rfl, hacc⟩
+    (mem_regroupLevels_iff ctx dir Laws.free _ _ r).2
+      ⟨r₀, h₀, regroupLevels_fuel_mono ctx dir Laws.free (viewSize_le_regroupFuel h₀) hlev⟩
+  exact (acceptsE_enumerateFromR (κ := ctx.κ)).2 ⟨r, mem_withinLimit.2 ⟨hmem, hlim⟩, rfl, hacc⟩
 
 /-- **Completeness of regrouped views at the match level, chains.** An n-ary
 atom of any kind over a laws-free operator, any fold direction: if a chain
-of regroupings, each within the atom's per-item limit, takes a walk record
-of the atom's node to a record on whose view the binding matches the atom's
-shallow pattern, and the item classes take the classes the record still
-needs and satisfy its leaves, the atom holds under
+of regroupings takes a walk record of the atom's node to a record on whose
+view the binding matches the atom's shallow pattern, the record needs at
+most as many classes as the atom has items, and the item classes take the
+classes the record still needs and satisfy its leaves, the atom holds under
 `AtomSatG (Enumerator.regroup dir)`; `regroup_plan_complete` then emits the
 binding. -/
 theorem regroup_match_complete {c : FCtx} {dir : Sym → Dir} {σ : Binding} {a : RAtom}
@@ -478,11 +477,11 @@ theorem regroup_match_complete {c : FCtx} {dir : Sym → Dir} {σ : Binding} {a 
     (hcls : σ.cls a.node = some (c.G.find id)) (hop : n.op = a.op)
     (hlaws : c.laws a.op = Laws.free) {r₀ r : RecR}
     (h₀ : r₀ ∈ baseRecsR (c.ctx a.op κ) (dir a.op) Laws.free n)
-    (hch : RegroupChain (c.ctx a.op κ) (dir a.op) a.elems.length r₀ r)
+    (hch : RegroupChain (c.ctx a.op κ) (dir a.op) r₀ r) (hlim : r.2.2.length ≤ a.elems.length)
     (hacc : ∀ l ∈ r.alt, l.okE κ (takenOf σ a.elems))
     (hm : MatchN c.G a.shallow ⟨a.op, ofView κ r.1⟩ σ) :
     AtomSatG (Enumerator.regroup dir) c σ a := by
-  obtain ⟨d, hd, hd'⟩ := regroup_view_complete (taken := takenOf σ a.elems) h₀ hch hacc
+  obtain ⟨d, hd, hd'⟩ := regroup_view_complete (taken := takenOf σ a.elems) h₀ hch hlim hacc
   unfold AtomSatG
   rw [hκ]
   refine ⟨id, n, hnode, hmem, hcls, hop, r.1, d, ?_, hm, hd'⟩
@@ -644,21 +643,21 @@ theorem regroupsTo_of_fitsR {κ : FlatKind} {dir : Dir} {view : List (C × Nat)}
 
 /-- **Every regrouping of the model is a declarative step**, laws-free, from a
 canonical view. -/
-theorem regroupStep_of_mem {ctx : Ctx} {dir : Dir} {limit : Nat} {r r' : RecR}
-    (hok : ViewOK ctx.κ r.1) (h : r' ∈ regroupRec ctx dir Laws.free limit r) :
-    RegroupStep ctx dir limit r r' := by
-  obtain ⟨g, grp, raw, hgg, hraw, hn, hl, hneeds, hle⟩ := mem_regroupRec h
+theorem regroupStep_of_mem {ctx : Ctx} {dir : Dir} {r r' : RecR}
+    (hok : ViewOK ctx.κ r.1) (h : r' ∈ regroupRec ctx dir Laws.free r) :
+    RegroupStep ctx dir r r' := by
+  obtain ⟨g, grp, raw, hgg, hraw, hn, hl, hneeds⟩ := mem_regroupRec h
   obtain ⟨id, m, hm, rfl⟩ := mem_groupsOf hgg
   obtain ⟨w', ls', ns'⟩ := r'
-  simp only at hl hneeds hle hn
+  simp only at hl hneeds hn
   subst hl hneeds
-  exact RegroupStep.mk hm (fitsR_not_mem hraw) (regroupsTo_of_fitsR hok hraw hn) hle
+  exact RegroupStep.mk hm (fitsR_not_mem hraw) (regroupsTo_of_fitsR hok hraw hn)
 
 /-- A record of the model's levels from a canonical record is reached by a
 chain of declarative steps. -/
-theorem regroupChain_of_mem_levels {ctx : Ctx} {dir : Dir} {limit : Nat} :
+theorem regroupChain_of_mem_levels {ctx : Ctx} {dir : Dir} :
     ∀ (F : Nat) {r₀ r : RecR}, ViewOK ctx.κ r₀.1 →
-      r ∈ regroupLevels ctx dir Laws.free limit F [r₀] → RegroupChain ctx dir limit r₀ r
+      r ∈ regroupLevels ctx dir Laws.free F [r₀] → RegroupChain ctx dir r₀ r
   | 0, r₀, r, _, h => by
       simp only [regroupLevels, List.mem_singleton] at h
       subst h; exact Relation.ReflTransGen.refl
@@ -667,7 +666,7 @@ theorem regroupChain_of_mem_levels {ctx : Ctx} {dir : Dir} {limit : Nat} :
         List.mem_append, List.mem_singleton] at h
       rcases h with rfl | h
       · exact Relation.ReflTransGen.refl
-      · obtain ⟨r₁, h₁, h⟩ := (mem_regroupLevels_iff ctx dir Laws.free limit F _ r).1 h
+      · obtain ⟨r₁, h₁, h⟩ := (mem_regroupLevels_iff ctx dir Laws.free F _ r).1 h
         have h₁' := mem_dedupH.1 h₁
         have hs := regroupStep_of_mem hok h₁'
         exact Relation.ReflTransGen.head hs
@@ -675,36 +674,37 @@ theorem regroupChain_of_mem_levels {ctx : Ctx} {dir : Dir} {limit : Nat} :
 
 /-- **The regrouped views are exactly the chains' views**, laws-free, every
 kind and fold direction: a view of `enumerateR` accepts `taken` iff a chain
-of regroupings within the limit takes a walk record to a record of that
-view whose leaves and needed classes `taken` satisfies. -/
+of regroupings takes a walk record to a record of that view that needs at
+most `limit` classes and whose leaves and needed classes `taken` satisfies. -/
 theorem regroup_views_iff {ctx : Ctx} {dir : Dir} {limit : Nat} {n : Node}
     {w : List (C × Nat)} {taken : List C} :
     (∃ d, (w, d) ∈ enumerateR ctx dir Laws.free limit n ∧ d.acceptsE ctx.κ taken) ↔
-      ∃ r₀ ∈ baseRecsR ctx dir Laws.free n, ∃ r, RegroupChain ctx dir limit r₀ r ∧ r.1 = w ∧
-        ∀ l ∈ r.alt, l.okE ctx.κ taken := by
+      ∃ r₀ ∈ baseRecsR ctx dir Laws.free n, ∃ r, RegroupChain ctx dir r₀ r ∧ r.1 = w ∧
+        r.2.2.length ≤ limit ∧ ∀ l ∈ r.alt, l.okE ctx.κ taken := by
   constructor
   · intro h
     unfold enumerateR regroupAll at h
     obtain ⟨r, hr, hw, hacc⟩ := (acceptsE_enumerateFromR (κ := ctx.κ)).1 h
-    obtain ⟨r₀, h₀, hr⟩ := (mem_regroupLevels_iff ctx dir Laws.free limit _ _ r).1 hr
-    exact ⟨r₀, h₀, r, regroupChain_of_mem_levels _ (viewOK_base h₀) hr, hw, hacc⟩
-  · rintro ⟨r₀, h₀, r, hch, rfl, hacc⟩
-    exact regroup_view_complete h₀ hch hacc
+    obtain ⟨hr, hlim⟩ := mem_withinLimit.1 hr
+    obtain ⟨r₀, h₀, hr⟩ := (mem_regroupLevels_iff ctx dir Laws.free _ _ r).1 hr
+    exact ⟨r₀, h₀, r, regroupChain_of_mem_levels _ (viewOK_base h₀) hr, hw, hlim, hacc⟩
+  · rintro ⟨r₀, h₀, r, hch, rfl, hlim, hacc⟩
+    exact regroup_view_complete h₀ hch hlim hacc
 
 /-- **The matches of regrouped views, characterized.** For an n-ary atom over a
 laws-free operator, any kind and fold direction, the atom holds under
-`AtomSatG (Enumerator.regroup dir)` iff some chain of regroupings, each
-within the atom's per-item limit, takes a walk record of a stored node of
-the atom's class to a record on whose view the binding matches the shallow
-pattern, with the item classes satisfying the record's leaves and taking the
-classes it still needs. -/
+`AtomSatG (Enumerator.regroup dir)` iff some chain of regroupings takes a
+walk record of a stored node of the atom's class to a record on whose view
+the binding matches the shallow pattern, the record needing at most as many
+classes as the atom has items, with the item classes satisfying the
+record's leaves and taking the classes it still needs. -/
 theorem regroup_match_iff {c : FCtx} {dir : Sym → Dir} {σ : Binding} {a : RAtom}
     {κ : FlatKind} (hκ : a.shape.flatKind = some κ) (hlaws : c.laws a.op = Laws.free) :
     AtomSatG (Enumerator.regroup dir) c σ a ↔
       ∃ id n, σ.node a.node = some id ∧ (id, n) ∈ c.G.nodes ∧
         σ.cls a.node = some (c.G.find id) ∧ n.op = a.op ∧
         ∃ r₀ ∈ baseRecsR (c.ctx a.op κ) (dir a.op) Laws.free n, ∃ r,
-          RegroupChain (c.ctx a.op κ) (dir a.op) a.elems.length r₀ r ∧
+          RegroupChain (c.ctx a.op κ) (dir a.op) r₀ r ∧ r.2.2.length ≤ a.elems.length ∧
           MatchN c.G a.shallow ⟨a.op, ofView κ r.1⟩ σ ∧
           ∀ l ∈ r.alt, l.okE κ (takenOf σ a.elems) := by
   constructor
@@ -714,10 +714,10 @@ theorem regroup_match_iff {c : FCtx} {dir : Sym → Dir} {σ : Binding} {a : RAt
     obtain ⟨id, n, hnode, hmem, hcls, hop, w, d, hd, hm, hacc⟩ := h
     have hd' : (w, d) ∈ enumerateR (c.ctx a.op κ) (dir a.op) Laws.free a.elems.length n := by
       rw [← hlaws]; exact hd
-    obtain ⟨r₀, h₀, r, hch, rfl, hacc'⟩ :=
+    obtain ⟨r₀, h₀, r, hch, rfl, hlim, hacc'⟩ :=
       (regroup_views_iff (ctx := c.ctx a.op κ) (taken := takenOf σ a.elems)).1 ⟨d, hd', hacc⟩
-    exact ⟨id, n, hnode, hmem, hcls, hop, r₀, h₀, r, hch, hm, hacc'⟩
-  · rintro ⟨id, n, hnode, hmem, hcls, hop, r₀, h₀, r, hch, hm, hacc⟩
-    exact regroup_match_complete hκ hnode hmem hcls hop hlaws h₀ hch hacc hm
+    exact ⟨id, n, hnode, hmem, hcls, hop, r₀, h₀, r, hch, hlim, hm, hacc'⟩
+  · rintro ⟨id, n, hnode, hmem, hcls, hop, r₀, h₀, r, hch, hlim, hm, hacc⟩
+    exact regroup_match_complete hκ hnode hmem hcls hop hlaws h₀ hch hlim hacc hm
 
 end Semper.EMatch.Flatten

@@ -197,12 +197,12 @@ theorem mem_baseRecsR_both {ctx : Ctx} {laws : Laws} {n : Node} {r : RecR}
 that one regrouping preserves. -/
 theorem enumerateR_induction {ctx : Ctx} {dir : Dir} {laws : Laws} {limit : Nat} {n : Node}
     {P : RecR → Prop} (h0 : ∀ r ∈ baseRecsR ctx dir laws n, P r)
-    (hs : ∀ r r', P r → r' ∈ regroupRec ctx dir laws limit r → P r')
+    (hs : ∀ r r', P r → r' ∈ regroupRec ctx dir laws r → P r')
     {w : List (C × Nat)} {d : DemandL} (h : (w, d) ∈ enumerateR ctx dir laws limit n) :
     ∃ r, P r ∧ r.1 = w := by
   unfold enumerateR at h
   obtain ⟨r, hr, rfl⟩ := mem_enumerateFromR h
-  exact ⟨r, regroupLevels_induction ctx dir laws limit hs _ _ h0 r hr, rfl⟩
+  exact ⟨r, regroupLevels_induction ctx dir laws hs _ _ h0 r (mem_withinLimit.1 hr).1, rfl⟩
 
 /-! ## AC: commutative monoids -/
 

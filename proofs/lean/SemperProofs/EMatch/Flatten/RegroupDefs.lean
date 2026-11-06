@@ -21,11 +21,15 @@ step, executably, over the records the opening walk produces:
 * `regroupRec` is one regrouping of a record: the raw view normalized as
   any view, the source's flagged leaves with `g` added to a leaf holding a
   class of the group (`addG`), and the regrouped classes the matches must
-  take (`needs`: the source's, less those the group absorbs, and `g`), at
-  most `limit` of them (`Demand::needs`, one per item);
+  take (`needs`: the source's, less those the group absorbs, and `g`);
 * `regroupLevels` / `regroupAll` iterate it, level by level, from the
   walk's records, as many levels as the largest view has entries
-  (`regroupFuel`);
+  (`regroupFuel`), with no bound on the needed classes along the way: a
+  later regrouping may absorb needed classes, so a record needing more
+  classes than the items may lead to one needing fewer;
+* `withinLimit` keeps the records a match may use: those needing at most
+  `limit` classes (`Demand::needs`, one per item), since each needed class
+  is taken by a distinct item;
 * `enumerateFromR` builds the distinct views with their demand: a needed
   class is a leaf `needLeaf g` satisfied exactly when `g` is taken, so the
   demand is a `DemandL` and every demand rule of the model reads it
@@ -133,15 +137,13 @@ def needsAfter (g : C) (grp : List C) (needs : List C) : List C :=
   if g ∈ ns then ns else ns ++ [g]
 
 /-- One regrouping of a record, every candidate group, every fit. -/
-def regroupRec (ctx : Ctx) (dir : Dir) (laws : Laws) (limit : Nat) (r : RecR) : List RecR :=
+def regroupRec (ctx : Ctx) (dir : Dir) (laws : Laws) (r : RecR) : List RecR :=
   (groupsOf ctx).flatMap fun gg =>
     (fitsR ctx.κ dir r.1 gg.1 gg.2).filterMap fun raw =>
       match normalize ctx.κ laws raw with
       | .node w =>
-          let need := needsAfter gg.1 (gg.2.map Prod.fst) r.2.2
-          if need.length ≤ limit then
-            some (w, r.2.1.map (addG gg.1 (gg.2.map Prod.fst)), need)
-          else none
+          some (w, r.2.1.map (addG gg.1 (gg.2.map Prod.fst)),
+            needsAfter gg.1 (gg.2.map Prod.fst) r.2.2)
       | _ => none
 
 instance : Hashable LeafL := ⟨fun l => mixHash (hash l.X) (mixHash (hash l.k) (hash l.L))⟩
@@ -154,24 +156,24 @@ def dedupH {α : Type} [BEq α] [Hashable α] (l : List α) : List α :=
 
 /-- Regrouping level by level: the records, then the regroupings of each
 level's records. -/
-def regroupLevels (ctx : Ctx) (dir : Dir) (laws : Laws) (limit : Nat) :
+def regroupLevels (ctx : Ctx) (dir : Dir) (laws : Laws) :
     Nat → List RecR → List RecR
   | 0, recs => recs
   | fuel + 1, recs =>
-      recs ++ regroupLevels ctx dir laws limit fuel (dedupH (recs.flatMap (regroupRec ctx dir laws limit)))
+      recs ++ regroupLevels ctx dir laws fuel (dedupH (recs.flatMap (regroupRec ctx dir laws)))
 
 /-- `regroupLevels` with a budget for the conformance generators: `none` when
 the levels hold more than `cap` records in all (`regroupLevelsCapped_eq`:
 otherwise the levels). The engine has bounds of its own (`MAX_REGROUP_VIEWS`,
 `MAX_REGROUP_WORK`), past which it reports the node; a generator does not
 emit an exact case for a node past the budget. -/
-def regroupLevelsCapped (ctx : Ctx) (dir : Dir) (laws : Laws) (limit cap : Nat) :
+def regroupLevelsCapped (ctx : Ctx) (dir : Dir) (laws : Laws) (cap : Nat) :
     Nat → List RecR → Option (List RecR)
   | 0, recs => some recs
   | fuel + 1, recs =>
       if cap < recs.length then none
-      else (regroupLevelsCapped ctx dir laws limit (cap - recs.length) fuel
-        (dedupH (recs.flatMap (regroupRec ctx dir laws limit)))).map (recs ++ ·)
+      else (regroupLevelsCapped ctx dir laws (cap - recs.length) fuel
+        (dedupH (recs.flatMap (regroupRec ctx dir laws)))).map (recs ++ ·)
 
 /-- The generators' budget on the regrouped records of one node. -/
 def regroupCap : Nat := 45000
@@ -186,9 +188,16 @@ largest view size among them. -/
 def regroupFuel (recs : List RecR) : Nat := (recs.map (fun r => viewSize r.1)).foldl max 0
 
 /-- Every regrouped record of the records `recs`, `fuel` levels deep. -/
-def regroupAll (ctx : Ctx) (dir : Dir) (laws : Laws) (limit fuel : Nat) (recs : List RecR) :
+def regroupAll (ctx : Ctx) (dir : Dir) (laws : Laws) (fuel : Nat) (recs : List RecR) :
     List RecR :=
-  regroupLevels ctx dir laws limit fuel recs
+  regroupLevels ctx dir laws fuel recs
+
+/-- The records a match may use: those needing at most `limit` regrouped
+classes. Each needed class is taken by a distinct item, so a record needing
+more classes than the decomposition has items never matches; the engine
+filters its records the same way after regrouping. -/
+def withinLimit (limit : Nat) (recs : List RecR) : List RecR :=
+  recs.filter (fun r => decide (r.2.2.length ≤ limit))
 
 /-- A record's demand alternative: its leaves and one leaf per needed class. -/
 def RecR.alt (r : RecR) : List LeafF := r.2.1 ++ r.2.2.map needLeaf
@@ -241,23 +250,24 @@ def keepRec (κ : FlatKind) (T : C → Bool) (laws : Laws) (r : RecR) : Bool :=
   r.2.1.all (fun lf => keepLeaf κ T laws lf.1)
 
 /-- The enumeration of `Step::Flatten` with regrouping: the walk's records
-pruned by `T`, regrouped with at most `limit` needed classes, the distinct
-views. Regrouping runs as many levels as the largest view of the unpruned
+pruned by `T`, regrouped, those with at most `limit` needed classes kept,
+the distinct views. Regrouping runs as many levels as the largest view of the unpruned
 walk has entries. -/
 def enumerateRD (T : C → Bool) (ctx : Ctx) (dir : Dir) (laws : Laws) (limit : Nat)
     (n : Node) : List (List (C × Nat) × DemandL) :=
   let base := baseRecsR ctx dir laws n
-  enumerateFromR (regroupAll ctx dir laws limit (regroupFuel base)
-    (base.filter (keepRec ctx.κ T laws)))
+  enumerateFromR (withinLimit limit (regroupAll ctx dir laws (regroupFuel base)
+    (base.filter (keepRec ctx.κ T laws))))
 
 /-- The same without pruning: every view a match may use. -/
 def enumerateR (ctx : Ctx) (dir : Dir) (laws : Laws) (limit : Nat) (n : Node) :
     List (List (C × Nat) × DemandL) :=
   let base := baseRecsR ctx dir laws n
-  enumerateFromR (regroupAll ctx dir laws limit (regroupFuel base) base)
+  enumerateFromR (withinLimit limit (regroupAll ctx dir laws (regroupFuel base) base))
 
 /-- The enumeration of a `Flatten` step with regrouped views, every operator
-with its fold direction: at most one regrouped class per item. -/
+with its fold direction: the records with at most one regrouped class per
+item. -/
 def Enumerator.regroup (dir : Sym → Dir) : Enumerator :=
   ⟨fun ctx laws items n => enumerateR ctx (dir ctx.f) laws items.length n,
     fun ctx laws σ items n =>
