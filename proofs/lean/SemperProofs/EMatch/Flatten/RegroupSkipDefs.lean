@@ -171,10 +171,15 @@ every view is one of the full enumeration's (`RegroupSkip.lean`). -/
 def skipFuel (ctx : Ctx) (dir : Dir) (laws : Laws) (base : List RecR) : Nat :=
   (regroupAll ctx dir laws (regroupFuel base) base).length + 1
 
+/-- The loop from the walk's records with the fuel `fuel`. -/
+def regroupSkipN (ctx : Ctx) (dir : Dir) (laws : Laws) (gs : List (C × List (C × Nat)))
+    (fuel : Nat) (base : List RecR) : List RecR :=
+  (SkipSt.run ctx dir laws gs fuel (SkipSt.init base)).records
+
 /-- The engine's regrouping, with the candidate groups `gs`. -/
 def regroupSkipG (ctx : Ctx) (dir : Dir) (laws : Laws) (gs : List (C × List (C × Nat)))
     (base : List RecR) : List RecR :=
-  (SkipSt.run ctx dir laws gs (skipFuel ctx dir laws base) (SkipSt.init base)).records
+  regroupSkipN ctx dir laws gs (skipFuel ctx dir laws base) base
 
 /-- The engine's regrouping, candidates in the engine's order. -/
 def regroupAllSkip (ctx : Ctx) (dir : Dir) (laws : Laws) (base : List RecR) : List RecR :=
