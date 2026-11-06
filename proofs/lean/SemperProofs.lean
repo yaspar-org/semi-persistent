@@ -1,5 +1,7 @@
 import SemperProofs.Basic
 import SemperProofs.CC.Main
+import SemperProofs.CC.Atoms
+import SemperProofs.CC.AtomsWitness
 import SemperProofs.CC.Laws.Main
 import SemperProofs.CC.Laws.InvRulesMain
 import SemperProofs.EMatch.Main
