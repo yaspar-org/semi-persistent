@@ -57,7 +57,7 @@ sort instead talks to one shared **fact record**. For bit-vectors, that record
 is `Facts<W>`:
 
 - `u`: unsigned bounds, today
-- `c`: congruence, planned
+- `c`: congruence, today
 - `bits`: known bits, `nonzero`, and the other planned fields
 
 Each field is a canonical domain. The record's `normalize` reduces the fields
@@ -109,13 +109,16 @@ All four pairs from the table reduce to `[3, 7] × 4ℤ+3`. For the empty pair
 
 ## The limit, and why fields matter
 
-Reduction is only as precise as the record. With today's record `{u}` alone:
+Reduction is only as precise as the record. With a bounds-only record `{u}` and export:
 
 - The congruence can only write `u = [3, 255]`.
 - The meet gives `[3, 10]`, and the round stops there.
 - `[3, 10] × 4ℤ+3` and `[3, 7] × 4ℤ+3` remain two different fixpoints with
   the same γ.
 - `[10, 11] × 4ℤ+1` is never reported as `Bot`.
+
+Today's `{u, c}` record and Congruence `Refine` implementation resolve these
+cases through grid normalization.
 
 So the rule: **a domain is exact in the product only once its facts are a
 field of the record.** Until then, it can still sit in a `Product` and refine
@@ -352,8 +355,8 @@ the only bottom (no empty representation of their own), `Canonical`, and
 
 **Make a standalone domain a `Refine` component.** Implement `Domain`,
 then `Refine` with `F = Facts<W>`: `to_channel` builds a record from the facts
-the domain implies (top elsewhere), normalizes it, and wraps it in
-`BotOr::Val`; `refine` meets the
+the domain implies (top elsewhere), normalizes it to `BotOr<Facts<W>>`
+(as `Facts::from_parts` does); `refine` meets the
 domain with the fields it can read. `impl Refine for Interval<W>` in
 `facts.rs` is the template. `Product<YourDomain, Facts<W>>` then reduces.
 
@@ -398,16 +401,17 @@ test name in your PR.
 `src/congruence.rs` (new), `src/sbounds.rs` (new). Builds on #106, #112,
 #114, #118 (Congruence) and #109 (Strided).
 
-- *First:* port Congruence to the #117 `Word` primitives (`checked_mul`,
-  `mulmod`, `trailing_zeros`; no u128 or i128 helpers). Add it to `Facts` as
-  field `c`, with the interval and congruence grid step in `normalize`;
-  reuse the `clip` code of #109.
+- *Implemented (A1–A3):* Congruence uses `Word` primitives and participates
+  in `Refine` through `Facts.c`. Grid rounding in `src/grid.rs` supports the
+  interval and congruence step in `normalize`, with canonicality proved.
 - *Later:* the signed-bounds field `s` and the unsigned and signed step;
   known bits against bounds; congruence against low bits.
 
 **BitVec transfers.** Files: `src/facts_ops.rs`, `src/tnum_w.rs` (new).
 Builds on #108 (interval transfers) and #120 (Wrapped).
 
+- *Implemented (A4):* unsigned add/sub/neg combine interval and Congruence
+  results through `Facts::from_parts`, with sound arithmetic proved.
 - *First:* `Compare<Unsigned<W>>` and `Compare<Signed<W>>` for `Facts<W>` on
   the `u` field, forward and backward, replacing the stubs; and bvand, bvor,
   bvxor, bvnot and the shifts from #108.
@@ -427,9 +431,8 @@ Builds on #108 (interval transfers) and #120 (Wrapped).
   ([herbie.deviations.md](../../doc/benchmarks/ledgers/herbie.deviations.md)
   §1).
 
-**Dependencies.** The congruence field `c` comes first, because the BitVec
-transfers and the later reduction steps read it; until then transfers are
-written against `u`. The BitVec and Int comparisons share `Compare<S>` and
+**Dependencies.** The congruence field `c` is implemented; unsigned add/sub/neg
+now read both `u` and `c`. The BitVec and Int comparisons share `Compare<S>` and
 `Semantics::lt`/`le`, so a change to those signatures needs a review covering
 both.
 
