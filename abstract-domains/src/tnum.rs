@@ -209,6 +209,18 @@ impl Tnum {
         Tnum { val: bw_and_not(bw_and_not(self.val, t.val), t.mask), mask: bw_or(self.mask, t.mask) }
     }
 
+    /// A constant Tnum contains its value.
+    pub proof fn unit_has(n: nat)
+        ensures Tnum::unit(n).has(n)
+    {
+        Tnum::unit(n).has_equiv(n);
+        assert forall|i: nat| #![auto] bit(bw_and_not(n, 0), i) == bit(n, i) by {
+            and_not_bit(n, 0, i);
+            bit_zero(i);
+        };
+        eq_from_bits(bw_and_not(n, 0), n);
+    }
+
     pub proof fn and_not_sound(self, t: Tnum)
         ensures forall|c: nat, tc: nat| #![auto] self.has(c) && t.has(tc) ==> self.bw_and_not(t).has(bw_and_not(c, tc))
     {
@@ -965,6 +977,183 @@ impl Tnum {
     }
 
     // ================================================================
+    // Lattice facts for the executable domain: membership bit by bit, exact
+    // meet, leq and canonicity (the bounds are has_bounds, in div.rs)
+    // ================================================================
+
+    /// Membership bit by bit: outside the mask, every bit is the value's bit.
+    pub proof fn has_bits(self, n: nat)
+        ensures self.has(n) <==> forall|i: nat| #![trigger bit(n, i)] bit(n, i).and_not(bit(self.mask, i)) == bit(self.val, i)
+    {
+        self.has_equiv(n);
+        if forall|i: nat| #![trigger bit(n, i)] bit(n, i).and_not(bit(self.mask, i)) == bit(self.val, i) {
+            assert forall|i: nat| #![auto] bit(bw_and_not(n, self.mask), i) == bit(self.val, i) by {
+                and_not_bit(n, self.mask, i);
+            };
+            eq_from_bits(bw_and_not(n, self.mask), self.val);
+        }
+        if self.has(n) {
+            assert forall|i: nat| #![trigger bit(n, i)] bit(n, i).and_not(bit(self.mask, i)) == bit(self.val, i) by {
+                and_not_bit(n, self.mask, i);
+            };
+        }
+    }
+
+    /// A well-formed Tnum holds its value and its maximum val | mask.
+    pub proof fn val_max_has(self)
+        requires self.inv()
+        ensures self.has(self.val), self.has(self.max())
+    {
+        disj_bits(self.val, self.mask);
+        self.has_bits(self.val);
+        self.has_bits(self.max());
+        assert forall|i: nat| #![trigger bit(self.max(), i)]
+            bit(self.max(), i).and_not(bit(self.mask, i)) == bit(self.val, i) by {
+            or_bit(self.val, self.mask, i);
+        };
+    }
+
+    /// The bits both operands know but disagree on.
+    pub open spec fn conflict(self, t: Tnum) -> nat {
+        bw_and_not(bw_xor(self.val, t.val), bw_or(self.mask, t.mask))
+    }
+
+    /// The meet with its value cleared under its mask, as computed at Layer 4.
+    pub open spec fn meet_n(self, t: Tnum) -> Tnum {
+        let s = self.meet(t);
+        Tnum { val: bw_and_not(s.val, s.mask), mask: s.mask }
+    }
+
+    /// A conflict leaves no common member.
+    pub proof fn conflict_empty(self, t: Tnum, n: nat)
+        requires self.conflict(t) != 0
+        ensures !(self.has(n) && t.has(n))
+    {
+        if self.has(n) && t.has(n) {
+            self.has_bits(n);
+            t.has_bits(n);
+            assert forall|i: nat| #![auto] bit(self.conflict(t), i) == bit(0 as nat, i) by {
+                and_not_bit(bw_xor(self.val, t.val), bw_or(self.mask, t.mask), i);
+                xor_bit(self.val, t.val, i);
+                or_bit(self.mask, t.mask, i);
+                bit_zero(i);
+                assert(bit(n, i).and_not(bit(self.mask, i)) == bit(self.val, i));
+                assert(bit(n, i).and_not(bit(t.mask, i)) == bit(t.val, i));
+            };
+            eq_from_bits(self.conflict(t), 0);
+        }
+    }
+
+    /// Without a conflict, the normalized meet is well formed and holds exactly
+    /// the common members.
+    pub proof fn meet_exact(self, t: Tnum)
+        requires self.inv(), t.inv(), self.conflict(t) == 0
+        ensures
+            self.meet_n(t).inv(),
+            forall|n: nat| #![auto] self.meet_n(t).has(n) == (self.has(n) && t.has(n)),
+    {
+        let r = self.meet_n(t);
+        let s = self.meet(t);
+        let (v, su, tu) = (bw_or(self.val, t.val), self.u(), t.u());
+        disj_bits(self.val, self.mask);
+        disj_bits(t.val, t.mask);
+        // Each bit of r against the operands' bits.
+        assert forall|i: nat| #![trigger bit(r.val, i)]
+            bit(r.val, i) == bit(v, i).and_not(bit(r.mask, i))
+            && bit(r.mask, i) == bit(v, i).xor(bit(su, i).and(bit(tu, i)))
+            && bit(v, i) == bit(self.val, i).or(bit(t.val, i))
+            && bit(su, i) == bit(self.val, i).xor(bit(self.mask, i))
+            && bit(tu, i) == bit(t.val, i).xor(bit(t.mask, i))
+            && !(bit(self.val, i).xor(bit(t.val, i)).and_not(bit(self.mask, i).or(bit(t.mask, i)))).b() by {
+            and_not_bit(s.val, s.mask, i);
+            xor_bit(v, bw_and(su, tu), i);
+            and_bit(su, tu, i);
+            or_bit(self.val, t.val, i);
+            xor_bit(self.val, self.mask, i);
+            xor_bit(t.val, t.mask, i);
+            and_not_bit(bw_xor(self.val, t.val), bw_or(self.mask, t.mask), i);
+            xor_bit(self.val, t.val, i);
+            or_bit(self.mask, t.mask, i);
+            bit_zero(i);
+        };
+        assert forall|i: nat| #![auto] !(bit(r.val, i).b() && bit(r.mask, i).b()) by {
+            assert(bit(r.val, i) == bit(v, i).and_not(bit(r.mask, i)));
+        };
+        disj_bits(r.val, r.mask);
+        assert forall|n: nat| #![auto] r.has(n) == (self.has(n) && t.has(n)) by {
+            r.has_bits(n);
+            self.has_bits(n);
+            t.has_bits(n);
+            if r.has(n) {
+                assert forall|i: nat| #![trigger bit(n, i)]
+                    bit(n, i).and_not(bit(self.mask, i)) == bit(self.val, i)
+                    && bit(n, i).and_not(bit(t.mask, i)) == bit(t.val, i) by {
+                    assert(bit(r.val, i) == bit(v, i).and_not(bit(r.mask, i)));
+                    assert(bit(n, i).and_not(bit(r.mask, i)) == bit(r.val, i));
+                };
+            }
+            if self.has(n) && t.has(n) {
+                assert forall|i: nat| #![trigger bit(n, i)]
+                    bit(n, i).and_not(bit(r.mask, i)) == bit(r.val, i) by {
+                    assert(bit(r.val, i) == bit(v, i).and_not(bit(r.mask, i)));
+                    assert(bit(n, i).and_not(bit(self.mask, i)) == bit(self.val, i));
+                    assert(bit(n, i).and_not(bit(t.mask, i)) == bit(t.val, i));
+                };
+            }
+        };
+    }
+
+    /// Sound inclusion test: the mask is within o's mask, and outside o's mask
+    /// the values agree.
+    pub proof fn leq_sound(self, o: Tnum)
+        requires
+            o.inv(),
+            bw_and_not(self.mask, o.mask) == 0,
+            bw_and_not(self.val, o.mask) == o.val,
+        ensures forall|n: nat| #![auto] self.has(n) ==> o.has(n)
+    {
+        disj_bits(o.val, o.mask);
+        assert forall|n: nat| #![auto] self.has(n) implies o.has(n) by {
+            self.has_bits(n);
+            o.has_bits(n);
+            assert forall|i: nat| #![trigger bit(n, i)]
+                bit(n, i).and_not(bit(o.mask, i)) == bit(o.val, i) by {
+                and_not_bit(self.mask, o.mask, i);
+                and_not_bit(self.val, o.mask, i);
+                bit_zero(i);
+                assert(bit(n, i).and_not(bit(self.mask, i)) == bit(self.val, i));
+            };
+        };
+    }
+
+    /// Canonicity: two well-formed Tnums that hold each other's value and
+    /// maximum are equal.
+    pub proof fn canonical(self, o: Tnum)
+        requires
+            self.inv(), o.inv(),
+            o.has(self.val), o.has(self.max()),
+            self.has(o.val), self.has(o.max()),
+        ensures self == o
+    {
+        disj_bits(self.val, self.mask);
+        disj_bits(o.val, o.mask);
+        o.has_bits(self.val);
+        o.has_bits(self.max());
+        self.has_bits(o.val);
+        self.has_bits(o.max());
+        assert forall|i: nat| #![auto] bit(self.val, i) == bit(o.val, i) && bit(self.mask, i) == bit(o.mask, i) by {
+            or_bit(self.val, self.mask, i);
+            or_bit(o.val, o.mask, i);
+            assert(bit(self.val, i).and_not(bit(o.mask, i)) == bit(o.val, i));
+            assert(bit(self.max(), i).and_not(bit(o.mask, i)) == bit(o.val, i));
+            assert(bit(o.val, i).and_not(bit(self.mask, i)) == bit(self.val, i));
+            assert(bit(o.max(), i).and_not(bit(self.mask, i)) == bit(self.val, i));
+        };
+        eq_from_bits(self.val, o.val);
+        eq_from_bits(self.mask, o.mask);
+    }
+
+    // ================================================================
     // Multi-bit shifts: lshi, rshi
     // ================================================================
 
@@ -989,6 +1178,18 @@ impl Tnum {
                 // lshi(i) == lshi(i-1).lsh()
                 // This follows from lshi(v, i) = lsh(lshi(v, i-1))
             };
+        }
+    }
+
+    /// lshi preserves inv: shifting both fields keeps them disjoint.
+    pub proof fn lshi_inv(self, i: nat)
+        requires self.inv()
+        ensures self.lshi(i).inv()
+        decreases i
+    {
+        if i > 0 {
+            self.lshi_inv((i - 1) as nat);
+            disj_cons(lshi(self.val, (i - 1) as nat), Bit::f(), lshi(self.mask, (i - 1) as nat), Bit::f());
         }
     }
 
@@ -1022,7 +1223,7 @@ impl Tnum {
 
     /// Two's complement negation of a Tnum (w-bit).
     /// We prove this via xor_sound + add_sound + chop_sound.
-    /// Note: neg_tn is also defined in div.rs with full soundness proof.
+    /// Its soundness theorems (neg_sound, neg_twos_comp_sound) are in div.rs.
     pub open spec fn neg(self, w: nat) -> Tnum {
         self.bw_xor(Tnum::unit(all_ones(w))).add_bitwise(Tnum::unit(1)).chop_tn(w)
     }
@@ -1101,6 +1302,50 @@ impl Tnum {
 
     pub open spec fn chop_tn(self, i: nat) -> Tnum {
         Tnum { val: chop(self.val, i), mask: chop(self.mask, i) }
+    }
+
+    /// Chop distributes through add_bitwise: only the low w bits of the
+    /// operands reach the low w bits of the sum.
+    pub proof fn chop_add_bitwise(a: Tnum, b: Tnum, w: nat)
+        ensures a.add_bitwise(b).chop_tn(w) == a.chop_tn(w).add_bitwise(b.chop_tn(w)).chop_tn(w)
+    {
+        let (av, am, bv, bm) = (a.val, a.mask, b.val, b.mask);
+        let (cav, cam, cbv, cbm) = (chop(av, w), chop(am, w), chop(bv, w), chop(bm, w));
+        // Left: the full sum, chopped.
+        let lbv = nat_add(av, bv);
+        let lbm = nat_add(am, bm);
+        let ub = nat_add(lbv, lbm);
+        let mask = bw_or(bw_or(bw_xor(ub, lbv), am), bm);
+        // Right: the sum of the chopped operands, chopped.
+        let lbv2 = nat_add(cav, cbv);
+        let lbm2 = nat_add(cam, cbm);
+        let ub2 = nat_add(lbv2, lbm2);
+        let mask2 = bw_or(bw_or(bw_xor(ub2, lbv2), cam), cbm);
+        chop_nat_add(av, bv, w);
+        chop_nat_add(am, bm, w);
+        chop_nat_add(lbv, lbm, w);
+        chop_nat_add(lbv2, lbm2, w);
+        chop_nat_add(cav, cbv, w);
+        chop_nat_add(cam, cbm, w);
+        chop_idem(av, w); chop_idem(am, w); chop_idem(bv, w); chop_idem(bm, w);
+        chop_idem(lbv, w); chop_idem(lbm, w);
+        assert(chop(lbv2, w) == chop(lbv, w));
+        assert(chop(lbm2, w) == chop(lbm, w));
+        assert(chop(ub2, w) == chop(ub, w));
+        chop_bw_xor(ub, lbv, w); chop_bw_xor(ub2, lbv2, w);
+        chop_bw_or(bw_xor(ub, lbv), am, w); chop_bw_or(bw_or(bw_xor(ub, lbv), am), bm, w);
+        chop_bw_or(bw_xor(ub2, lbv2), cam, w); chop_bw_or(bw_or(bw_xor(ub2, lbv2), cam), cbm, w);
+        assert(chop(mask2, w) == chop(mask, w));
+        chop_bw_and_not(lbv, mask, w);
+        chop_bw_and_not(lbv2, mask2, w);
+    }
+
+    /// Chop distributes through lsh.
+    pub proof fn chop_lsh_tn(a: Tnum, w: nat)
+        ensures a.lsh().chop_tn(w) == a.chop_tn(w).lsh().chop_tn(w)
+    {
+        chop_lsh(a.val, w);
+        chop_lsh(a.mask, w);
     }
 
     pub proof fn chop_sound(self, i: nat)

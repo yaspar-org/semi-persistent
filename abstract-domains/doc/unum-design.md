@@ -108,7 +108,7 @@ sums only. They do not prove equality of abstract results.
 
 ## Fixed-Width Addition
 
-`ExecUnum::add` is generated for `u8`, `u16`, `u32`, and `u64`. It uses the
+`ExecUnum::add` is proved once for every `W: BitWord`. It uses the
 field formula only when the bases, extents, represented upper bounds, and
 their sum do not wrap. Otherwise it returns `top`.
 
@@ -116,10 +116,10 @@ Its Verus postcondition universally quantifies over machine values:
 
 ```text
 self.has(x) && other.has(y)
-    ==> result.has(x.wrapping_add(y))
+    ==> result.has(W::from_int(x.view() + y.view()))
 ```
 
-The proof connects the native operations to `ChoppedUnum` and the unbounded
+The proof connects the word operations to `ChoppedUnum` and the unbounded
 containment theorem. This is a soundness result; overflow-to-top and
 noncanonical wall masks prevent an unconditional fixed-width precision claim.
 
@@ -151,16 +151,24 @@ The implemented conversions have different proof status:
 
 - `ExecUnum::from_interval` creates one field and has a universal containment
   postcondition.
-- `ExecUnum::from_ean` gives every bit its own field. It has mirror-test
-  coverage but no Layer-4 containment postcondition.
-- `ExecUnum::to_ean` widens the whole extent to the next all-ones mask. It has
-  mirror-test coverage but no Layer-4 containment postcondition.
-- `ExecUnum::to_etn` goes through that Anum and guarantees only Tnum
-  well-formedness at Layer 4.
-- The unbounded `Unum::to_anum_sound` theorem applies only when `walls == 0`.
+- `ExecUnum::from_ean` gives every bit its own field. Its containment
+  postcondition follows from `Unum::submask_admitted`: an offset whose bits are
+  bits of the extent is admitted whatever the walls.
+- `ExecUnum::to_ean` widens the whole extent to the next all-ones mask. Its
+  containment postcondition follows from `Unum::to_anum_sound`, which holds for
+  any walls, since every admitted offset is at most the extent.
+- `ExecUnum::to_etn` is `ExecAnum::to_etn` of that Anum, and inherits its
+  containment postcondition.
 
-Consequently, conversion soundness must not be generalized beyond this
-inventory until the missing executable postconditions are added.
+## Negation and Subtraction
+
+`ExecUnum::neg` maps `v + d` to `(-v - x) + (x - d)`. Within each field the
+complement `x_f - d_f` stays in `[0, x_f]`, and the subtraction `x - d` borrows
+at the same bits as `d`'s admission, so `Unum::complement_admitted` proves that
+`x - d` is admitted with the same walls and extent. The result keeps the walls
+when `0 < v` and `v + x < 2^W`; it is `{0}` for `{0}`, and top when the range
+wraps or holds 0 with something else. `ExecUnum::sub` adds the negation; both
+have universal containment postconditions.
 
 ## Reduced Product
 

@@ -122,6 +122,18 @@ we get `base/d ≤ x/d ≤ (base+span)/d`. The result Anum has base `base/d`
 **Improvement over Tnum**: the base adds exactly, so precision loss only
 affects the offset. But the offset still suffers from carry expansion.
 
+The other Anum operations come in three kinds. `lshi`, `neg` and `join` are
+native: `lshi` shifts base and span together; `neg` reflects through `2^w`
+(`Anum::reflect`, base `2^w - (base + span)`, same span, since `span - δ` is a
+bit subset of `span` when `δ` is); `join` takes the lower base and covers the
+join of both offset Tnums above it (`Anum::cover`: a member of a Tnum is a bit
+subset of `val | mask`). Bitwise ops, `rshi` and `meet` go through Tnum, as
+`from_tnum(op(to_tnum a, to_tnum b))`, since an Anum has no better
+representation for them. `mul` is the bounded `Anum::mul_anum`: the partial
+products of one operand's Tnum by each bit of the other are summed in an Anum
+accumulator. At width `w`, `lshi`, `neg`, `add` (and so `mul`) widen to top
+when a bound would wrap.
+
 ### Unum: horizontally composable additive tristate numbers
 
 A Unum `{base, walls, extent}` partitions the bits into fields. Within each
@@ -179,8 +191,12 @@ non-wrapping intervals. No interval-by-interval division is implemented.
 These domains are combined through `reduce::Product` and the per-sort fact
 records, described in [`reduced-product.md`](reduced-product.md). #123 removed
 the earlier `ReducedProduct`, which combined exactly Tnum, Anum, Interval and
-Unum with a reduction written by hand for those four. Tnum, Anum and Unum join
-`Product` once they implement `Domain` with a `BotOr` bottom and `Refine`.
+Unum with a reduction written by hand for those four. `ExecTnum<W>` implements
+`Domain`, `Canonical` and `Refine` with `Facts<W>`: `leq` tests mask inclusion
+with agreeing known bits, `meet` returns `BotOr::Bot` when the operands
+disagree on a bit both know, `widen` is `join`, `to_channel` writes the bounds
+`[val, val | mask]`, and `refine` meets with `range_tn` of the interval. Anum
+and Unum join `Product` once they implement the same traits.
 
 The exact contracts implemented by the interval component are listed in
 [`interval-soundness.md`](interval-soundness.md). General division and alarms,
@@ -237,7 +253,7 @@ Layer 1: bools.rs + nats.rs        — Natural number algorithms on infinite bit
 Layer 2: tbit.rs + tnum.rs         — Recursive abstract domain operations + soundness
          anum.rs + unum.rs + div.rs
 Layer 3: chopped.rs                — Bounded (w-bit) simulation via chop
-Layer 4: exec_tnum.rs + domains.rs — Machine-word execution on u8/u16/u32/u64
+Layer 4: exec_tnum.rs + exec_anum.rs + exec_unum.rs — Machine-word execution, generic over the width
 ```
 
 ### Layer 1: Natural numbers as infinite bitstrings (`bools.rs`, `nats.rs`)
@@ -276,7 +292,9 @@ The hardest theorem, `add_bitwise_eq`, uses
 
 **Anum** (`anum.rs`): Additive tristate numbers. Addition is exact on the
 base value. `div_const` gives an exact base quotient for division by
-constant. Tnum multiplication uses Anum as internal accumulator (`tnum_mul`).
+constant. `Anum::mul_anum` multiplies Tnums into an Anum by shift-and-add
+with an Anum accumulator; it is the model of Anum `mul`. Tnum multiplication
+uses pair-join (`Tnum::pair_mul`, `pair_mul.rs`), which is more precise.
 
 **Unum** (`unum.rs`): Horizontally composable additive tristate numbers.
 The unbounded addition formula and multiplication's bilinear bound have
@@ -285,7 +303,11 @@ Membership uses borrow-tracking subtraction, and the core addition proof
 maintains `cd + br ≤ cx + b1 + b2`.
 
 **Div** (`div.rs`): Tnum division and subtraction. Long division by iterated
-subtraction; both constant-divisor and general Tnum÷Tnum proved sound.
+subtraction. `div1_div_mod` proves that the spec long division `div1` computes
+`n / d` and `n % d` for every `n` below `2^w`, so `div_const_sound_div` and
+`div_sound_div` state that the quotient and remainder Tnums contain `/` and `%`
+of every such member (constant divisor and general Tnum÷Tnum). Negation and
+subtraction (`neg_sound`, `sub_sound_all`) are proved for every member.
 
 All contracts described in this Layer-2 inventory verify without admits.
 
@@ -295,43 +317,69 @@ All contracts described in this Layer-2 inventory verify without admits.
 L2 types with a bit-width. The current explicit bounded containment contracts
 are:
 
-- ChoppedTnum: add, mul, shifts (lsh, rsh), join, meet
-- ChoppedAnum: add and div_const, under their stated fit/divisor preconditions
+- ChoppedTnum: add, sub, neg, mul, bitwise (or, and, xor,
+  and_not, not), shifts (lsh, rsh, lshi, rshi), join, meet
+- ChoppedAnum: add, add_w (top on overflow), sub, div_const, from_tnum and
+  to_tnum, under their stated fit/divisor preconditions; lshi, neg, join; bitwise
+  (and, or, xor, not) and rshi through Tnum; mul (`mul_step`, the bounded
+  `Anum::mul_step_anum`)
 - ChoppedUnum: add and mul, under their stated no-overflow/fit preconditions
 
-ChoppedTnum bitwise `or_inv`, `and_inv`, and `xor_inv` expose
-invariant/width-preservation postconditions and call the Layer-2 soundness
-lemmas internally, but they do not state a Layer-3 containment postcondition.
-The `div` and `neg` spec functions currently have no corresponding Layer-3
-soundness theorem. All contracts that are stated in this layer verify without
+The `div` spec function currently has no corresponding Layer-3 soundness
+theorem. All contracts that are stated in this layer verify without
 project-local admits.
 
-### Layer 4: Executable machine-word domains (`domains.rs`, `exec_tnum.rs`)
+### Layer 4: Executable machine-word domains (`exec_tnum.rs`, `exec_anum.rs`, `exec_unum.rs`)
 
-Native Rust implementations on u8, u16, u32, and u64 via macro generation.
-The u128 instantiation is disabled because its bitvector obligations exceed
-current solver capacity. Four domain types are enabled at each active width:
-ExecTnum, ExecAnum, ExecUnum, and Interval.
-
-The **value bridge** connects native wrapping arithmetic to spec chopping:
-- `bridge_add(a, b)`: `wrapping_add(a,b) as nat == chop(nat_add(a,b), W)`
-- `bridge_mul(a, b)`: `wrapping_mul(a,b) as nat == chop(prod(a,b), W)`
-
-The **bitwise bridge** connects native bitwise ops to spec bitwise ops:
-- `bit_is_native_bit(n, i)`: `bit(n as nat, i) == ((n >> i) & 1 == 1)`
-- `native_xor(a, b)`: `(a ^ b) as nat == bw_xor(a as nat, b as nat)`
-- `native_or(a, b)`: `(a | b) as nat == bw_or(a as nat, b as nat)`
-- `native_and(a, b)`: `(a & b) as nat == bw_and(a as nat, b as nat)`
+Each executable domain is written once, generic over the width:
+`impl<W: BitWord> ExecTnum<W>`, `ExecAnum<W>` and `ExecUnum<W>`, with
+`Interval<W>` (`interval.rs`) over `W: Word`. `domains.rs` names them at u8,
+u16, u32 and u64 (`d8` .. `d64`). No per-width proof remains in domain code:
+the bridges are the `BitWord` lemmas of `bitword.rs` (`lemma_and`, `lemma_or`,
+`lemma_xor`, `mul_wrap`, `shl_wrap`, and the generic `lemma_add`,
+`lemma_sub`, `lemma_neg`, `lemma_not`, `lemma_and_not`, `lemma_shr`,
+`lemma_low_bit`), and bound checks use `Word::checked_add` and
+`checked_mul`. ExecTnum's well-formedness is `to_tn().inv()`, taken from the
+Layer-3 inv lemmas. Containment is stated on the word view: `W::from_int` for
+wrapping add, sub and neg, `and`/`or`/`xor`/`not` for the bitwise operations,
+and `chop` of the nat result for shifts and products.
 
 Every L4 method verifies its stated contract. Universal containment is
 currently proved for:
 
-- `ExecTnum::{bw_or,bw_and,bw_xor,add,join,meet}`;
-- `ExecAnum::{add,div_const}`;
-- `ExecUnum::{top,add,from_interval,mul}`;
-- `Interval::{add,meet,join,div_const}`;
+- `ExecTnum::{constant,top,bw_or,bw_and,bw_xor,bw_not,bw_and_not,add,sub,neg,
+  mul,divrem_g,divrem,rsh,lsh,rshi,lshi,join,meet}`, each derived from its
+  Layer-3 theorem through `lemma_ct()`;
+- `ExecAnum::{constant,top,add,sub,div_const,from_etn,to_etn,neg,lshi,join,
+  bw_and,bw_or,bw_xor,bw_not,rshi,meet,mul,mul_precise}`, the same way;
+- `ExecUnum::{constant,top,add,neg,sub,mul,from_interval,from_ean,to_ean,
+  to_etn}`;
+- every `Interval<W>` operation (`interval.rs`);
 - generic `Congruence<W>` exact refinement/meet, least-upper-bound join,
   join-based widen, and unsigned add/sub/neg.
+
+
+Most `ExecTnum` operations, and `ExecAnum::{top,add,neg,lshi,join,bw_and,
+bw_or,bw_xor,bw_not,rshi,mul,to_etn,from_etn}`, also ensure, as a clause
+separate from containment, that their result equals the Layer-3 spec
+(`r.to_tn() == ct.op().tnum`, `r.to_an() == ca.op().anum`). This
+lets composite operations chain them (`neg` and `sub` through `bw_not` and
+`add`; the `mul` loop invariant through `add` and `join`), and it pins
+precision: a less precise `add` would still be sound but would break these
+proofs. `meet` does not export it: it returns `BotOr::Bot` when the operands
+disagree on a bit both know, and otherwise the normalized spec meet, which
+holds exactly the common members (`Tnum::meet_exact`); neither does
+`ExecAnum::meet`, which is built on it. `ExecAnum::mul` follows `ChoppedAnum::mul_step` with the exec `add`, so its
+loop invariant is the spec equality. It is often top, because the bounds of the
+partial products sum past 2^W. `ExecAnum::mul_precise` trades time for
+precision: it also computes pair-join on the two Tnums, meets it with `mul`, and
+keeps whichever of `mul` and the meet has fewer span bits (the meet alone can be
+looser than `mul`, since reading an Anum as a Tnum carries the base into the
+span). At u8 with bases and spans below 16, results average 151.7 values,
+against 196.5 for `mul`. It has containment but no spec equality. `ExecTnum::mul` is pair-join multiplication
+(`ChoppedTnum::mul`, `Tnum::pair_mul`): starting from the exact product of the
+known bits, each unknown bit keeps both sums with `join(acc, acc + c)`. See
+`future/tnum-mul-div-precision.md`.
 
 Congruence uses private canonical finite-word classes and external `BotOr` for
 empty intersections. Its meet delegates positive-modulus inputs to the shared
@@ -368,11 +416,11 @@ check them. The source contains no executable `admit()` or `assume()`.
 | Layer 2 (anum) | Stated contracts verified, including `div_const` |
 | Layer 2 (unum) | Add/mul containment and supporting contracts verified |
 | Layer 3 (chopped) | Stated bounded-simulation contracts verified |
-| Layer 4 (exec) | All stated contracts proved at u8/u16/u32/u64; universal containment only for the explicit inventory above |
+| Layer 4 (exec) | All stated contracts proved for every `W: BitWord`; universal containment only for the explicit inventory above |
 | Division | Tnum constant and general containment proved |
 | Anum division | Positive constant-divisor containment proved |
 | Unum domain | Sound unbounded/bounded add and mul; no general exactness theorem |
 | Congruence | Generic `Domain` and `Arith<Unsigned<W>>`; exact meet/refinement and LUB join |
 | Reduced product | 4-domain (Tnum×Anum×Interval×Unum) |
-| Multi-width | Legacy macro domains: u8, u16, u32, u64 (`d128` disabled). Generic `Congruence<W>`: u8, u16, u32, u64, u128. |
+| Multi-width | `ExecTnum`, `ExecAnum`, `ExecUnum` generic over `W: BitWord`, named at u8, u16, u32, u64; `Congruence<W>`: u8, u16, u32, u64, u128 |
 | Rust mirror tests | See `proof-status.md` for coverage and commands |

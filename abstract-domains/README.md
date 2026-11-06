@@ -23,7 +23,7 @@ definitions rather than constituting a second formal verification.
 ## Architecture
 
 ```
-Layer 4: exec_tnum.rs / domains.rs  -- Executable u8/u16/u32/u64 implementations
+Layer 4: exec_tnum.rs / exec_anum.rs / exec_unum.rs -- Executable, generic over the width
 Layer 3: chopped.rs                 -- Bounded-width simulation
 Layer 2: tnum.rs / anum.rs / unum.rs / div.rs -- Unbounded theory with soundness proofs
 Layer 1: nats.rs / bools.rs         -- Natural numbers as infinite bitstrings
@@ -56,27 +56,34 @@ bit fields.
 - Key formula: `cout = (x1 & x2) | ((x1 | x2) & ~(x1 + x2))`
 
 **Division**: long division by iterated subtraction, dual of multiplication.
-Both constant-divisor and general Tnum/Tnum division are proved sound.
+The spec long division `div1` computes `n / d` and `n % d` for every `n`
+below `2^w` (`div1_div_mod`), so the constant-divisor and general Tnum/Tnum
+theorems (`div_const_sound_div`, `div_sound_div`) state that the quotient and
+the remainder Tnums contain `/` and `%` of every such member. There is no
+executable Tnum division yet.
 
 ### Layer 3: Bounded simulation (`chopped.rs`)
 
 `ChoppedTnum`, `ChoppedAnum`, and `ChoppedUnum` pair an unbounded domain with
 a bit width. Explicit bounded containment theorems cover ChoppedTnum
-add/mul/shifts/join/meet, ChoppedAnum add/division by constant, and
-ChoppedUnum add/mul, subject to their stated fit and no-overflow preconditions.
-The ChoppedTnum bitwise helpers currently expose invariant/width preservation,
-while its `div` and `neg` spec functions have no Layer-3 containment theorem.
+add/sub/neg/mul/bitwise (or, and, xor, and-not, not)/shifts
+(rsh, lsh, rshi, lshi)/join/meet, ChoppedAnum add/sub/division by constant,
+the conversions to and from Tnum, neg/lshi/join, bitwise and rshi through Tnum,
+and mul, and ChoppedUnum add/mul, subject to their stated
+fit and no-overflow preconditions. ChoppedTnum `div` has no Layer-3
+containment theorem.
 
-### Layer 4: Executable domains (exec_tnum.rs, domains.rs)
+### Layer 4: Executable domains (exec_tnum.rs, exec_anum.rs, exec_unum.rs)
 
-Native Rust implementations on u8/u16/u32/u64 (`u128` is disabled because its
-bitvector obligations exceed current solver capacity):
+Native Rust implementations, each written once as `impl<W: BitWord>` and
+proved for every width through the `BitWord` bridges (`bitword.rs`);
+`domains.rs` names them at u8/u16/u32/u64 (`d8` .. `d64`):
 
-- **ETn**: Executable Tnum. Well-formedness (`v & m == 0`) proved via `by(bit_vector)`.
-- **EAn**: Executable Anum. Exact base arithmetic.
-- **EUn**: Executable Unum. Proved-sound addition via the carry-out formula,
+- **ExecTnum<W>**: Executable Tnum. Well-formedness is `to_tn().inv()`.
+- **ExecAnum<W>**: Executable Anum. Exact base arithmetic.
+- **ExecUnum<W>**: Executable Unum. Proved-sound addition via the carry-out formula,
   widening to top when represented bounds or result ranges wrap.
-- **Interval**: `[lo, hi]` bounds tracking.
+- **Interval<W>** (`interval.rs`): `[lo, hi]` bounds tracking.
 - **Congruence<W>** (`congruence.rs`): generic canonical finite-word classes,
   exact refinement/meet, least-upper-bound join, join-based widen, and
   `Arith<Unsigned<W>>` add/sub/neg for u8 through u128. Uniform-wrap arithmetic
@@ -85,14 +92,22 @@ bitvector obligations exceed current solver capacity):
 
 These domains combine through `reduce::Product` and the fact records (see
 [the reduced-product note](doc/reduced-product.md)) once they implement
-`Domain` with a `BotOr` bottom and `Refine`.
+`Domain` with a `BotOr` bottom and `Refine`. `ExecTnum<W>` does: it implements
+`Domain`, `Canonical` and `Refine` with `Facts<W>`, so
+`Product<Interval<W>, ExecTnum<W>>` reduces; `ExecAnum` and `ExecUnum` do not
+yet.
 
 Every executable method verifies its stated contract. Universal containment
-theorems currently cover `ExecTnum` bitwise/add/join/meet,
-`ExecAnum` add/division by constant, `ExecUnum` top/add/from-interval/multiply,
-`Interval` add/meet/join/division by constant. Generic `Congruence<W>` additionally proves exact refinement/meet,
-least-upper-bound join, and widen/add/sub/neg containment. Other Layer 4 methods
-currently prove well-formedness only; see
+theorems, each derived from the Layer-3 theorem through `to_chopped()`, cover
+every `ExecTnum` operation (constant, bitwise, add, sub, neg, mul, division,
+shifts, join, meet) and every `ExecAnum` operation (constant, top, add, sub,
+neg, mul and the more precise mul_precise, division by constant, bitwise, shifts, join, meet, conversions);
+they also cover every `ExecUnum` operation (constant, top, add, neg, sub,
+multiply, conversions) and every `Interval<W>` operation. Generic
+`Congruence<W>` additionally proves exact refinement/meet, least-upper-bound
+join, and widen/add/sub/neg containment. The other Layer 4 methods are helpers
+(`min_val`, `max_val`, `is_const`, `meet_m`, `range_tn`, `chop_to`) whose
+postconditions state their exact result; see
 [the proof-status inventory](doc/proof-status.md).
 
 ### Shared domain interface (lattice.rs, word.rs, semantics.rs, transfer.rs)
@@ -123,7 +138,9 @@ The reference implementations are `Interval<W>` (`interval.rs`) and
 | `Unum::mul_sound` | unum.rs | Unbounded Unum multiplication is sound |
 | `carry_out_c_overflow` | unum.rs | Carry-out bit = low-bits overflow |
 | `Unum::add_bounded_sound` | unum.rs | Chopped addition is sound under its no-overflow preconditions |
-| `Unum::to_anum_sound` | unum.rs | Single-field (`walls == 0`) Unum-to-Anum conversion is sound |
+| `Unum::to_anum_sound` | unum.rs | Unum-to-Anum conversion is sound, for any walls |
+| `Unum::submask_admitted` | unum.rs | An offset whose bits are bits of the extent is admitted, for any walls |
+| `Unum::complement_admitted` | unum.rs | If `d` is admitted, so is `x - d`, with the same fields |
 
 ## Prerequisites
 
@@ -159,8 +176,8 @@ cargo run --features bin
   [trust ledger](doc/domain-traits.md#7-trust); machine-word domains do not use it
 - Runtime suites cover mirror domains, generic reference domains, Congruence
   semantics, reduction, and shared arithmetic (including the exhaustive CRT oracle)
-- Generic `Word` and shared arithmetic support u8 through u128; legacy macro
-  domains remain enabled at u8, u16, u32, and u64
+- Generic `Word` and shared arithmetic support u8 through u128; `domains.rs`
+  names the executable domains at u8, u16, u32, and u64
 
 ## Design documents
 
