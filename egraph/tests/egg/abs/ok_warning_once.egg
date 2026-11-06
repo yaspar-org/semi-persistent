@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; WARNING: the analysis is not active
+;; Several sorts, propagators, refines and guards, across push and pop: the program
+;; raises the not-active warning once (abs_syntax.rs counts it), not once per item.
+(sort Int  :interp int)
+(sort BV16 :interp (bitvec 16))
+(sort Bool :interp bool)
+(function lt (Int Int) Bool :interp <)
+(function bvmul (BV16 BV16) BV16 :interp bvmul :range (0 255))
+(constructor x () Int)
+(constructor w () BV16)
+(refine (x) (interval 0 1))
+(push)
+(refine (w) (interval 0 7))
+(rule ((= r (bvmul a b)) (within a 0 3)) ((refine r (interval 0 21))))
+(bvmul (w) (w))
+(run 2)
+(pop)
+(refine (x) (nonzero))
+(lt (x) (x))

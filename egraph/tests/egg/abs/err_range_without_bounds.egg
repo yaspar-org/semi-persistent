@@ -1,0 +1,7 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: function 'h': :range needs a bounds domain on sort 'E'
+;; :range is a bounds fact, so the result sort enables interval (int) or ubounds (bitvec).
+(sort E)
+(function h (E) E :range (0 9))

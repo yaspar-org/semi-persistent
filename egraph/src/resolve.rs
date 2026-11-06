@@ -129,6 +129,7 @@ pub enum PatVar {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RAtom<O, S, L> {
+    // TODO(abs-surface-syntax): add `AbsGuard { node: PatVar, test: AbsTest }`; every `match` on `RAtom` in schedule.rs, saturate.rs and ematch.rs then needs an arm, see egraph/doc/future/abstract-syntax-task.md §4
     Plain {
         node: VarId,
         op: O,
@@ -1280,6 +1281,7 @@ where
             )
         }
 
+        // TODO(abs-surface-syntax): add an `Atom::AbsGuard` arm: the variable is a global or bound by an earlier pattern, its sort enables the test's domain, and the bounds fit the carrier; lower to `RAtom::AbsGuard`, see egraph/doc/future/abstract-syntax-task.md §3
         Atom::Pred { expr, span } => {
             let rexpr = resolve_pred_expr(expr, None, ops, sorts, model, shape)?;
             let RPredExpr::App { op, .. } = &rexpr else {
@@ -2487,6 +2489,7 @@ impl<'a, S: DenseId> RhsResolveCtx<'a, S> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolvedAction<O, S, L> {
+    // TODO(abs-surface-syntax): add `Refine(RRhsTerm<O, S, L>, AbsValue)`, see egraph/doc/future/abstract-syntax-task.md §4
     Union(RRhsTerm<O, S, L>, RRhsTerm<O, S, L>),
     Insert(RRhsTerm<O, S, L>),
     Set {
@@ -2522,6 +2525,7 @@ where
             let rt = resolve_rhs(t, None, ops, sorts, model, ctx, globals)?;
             Ok(ResolvedAction::Insert(rt))
         }
+        // TODO(abs-surface-syntax): add an `Action::Refine` arm: resolve the term with `resolve_rhs`, then check the value against the domains enabled on its sort, as for the top-level refine, see egraph/doc/future/abstract-syntax-task.md §3
         Action::Set { func, .. } => {
             // Lattice `set` parses but has no semantics yet (`apply.rs` would reach a
             // `todo!` when the rule fired). Refused here, when the rule is installed, so a

@@ -1,0 +1,6 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: sort 'Int': unknown domain 'octagon'
+;; Every name in :domains is a domain the registry lists.
+(sort Int :interp int :domains (interval octagon))

@@ -26,6 +26,8 @@ union, check, extract, push/pop, and run) and extends it with:
 
 ## Sorts and Operators
 
+<!-- TODO(abs-surface-syntax): add a subsection on interpreted sorts (`:interp`, `:domains`, defaults, `:domains ()`), operator propagators (`:interp OP`, `:range`), and the interim not-active warning, see egraph/doc/future/abstract-syntax-task.md §2 -->
+
 Every term in the engine has a sort. Sorts are declared explicitly:
 
 ```
@@ -270,6 +272,8 @@ Four rules govern them:
 The guard runs as early as its variables allow, immediately after the last of
 them is bound, so a false guard cuts the search before the remaining patterns
 are joined.
+
+<!-- TODO(abs-surface-syntax): add an "Abstract Guards" subsection (`within`, `nonzero`, `known-bits`, never true until the engine lands) and document the `refine` action; extend the Annex grammar's sort, declaration-tag, action and command productions, see egraph/doc/future/abstract-syntax-task.md §2 -->
 
 ### Subsumption
 

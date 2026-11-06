@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; WARNING: the analysis is not active
+;; refine as a rule action, next to union and insertion, with and without a guard.
+(sort Int  :interp int)
+(sort Bool :interp bool)
+(constructor x () Int)
+(constructor scale (Int) Int)
+(constructor Sq (Int) Int)
+(constructor IsPos (Int) Bool)
+(rule ((= r (scale y)) (within y 0 9)) ((refine r (interval 0 99))))
+(rule ((= r (Sq y))) ((refine r (interval 0 1000000)) (refine r (congruence 0 1))))
+(rule ((= b (IsPos y)) (nonzero y)) ((refine b (true)) (Sq y)))
+(scale (x))
+(Sq (x))
+(IsPos (x))
+(run 3)
+(check-eq (Sq (x)) (Sq (x)))

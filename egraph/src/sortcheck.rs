@@ -76,6 +76,7 @@ pub enum CTerm<O, S, L> {
 /// Fully resolved command — ready for interpretation.
 #[derive(Clone, Debug)]
 pub enum CCommand<O, S, L> {
+    // TODO(abs-surface-syntax): add `Refine { term: CTerm<O, S, L>, value: AbsValue }` (the checked top-level refine; `AbsValue` names its domain), see egraph/doc/future/abstract-syntax-task.md §4
     /// Declaration — replay through interpreter's existing exec path.
     Decl(Command),
     Let(String, CTerm<O, S, L>),
@@ -602,6 +603,7 @@ where
             self.atoms.push(Atom::Neq(ra, rb));
             return Ok(self.fresh("neq"));
         }
+        // TODO(abs-surface-syntax): before the primitive-guard case, recognise a top-level `within`, `nonzero` or `known-bits` conjunct by head name, check its arity and integer arguments, and push `Atom::AbsGuard`, see egraph/doc/future/abstract-syntax-task.md §3
         if let SurfacePattern::App { op, .. } = pat
             && op != EQ_FORM
             && let Some(op_id) = self.ops.id_by_name(op)
@@ -1383,6 +1385,7 @@ where
             let ct = check_term(&term, None, eg.ops(), eg.sorts(), model, globals)?;
             Ok(CCommand::Insert(ct))
         }
+        // TODO(abs-surface-syntax): add a `Command::Refine` arm: `check_term` the target, then check the value against the domains enabled on its sort and lower it to `CCommand::Refine`, see egraph/doc/future/abstract-syntax-task.md §3
         Command::CheckEq(a, b, complete) => {
             let ca = check_term(&a, None, eg.ops(), eg.sorts(), model, globals)?;
             let cb = check_term(&b, None, eg.ops(), eg.sorts(), model, globals)?;
@@ -1572,6 +1575,7 @@ where
     Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
 {
     match cmd {
+        // TODO(abs-surface-syntax): validate `:interp` and `:domains` against the registry (or the stub list until abs-domain-registry lands), apply the carrier's default set, and record carrier and mask in `SortRegistry`, see egraph/doc/future/abstract-syntax-task.md §3
         Command::Sort(name) => {
             eg.intern_sort(name);
         }
@@ -1594,6 +1598,7 @@ where
                         .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                 })
                 .collect::<Result<_, _>>()?;
+            // TODO(abs-surface-syntax): check `:interp` (known operator, signature matches the argument and result carriers, no `:assoc`) and `:range` (bounds domain on the result sort, lo <= hi) before registering, see egraph/doc/future/abstract-syntax-task.md §3
             register_op(eg, name, &args, ret, tags, *meta, model, globals)?;
         }
         Command::Datatype { name, variants } => {

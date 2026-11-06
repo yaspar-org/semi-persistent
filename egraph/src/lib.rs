@@ -8,6 +8,7 @@
 // use `crate::containers::Vec`, `crate::containers::Tagged`, etc.
 pub use semi_persistent_containers as containers;
 
+// TODO(abs-surface-syntax): add `pub mod abs_syntax;` with the IR types (`Carrier`, `DomainMask`, `AbsValue`, `AbsTest`) and the stub list of carriers, domains and operators that abs-domain-registry replaces, see egraph/doc/future/abstract-syntax-task.md §4
 pub mod ac_invariants;
 pub mod apply;
 pub mod ast;

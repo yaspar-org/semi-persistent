@@ -317,6 +317,7 @@ pub fn compile_action<O: Clone, S, V: Clone>(
 ) -> CompiledAction<O, V> {
     use crate::resolve::ResolvedAction;
     match action {
+        // TODO(abs-surface-syntax): compile `ResolvedAction::Refine` to an action that builds its term and leaves every abstract value unchanged until abs-saturation-engine lands, see egraph/doc/future/abstract-syntax-task.md §5
         ResolvedAction::Union(a, b) => {
             CompiledAction::Union(rule_id, compile_rhs(a), compile_rhs(b))
         }

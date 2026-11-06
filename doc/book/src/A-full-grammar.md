@@ -9,6 +9,8 @@ separates alternatives. Quoted words and punctuation are literal tokens.
 Whitespace and comments may appear between tokens unless a production states
 otherwise.
 
+<!-- TODO(abs-surface-syntax): extend sort-declaration with :interp and :domains, declaration-tag with :interp and :range, action and term-command with refine, and list the abstract guards among the pattern forms, see egraph/doc/future/abstract-syntax-task.md §2 -->
+
 ```text
 alphabetic       = any alphabetic character
 alphanumeric     = any alphabetic character or decimal digit
