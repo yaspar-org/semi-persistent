@@ -1,4 +1,5 @@
 import SemperProofs.CC.Bridge.Represents
+import SemperProofs.CC.Atoms
 
 /-!
 # Bridge: matching modulo the AC theory
@@ -52,6 +53,40 @@ structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : S
     Joinable (Rw (plain n) (st.rules ∪ L.axRules)) (M + X) (N + X) →
     Joinable (Rw (plain n) (st.rules ∪ L.axRules)) M N
 
+/-- The hypotheses of `completion_complete_atoms` give those of
+`completion_complete_at_convergence` on the completion view: the fixed
+round with the one-element collapse is a fixed round of the view, and
+congruence on the stored nodes is congruence on the view. -/
+theorem CompleteHyps.ofAtoms {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    {X : Set (Fin n)} {u : Option (Fin n)} (h : CompleteAtoms L S st X u) :
+    CompleteHyps L S (st.withAtoms X u) where
+  slots := h.slots
+  h0 := h.h0
+  hcanon := h.hcanon
+  hfix := h.hfix.roundFixed
+  hlaw := h.hlaw
+  hnf_ax := h.hnf_ax
+  hcp := h.hcp
+  hcc := h.hfix.congr h.hcc
+  hS := h.hS
+  hcancel := h.hcancel
+
+/-- The graph of the completion view is the graph of the stored state: the
+view changes the node set, and the graph reads only `find` and the
+enumeration. -/
+theorem represents_withAtoms (st : State n) (X : Set (Fin n)) (u : Option (Fin n)) (f : Sym)
+    (A : Finset (Monomial n × Fin n)) : represents (st.withAtoms X u) f A = represents st f A :=
+  rfl
+
+theorem mkNode_withAtoms (st : State n) (X : Set (Fin n)) (u : Option (Fin n)) (f : Sym)
+    (p : Monomial n × Fin n) : mkNode (st.withAtoms X u) f p = mkNode st f p :=
+  rfl
+
+/-- An enumeration of the stored active nodes lies within the view. -/
+theorem Enumerates.within_withAtoms {st : State n} {A : Finset (Monomial n × Fin n)}
+    (h : Enumerates st A) (X : Set (Fin n)) (u : Option (Fin n)) : Within (st.withAtoms X u) A :=
+  fun p hp => State.active_withAtoms ((h p).1 hp)
+
 /-- Two `=_E`-equal active nodes of a converged state are in one class. -/
 theorem ac_equal_same_class {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
     (h : CompleteHyps L S st) {M N : Monomial n} {c d : Fin n}
@@ -65,11 +100,11 @@ theorem ac_equal_same_class {L : Laws n} {S : Set (Monomial n × Monomial n)} {s
 one class. -/
 theorem ac_equal_same_class_graph {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) (f : Sym) {p q : Monomial n × Fin n} (hp : p ∈ A) (hq : q ∈ A)
+    (hA : Within st A) (f : Sym) {p q : Monomial n × Fin n} (hp : p ∈ A) (hq : q ∈ A)
     (hpq : E L S p.1 q.1) :
     (represents st f A).find (nodeId p) = (represents st f A).find (nodeId q) := by
   rw [represents_find, represents_find]
-  exact congrArg clsId (ac_equal_same_class h ((hA p).1 hp) ((hA q).1 hq) hpq)
+  exact congrArg clsId (ac_equal_same_class h (hA p hp) (hA q hq) hpq)
 
 /-! ## Ground terms of the operator and the theory on patterns -/
 
@@ -108,7 +143,7 @@ matching `P` at `p'`'s node matches `P` at `p`'s class. The root of the
 pattern binds the class `find p`, not the node `p`. -/
 theorem matches_closed_under_theory {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) {f : Sym} {p p' : Monomial n × Fin n} (hp : p ∈ A) (hp' : p' ∈ A)
+    (hA : Within st A) {f : Sym} {p p' : Monomial n × Fin n} (hp : p ∈ A) (hp' : p' ∈ A)
     (hE : E L S p.1 p'.1) {P : Pat} (hhead : P.head = some f) {σ : Binding}
     (hm : MatchN (represents st f A) P (mkNode st f p') σ) :
     MatchC (represents st f A) P ((represents st f A).find (nodeId p)) σ := by
@@ -119,7 +154,7 @@ theorem matches_closed_under_theory {L : Laws n} {S : Set (Monomial n × Monomia
 of the node's monomial. -/
 theorem classMatches_congr {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) (f : Sym) {p p' : Monomial n × Fin n} (hp : p ∈ A) (hp' : p' ∈ A)
+    (hA : Within st A) (f : Sym) {p p' : Monomial n × Fin n} (hp : p ∈ A) (hp' : p' ∈ A)
     (hE : E L S p.1 p'.1) (P : Pat) :
     ClassMatches (represents st f A) P ((represents st f A).find (nodeId p)) =
       ClassMatches (represents st f A) P ((represents st f A).find (nodeId p')) := by
@@ -129,7 +164,7 @@ theorem classMatches_congr {L : Laws n} {S : Set (Monomial n × Monomial n)}
 every match at its node is a match at `p`'s class. -/
 theorem eterm_matches {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) {f : Sym} {p : Monomial n × Fin n} (hp : p ∈ A) {t : Term n}
+    (hA : Within st A) {f : Sym} {p : Monomial n × Fin n} (hp : p ∈ A) {t : Term n}
     (ht : t ∈ ETerm L S p) {c' : Fin n} (hc' : (t.flatten, c') ∈ A) {P : Pat}
     (hhead : P.head = some f) {σ : Binding}
     (hm : MatchN (represents st f A) P (mkNode st f (t.flatten, c')) σ) :
@@ -248,7 +283,7 @@ e-matching over e-classes: a pattern matches an e-class, and a class
 represents a term when it holds one node spelling it. -/
 theorem engine_match_modulo_complete {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) {f : Sym} {sig : Sym → Kind} (hf : sig f = .ac) {P : Pat} {r : Var}
+    (hA : Within st A) {f : Sym} {sig : Sym → Kind} (hf : sig f = .ac) {P : Pat} {r : Var}
     {plan : Plan} (hwk : PatWK sig P) (hnd : P.restVars.Nodup) (hr : r ∉ P.vars)
     (hP : P.head.isSome = true) (hplan : PlanOK ((atoms P r).map QAtom.scan) plan)
     {p : Monomial n × Fin n} (hp : p ∈ A) {t : Term n} (ht : t ∈ ETerm L S p) {c' : Fin n}
@@ -270,7 +305,7 @@ matches `P` at the node of some active `p'`, binds the root class to
 is `=_E`-equal to `p'`'s. -/
 theorem engine_match_modulo_sound {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) {f : Sym} {sig : Sym → Kind} (hf : sig f = .ac) {P : Pat} {r : Var}
+    (hA : Within st A) {f : Sym} {sig : Sym → Kind} (hf : sig f = .ac) {P : Pat} {r : Var}
     {plan : Plan} (hwk : PatWK sig P) (hnd : P.restVars.Nodup) (hr : r ∉ P.vars)
     (hP : P.head.isSome = true) (hplan : PlanOK ((atoms P r).map QAtom.scan) plan)
     {σ : Binding} (hσ : σ ∈ run (represents st f A) plan Binding.empty) :

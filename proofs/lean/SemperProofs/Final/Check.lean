@@ -6,3 +6,5 @@ import SemperProofs.Final.Main
 #print axioms SemperProofs.Final.matches_at_active
 #print axioms SemperProofs.Final.saturation_modulo_complete
 #print axioms SemperProofs.Final.saturation_modulo_sound
+#print axioms SemperProofs.Final.saturation_modulo_complete_within
+#print axioms SemperProofs.Final.saturation_modulo_complete_atoms

@@ -15,3 +15,4 @@ import SemperProofs.CC.Bridge.Modulo
 #print axioms SemperProofs.CC.Bridge.per_node_form_fails
 #print axioms SemperProofs.CC.Bridge.engine_match_modulo_complete
 #print axioms SemperProofs.CC.Bridge.engine_match_modulo_sound
+#print axioms SemperProofs.CC.Bridge.CompleteHyps.ofAtoms

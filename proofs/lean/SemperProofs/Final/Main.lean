@@ -46,6 +46,35 @@ theorem matches_at_active {st : State n} {f : Sym} {act : Finset (Monomial n × 
   obtain ⟨p', hp', rfl, rfl⟩ := mem_represents.1 hmem
   exact ⟨p', hp', hid, hcls, hmn⟩
 
+/-- `saturation_modulo_complete` with `act` within the active nodes
+(`Within`) instead of enumerating them; the form the leaf-constant
+statement instantiates. -/
+theorem saturation_modulo_complete_within {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
+    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
+    (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
+    {A : ActRound} (hA : A ∈ A₀ :: As) (hfix : A.R.Unchanged)
+    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    {act : Finset (Monomial n × Fin n)} (hcomp : CompleteHyps L S st)
+    (hw : Within st act) {f : Sym} (hG : A.R.after = represents st f act) :
+    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
+      P.head = some f →
+      ∀ p ∈ act, ∀ p' ∈ act, E L S p.1 p'.1 →
+      ∀ σ, Matches A.R.after rule.atoms σ → σ.node r = some (nodeId p') →
+        Fired A.R.after σ rule ∧
+        σ.cls r = some (A.R.after.find (nodeId p)) ∧
+        MatchC A.R.after P (A.R.after.find (nodeId p)) σ := by
+  intro rule hr P r hatoms hhead p hp p' hp' hE σ hm hroot
+  have hinv := (saturation_complete A₀ As hplan h₀ hok hemit₀ hchain hA hfix).2
+  refine ⟨hinv rule hr σ hm, ?_⟩
+  rw [hG] at hm ⊢
+  rw [hatoms] at hm
+  obtain ⟨q, hq, hroot', hcls, hmn⟩ := matches_at_active hhead hm
+  rw [hroot] at hroot'
+  obtain rfl : q = p' := nodeId_injective (Option.some.inj hroot').symm
+  refine ⟨?_, matches_closed_under_theory hcomp hw hp hq hE hhead hmn⟩
+  rw [hcls, ac_equal_same_class_graph hcomp hw f hp hq hE]
+
 /-- **Saturation is complete modulo the AC theory.**
 
 Setting. A run of the saturation loop is a first round `A₀` (every rule
@@ -86,13 +115,15 @@ every binding of every variant reading the previous round's delta
 
 (d) Completion has converged (`CompleteHyps L S st`): the slot invariant
 `I5` holds at an initial slot state and the refresh `OpsStar` leads to a
-slot state the completion state agrees with; the active nodes are
-`I0Active`; the right-hand sides are clamped; the round is fixed
+slot state the completion state agrees with; every class holding an
+active node has an active node as right-hand side (`I0Active`; a leaf
+constant, with no node, is unconstrained, and
+`saturation_modulo_complete_atoms` reads it as its one-element monomial); the right-hand sides are clamped; the round is fixed
 (`RoundFixed L st`, no rule to add, no critical pair left); the law
 relation is `degLex`-decreasing, no clamped monomial rewrites by an axiom
 rule, the critical pairs of the rules and axiom rules are joinable;
-congruence holds on the nodes (`hcc`: two nodes with the same monomial
-are in one class); every asserted equation of `S` is present between
+congruence holds on the active nodes (`hcc`: two active nodes with the
+same monomial are in one class); every asserted equation of `S` is present between
 active nodes of one class (`hS`); cancellation (`hcancel`, under
 `L.cancellative`). `Enumerates st act` says `act` is the set of active
 nodes.
@@ -137,17 +168,36 @@ theorem saturation_modulo_complete {sig : Sym → Kind} {naive : Rule → Bool} 
       ∀ σ, Matches A.R.after rule.atoms σ → σ.node r = some (nodeId p') →
         Fired A.R.after σ rule ∧
         σ.cls r = some (A.R.after.find (nodeId p)) ∧
-        MatchC A.R.after P (A.R.after.find (nodeId p)) σ := by
-  intro rule hr P r hatoms hhead p hp p' hp' hE σ hm hroot
-  have hinv := (saturation_complete A₀ As hplan h₀ hok hemit₀ hchain hA hfix).2
-  refine ⟨hinv rule hr σ hm, ?_⟩
-  rw [hG] at hm ⊢
-  rw [hatoms] at hm
-  obtain ⟨q, hq, hroot', hcls, hmn⟩ := matches_at_active hhead hm
-  rw [hroot] at hroot'
-  obtain rfl : q = p' := nodeId_injective (Option.some.inj hroot').symm
-  refine ⟨?_, matches_closed_under_theory hcomp henum hp hq hE hhead hmn⟩
-  rw [hcls, ac_equal_same_class_graph hcomp henum f hp hq hE]
+        MatchC A.R.after P (A.R.after.find (nodeId p)) σ :=
+  saturation_modulo_complete_within A₀ As hplan h₀ hok hemit₀ hchain hA hfix hcomp henum.within hG
+
+/-- **Saturation is complete modulo the AC theory, with leaf constants.**
+`saturation_modulo_complete` for a completion state whose atomic classes
+`X` (the leaf constants among them) are read as their one-element monomials
+and whose unit class `u`, if any, as the empty monomial (`State.withAtoms`,
+`CC/Atoms.lean`): the hypotheses are those of
+`completion_complete_atoms` (`CompleteAtoms`), `act` enumerates the stored
+active nodes and the graph is the one of the stored nodes. The asserted
+equations `S` and the theory may relate a node to a constant (`a + b = c`);
+the conclusion is about the stored nodes `p`, `p'` of `act`. -/
+theorem saturation_modulo_complete_atoms {sig : Sym → Kind} {naive : Rule → Bool}
+    {rules : List Rule}
+    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
+    (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
+    {A : ActRound} (hA : A ∈ A₀ :: As) (hfix : A.R.Unchanged)
+    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n} {X : Set (Fin n)}
+    {u : Option (Fin n)} {act : Finset (Monomial n × Fin n)} (hcomp : CompleteAtoms L S st X u)
+    (henum : Enumerates st act) {f : Sym} (hG : A.R.after = represents st f act) :
+    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
+      P.head = some f →
+      ∀ p ∈ act, ∀ p' ∈ act, E L S p.1 p'.1 →
+      ∀ σ, Matches A.R.after rule.atoms σ → σ.node r = some (nodeId p') →
+        Fired A.R.after σ rule ∧
+        σ.cls r = some (A.R.after.find (nodeId p)) ∧
+        MatchC A.R.after P (A.R.after.find (nodeId p)) σ :=
+  saturation_modulo_complete_within (st := st.withAtoms X u) A₀ As hplan h₀ hok hemit₀ hchain hA
+    hfix (CompleteHyps.ofAtoms hcomp) (henum.within_withAtoms X u) hG
 
 /-- **Soundness modulo the theory, matching side.**
 
@@ -183,6 +233,6 @@ theorem saturation_modulo_sound {sig : Sym → Kind} {rules : List Rule}
   rw [hatoms] at hm
   obtain ⟨p', hp', hroot, hcls, hmn⟩ := matches_at_active hhead hm
   exact ⟨p', hp', hroot, hcls, hmn,
-    fun p hp hE => matches_closed_under_theory hcomp henum hp hp' hE hhead hmn⟩
+    fun p hp hE => matches_closed_under_theory hcomp henum.within hp hp' hE hhead hmn⟩
 
 end SemperProofs.Final
