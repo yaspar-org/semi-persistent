@@ -417,8 +417,8 @@ egg_test!(
 );
 egg_test!(flatten_regroup_control, "flatten_regroup_control.egg");
 egg_test!(
-    flatten_regroup_nested_limit,
-    "flatten_regroup_nested_limit.egg"
+    flatten_regroup_nested_needs,
+    "flatten_regroup_nested_needs.egg"
 );
 egg_test!(checked_add_ok, "checked_add_ok.egg");
 // A partial primitive applied outside its domain is a reported program error,

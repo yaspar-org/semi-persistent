@@ -59,8 +59,11 @@
 //!
 //! A regrouping must be needed, as an opening is: a regrouped view records the regrouped
 //! classes its matches must take ([`Demand::needs`]), so a match in which only the rest
-//! holds a regrouped class is not kept, and a view needing more classes than the
-//! decomposition has items is not built.
+//! holds a regrouped class is not kept, and a record needing more classes than the
+//! decomposition has items is not matched. Such a record is still regrouped, since a
+//! later regrouping may absorb its needed classes: with `G1 ∋ f{a, b}`, `G2 ∋ f{c, d}`
+//! and `G3 ∋ f{G1, G2}`, the view `[G1, G2]` of `f{a, b, c, d}` needs two classes and
+//! its regrouping `[G3]` needs one, so `(f x ..r)` binds `x` to `G3`.
 //! Two bounds of their own keep regrouping cheap: [`MAX_REGROUP_VIEWS`] records and
 //! [`MAX_REGROUP_WORK`] candidates examined per node. Past either, regrouping stops, the
 //! views found so far are matched, and the node is counted ([`REGROUP_TRUNCATED`],
@@ -684,11 +687,13 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
 
     /// Add the regrouped views of the complete enumeration (module documentation,
     /// "Regrouped views"): for each view, every view that replaces a group of its entries
-    /// by the class `g` of an `op` node spelling that group, recursively, while a record
-    /// needs at most `limit` regrouped classes. Every regrouped view is strictly smaller
-    /// than its source (a group of at least two entries becomes one, and the
-    /// normalization only drops entries), so views are taken largest first, and each
-    /// view's records are all known when it is regrouped. Past [`MAX_REGROUP_VIEWS`]
+    /// by the class `g` of an `op` node spelling that group, recursively. A record may
+    /// need any number of regrouped classes here: a later regrouping may absorb some of
+    /// them (`G3 ∋ f{G1, G2}` turns the needs `[G1, G2]` into `[G3]`), so the per-item
+    /// bound applies only to the records [`enumerate`] keeps. Every regrouped view is
+    /// strictly smaller than its source (a group of at least two entries becomes one,
+    /// and the normalization only drops entries), so views are taken largest first, and
+    /// each view's records are all known when it is regrouped. Past [`MAX_REGROUP_VIEWS`]
     /// records or [`MAX_REGROUP_WORK`] candidates examined, regrouping stops, the views
     /// found so far are kept, and [`FlattenScratch::regroup_truncated`] is set.
     #[allow(clippy::too_many_arguments)]
@@ -699,7 +704,6 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
         kind: FlatKind,
         dir: crate::registry::AssocDir,
         laws: &crate::nary_canon::NaryLaws<G, O>,
-        limit: usize,
     ) -> Result<(), &'static str>
     where
         O: Copy + PartialEq,
@@ -846,9 +850,6 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                         );
                         if !need.contains(&g) {
                             need.push(g);
-                        }
-                        if need.len() > limit {
-                            continue;
                         }
                         // The derived record's demand, to skip one the target already has.
                         let mut sig: Sig<G> = (
@@ -1228,6 +1229,10 @@ fn times<M: MultiplicityLike>(k: M, j: M) -> Result<M, &'static str> {
 /// of the view ([`FlattenScratch::may_be_non_inert`]) makes no match, so the branch is
 /// abandoned there. Counters per instance make the check constant-time, which keeps a
 /// chain of 10^5 levels linear when one level's element is the only takeable one.
+///
+/// `regroup` is the number of items of the decomposition: when positive, the regrouped
+/// views are added ([`FlattenScratch::regroup`]), and only the records needing at most
+/// `regroup` regrouped classes are kept.
 pub fn enumerate<G, O, M, Src>(
     src: &Src,
     node: G,
@@ -1310,7 +1315,11 @@ where
         }
     }
     if regroup > 0 {
-        s.regroup(src, op, kind, dir, &laws, regroup)?;
+        s.regroup(src, op, kind, dir, &laws)?;
+        // A match takes each needed class by a distinct item, so a record needing more
+        // classes than `regroup`, the number of items, never matches. Regrouping keeps
+        // such records, since a later regrouping may absorb their needed classes.
+        s.recs.retain(|r| r.ncount <= regroup);
     }
     s.dedup();
     Ok(())

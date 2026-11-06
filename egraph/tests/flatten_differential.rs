@@ -475,8 +475,9 @@ thread_local! {
 /// replace a group of its entries by a class `g` holding an `f` node over that group,
 /// recursively. A regrouped view inherits each of its source's opening trees: a leaf
 /// holding a class of the group also holds `g`, the regrouped classes the group absorbs
-/// are no longer needed, and `g` is; a tree needing more than `limit` (the pattern's
-/// items) is dropped.
+/// are no longer needed, and `g` is. A tree needing more than `limit` (the pattern's
+/// items) is dropped once regrouping is done, not before: a later group may absorb the
+/// classes it needs.
 fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Alts>) {
     if NO_REGROUP.with(|c| c.get()) {
         return;
@@ -535,12 +536,13 @@ fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Al
                             need: true,
                         });
                     }
-                    if next.iter().filter(|l| l.need).count() <= limit {
-                        entry.push(next);
-                    }
+                    entry.push(next);
                 }
             }
         }
+    }
+    for alts in by_view.values_mut() {
+        alts.retain(|leaves| leaves.iter().filter(|l| l.need).count() <= limit);
     }
 }
 

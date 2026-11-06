@@ -1,13 +1,12 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
-;; EXPECT: check-failed
+;; EXPECT: ok
 ;; TYPES: machine
-;; MESSAGE: terms are not equal
-;; Regrouped views (design 07 §7.5): the per-item limit on needed classes is checked at
-;; every regrouping, not only on the classes still needed after the last one. g3 holds
-;; F{P, Q} with P = g1 = F{A, B} and Q = g2 = F{C, D}, so g3 spells F{A, B, C, D} only
-;; through two nested groups. A known gap, pinned by the last check (the counter-model
-;; regroup_nested_limit_counter, proofs/lean/SemperProofs/EMatch/Flatten/RegroupNested.lean).
+;; Regrouped views (design 07 §7.5): the per-item limit on needed classes bounds the
+;; classes still needed after the last regrouping, not those of the views in between.
+;; g3 holds F{P, Q} with P = g1 = F{A, B} and Q = g2 = F{C, D}, so g3 spells
+;; F{A, B, C, D} only through two nested groups, and the middle view needs both
+;; (regroup_nested_matches, proofs/lean/SemperProofs/EMatch/Flatten/RegroupNested.lean).
 (sort E)
 (function A () E) (function B () E) (function C () E) (function D () E)
 (function H () E) (function K () E) (function P () E) (function Q () E)
@@ -28,7 +27,6 @@
 ;; Two items: the chain {G1, C, D, H, K}, {G1, G2, H, K}, {G3, H, K} needs at most two
 ;; classes at each step (g1 and g2, then g3 alone), within the limit of two.
 (check-eq t (T3 g3 (F (H) (K))))
-;; One item: the chain ends needing g3 alone, but its middle view {G1, G2, H, K} needs g1
-;; and g2, past the limit of one, so the match x = g3 is not found. A match the theory
-;; admits; this check fails.
+;; One item: the chain ends needing g3 alone; its middle view {G1, G2, H, K} needs g1
+;; and g2, past the limit of one, but only the last record is matched.
 (check-eq t (T1 g3 (F (H) (K))))
