@@ -642,15 +642,16 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     /// to choose, could be non-inert on some completion ([`Self::non_inert`]): the walk
     /// must not prune it then. The unit test and the sequence test read only the leaf;
     /// the clamp and the cancel tests read the whole view, so under `:nilpotent` or
-    /// `:inverse` every multiset leaf is kept.
+    /// `:inverse` every multiset leaf is kept. Under an `:identity` every leaf is kept
+    /// too: a regrouping whose class the normalization drops flags the leaves that gain
+    /// it ([`Self::regroup`]).
     fn may_be_non_inert<O: Copy>(
         &self,
         i: usize,
         laws: &crate::nary_canon::NaryLaws<G, O>,
     ) -> bool {
         use crate::nary_canon::NaryKind;
-        let x = self.instances[i].class;
-        if laws.unit == Some(x) {
+        if laws.unit.is_some() {
             return true;
         }
         match laws.kind {
@@ -845,7 +846,10 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                             ..
                         } = self.recs[r];
                         // The classes the regrouped record needs taken: the source's,
-                        // less those the group absorbs, and `g`.
+                        // less those the group absorbs, and `g`; of those, only the
+                        // classes the normalized view holds. The laws may drop `g` (the
+                        // unit, a count clamped to zero, a cancelled inverse) or an
+                        // earlier needed class, which no item can take then.
                         need.clear();
                         need.extend(
                             self.needs[nstart..nstart + ncount]
@@ -855,17 +859,23 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                         if !need.contains(&g) {
                             need.push(g);
                         }
+                        need.retain(|c| fresh.iter().any(|e| e.0 == *c));
+                        // A leaf that gains a class the normalization dropped is
+                        // satisfied without it: the regrouping is not inert there.
+                        let g_gone = !fresh.iter().any(|e| e.0 == g);
                         // The derived record's demand, to skip one the target already has.
                         let mut sig: Sig<G> = (
                             (gstart..gstart + gcount)
                                 .map(|gi| {
                                     let (es, en, opened, non_inert) = self.groups[gi];
                                     let mut el = self.group_elems[es..es + en].to_vec();
-                                    if !el.contains(&g) && el.iter().any(|c| group.contains(c)) {
+                                    let holds =
+                                        !el.contains(&g) && el.iter().any(|c| group.contains(c));
+                                    if holds {
                                         el.push(g);
                                     }
                                     el.sort_unstable();
-                                    (opened, non_inert, el)
+                                    (opened, non_inert || (holds && g_gone), el)
                                 })
                                 .collect(),
                             need.clone(),
@@ -899,8 +909,12 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                             if holds {
                                 self.group_elems.push(g);
                             }
-                            self.groups
-                                .push((ns, self.group_elems.len() - ns, opened, non_inert));
+                            self.groups.push((
+                                ns,
+                                self.group_elems.len() - ns,
+                                opened,
+                                non_inert || (holds && g_gone),
+                            ));
                         }
                         let nn = self.needs.len();
                         self.needs.extend_from_slice(&need);

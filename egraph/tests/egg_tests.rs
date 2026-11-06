@@ -420,7 +420,10 @@ egg_test!(
     flatten_regroup_nested_needs,
     "flatten_regroup_nested_needs.egg"
 );
-egg_test!(flatten_regroup_laws_need, "flatten_regroup_laws_need.egg");
+egg_test!(
+    flatten_regroup_laws_drop_need,
+    "flatten_regroup_laws_drop_need.egg"
+);
 egg_test!(
     flatten_regroup_laws_insert,
     "flatten_regroup_laws_insert.egg"
