@@ -222,15 +222,40 @@ its two children classes merge (`NoCollapse`).
   `regroup_views_sound_{ac,aci,assoc}` (laws-free operators, a consistent
   denotation into a commutative monoid, a join semilattice, a monoid),
   `regroup_step_sound_left/right`, `regroup_off_spine_unsound`.
-  Completeness, AC laws-free: `fitsR_ac_complete`, `regroup_chain_ac`,
-  `regroup_view_complete_ac`, `regroup_match_complete_ac`. One group fits,
-  per step (`RegroupFits.lean`): `fitsR_aci_complete` (a subset of a
-  canonical set view), `fitsR_assoc_complete` (a run on the spine),
-  `fitsR_left_complete` (a prefix of a left fold), `fitsR_right_complete`
-  (a suffix of a right fold). Not covered: the chain, view and match
-  theorems for ACI, `:assoc` and the folds (the folds need nested chains,
-  `g₂ ∋ f[g₁, c]`, which the disjoint-group form of the AC theorem does not
-  express; the AC theorem omits nested groups too); the engine's regrouping
+  Completeness, laws-free, every kind and fold direction
+  (`RegroupChain.lean`): `RegroupsTo` states one regrouping of a view
+  declaratively (a sub-multiset for AC, a subset for ACI, a run on the
+  spine for `:assoc`, a prefix of a left fold, a suffix of a right fold:
+  `regroupsTo_left_iff`, `regroupsTo_right_iff`; at least two entries, not
+  the whole view), `RegroupStep` one regrouping of a record by an
+  `f`-member (leaves through `addG`, needed classes through `needsAfter`,
+  at most `limit` of them), `RegroupChain` any finite chain of steps, so
+  nested groups (`G2 ∋ f{G1, c}`, `G1` itself a regrouping) and groups
+  covering the view together are chains. `regroupStep_mem`,
+  `regroupChain_mem_levels` (a step is a regrouping of the model and
+  shrinks the view, so a chain lies within the levels the model runs) and
+  the converse `regroupStep_of_mem`, `regroupChain_of_mem_levels`;
+  `regroup_view_complete` and `regroup_views_iff` (a view of `enumerateR`
+  accepts `taken` iff a chain from a walk record reaches it with its leaves
+  and needed classes satisfied); `regroup_match_complete` and
+  `regroup_match_iff` (an n-ary atom holds under
+  `AtomSatG (Enumerator.regroup dir)` iff a chain within the atom's
+  per-item limit reaches a view its shallow pattern matches). The limit
+  bounds the needed classes at every step of the chain, as the engine
+  checks it: `regroup_nested_limit_counter` (`RegroupNested.lean`) is a
+  chain to `{h, k, G3}`, `G3 ∋ F{G1, G2}`, that ends needing `G3` alone but
+  needs `G1` and `G2` midway, and no view with a limit of one holds `G3`;
+  the engine misses the same match (`flatten_regroup_nested_limit.egg`,
+  expected `check-failed`). `regroup_fold_nested`: the nested prefixes of a
+  left fold (`(a - b) - c` in `((a - b) - c) - d`) are reached within one
+  needed class per step. The disjoint-group AC form (`regroup_chain_ac`,
+  `regroup_view_complete_ac`, `regroup_match_complete_ac`) now admits
+  groups that cover the view together (their sum within the view, none the
+  whole view). One group fits, per step (`RegroupFits.lean`):
+  `fitsR_ac_complete`, `fitsR_aci_complete`, `fitsR_assoc_complete`,
+  `fitsR_left_complete`, `fitsR_right_complete`. Not covered: operators
+  with laws (identity, nilpotence, inverses) in the completeness theorems;
+  the engine's regrouping
   bounds (`MAX_REGROUP_VIEWS`, 2^14 regrouped records added after the skips,
   and `MAX_REGROUP_WORK`, 2^20 use-list entries and member children
   examined, which also counts views no record reaches) and its skipping of
