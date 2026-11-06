@@ -1,0 +1,32 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Regrouped views (design 07 §7.5): the per-item limit on needed classes bounds the
+;; classes still needed after the last regrouping, not those of the views in between.
+;; g3 holds F{P, Q} with P = g1 = F{A, B} and Q = g2 = F{C, D}, so g3 spells
+;; F{A, B, C, D} only through two nested groups, and the middle view needs both
+;; (regroup_nested_matches, proofs/lean/SemperProofs/EMatch/Flatten/RegroupNested.lean).
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E)
+(function H () E) (function K () E) (function P () E) (function Q () E)
+(function F (E) E :assoc-comm)
+(function T1 (E E) E)
+(function T3 (E E) E)
+(let g1 (F (A) (B)))
+(let g2 (F (C) (D)))
+(let g3 (F (P) (Q)))
+(union (P) g1)
+(union (Q) g2)
+(let t (F (A) (B) (C) (D) (H) (K)))
+(rewrite (F x ..r) (T1 x (F ..r)) :flatten)
+(rewrite (F x y ..r) (T3 x (F y ..r)) :flatten)
+(run 2)
+;; One item, one nested level: {A, B, C, D, H, K} to {G1, C, D, H, K} needs g1 alone.
+(check-eq t (T1 g1 (F (C) (D) (H) (K))))
+;; Two items: the chain {G1, C, D, H, K}, {G1, G2, H, K}, {G3, H, K} needs at most two
+;; classes at each step (g1 and g2, then g3 alone), within the limit of two.
+(check-eq t (T3 g3 (F (H) (K))))
+;; One item: the chain ends needing g3 alone; its middle view {G1, G2, H, K} needs g1
+;; and g2, past the limit of one, but only the last record is matched.
+(check-eq t (T1 g3 (F (H) (K))))

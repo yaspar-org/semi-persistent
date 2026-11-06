@@ -11,8 +11,8 @@ the model computes as `check-eq`, and a sample of the candidates it rejects as
 view register, with the views of the opening walk and their regrouped views,
 accepted by the engine's demand rule); an untagged rule by the reference
 interpreter, as in `../conform/`. A regrouped view replaces a group of a view's
-entries by the class of an existing node over that group, at most one per item
-(`regroup_plan_sound`, `regroup_plan_complete` in `Flatten/Regroup.lean`). A draw
+entries by the class of an existing node over that group, and a matched record
+needs at most one regrouped class per item (`regroup_plan_sound`, `regroup_plan_complete` in `Flatten/Regroup.lean`). A draw
 whose regrouping passes the generator's budget (`regroupCap`) is redrawn.
 
 The cases cover what the seed-1 fixtures (`../conform/`) leave out of `:flatten`:

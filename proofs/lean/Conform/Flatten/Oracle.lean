@@ -48,7 +48,7 @@ def withinRegroupBudget (c : FCtx) (dir : Sym → Dir) (v : Var) (f : Sym) (κ :
   | some n =>
       let ctx := c.ctx f κ
       let base := baseRecsR ctx (dir f) (c.laws f) n
-      (regroupLevelsCapped ctx (dir f) (c.laws f) items.length regroupCap (regroupFuel base)
+      (regroupLevelsCapped ctx (dir f) (c.laws f) regroupCap (regroupFuel base)
         (base.filter (keepRec κ (takeableR ctx env.σ items) (c.laws f)))).isSome
   | none => true
 

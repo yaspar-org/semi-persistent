@@ -8,10 +8,12 @@ bound variables, and checks the matches the model's reference interpreter comput
 `enumerateL` views and their regrouped views when the rule is `:flatten`) as
 `check-eq`, and a sample of the candidates it rejects as `check-neq`. A regrouped view
 (`SemperProofs/EMatch/Flatten/RegroupDefs.lean`) replaces a group of a view's entries
-by the class of an existing node over that group, at most one per item of the root, as
-the engine does (`flatten::FlattenScratch::regroup`). Past a budget of regrouped records
-per node (`regroupCap`), the generator matches that node's views without regrouping and
-says so in a closing comment; no committed file is past it.
+by the class of an existing node over that group, recursively, and a matched record needs
+at most one regrouped class per item of the root, as the engine does
+(`flatten::FlattenScratch::regroup`). Past a budget of regrouped records per node
+(`regroupCap`), the generator matches that node's views without regrouping and says so in
+a closing comment; one committed file is past it, `c1_0052.egg`, on which the engine
+also stops regrouping one node at its own bounds and reports it.
 
 The files are the first 200 cases of seed 1 on which the model and the engine agree
 (`c1_0000.egg` .. `c1_0199.egg`). `conform.rs` scans this directory and runs each

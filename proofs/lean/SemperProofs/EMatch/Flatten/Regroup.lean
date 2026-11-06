@@ -158,19 +158,19 @@ theorem acceptsE_enumerateFromR {κ : FlatKind} {recs : List RecR} {w : List (C 
 
 section Levels
 
-variable (ctx : Ctx) (dir : Dir) (laws : Laws) (limit : Nat)
+variable (ctx : Ctx) (dir : Dir) (laws : Laws)
 
 theorem mem_regroupLevels_of_mem :
     ∀ (F : Nat) {recs : List RecR} {r : RecR}, r ∈ recs →
-      r ∈ regroupLevels ctx dir laws limit F recs
+      r ∈ regroupLevels ctx dir laws F recs
   | 0, _, _, h => h
   | _ + 1, _, _, h => List.mem_append_left _ h
 
 /-- A record of the levels of `recs` is one of the levels of a single record. -/
 theorem mem_regroupLevels_iff :
     ∀ (F : Nat) (recs : List RecR) (r : RecR),
-      r ∈ regroupLevels ctx dir laws limit F recs ↔
-        ∃ r₀ ∈ recs, r ∈ regroupLevels ctx dir laws limit F [r₀]
+      r ∈ regroupLevels ctx dir laws F recs ↔
+        ∃ r₀ ∈ recs, r ∈ regroupLevels ctx dir laws F [r₀]
   | 0, recs, r => by
       simp only [regroupLevels, List.mem_singleton]
       exact ⟨fun h => ⟨r, h, rfl⟩, fun ⟨r₀, h, he⟩ => he ▸ h⟩
@@ -188,21 +188,21 @@ theorem mem_regroupLevels_iff :
         · exact Or.inl h₀
         · rw [mem_regroupLevels_iff F] at h
           obtain ⟨r₁, h₁, h⟩ := h
-          have h₁' : r₁ ∈ regroupRec ctx dir laws limit r₀ := by simpa using mem_dedupH.1 h₁
+          have h₁' : r₁ ∈ regroupRec ctx dir laws r₀ := by simpa using mem_dedupH.1 h₁
           exact Or.inr ⟨r₁, mem_dedupH.2 (List.mem_flatMap.2 ⟨r₀, h₀, h₁'⟩), h⟩
 
 theorem regroupLevels_mono {F : Nat} {recs recs' : List RecR} (hs : ∀ r ∈ recs, r ∈ recs')
-    {r : RecR} (h : r ∈ regroupLevels ctx dir laws limit F recs) :
-    r ∈ regroupLevels ctx dir laws limit F recs' := by
-  obtain ⟨r₀, h₀, h⟩ := (mem_regroupLevels_iff ctx dir laws limit F recs r).1 h
-  exact (mem_regroupLevels_iff ctx dir laws limit F recs' r).2 ⟨r₀, hs r₀ h₀, h⟩
+    {r : RecR} (h : r ∈ regroupLevels ctx dir laws F recs) :
+    r ∈ regroupLevels ctx dir laws F recs' := by
+  obtain ⟨r₀, h₀, h⟩ := (mem_regroupLevels_iff ctx dir laws F recs r).1 h
+  exact (mem_regroupLevels_iff ctx dir laws F recs' r).2 ⟨r₀, hs r₀ h₀, h⟩
 
 /-- An invariant of the walk's records preserved by one regrouping holds of
 every level. -/
 theorem regroupLevels_induction {P : RecR → Prop}
-    (hs : ∀ r r', P r → r' ∈ regroupRec ctx dir laws limit r → P r') :
+    (hs : ∀ r r', P r → r' ∈ regroupRec ctx dir laws r → P r') :
     ∀ (F : Nat) (recs : List RecR), (∀ r ∈ recs, P r) →
-      ∀ r ∈ regroupLevels ctx dir laws limit F recs, P r
+      ∀ r ∈ regroupLevels ctx dir laws F recs, P r
   | 0, _, h0, r, hr => h0 r hr
   | F + 1, recs, h0, r, hr => by
       simp only [regroupLevels, List.mem_append] at hr
@@ -215,18 +215,23 @@ theorem regroupLevels_induction {P : RecR → Prop}
 
 end Levels
 
+/-- The records `withinLimit` keeps: those needing at most `limit` classes. -/
+theorem mem_withinLimit {limit : Nat} {recs : List RecR} {r : RecR} :
+    r ∈ withinLimit limit recs ↔ r ∈ recs ∧ r.2.2.length ≤ limit := by
+  simp [withinLimit]
+
 /-- The capped levels are the levels when within the budget. -/
-theorem regroupLevelsCapped_eq (ctx : Ctx) (dir : Dir) (laws : Laws) (limit : Nat) :
+theorem regroupLevelsCapped_eq (ctx : Ctx) (dir : Dir) (laws : Laws) :
     ∀ (F cap : Nat) (recs l : List RecR),
-      regroupLevelsCapped ctx dir laws limit cap F recs = some l →
-      l = regroupLevels ctx dir laws limit F recs
+      regroupLevelsCapped ctx dir laws cap F recs = some l →
+      l = regroupLevels ctx dir laws F recs
   | 0, _, recs, l, h => by simpa [regroupLevelsCapped, regroupLevels] using h.symm
   | F + 1, cap, recs, l, h => by
       simp only [regroupLevelsCapped] at h
       split at h
       · simp at h
       · obtain ⟨l', h', rfl⟩ := Option.map_eq_some_iff.1 h
-        rw [regroupLevelsCapped_eq ctx dir laws limit F _ _ l' h']
+        rw [regroupLevelsCapped_eq ctx dir laws F _ _ l' h']
         rfl
 
 /-! ## One regrouping, unfolded -/
@@ -249,36 +254,31 @@ theorem mem_groupsOf_of_member {ctx : Ctx} {id : NodeId} {m : Node} {g : C}
   · simp [hf, hop]
   · simp [hg]
 
-theorem mem_regroupRec {ctx : Ctx} {dir : Dir} {laws : Laws} {limit : Nat} {r r' : RecR}
-    (h : r' ∈ regroupRec ctx dir laws limit r) :
+theorem mem_regroupRec {ctx : Ctx} {dir : Dir} {laws : Laws} {r r' : RecR}
+    (h : r' ∈ regroupRec ctx dir laws r) :
     ∃ g grp raw, (g, grp) ∈ groupsOf ctx ∧ raw ∈ fitsR ctx.κ dir r.1 g grp ∧
       normalize ctx.κ laws raw = .node r'.1 ∧
       r'.2.1 = r.2.1.map (addG g (grp.map Prod.fst)) ∧
-      r'.2.2 = needsAfter g (grp.map Prod.fst) r.2.2 ∧ r'.2.2.length ≤ limit := by
+      r'.2.2 = needsAfter g (grp.map Prod.fst) r.2.2 := by
   unfold regroupRec at h
   obtain ⟨⟨g, grp⟩, hgg, h⟩ := List.mem_flatMap.1 h
   obtain ⟨raw, hraw, h⟩ := List.mem_filterMap.1 h
   revert h
   cases hn : normalize ctx.κ laws raw with
   | node w =>
-      simp only
-      split
-      · rename_i hle
-        intro h
-        cases h
-        exact ⟨g, grp, raw, hgg, hraw, hn, rfl, rfl, hle⟩
-      · simp
+      intro h
+      cases h
+      exact ⟨g, grp, raw, hgg, hraw, hn, rfl, rfl⟩
   | _ => simp
 
-theorem regroupRec_of {ctx : Ctx} {dir : Dir} {laws : Laws} {limit : Nat} {r : RecR} {g : C}
+theorem regroupRec_of {ctx : Ctx} {dir : Dir} {laws : Laws} {r : RecR} {g : C}
     {grp raw w : List (C × Nat)} (hgg : (g, grp) ∈ groupsOf ctx)
-    (hraw : raw ∈ fitsR ctx.κ dir r.1 g grp) (hn : normalize ctx.κ laws raw = .node w)
-    (hle : (needsAfter g (grp.map Prod.fst) r.2.2).length ≤ limit) :
+    (hraw : raw ∈ fitsR ctx.κ dir r.1 g grp) (hn : normalize ctx.κ laws raw = .node w) :
     (w, r.2.1.map (addG g (grp.map Prod.fst)), needsAfter g (grp.map Prod.fst) r.2.2) ∈
-      regroupRec ctx dir laws limit r := by
+      regroupRec ctx dir laws r := by
   unfold regroupRec
   refine List.mem_flatMap.2 ⟨(g, grp), hgg, List.mem_filterMap.2 ⟨raw, hraw, ?_⟩⟩
-  simp only [hn, hle, ↓reduceIte]
+  simp only [hn]
 
 /-! ## Regrouped leaves -/
 
@@ -334,16 +334,16 @@ theorem leafRel_addG {ctx : Ctx} {g : C} {grp : List (C × Nat)} (hgg : (g, grp)
 theorem recRel_refl (ctx : Ctx) (r : RecR) : RecRel ctx r r :=
   ⟨id, by simp, fun l => ⟨rfl, rfl, fun c hc => ⟨c, hc, Relation.ReflTransGen.refl⟩⟩⟩
 
-theorem recRel_step {ctx : Ctx} {dir : Dir} {laws : Laws} {limit : Nat} {r₀ r r' : RecR}
-    (h : RecRel ctx r₀ r) (h' : r' ∈ regroupRec ctx dir laws limit r) : RecRel ctx r₀ r' := by
-  obtain ⟨g, grp, -, hgg, -, -, hl, -, -⟩ := mem_regroupRec h'
+theorem recRel_step {ctx : Ctx} {dir : Dir} {laws : Laws} {r₀ r r' : RecR}
+    (h : RecRel ctx r₀ r) (h' : r' ∈ regroupRec ctx dir laws r) : RecRel ctx r₀ r' := by
+  obtain ⟨g, grp, -, hgg, -, -, hl, -⟩ := mem_regroupRec h'
   obtain ⟨φ, hφ, hrel⟩ := h
   refine ⟨addG g (grp.map Prod.fst) ∘ φ, ?_, fun l => leafRel_addG hgg (hrel l)⟩
   rw [hl, hφ, List.map_map]
 
-theorem recRel_of_mem {ctx : Ctx} {dir : Dir} {laws : Laws} {limit F : Nat} {r₀ r : RecR}
-    (h : r ∈ regroupLevels ctx dir laws limit F [r₀]) : RecRel ctx r₀ r :=
-  regroupLevels_induction ctx dir laws limit (P := RecRel ctx r₀)
+theorem recRel_of_mem {ctx : Ctx} {dir : Dir} {laws : Laws} {F : Nat} {r₀ r : RecR}
+    (h : r ∈ regroupLevels ctx dir laws F [r₀]) : RecRel ctx r₀ r :=
+  regroupLevels_induction ctx dir laws (P := RecRel ctx r₀)
     (fun _ _ h h' => recRel_step h h') F [r₀]
     (fun r hr => by rw [List.mem_singleton] at hr; subst hr; exact recRel_refl ctx _) r h
 
@@ -455,22 +455,24 @@ theorem prune_regroup {T : C → Bool} {ctx : Ctx} {dir : Dir} {laws : Laws} {li
   rw [acceptsE_enumerateFromR, acceptsE_enumerateFromR]
   constructor
   · rintro ⟨r, hr, hw, hall⟩
-    exact ⟨r, regroupLevels_mono ctx dir laws limit (fun r h => (List.mem_filter.1 h).1) hr, hw,
-      hall⟩
+    obtain ⟨hr, hlim⟩ := mem_withinLimit.1 hr
+    exact ⟨r, mem_withinLimit.2 ⟨regroupLevels_mono ctx dir laws
+      (fun r h => (List.mem_filter.1 h).1) hr, hlim⟩, hw, hall⟩
   · rintro ⟨r, hr, hw, hall⟩
-    obtain ⟨r₀, h₀, hr₀⟩ := (mem_regroupLevels_iff ctx dir laws limit _ _ r).1 hr
+    obtain ⟨hr, hlim⟩ := mem_withinLimit.1 hr
+    obtain ⟨r₀, h₀, hr₀⟩ := (mem_regroupLevels_iff ctx dir laws _ _ r).1 hr
     obtain ⟨v, ls, -, hfl, -⟩ := mem_baseRecsR h₀
     have hkeep := keepRec_of_accept hT htk hfl (recRel_of_mem hr₀)
       (fun l hl => hall l (List.mem_append_left _ hl))
-    exact ⟨r, (mem_regroupLevels_iff ctx dir laws limit _ _ r).2
-      ⟨r₀, List.mem_filter.2 ⟨h₀, hkeep⟩, hr₀⟩, hw, hall⟩
+    exact ⟨r, mem_withinLimit.2 ⟨(mem_regroupLevels_iff ctx dir laws _ _ r).2
+      ⟨r₀, List.mem_filter.2 ⟨h₀, hkeep⟩, hr₀⟩, hlim⟩, hw, hall⟩
 
 /-! ## The specification -/
 
-theorem normal_of_mem_regroupLevels {ctx : Ctx} {dir : Dir} {laws : Laws} {limit F : Nat}
+theorem normal_of_mem_regroupLevels {ctx : Ctx} {dir : Dir} {laws : Laws} {F : Nat}
     {recs : List RecR} (h0 : ∀ r ∈ recs, ∃ v, normalize ctx.κ laws v = .node r.1) :
-    ∀ r ∈ regroupLevels ctx dir laws limit F recs, ∃ v, normalize ctx.κ laws v = .node r.1 :=
-  regroupLevels_induction ctx dir laws limit
+    ∀ r ∈ regroupLevels ctx dir laws F recs, ∃ v, normalize ctx.κ laws v = .node r.1 :=
+  regroupLevels_induction ctx dir laws
     (fun _ _ _ h' => by
       obtain ⟨_, _, raw, -, -, hn, -⟩ := mem_regroupRec h'
       exact ⟨raw, hn⟩) F recs h0
@@ -478,10 +480,10 @@ theorem normal_of_mem_regroupLevels {ctx : Ctx} {dir : Dir} {laws : Laws} {limit
 theorem normal_enumerateFromR {ctx : Ctx} {dir : Dir} {laws : Laws} {limit F : Nat}
     {recs : List RecR} (h0 : ∀ r ∈ recs, ∃ v, normalize ctx.κ laws v = .node r.1)
     {w : List (C × Nat)} {d : DemandL}
-    (h : (w, d) ∈ enumerateFromR (regroupAll ctx dir laws limit F recs)) :
+    (h : (w, d) ∈ enumerateFromR (withinLimit limit (regroupAll ctx dir laws F recs))) :
     ∃ v, normalize ctx.κ laws v = .node w := by
   obtain ⟨r, hr, rfl⟩ := mem_enumerateFromR h
-  exact normal_of_mem_regroupLevels h0 r hr
+  exact normal_of_mem_regroupLevels h0 r (mem_withinLimit.1 hr).1
 
 theorem normal_baseRecsR {ctx : Ctx} {dir : Dir} {laws : Laws} {n : Node} :
     ∀ r ∈ baseRecsR ctx dir laws n, ∃ v, normalize ctx.κ laws v = .node r.1 := by

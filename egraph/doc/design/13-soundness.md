@@ -315,7 +315,12 @@ The same boundary appears on the matching side ([AC chapter §5b](06-ac-congruen
 with no node of its own is outside the e-matching relation. That residual case
 requires materializing a sub-sum no equation justifies and is not claimed; it is the
 open term-valued AC-matching extension (AC chapter §11), separate from
-congruence completeness. Classical AC unification is a broader problem; the
+congruence completeness. A sub-sum that has a node of its own is bound by a
+`:flatten` rule through a regrouped view ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten),
+"Regrouped views"), including a sub-sum reached through nested groups whose intermediate
+views need more regrouped classes than the pattern has items: the per-item limit bounds
+only the classes the last regrouping leaves needed (`regroup_nested_matches`,
+`flatten_regroup_nested_needs.egg`). Classical AC unification is a broader problem; the
 implemented operation is matching a pattern against a ground e-graph subject.
 
 Nesting is a separate, closed gap on the matching side. A node whose child class

@@ -37,3 +37,4 @@
 (check-neq (C2) (Tag (C3)))
 (check-neq (C1) (Tag (C1)))
 (check-neq (C1) (Tag (C2)))
+;; regrouping past the model's budget (Conform.regroupCap): the expected matches omit the regrouped views

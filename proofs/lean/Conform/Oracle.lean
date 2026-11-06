@@ -9,8 +9,8 @@ The expected match set of a case is computed by the reference interpreter
 tagged `:flatten` on every canonical view of every node of the root
 operator (`enumerateX`, with the per-kind demand rule `acceptsKindB`; under
 laws `enumerateL` with `acceptsLawsB`) and every regrouped view
-(`regroupAll` of `Flatten/RegroupDefs.lean`, at most one regrouped class per
-item of the root), the view standing in for the stored node through a fresh
+(`regroupAll` of `Flatten/RegroupDefs.lean`, the records needing at most one
+regrouped class per item of the root, `withinLimit`), the view standing in for the stored node through a fresh
 node id in a fresh class.
 
 A match is reported as the root class and the list of tag arguments: the
@@ -82,11 +82,11 @@ exactly when `acceptsKindB`'s does. -/
 def recXtoR (r : RawX) : RecR :=
   (r.1, r.2.map (fun l => (⟨l.1, 1, l.2.map (fun c => (c, 1))⟩, false)), [])
 
-/-- The records of node `n` and their regroupings (`regroupLevels`, at most
-`limit` regrouped classes, one per item), within the budget `regroupCap`;
-past it, the walk's records alone (`regroupOverBudget`). -/
+/-- The records of node `n` and their regroupings (`regroupLevels`) needing at
+most `limit` regrouped classes, one per item (`withinLimit`), within the budget
+`regroupCap`; past it, the walk's records alone (`regroupOverBudget`). -/
 def regroupedRecs (ctx : Ctx) (laws : Laws) (limit : Nat) (recs : List RecR) : List RecR :=
-  (regroupLevelsCapped ctx .both laws limit regroupCap (regroupFuel recs) recs).getD recs
+  withinLimit limit ((regroupLevelsCapped ctx .both laws regroupCap (regroupFuel recs) recs).getD recs)
 
 /-- The walk's records of node `n` as regrouping reads them. -/
 def recsOf (cs : Case) (ctx : Ctx) (laws : Laws) (n : Node) : List RecR :=
@@ -136,10 +136,9 @@ def regroupOverBudget (cs : Case) : Bool :=
         | .ac => cs.lawsAC.toLaws
         | .assoc => Laws.free
       let ctx : Ctx := ⟨G, f, κ, fun _ => true⟩
-      let limit := (itemVars cs.pat).length
       cs.nodes.any fun p => p.2.op = f &&
         let recs := recsOf cs ctx laws p.2
-        (regroupLevelsCapped ctx .both laws limit regroupCap (regroupFuel recs) recs).isNone
+        (regroupLevelsCapped ctx .both laws regroupCap (regroupFuel recs) recs).isNone
   | _, _ => false
 
 /-- The expected match set. -/

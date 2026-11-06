@@ -222,13 +222,54 @@ its two children classes merge (`NoCollapse`).
   `regroup_views_sound_{ac,aci,assoc}` (laws-free operators, a consistent
   denotation into a commutative monoid, a join semilattice, a monoid),
   `regroup_step_sound_left/right`, `regroup_off_spine_unsound`.
-  Completeness, AC laws-free: `fitsR_ac_complete`, `regroup_chain_ac`,
-  `regroup_view_complete_ac`, `regroup_match_complete_ac`. Not covered: the
-  engine's regrouping bounds and its skipping of records whose acceptance
-  another record of the view implies (acceptance-preserving, argued, not
-  proved); completeness for ACI, `:assoc` and folds, and soundness under
-  laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
-  with a budget of 45,000 records per node.
+  Completeness, laws-free, every kind and fold direction
+  (`RegroupChain.lean`): `RegroupsTo` states one regrouping of a view
+  declaratively (a sub-multiset for AC, a subset for ACI, a run on the
+  spine for `:assoc`, a prefix of a left fold, a suffix of a right fold:
+  `regroupsTo_left_iff`, `regroupsTo_right_iff`; at least two entries, not
+  the whole view), `RegroupStep` one regrouping of a record by an
+  `f`-member (leaves through `addG`, needed classes through `needsAfter`),
+  `RegroupChain` any finite chain of steps, with no bound on the needed
+  classes along it, so nested groups (`G2 ∋ f{G1, c}`, `G1` itself a
+  regrouping) and groups covering the view together are chains. The
+  enumeration keeps the records needing at most one class per item
+  (`withinLimit`, `mem_withinLimit`) after regrouping, as the engine does.
+  `regroupStep_mem`, `regroupChain_mem_levels` (a step is a regrouping of
+  the model and shrinks the view, so a chain lies within the levels the
+  model runs) and the converse `regroupStep_of_mem`,
+  `regroupChain_of_mem_levels`; `regroup_view_complete` and
+  `regroup_views_iff` (a view of `enumerateR` accepts `taken` iff a chain
+  from a walk record reaches it, its last record needing at most `limit`
+  classes, with its leaves and needed classes satisfied);
+  `regroup_match_complete` and `regroup_match_iff` (an n-ary atom holds
+  under `AtomSatG (Enumerator.regroup dir)` iff a chain reaches a view its
+  shallow pattern matches, its last record needing at most as many classes
+  as the atom has items). The limit bounds only the classes the last record
+  needs: `regroup_nested_matches` (`RegroupNested.lean`) is a chain to
+  `{h, k, G3}`, `G3 ∋ F{G1, G2}`, that needs `G1` and `G2` midway and `G3`
+  alone at the end, and with a limit of one the view `{h, k, G3}` is
+  enumerated and accepts `x = G3`; the engine finds the same match
+  (`flatten_regroup_nested_needs.egg`). `regroup_fold_nested`: the nested
+  prefixes of a left fold (`(a - b) - c` in `((a - b) - c) - d`) are
+  reached, needing one class at each step. The disjoint-group AC form
+  (`regroup_chain_ac`, `regroup_view_complete_ac`,
+  `regroup_match_complete_ac`) admits groups that cover the view together
+  (their sum within the view, none the whole view); `regroup_chain_ac`
+  bounds the needed classes by one per group instead of assuming a limit.
+  One group fits, per step (`RegroupFits.lean`):
+  `fitsR_ac_complete`, `fitsR_aci_complete`, `fitsR_assoc_complete`,
+  `fitsR_left_complete`, `fitsR_right_complete`. Not covered: operators
+  with laws (identity, nilpotence, inverses) in the completeness theorems;
+  the engine's regrouping
+  bounds (`MAX_REGROUP_VIEWS`, 2^14 regrouped records added after the skips,
+  and `MAX_REGROUP_WORK`, 2^20 use-list entries and member children
+  examined, which also counts views no record reaches) and its skipping of
+  records (a target view with an unconditional record, a source view with
+  one, the per-target signature deduplication; acceptance-preserving,
+  argued, not proved); soundness under laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
+  with a budget of 45,000 records per node; one committed `conform` sample
+  (`c1_0052.egg`) is past it, and the engine stops regrouping a node of it at
+  its own bounds too.
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);

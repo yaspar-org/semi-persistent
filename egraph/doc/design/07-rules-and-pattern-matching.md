@@ -1333,14 +1333,22 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   source's opening trees, and a leaf holding a class of the group also holds `G`, so an item
   that takes `G` satisfies the leaf. A regrouping must be needed, as an opening is: the view
   records the regrouped classes, and a match is kept only if its items take each of them
-  (`Demand::needs`). A view needing more regrouped classes than the decomposition has items
-  is not built. When the items are all bound, the walk counts as takeable the classes below
+  (`Demand::needs`). Each needed class is taken by a distinct item, so a record needing more
+  regrouped classes than the decomposition has items never matches and is dropped once
+  regrouping is done. It is still regrouped first, since a later group may absorb the
+  classes it needs. When the items are all bound, the walk counts as takeable the classes below
   a bound class through `f` members, so its pruning keeps the leaves a regrouped item takes
   from.
-- **Guarantee.** A `:flatten` rule is complete modulo the theory relative to the classes
-  holding a node that spells the group: when such a class exists, the match that binds a
-  variable to it is found. The exceptions are a node over its own class, excluded above,
-  and a node whose regrouping stops at a bound, which is reported.
+- **Guarantee.** A `:flatten` rule finds every match reached by a chain of regroupings,
+  each a group of the current view spelled by a node of its class, whose last record needs
+  no more regrouped classes than the decomposition has items. Nested groups
+  (`G2 ∋ f{G1, c}` with `G1` a regrouping of the view) and groups that together cover the
+  view are such chains. The item limit bounds only the classes needed at the end of the
+  chain: with `G3 ∋ F{G1, G2}`, `G1 ∋ F{a, b}`, `G2 ∋ F{c, d}`, the chain from
+  `F{a, b, c, d, h, k}` to `{G3, h, k}` passes through `{G1, G2, h, k}`, which needs two
+  classes, and `(F x ..r)` (one item) binds `x` to `G3` (`flatten_regroup_nested_needs.egg`).
+  The exceptions are a node over its own class, excluded above, and a node whose regrouping
+  stops at a bound, which is reported.
 - **Bounds.** Regrouping has its own bounds per node: `MAX_REGROUP_VIEWS` (2^14) regrouped
   records and `MAX_REGROUP_WORK` (2^20) candidates examined. Past either, regrouping stops,
   the views found so far are matched, and the node is counted
@@ -1364,25 +1372,45 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   its class), `regroup_views_sound_ac`, `_aci`, `_assoc` (every enumerated view of a
   laws-free operator denotes the node), `regroup_step_sound_left`, `_right` (the prefix of a
   left fold, the suffix of a right fold) and `regroup_off_spine_unsound` (the counter-model
-  for any other run). Completeness for AC: `regroup_view_complete_ac` (disjoint groups, each
-  spelled by a member of its class, their sum below the view, at most one per item, give an
-  enumerated view whose demand accepts the match) and `regroup_match_complete_ac` (the atom
-  then holds under the regrouped semantics, so `regroup_plan_complete` emits the binding).
+  for any other run). Completeness, every kind and fold direction, no laws
+  (`RegroupChain.lean`): `RegroupsTo` states one regrouping declaratively (a sub-multiset,
+  a subset, a run on the spine; `regroupsTo_left_iff` and `regroupsTo_right_iff` for the
+  prefix and the suffix), `RegroupStep` regroups a record by an `f` member with the leaves
+  and needed classes as the engine updates them, and `RegroupChain` is any finite chain of
+  steps, with no bound on the needed classes along it; `withinLimit` keeps the records
+  needing at most one class per item. `regroup_views_iff` and `regroup_match_iff` show
+  that the enumerated views, and the atoms holding under the regrouped semantics, are
+  exactly those a chain from a walk record reaches, its last record needing at most one
+  class per item, with its leaves and needed classes satisfied; `regroup_match_complete`
+  is the direction `regroup_plan_complete` uses to emit the binding.
+  `regroup_nested_matches` (`RegroupNested.lean`) is the example of the "Guarantee" bullet:
+  with a limit of one, the view `{G3, h, k}` is enumerated and accepts `x = G3`.
+  `regroup_fold_nested`:
+  `x = (a - b) - c` in `[a, b, c, d]`, reached through the nested prefixes `G1 ∋ f[a, b]`
+  and `G2 ∋ f[G1, c]`, within one needed class per step. The disjoint-group AC theorems
+  (`regroup_view_complete_ac`, `regroup_match_complete_ac`) are the special case of
+  groups over the walk's view, their sum within the view, none the whole view.
   The generators run this enumeration (`runER` for `conform-flatten`, `regroupLevels` for
   the root views of `conform`), so the two samples hold matches through regrouped classes as
   `check-eq`. Differences from `flatten.rs`: the model keeps every record, where the engine
   skips a record whose acceptance another record of the same view implies; the bounds are not
   modelled, and a generator gives up on a node past a budget of 45,000 records
-  (`regroupCap`), saying so in the program; completeness is proved for AC with no laws,
-  soundness for the three kinds with no laws, and the fold lemmas are per step.
+  (`regroupCap`), saying so in the program. That budget is not the engine's: the engine
+  counts the regrouped records it adds after its skips (`MAX_REGROUP_VIEWS`, 2^14) and the
+  use-list entries and member children it examines (`MAX_REGROUP_WORK`, 2^20), the latter
+  including views that receive no record. Completeness and soundness are proved for
+  operators with no laws; the fold soundness lemmas are per step.
 - **Evidence.** `tests/egg/flatten_regroup_{ac,assoc,assoc_left,assoc_right}.egg` pin the
   valid groupings with `check-eq`, and the off-spine fold groupings, the non-contiguous
   `:assoc` run and the groups no node spells with `check-neq`;
   `flatten_regroup_control.egg` pins that a rule without the tag still misses every one.
+  `flatten_regroup_nested_needs.egg` pins the example of the "Guarantee" bullet: one item
+  and two items both reach a class over two nested groups, although the middle view needs
+  two classes.
   `tests/flatten_differential.rs` extends its brute-force reference with regrouping over
-  every `f` member of the model, needs and the item limit included; over its 60 seeds,
-  regrouping changes the matches of 352 (graph, pattern) pairs, and 273 under laws, and the
-  engine equals the reference on each.
+  every `f` member of the model, needs and the item limit on the final records included;
+  over its 60 seeds, regrouping changes the matches of 352 (graph, pattern) pairs, and 273
+  under laws, and the engine equals the reference on each.
 - **Cost** (release build, best of three runs per file, 2026-11-05). The 231 `:flatten`
   programs of `tests/egg` and `tests/egg/conform-flatten` other than
   `ac_lazy_budget_inconclusive.egg` take 0.590 s in total before and 0.604 s after.
@@ -1392,6 +1420,10 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   reported: `conform/c1_0052.egg` run with regrouping on, a cyclic graph whose views carry
   large counts, and `mult_flatten_view_overflow.egg` under `--bits 64`, whose opened view
   `{b:2^32, c:65536, a}` regroups `{b:65536, c}` into `K` once per step of a chain of 65,536.
+  Applying the item limit to the final records only, instead of at every regrouping, costs
+  nothing measurable: `conform.rs` 2.49 s before and after, `flatten_differential.rs` 21.0 s
+  before and after, `egg_tests.rs` 3.1 s, and the same single truncated node
+  (`conform/c1_0052.egg`) over the 438 conformance and `:flatten` programs.
 
 The walk follows the e-graph's nesting, so it is an explicit-stack depth-first search
 over pending tasks, the view so far, the open classes and instances, and an undo trail.
