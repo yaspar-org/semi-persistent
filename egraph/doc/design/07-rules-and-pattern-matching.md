@@ -1373,8 +1373,15 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   `check-eq`. Differences from `flatten.rs`: the model keeps every record, where the engine
   skips a record whose acceptance another record of the same view implies; the bounds are not
   modelled, and a generator gives up on a node past a budget of 45,000 records
-  (`regroupCap`), saying so in the program; completeness is proved for AC with no laws,
-  soundness for the three kinds with no laws, and the fold lemmas are per step.
+  (`regroupCap`), saying so in the program. That budget is not the engine's: the engine
+  counts the regrouped records it adds after its skips (`MAX_REGROUP_VIEWS`, 2^14) and the
+  use-list entries and member children it examines (`MAX_REGROUP_WORK`, 2^20), the latter
+  including views that receive no record. Completeness is proved for AC with no laws;
+  for ACI, `:assoc` and the folds only the step is proved complete (`fitsR_aci_complete`,
+  `fitsR_assoc_complete`, `fitsR_left_complete`, `fitsR_right_complete`, `RegroupFits.lean`).
+  A fold reaches `x = (a - b) - c` in `[a, b, c, d]` by nested groups (`G₁ ∋ f[a, b]`, then
+  `G₂ ∋ f[G₁, c]`), which the disjoint groups of the AC theorem do not express. Soundness is
+  proved for the three kinds with no laws, and the fold lemmas are per step.
 - **Evidence.** `tests/egg/flatten_regroup_{ac,assoc,assoc_left,assoc_right}.egg` pin the
   valid groupings with `check-eq`, and the off-spine fold groupings, the non-contiguous
   `:assoc` run and the groups no node spells with `check-neq`;

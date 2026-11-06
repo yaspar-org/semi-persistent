@@ -223,11 +223,20 @@ its two children classes merge (`NoCollapse`).
   denotation into a commutative monoid, a join semilattice, a monoid),
   `regroup_step_sound_left/right`, `regroup_off_spine_unsound`.
   Completeness, AC laws-free: `fitsR_ac_complete`, `regroup_chain_ac`,
-  `regroup_view_complete_ac`, `regroup_match_complete_ac`. Not covered: the
-  engine's regrouping bounds and its skipping of records whose acceptance
-  another record of the view implies (acceptance-preserving, argued, not
-  proved); completeness for ACI, `:assoc` and folds, and soundness under
-  laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
+  `regroup_view_complete_ac`, `regroup_match_complete_ac`. One group fits,
+  per step (`RegroupFits.lean`): `fitsR_aci_complete` (a subset of a
+  canonical set view), `fitsR_assoc_complete` (a run on the spine),
+  `fitsR_left_complete` (a prefix of a left fold), `fitsR_right_complete`
+  (a suffix of a right fold). Not covered: the chain, view and match
+  theorems for ACI, `:assoc` and the folds (the folds need nested chains,
+  `g₂ ∋ f[g₁, c]`, which the disjoint-group form of the AC theorem does not
+  express; the AC theorem omits nested groups too); the engine's regrouping
+  bounds (`MAX_REGROUP_VIEWS`, 2^14 regrouped records added after the skips,
+  and `MAX_REGROUP_WORK`, 2^20 use-list entries and member children
+  examined, which also counts views no record reaches) and its skipping of
+  records (a target view with an unconditional record, a source view with
+  one, the per-target signature deduplication; acceptance-preserving,
+  argued, not proved); soundness under laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
   with a budget of 45,000 records per node.
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
