@@ -35,9 +35,9 @@ left; `enumerateRSkip`, `enumerateRDSkip` and `Enumerator.regroupSkip` are
 `regroupAll`. `RegroupSkip.lean` proves that the two enumerations accept
 the same matches on every view.
 
-Not modelled: the engine's bounds (`MAX_REGROUP_VIEWS`, `MAX_REGROUP_WORK`,
-`MAX_ELEMS`), past which it stops regrouping and reports the node, and the
-count overflow of normalization (`Normal::Overflow`; counts here are `Nat`).
+The engine's bounds (`MAX_REGROUP_VIEWS`, `MAX_REGROUP_WORK`, `MAX_ELEMS`),
+past which it stops regrouping and reports the node, and the count overflow
+of normalization (`Normal::Overflow`) are added in `RegroupBoundsDefs.lean`.
 -/
 
 namespace Semper.EMatch.Flatten

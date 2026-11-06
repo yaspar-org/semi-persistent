@@ -34,3 +34,5 @@ import SemperProofs.CC.MinMonoKey
 import SemperProofs.CC.Countermodel
 import SemperProofs.CC.ARound
 import SemperProofs.CC.Lattice
+import SemperProofs.EMatch.Flatten.RegroupBoundsDefs
+import SemperProofs.EMatch.Flatten.RegroupBounds

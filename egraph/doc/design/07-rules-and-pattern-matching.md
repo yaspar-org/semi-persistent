@@ -959,8 +959,7 @@ exception stands.
   `tests/flatten_differential.rs` and `tests/seq_reference.rs` are a second, independent check.
 - Not modelled: the galloping cursor; faults inside sequence sub-queries; literals,
   sequence-filter patterns and predicates in the base model (`EMatch/Defs.lean` header);
-  the regrouping bounds (`MAX_REGROUP_VIEWS`, `MAX_REGROUP_WORK`, the cap on the takeable
-  closure); `:flatten` and sequence rules across
+  `:flatten` and sequence rules across
   rounds, which the engine matches against the full
   index each round (§9.2); and the correspondence of the model to `ematch.rs` and
   `flatten.rs`.
@@ -1411,13 +1410,31 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   the root views of `conform`), so the two samples hold matches through regrouped classes as
   `check-eq`. Run on the engine's loop instead, they emit the same `check-eq` sets in another
   order, which changes the sampled `check-neq` candidates, so the generators stay on the full
-  enumeration. Differences from `flatten.rs`: the bounds are not
-  modelled, and a generator gives up on a node past a budget of 45,000 records
+  enumeration. Differences from `flatten.rs`: a generator gives up on a node past a budget
+  of 45,000 records
   (`regroupCap`), saying so in the program. That budget is not the engine's: the engine
   counts the regrouped records it adds after its skips (`MAX_REGROUP_VIEWS`, 2^14) and the
   use-list entries and member children it examines (`MAX_REGROUP_WORK`, 2^20), the latter
   including views that receive no record. Completeness and soundness are proved for
   operators with no laws; the fold soundness lemmas are per step.
+  The bounds are modelled too (`RegroupBoundsDefs.lean`, `RegroupBounds.lean`): the loop
+  carries the engine's counters, incremented and checked where `flatten.rs` does (the views
+  counter before a record is stored, the work counter on the popped view's use lists and on
+  each candidate's children, the stored elements against `MAX_ELEMS`, the fits whose
+  normalization overflows the width), and stops at once, keeping its records. The run stops
+  iff the run without bounds ends with a counter past its bound, wherever it is crossed
+  (`regroupBounded_halt_iff`, `regroupBounded_truncated_iff`); a run that does not stop,
+  without overflow, ends with the records of the loop without bounds
+  (`regroupBounded_exact`); a truncated run keeps only records of that loop
+  (`regroupBounded_sub`). `takeableRCap` adds the cap on the takeable closure. At the
+  level of a query, `runB` sums `flatten_regroup_truncated`, `flatten_skipped` and
+  `flatten_overflowed` over the plan's `Flatten` evaluations: every binding emitted is a
+  match (`regroupBounded_plan_sound`), and with the three counters zero the bindings are
+  exactly those of `Enumerator.regroupSkip` (`regroupBounded_query_exact`), the matches
+  `regroupSkip_match_iff` characterizes (`regroupBounded_match_exact`). A runtime check
+  therefore reads all three counters: `MAX_ELEMS` reports through `flatten_skipped`. The
+  model's counters match the engine's on every regrouping of the two conformance samples
+  (`c1_0052.egg` stops at 16,385 records in both).
 - **Evidence.** `tests/egg/flatten_regroup_{ac,assoc,assoc_left,assoc_right}.egg` pin the
   valid groupings with `check-eq`, and the off-spine fold groupings, the non-contiguous
   `:assoc` run and the groups no node spells with `check-neq`;
