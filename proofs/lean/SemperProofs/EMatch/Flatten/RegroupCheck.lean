@@ -133,7 +133,8 @@ six records, the engine's loop five. -/
 end Semper.EMatch.Flatten
 
 /-! Regrouped views under the operator's laws (`RegroupLaws.lean`): soundness in
-models of the laws and the exact chain characterization for any laws. -/
+models of the laws, the exact chain characterization for any laws, and the
+counter-models of the matches chains miss. -/
 
 #print axioms Semper.EMatch.Flatten.denAC_normalizeList
 #print axioms Semper.EMatch.Flatten.denACI_normalizeList
@@ -160,4 +161,17 @@ models of the laws and the exact chain characterization for any laws. -/
 #print axioms Semper.EMatch.Flatten.regroupSkip_match_iff_laws
 #print axioms Semper.EMatch.Flatten.regroupSkip_match_complete_laws
 #print axioms Semper.EMatch.Flatten.regroupSkip_plan_complete_laws
+#print axioms Semper.EMatch.Flatten.needs_absent_rejects
+#print axioms Semper.EMatch.Flatten.regroup_unit_need_lost
+#print axioms Semper.EMatch.Flatten.regroup_insert_unit_lost
+#print axioms Semper.EMatch.Flatten.regroup_idem_overlap_lost
 
+namespace Semper.EMatch.Flatten
+
+/- `regroup_unit_need_lost`: the engine's views of `add{a, b, c, d}` with
+`zero ∋ add{a, b}`: the stored view, unconditional, and `{c, d}`, whose only
+record needs `zero` (class 9), a class `{c, d}` does not hold. -/
+#eval (enumerateRSkip exUnitCtx .both exUnitLaws 2 exUnitRoot).map
+  (fun wd => (wd.1, wd.2.unconditional, wd.2.alts.map (List.map (fun l => l.1.g))))
+
+end Semper.EMatch.Flatten

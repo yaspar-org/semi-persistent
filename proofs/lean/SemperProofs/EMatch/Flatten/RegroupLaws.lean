@@ -1,5 +1,6 @@
 import SemperProofs.EMatch.Flatten.RegroupSkip
 import SemperProofs.EMatch.Flatten.RegroupSound
+import SemperProofs.EMatch.Flatten.RegroupNested
 
 /-!
 # `:flatten`: regrouped views under the operator's laws
@@ -44,11 +45,36 @@ one (`regroupStepL_free_iff`). `regroupSkip_match_complete_laws` and
 chains under the laws; `regroupSkip_plan_sound` and `regroupSkip_plan_complete`
 already hold for any laws.
 
-## Not covered here
+## What chains miss under laws
 
 The characterization is relative to chains: openings by the walk, then
-contractions by regrouping. Whether chains reach every match modulo the laws
-over the classes present is not addressed in this file.
+contractions by regrouping. Relative to the laws, over the classes present,
+three kinds of match are missed:
+
+* **A needed class the normalization drops.** A record needs the class `g` of
+  each group (`needsAfter`), taken by an item. Without laws `g` stays in the
+  regrouped view; under laws the normalization may drop it (`g` is the unit,
+  its count clamps to zero, it cancels against its inverse). The record then
+  needs a class its view does not hold and accepts no match
+  (`needs_absent_rejects`), although a chain reaches the view, the view
+  denotes the node and the shallow pattern matches it.
+  `regroup_unit_need_lost` is the counter-model (`zero ∋ add{a, b}`, the node
+  `add{a, b, c, d}`, the view `{c, d}`). A leaf that gains `g` (`addG`) has the
+  same defect when the walk opened one of the group's classes.
+* **A normal form reached only by inserting** the unit, a cancel pair or `k`
+  copies under `:nilpotent k`: `a + c = (a + b) + (c + d)` when
+  `zero ∋ add{b, d}` (`regroup_insert_unit_lost`). No chain inserts.
+* **An idempotent group kept beside its class**: `S{a, b, c} = S{a, c, G}`
+  when `G ∋ S{a, b}`, a canonical set the replacing regrouping never forms
+  (`regroup_idem_overlap_lost`).
+
+The fixtures `flatten_regroup_laws_need.egg`, `flatten_regroup_laws_insert.egg`
+and `flatten_regroup_laws_idem.egg` pin each loss in the engine. The first is
+a defect of the demand, with a local fix (proposed, not applied): a regrouped
+record keeps only the needed classes its normal form holds, and a leaf that
+gains a class the normal form dropped is flagged non-inert. The other two are
+limits of the enumeration: insertions are unbounded, and keeping members of a
+set group multiplies the views by up to `2^|group|`.
 -/
 
 namespace Semper.EMatch.Flatten
@@ -846,5 +872,388 @@ theorem regroupSkip_plan_complete_laws {c : FCtx} {dir : Sym → Dir} {sig : Sym
   | some κ =>
       intro h
       exact (regroupSkip_match_iff_laws hκ).2 h
+
+/-! ## Needed classes the laws drop -/
+
+/-- **A record needing a class its view does not hold accepts no classes of its
+view.** A needed class is a leaf satisfied only by taking it, and items take
+classes of the view. Without laws a needed class stays in the view; under laws
+the normalization of a regrouped view can drop it (the unit, a count clamped
+to zero, a class cancelled against its inverse). -/
+theorem needs_absent_rejects {κ : FlatKind} {r : RecR} {taken : List C} {g : C}
+    (hg : g ∈ r.2.2) (hgw : g ∉ r.1.map Prod.fst) (ht : ∀ c ∈ taken, c ∈ r.1.map Prod.fst) :
+    ¬ ∀ l ∈ r.alt, l.okE κ taken := by
+  intro h
+  have := h (needLeaf g) (List.mem_append_right _ (List.mem_map_of_mem hg))
+  exact hgw (ht g ((needLeaf_okE κ taken g).1 this))
+
+theorem g_mem_needsAfter (g : C) (grp ns : List C) : g ∈ needsAfter g grp ns := by
+  unfold needsAfter
+  dsimp only
+  split
+  · assumption
+  · exact List.mem_append_right _ (List.mem_singleton_self g)
+
+theorem ofEntries_filter_class (u : C) :
+    ∀ l : List (C × Nat), ofEntries (l.filter (fun e => e.1 ≠ u)) = (ofEntries l).filter (· ≠ u)
+  | [] => by simp [ofEntries]
+  | e :: l => by
+      rw [List.filter_cons, ofEntries_cons, Multiset.filter_add, ← ofEntries_filter_class u l]
+      split
+      · rename_i h
+        simp only [ne_eq, decide_eq_true_eq] at h
+        rw [ofEntries_cons, Multiset.filter_eq_self.2]
+        intro c hc
+        rw [Multiset.eq_of_mem_replicate hc]
+        exact h
+      · rename_i h
+        simp only [ne_eq, decide_eq_true_eq, not_not] at h
+        rw [Multiset.filter_eq_nil.2, zero_add]
+        intro c hc
+        rw [Multiset.eq_of_mem_replicate hc, h]
+        simp
+
+/-! ### The counter-model: a group whose class is the unit -/
+
+/-- `add` (op 7) AC with the identity `zero` (class 9); classes
+`a, b, c, d = 1, …, 4`; `zero ∋ add{a, b}` (node 10); the root `add{a, b, c, d}`
+(node 11, class 5). -/
+def exUnitG : Graph :=
+  ⟨[(10, ⟨7, .mset {1, 2}⟩), (11, ⟨7, .mset {1, 2, 3, 4}⟩)],
+    fun id => if id = 10 then 9 else if id = 11 then 5 else id⟩
+
+def exUnitCtx : Ctx := ⟨exUnitG, 7, .ac, fun _ => true⟩
+
+def exUnitLaws : Laws := ⟨some 9, none, none⟩
+
+def exUnitRoot : Node := ⟨7, .mset {1, 2, 3, 4}⟩
+
+theorem exUnit_member {id : NodeId} {m : Node} {X : C} (h : exUnitCtx.IsMember id m X) :
+    (m = ⟨7, .mset {1, 2}⟩ ∧ X = 9) ∨ (m = ⟨7, .mset {1, 2, 3, 4}⟩ ∧ X = 5) := by
+  obtain ⟨hm, -, hX, -⟩ := h
+  simp only [exUnitCtx, exUnitG, List.mem_cons, Prod.mk.injEq, List.mem_nil_iff, or_false] at hm
+  rcases hm with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+  · left; exact ⟨rfl, by simpa [exUnitCtx, exUnitG] using hX.symm⟩
+  · right; exact ⟨rfl, by simpa [exUnitCtx, exUnitG] using hX.symm⟩
+
+theorem ofEntries_normalizeList_exUnit (v : List (C × Nat)) :
+    ofEntries (normalizeList .ac exUnitLaws v) = (ofEntries v).filter (· ≠ 9) := by
+  show ofEntries ((coalesce v).filter (fun e => e.1 ≠ 9)) = _
+  rw [ofEntries_filter_class, ofEntries_coalesce]
+
+/-- An opening tree over classes with no member opens nothing. -/
+theorem otl_no_members {ctx : Ctx} {k : Nat} {P : Finset C} {ks v : List (C × Nat)}
+    {ls : List LeafL} {o : Nat} (h : OTL ctx k P ks v ls o)
+    (hX : ∀ X ∈ ks.map Prod.fst, ∀ id m, ¬ ctx.IsMember id m X) : v = scale k ks := by
+  induction h with
+  | nil => rfl
+  | keep _ ih =>
+      rw [ih (fun X hx => hX X (List.mem_cons_of_mem _ hx))]
+      rfl
+  | opn _ hmem _ _ _ _ =>
+      exact absurd hmem (hX _ (List.mem_cons_self ..) _ _)
+
+/-- Every record reachable from the walk's records of the root has the
+root's classes, or the view `{c, d}` and needs `zero`. -/
+theorem exUnit_reach {r₀ r : RecR} (h₀ : r₀ ∈ baseRecsR exUnitCtx .both exUnitLaws exUnitRoot)
+    (hch : RegroupChainL exUnitCtx .both exUnitLaws r₀ r) :
+    ofEntries r.1 = {1, 2, 3, 4} ∨ (ofEntries r.1 = {3, 4} ∧ 9 ∈ r.2.2) := by
+  induction hch with
+  | refl =>
+      left
+      obtain ⟨v, ls, o, hv, hn⟩ := mem_baseRecsR_both h₀
+      have hv' : v = scale 1 (Multiset.entries {1, 2, 3, 4}) := by
+        refine otl_no_members hv (fun X hx id m hm => ?_)
+        rw [mem_entries_fst] at hx
+        rcases exUnit_member hm with ⟨-, rfl⟩ | ⟨-, rfl⟩ <;> revert hx <;> decide
+      rw [normalize_node_eq hn, hv']
+      show ofEntries (normalizeList .ac exUnitLaws _) = _
+      rw [ofEntries_normalizeList_exUnit, ofEntries_scale_one, ofEntries_entries]
+      decide
+  | tail _ hs ih =>
+      have hk : ∀ m : Multiset C, ofEntries (kids exUnitCtx.κ (Children.mset m)) = m :=
+        fun m => ofEntries_entries m
+      obtain ⟨hm, -, ⟨w₀, hto, hn⟩⟩ := hs
+      obtain ⟨-, hsub, hne, rfl⟩ := hto
+      rw [normalize_node_eq hn]
+      simp only
+      change ofEntries (normalizeList .ac exUnitLaws _) = _ ∨
+        (ofEntries (normalizeList .ac exUnitLaws _) = _ ∧ _)
+      rw [ofEntries_normalizeList_exUnit, ofEntries_entries]
+      rcases exUnit_member hm with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> dsimp only at hsub hne ⊢ <;>
+        simp only [hk] at hsub hne ⊢
+      · rcases ih with h | ⟨h, -⟩ <;> rw [h] at hsub hne ⊢
+        · right
+          exact ⟨by decide, g_mem_needsAfter _ _ _⟩
+        · exact absurd hsub (by decide)
+      · rcases ih with h | ⟨h, -⟩ <;> rw [h] at hsub hne ⊢
+        · exact absurd rfl hne
+        · exact absurd hsub (by decide)
+
+theorem exUnit_base : (Multiset.entries {1, 2, 3, 4}, [], []) ∈
+    baseRecsR exUnitCtx .both exUnitLaws exUnitRoot := by
+  have hw : normalizeList .ac exUnitLaws (scale 1 (Multiset.entries {1, 2, 3, 4})) =
+      Multiset.entries {1, 2, 3, 4} := by
+    rw [← entries_ofEntries_of_canonical (normalizeList_ac_canonical exUnitLaws _),
+      ofEntries_normalizeList_exUnit, ofEntries_scale_one, ofEntries_entries]
+    congr 1
+  refine kept_mem_baseRecsR ?_
+  show classify exUnitLaws.unit (normalizeList .ac exUnitLaws _) = _
+  rw [show kids exUnitCtx.κ exUnitRoot.children = Multiset.entries {1, 2, 3, 4} from rfl, hw,
+    classify_node_iff]
+  refine ⟨rfl, fun h => ?_, fun c h => ?_⟩
+  · have := congrArg (fun l => Multiset.card (ofEntries l)) h
+    simp only [ofEntries_entries] at this
+    revert this; decide
+  · have := congrArg (fun l => Multiset.card (ofEntries l)) h
+    simp only [ofEntries_entries] at this
+    revert this; simp [ofEntries]
+
+/-- **Counter-model: a regrouping into the unit loses a match** (`:identity`).
+With `zero ∋ add{a, b}`, the chain regroups the root's view `{a, b, c, d}` to
+`{zero, c, d}`, normalized `{c, d}`: the view is reached, and in every model of
+the laws where the members denote their classes it denotes the node. But the
+regrouped record needs `zero`, which its view does not hold, so the engine's
+enumeration has no view `{c, d}` whose demand accepts the item classes
+`[c, d]`, and `(add x y)` never binds `x = c, y = d`
+(`flatten_regroup_laws_need.egg`, which shows the same loss under
+`:nilpotent` and `:inverse`). -/
+theorem regroup_unit_need_lost :
+    (∃ r₀ ∈ baseRecsR exUnitCtx .both exUnitLaws exUnitRoot, ∃ r,
+        RegroupChainL exUnitCtx .both exUnitLaws r₀ r ∧ r.1 = [(3, 1), (4, 1)]) ∧
+      (∀ (M : Type) [AddCommMonoid M] (den : C → M), ConsistentAC exUnitCtx den →
+        LawsModelAC exUnitLaws den → den 3 + den 4 = den 1 + den 2 + den 3 + den 4) ∧
+      ¬ ∃ d, ([(3, 1), (4, 1)], d) ∈ enumerateRSkip exUnitCtx .both exUnitLaws 2 exUnitRoot ∧
+        d.acceptsE .ac [3, 4] := by
+  have hcd : [((3 : C), 1), ((4 : C), 1)] = Multiset.entries {3, 4} := by
+    rw [← entries_ofEntries_of_canonical (w := [((3 : C), 1), ((4 : C), 1)])
+      ⟨by decide, by decide⟩]
+    rfl
+  have hmem : exUnitCtx.IsMember 10 ⟨7, .mset {1, 2}⟩ 9 := by
+    simp [Ctx.IsMember, exUnitCtx, exUnitG]
+  have hk : ∀ m : Multiset C, ofEntries (kids exUnitCtx.κ (Children.mset m)) = m :=
+    fun m => ofEntries_entries m
+  have hw' : normalizeList .ac exUnitLaws (Multiset.entries ({1, 2, 3, 4} - {1, 2} + {9})) =
+      [(3, 1), (4, 1)] := by
+    rw [hcd, ← entries_ofEntries_of_canonical (normalizeList_ac_canonical exUnitLaws _),
+      ofEntries_normalizeList_exUnit, ofEntries_entries]
+    rfl
+  have hstep : RegroupStepL exUnitCtx .both exUnitLaws (Multiset.entries {1, 2, 3, 4}, [], [])
+      ([(3, 1), (4, 1)], [], [9]) := by
+    have h := RegroupStepL.mk (ctx := exUnitCtx) (dir := .both) (laws := exUnitLaws)
+      (r := (Multiset.entries {1, 2, 3, 4}, [], [])) (w' := [(3, 1), (4, 1)]) hmem
+      (by
+        show (9 : C) ∉ (Multiset.entries {1, 2}).map Prod.fst
+        rw [mem_entries_fst]; decide)
+      ⟨Multiset.entries ({1, 2, 3, 4} - {1, 2} + {9}), by
+        refine ⟨?_, ?_, ?_, ?_⟩ <;> dsimp only <;> simp only [hk, ofEntries_entries]
+        · decide
+        · decide
+        · decide, by
+        show classify exUnitLaws.unit (normalizeList .ac exUnitLaws _) = _
+        rw [hw', classify_node_iff]
+        exact ⟨rfl, by simp, fun c => by simp⟩⟩
+    simpa [needsAfter] using h
+  refine ⟨⟨_, exUnit_base, _, Relation.ReflTransGen.single hstep, rfl⟩, ?_, ?_⟩
+  · intro M _ den hc hl
+    have hr : Reach exUnitCtx .both exUnitLaws (baseRecsR exUnitCtx .both exUnitLaws exUnitRoot)
+        ([(3, 1), (4, 1)], [], [9]) :=
+      ⟨_, exUnit_base, Relation.ReflTransGen.single (regroupStepL_mem
+        (viewOK_baseL exUnit_base) hstep)⟩
+    have := reach_den_ac rfl hc hl hr
+    simp only [denAC, show kids FlatKind.ac exUnitRoot.children =
+      Multiset.entries {1, 2, 3, 4} from rfl, ofEntries_entries] at this
+    simp only [ofEntries, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
+      Multiset.replicate_one, add_zero] at this
+    simpa [add_assoc] using this
+  · rintro ⟨d, hd, hacc⟩
+    obtain ⟨r₀, h₀, r, hch, hw, -, hok⟩ := regroupSkip_views_iff_laws.1 ⟨d, hd, hacc⟩
+    rcases exUnit_reach h₀ hch with h | ⟨-, h9⟩
+    · rw [hw] at h; revert h; decide
+    · refine needs_absent_rejects (κ := .ac) h9 (by rw [hw]; decide) (fun c hc => ?_) hok
+      rw [hw]
+      simp only [List.mem_cons, List.mem_nil_iff, or_false] at hc
+      rcases hc with rfl | rfl <;> decide
+
+/-! ### Beyond chains: inserting the unit
+
+A chain only opens (the walk) and contracts (regrouping). Under laws, a term
+equal to the node may need an *insertion*: `a + c = a + c + zero` and
+`zero ∋ add{b, d}` give `a + c = (a + b) + (c + d)`. No chain inserts the
+unit, a cancel pair or `k` copies under `:nilpotent k`, so such a normal form
+is never a view, even when every class of it is present. -/
+
+/-- `add` (op 7) AC with the identity `zero` (class 9); classes
+`a, b, c, d = 1, …, 4`; `zero ∋ add{b, d}` (node 10), `G = 6 ∋ add{a, b}`
+(node 12), `K = 8 ∋ add{c, d}` (node 13); the root `add{a, c}` (node 11,
+class 5). -/
+def exInsG : Graph :=
+  ⟨[(10, ⟨7, .mset {2, 4}⟩), (11, ⟨7, .mset {1, 3}⟩), (12, ⟨7, .mset {1, 2}⟩),
+      (13, ⟨7, .mset {3, 4}⟩)],
+    fun id => if id = 10 then 9 else if id = 11 then 5 else if id = 12 then 6
+      else if id = 13 then 8 else id⟩
+
+def exInsCtx : Ctx := ⟨exInsG, 7, .ac, fun _ => true⟩
+
+def exInsRoot : Node := ⟨7, .mset {1, 3}⟩
+
+theorem exIns_member {id : NodeId} {m : Node} {X : C} (h : exInsCtx.IsMember id m X) :
+    (m = ⟨7, .mset {2, 4}⟩ ∧ X = 9) ∨ (m = ⟨7, .mset {1, 3}⟩ ∧ X = 5) ∨
+      (m = ⟨7, .mset {1, 2}⟩ ∧ X = 6) ∨ (m = ⟨7, .mset {3, 4}⟩ ∧ X = 8) := by
+  obtain ⟨hm, -, hX, -⟩ := h
+  simp only [exInsCtx, exInsG, List.mem_cons, Prod.mk.injEq, List.mem_nil_iff, or_false] at hm
+  rcases hm with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+  · exact Or.inl ⟨rfl, by simpa [exInsCtx, exInsG] using hX.symm⟩
+  · exact Or.inr (Or.inl ⟨rfl, by simpa [exInsCtx, exInsG] using hX.symm⟩)
+  · exact Or.inr (Or.inr (Or.inl ⟨rfl, by simpa [exInsCtx, exInsG] using hX.symm⟩))
+  · exact Or.inr (Or.inr (Or.inr ⟨rfl, by simpa [exInsCtx, exInsG] using hX.symm⟩))
+
+/-- Every record reachable from the walk's records of `add{a, c}` has the view `{a, c}`. -/
+theorem exIns_reach {r₀ r : RecR} (h₀ : r₀ ∈ baseRecsR exInsCtx .both exUnitLaws exInsRoot)
+    (hch : RegroupChainL exInsCtx .both exUnitLaws r₀ r) : ofEntries r.1 = {1, 3} := by
+  induction hch with
+  | refl =>
+      obtain ⟨v, ls, o, hv, hn⟩ := mem_baseRecsR_both h₀
+      have hv' : v = scale 1 (Multiset.entries {1, 3}) := by
+        refine otl_no_members hv (fun X hx id m hm => ?_)
+        rw [mem_entries_fst] at hx
+        rcases exIns_member hm with ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ <;>
+          revert hx <;> decide
+      rw [normalize_node_eq hn, hv']
+      show ofEntries (normalizeList .ac exUnitLaws _) = _
+      rw [ofEntries_normalizeList_exUnit, ofEntries_scale_one, ofEntries_entries]
+      decide
+  | tail _ hs ih =>
+      have hk : ∀ m : Multiset C, ofEntries (kids exInsCtx.κ (Children.mset m)) = m :=
+        fun m => ofEntries_entries m
+      obtain ⟨hm, -, ⟨w₀, hto, -⟩⟩ := hs
+      obtain ⟨-, hsub, hne, -⟩ := hto
+      rcases exIns_member hm with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+        dsimp only at hsub hne <;> simp only [hk] at hsub hne <;> rw [ih] at hsub hne
+      · exact absurd hsub (by decide)
+      · exact absurd rfl hne
+      · exact absurd hsub (by decide)
+      · exact absurd hsub (by decide)
+
+theorem denAC_kids_pair {M : Type*} [AddCommMonoid M] (den : C → M) (x y : C) :
+    denAC den (kids .ac (.mset {x, y})) = den x + den y := by
+  simp [denAC, kids, ofEntries_entries]
+
+/-- **Counter-model: a normal form reached only by inserting the unit**
+(`:identity`). With `zero ∋ add{b, d}`, `G ∋ add{a, b}` and `K ∋ add{c, d}`,
+the node `add{a, c}` equals `add{G, K}` in every model of the laws where the
+members denote their classes, and `{G, K}` is a normal form over classes
+present; but no chain from the walk reaches it (every reachable view is
+`{a, c}`), so the engine has no view `{G, K}` and `(add x y)` never binds
+`x = G, y = K` (`flatten_regroup_laws_insert.egg`). The same holds for a
+cancel pair (`G ∋ grp{a, b}`, `K ∋ grp{c, neg b}`) and for `k` copies under
+`:nilpotent k`. -/
+theorem regroup_insert_unit_lost :
+    (∀ (M : Type) [AddCommMonoid M] (den : C → M), ConsistentAC exInsCtx den →
+        LawsModelAC exUnitLaws den → den 6 + den 8 = den 1 + den 3) ∧
+      ∀ d, (Multiset.entries {6, 8}, d) ∉
+        enumerateRSkip exInsCtx .both exUnitLaws 2 exInsRoot := by
+  refine ⟨fun M _ den hc hl => ?_, fun d hd => ?_⟩
+  · have h0 := hl.unit 9 rfl
+    have h9 := hc 10 ⟨7, .mset {2, 4}⟩ 9 (by simp [Ctx.IsMember, exInsCtx, exInsG])
+    have h6 := hc 12 ⟨7, .mset {1, 2}⟩ 6 (by simp [Ctx.IsMember, exInsCtx, exInsG])
+    have h8 := hc 13 ⟨7, .mset {3, 4}⟩ 8 (by simp [Ctx.IsMember, exInsCtx, exInsG])
+    rw [denAC_kids_pair] at h9 h6 h8
+    rw [h6, h8, ← add_zero (den 1 + den 3), ← h0, h9]
+    abel
+  · obtain ⟨r, ⟨r₀, h₀, hch⟩, hw⟩ := reach_of_mem_enumerateRSkip hd
+    have := exIns_reach h₀ ((regroupChainL_iff (viewOK_baseL h₀)).2 hch)
+    rw [hw, ofEntries_entries] at this
+    revert this; decide
+
+/-! ### Beyond chains: an idempotent group kept beside its class -/
+
+/-- `S` (op 8) ACI; classes `a, b, c = 1, 2, 3`; `G = 4 ∋ S{a, b}` (node 10);
+the root `S{a, b, c}` (node 11, class 5). -/
+def exAciG : Graph :=
+  ⟨[(10, ⟨8, .set {1, 2}⟩), (11, ⟨8, .set {1, 2, 3}⟩)],
+    fun id => if id = 10 then 4 else if id = 11 then 5 else id⟩
+
+def exAciCtx : Ctx := ⟨exAciG, 8, .aci, fun _ => true⟩
+
+def exAciRoot : Node := ⟨8, .set {1, 2, 3}⟩
+
+theorem exAci_member {id : NodeId} {m : Node} {X : C} (h : exAciCtx.IsMember id m X) :
+    (m = ⟨8, .set {1, 2}⟩ ∧ X = 4) ∨ (m = ⟨8, .set {1, 2, 3}⟩ ∧ X = 5) := by
+  obtain ⟨hm, -, hX, -⟩ := h
+  simp only [exAciCtx, exAciG, List.mem_cons, Prod.mk.injEq, List.mem_nil_iff, or_false] at hm
+  rcases hm with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+  · left; exact ⟨rfl, by simpa [exAciCtx, exAciG] using hX.symm⟩
+  · right; exact ⟨rfl, by simpa [exAciCtx, exAciG] using hX.symm⟩
+
+theorem toFinset_kids_aci (s : Finset C) :
+    ((kids .aci (.set s)).map Prod.fst).toFinset = s := by
+  simp only [kids, List.map_map]
+  rw [show (Prod.fst ∘ fun c : C => (c, 1)) = id from rfl, List.map_id, Finset.sort_toFinset]
+
+/-- Every record reachable from the walk's records of `S{a, b, c}` has the
+classes `{a, b, c}` or `{c, G}`. -/
+theorem exAci_reach {r₀ r : RecR} (h₀ : r₀ ∈ baseRecsR exAciCtx .both Laws.free exAciRoot)
+    (hch : RegroupChainL exAciCtx .both Laws.free r₀ r) :
+    (r.1.map Prod.fst).toFinset = {1, 2, 3} ∨ (r.1.map Prod.fst).toFinset = {3, 4} := by
+  induction hch with
+  | refl =>
+      left
+      obtain ⟨v, ls, o, hv, hn⟩ := mem_baseRecsR_both h₀
+      have hv' : v = scale 1 (kids .aci (.set {1, 2, 3})) := by
+        refine otl_no_members hv (fun X hx id m hm => ?_)
+        have hx' : X ∈ ((kids .aci (.set {1, 2, 3})).map Prod.fst).toFinset :=
+          List.mem_toFinset.2 hx
+        rw [toFinset_kids_aci] at hx'
+        rcases exAci_member hm with ⟨-, rfl⟩ | ⟨-, rfl⟩ <;> revert hx' <;> decide
+      rw [(normalize_free_node.1 hn).1, hv']
+      show ((dedupAci _).map Prod.fst).toFinset = _
+      rw [toFinset_map_fst_dedupAci]
+      have : (scale 1 (kids .aci (.set {1, 2, 3}))).map Prod.fst =
+          (kids .aci (.set {1, 2, 3})).map Prod.fst := by simp [scale]
+      rw [this, toFinset_kids_aci]
+  | tail _ hs ih =>
+      obtain ⟨hm, -, ⟨w₀, hto, hn⟩⟩ := hs
+      obtain ⟨-, hsub, hne, -, rfl⟩ := hto
+      rw [(normalize_free_node.1 hn).1]
+      show ((dedupAci _).map Prod.fst).toFinset = _ ∨ ((dedupAci _).map Prod.fst).toFinset = _
+      rw [toFinset_map_fst_dedupAci, List.map_map]
+      rw [show (Prod.fst ∘ fun c : C => (c, 1)) = id from rfl, List.map_id, Finset.sort_toFinset]
+      have hk : ∀ s, ((kids exAciCtx.κ (Children.set s)).map Prod.fst).toFinset = s :=
+        toFinset_kids_aci
+      rcases exAci_member hm with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+        dsimp only at hsub hne ⊢ <;>
+        simp only [hk] at hsub hne ⊢
+      · rcases ih with h | h <;> rw [h] at hsub hne ⊢
+        · right; decide
+        · exact absurd hsub (by decide)
+      · rcases ih with h | h <;> rw [h] at hsub hne ⊢
+        · exact absurd rfl hne
+        · exact absurd hsub (by decide)
+
+/-- **Counter-model: an idempotent group kept beside its class** (ACI). With
+`G ∋ S{a, b}`, the node `S{a, b, c}` equals `S{a, c, G}` in every join
+semilattice where the members denote their classes (`a ⊔ c ⊔ (a ⊔ b)`), and
+`{a, c, G}` is a canonical set over classes present; but regrouping replaces
+the group (`{c, G}`) and never keeps one of its members beside `G`, so the
+engine has no view `{a, c, G}` and `(S x y z)` never binds `x = a, y = c,
+z = G` (`flatten_regroup_laws_idem.egg`). -/
+theorem regroup_idem_overlap_lost :
+    (∀ (M : Type) [SemilatticeSup M] [OrderBot M] (den : C → M), ConsistentACI exAciCtx den →
+        den 1 ⊔ den 3 ⊔ den 4 = den 1 ⊔ den 2 ⊔ den 3) ∧
+      ∀ d, ([(1, 1), (3, 1), (4, 1)], d) ∉ enumerateRSkip exAciCtx .both Laws.free 3 exAciRoot := by
+  refine ⟨fun M _ _ den hc => ?_, fun d hd => ?_⟩
+  · have h4 := hc 10 ⟨8, .set {1, 2}⟩ 4 (by simp [Ctx.IsMember, exAciCtx, exAciG])
+    have hd : denACI den (kids .aci (.set {1, 2})) = den 1 ⊔ den 2 := by
+      unfold denACI
+      rw [toFinset_ofEntries_of_pos (kids_pos _ _), toFinset_kids_aci]
+      simp
+    rw [hd] at h4
+    rw [h4]
+    apply le_antisymm <;>
+      simp [sup_le_iff, le_sup_left, le_sup_right, le_sup_of_le_left]
+  · obtain ⟨r, ⟨r₀, h₀, hch⟩, hw⟩ := reach_of_mem_enumerateRSkip hd
+    rcases exAci_reach h₀ ((regroupChainL_iff (viewOK_baseL h₀)).2 hch) with h | h <;>
+      rw [hw] at h <;> revert h <;> decide
 
 end Semper.EMatch.Flatten

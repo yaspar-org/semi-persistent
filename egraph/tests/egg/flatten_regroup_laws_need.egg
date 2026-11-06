@@ -1,0 +1,49 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Regrouped views under laws (design 07 §7.5, "Regrouped views"; Lean
+;; `regroup_unit_need_lost`, `RegroupLaws.lean`). A regrouped record needs the group's class
+;; taken, but the normalization of the regrouped view may drop that class: it is the unit, its
+;; count clamps to zero, or it cancels against its inverse. No item can take it then, and the
+;; match is lost although the view denotes the node and the shallow pattern matches it.
+;; - identity: zero ∋ add{A, B}; {A, B, C, D} regroups to {zero, C, D}, normalized {C, D};
+;; - nilpotent 2: G ∋ xor{A, B}; {A, B, C, D, G} regroups to {G:2, C, D}, clamped {C, D};
+;; - inverse: G ∋ grp{A, B}; {A, B, C, D, neg G} regroups to {G, neg G, C, D}, cancelled {C, D};
+;; - a leaf: X ∋ mul{A, B}, one ∋ mul{A, B, C}; the walk opens X in mul{X, C, D, F}, the view
+;;   {A, B, C, D, F} regroups to {one, D, F}, normalized {D, F}, and the leaf (X, [A, B]) gains
+;;   one, which the view does not hold either.
+;; Each record needs a class its view does not hold, or has a leaf only that class satisfies, so
+;; (OP x y) never binds the two remaining classes: the check-neq lines pin the loss. With
+;; `(set-option :completion eager)` all four nodes equal OP over those two classes.
+(sort E)
+(function zero () E) (function one () E)
+(function A () E) (function B () E) (function C () E) (function D () E) (function F () E)
+(function G () E) (function X () E)
+(function neg (E) E)
+(function add (E) E :assoc :comm :identity (zero))
+(function xor (E) E :assoc :comm :identity (zero) :nilpotent 2)
+(function grp (E) E :assoc :comm :identity (zero) :inverse neg)
+(function mul (E) E :assoc :comm :identity (one))
+(function T2 (E E) E)
+(function X2 (E E) E)
+(function N2 (E E) E)
+(function M2 (E E) E)
+(union (add (A) (B)) (zero))
+(let t (add (A) (B) (C) (D)))
+(union (xor (A) (B)) (G))
+(let u (xor (A) (B) (G) (C) (D)))
+(union (grp (A) (B)) (G))
+(let v (grp (A) (B) (neg (G)) (C) (D)))
+(union (X) (mul (A) (B)))
+(union (mul (A) (B) (C)) (one))
+(let w (mul (X) (C) (D) (F)))
+(rewrite (add x y) (T2 x y) :flatten)
+(rewrite (xor x y) (X2 x y) :flatten)
+(rewrite (grp x y) (N2 x y) :flatten)
+(rewrite (mul x y) (M2 x y) :flatten)
+(run 2)
+(check-neq t (T2 (C) (D)))
+(check-neq u (X2 (C) (D)))
+(check-neq v (N2 (C) (D)))
+(check-neq w (M2 (D) (F)))
