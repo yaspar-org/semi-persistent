@@ -1,8 +1,10 @@
 import SemperProofs.EMatch.Flatten.RegroupNested
+import SemperProofs.EMatch.Flatten.RegroupSkip
 
 /-! Axiom audit for regrouped views (`RegroupDefs.lean`, `Regroup.lean`,
 `RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`, `RegroupChain.lean`,
-`RegroupNested.lean`) and the plan theorems over any
+`RegroupNested.lean`), the engine's regrouping with its skips
+(`RegroupSkipDefs.lean`, `RegroupSkip.lean`) and the plan theorems over any
 enumeration (`Plan.lean`). Expected: only `propext`, `Classical.choice`,
 `Quot.sound`. -/
 
@@ -61,6 +63,37 @@ enumeration (`Plan.lean`). Expected: only `propext`, `Classical.choice`,
 #print axioms Semper.EMatch.Flatten.regroupStep_ac_of
 #print axioms Semper.EMatch.Flatten.regroup_nested_matches
 #print axioms Semper.EMatch.Flatten.regroup_fold_nested
+#print axioms Semper.EMatch.Flatten.regroupRec_shrink
+#print axioms Semper.EMatch.Flatten.mem_regroupLevels_iff_reach
+#print axioms Semper.EMatch.Flatten.mem_regroupAll_iff_reach
+#print axioms Semper.EMatch.Flatten.Cov.accepts
+#print axioms Semper.EMatch.Flatten.Cov.acceptsL
+#print axioms Semper.EMatch.Flatten.Cov.length
+#print axioms Semper.EMatch.Flatten.Cov.derive
+#print axioms Semper.EMatch.Flatten.cov_uncond
+#print axioms Semper.EMatch.Flatten.cov_of_same
+#print axioms Semper.EMatch.Flatten.mem_groupsOfEngine
+#print axioms Semper.EMatch.Flatten.addTarget_spec
+#print axioms Semper.EMatch.Flatten.fitStep_spec
+#print axioms Semper.EMatch.Flatten.regroupView_spec
+#print axioms Semper.EMatch.Flatten.next_spec
+#print axioms Semper.EMatch.Flatten.step_spec
+#print axioms Semper.EMatch.Flatten.run_finished
+#print axioms Semper.EMatch.Flatten.init_inv
+#print axioms Semper.EMatch.Flatten.regroupSkipG_spec
+#print axioms Semper.EMatch.Flatten.regroupSkipG_iff
+#print axioms Semper.EMatch.Flatten.regroupSkipG_iffL
+#print axioms Semper.EMatch.Flatten.baseGood_baseRecsR
+#print axioms Semper.EMatch.Flatten.enumerateRSkip_iff
+#print axioms Semper.EMatch.Flatten.enumerateRDSkip_iff
+#print axioms Semper.EMatch.Flatten.regroupSkip_spec
+#print axioms Semper.EMatch.Flatten.atomSat_regroupSkip_iff
+#print axioms Semper.EMatch.Flatten.regroupSkip_plan_sound
+#print axioms Semper.EMatch.Flatten.regroupSkip_plan_complete
+#print axioms Semper.EMatch.Flatten.regroupSkip_plan_complete_full
+#print axioms Semper.EMatch.Flatten.regroupSkip_views_iff
+#print axioms Semper.EMatch.Flatten.regroupSkip_match_iff
+#print axioms Semper.EMatch.Flatten.regroupSkip_match_complete
 
 namespace Semper.EMatch.Flatten
 open Semper.EMatch
@@ -81,5 +114,19 @@ def exRegCtx : Ctx := ⟨exRegG, 7, .ac, fun _ => true⟩
 
 /- One item: `(Add x ..r)` may take `G` (limit 1); no item: no regrouping. -/
 #eval (enumerateR exRegCtx .both Laws.free 0 ⟨7, .mset {1, 2, 3}⟩).map Prod.fst
+
+/- The engine's loop on the same node: the same views and demands. -/
+#eval (enumerateRSkip exRegCtx .both Laws.free 2 ⟨7, .mset {1, 2, 3}⟩).map
+  (fun wd => (wd.1, wd.2.unconditional, wd.2.alts.map (List.map (fun l => l.1.g))))
+
+/- The nested case of `RegroupNested.lean`: the view `{e, f, G1, G2}` is
+reached by regrouping `{a, b}` then `{c, d}` and in the other order; the two
+records need the same classes, listed in a different order, so the engine
+keeps the first and drops the second by its signature. The full levels hold
+six records, the engine's loop five. -/
+#eval (regroupAll exNestCtx .both Laws.free 6
+  (baseRecsR exNestCtx .both Laws.free exNestRoot)).length
+#eval (regroupAllSkip exNestCtx .both Laws.free
+  (baseRecsR exNestCtx .both Laws.free exNestRoot)).length
 
 end Semper.EMatch.Flatten
