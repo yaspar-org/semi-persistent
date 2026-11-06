@@ -317,10 +317,10 @@ requires materializing a sub-sum no equation justifies and is not claimed; it is
 open term-valued AC-matching extension (AC chapter §11), separate from
 congruence completeness. A sub-sum that has a node of its own is bound by a
 `:flatten` rule through a regrouped view ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten),
-"Regrouped views"). That is complete only up to the per-item limit, which bounds the
-regrouped classes at every regrouping step: a sub-sum reached through nested groups whose
-intermediate views need more regrouped classes than the pattern has items is missed
-(`regroup_nested_limit_counter`, `flatten_regroup_nested_limit.egg`; added 2026-11-05). Classical AC unification is a broader problem; the
+"Regrouped views"), including a sub-sum reached through nested groups whose intermediate
+views need more regrouped classes than the pattern has items: the per-item limit bounds
+only the classes the last regrouping leaves needed (`regroup_nested_matches`,
+`flatten_regroup_nested_needs.egg`). Classical AC unification is a broader problem; the
 implemented operation is matching a pattern against a ground e-graph subject.
 
 Nesting is a separate, closed gap on the matching side. A node whose child class
