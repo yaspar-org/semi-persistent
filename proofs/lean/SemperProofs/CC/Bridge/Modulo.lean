@@ -45,7 +45,7 @@ structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : S
     Overlap r₁.1 r₂.1 →
     Joinable (Rw (plain n) (st.rules ∪ L.axRules))
       (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2
-  hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d
+  hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d
   hS : ∀ M N, (M, N) ∈ S →
     ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d
   hcancel : L.cancellative → ∀ M N X,

@@ -323,16 +323,24 @@ statement is false, see `stub_counterexample` there. -/
 
 /-! ## L12-L13: convergence and completeness -/
 
-/-- L12: a state whose round changes nothing, with I0, I5 and canonical
-right-hand sides, is converged. -/
-theorem roundFixed_converged {L : Laws n} {st : State n} (h0 : I0 st) (h5 : I5 st)
+/-- I0 on the classes that hold an active node: such a class's stored
+right-hand side is a node of the class. A class with no active node (a leaf
+constant, or a class of another operator) is unconstrained. -/
+def I0On (st : State n) : Prop :=
+  ∀ M c, (M, c) ∈ st.active → ∃ c', (st.rhs (st.find c), c') ∈ st.nodes ∧ st.find c' = st.find c
+
+theorem I0On_of_I0 {st : State n} (h : I0 st) : I0On st := fun _ c _ => h c
+
+/-- L12: a state whose round changes nothing, with I0 on the classes holding
+an active node, I5 and canonical right-hand sides, is converged. -/
+theorem roundFixed_converged {L : Laws n} {st : State n} (h0 : I0On st) (h5 : I5 st)
     (hcanon : ∀ c, L.clamp (st.rhs c) = st.rhs c) (hfix : RoundFixed L st) :
     Converged L st := by
   refine ⟨hfix.cp_joinable, ?_⟩
   intro M c hM
   rcases h5 M c hM with h | h
   · rw [h]
-  · obtain ⟨c', hc', hcc⟩ := h0 c
+  · obtain ⟨c', hc', hcc⟩ := h0 M c hM
     have hrule : (M, st.rhs (st.find c)) ∈ st.rules := ⟨c, c', hM, rfl, h, hc', hcc⟩
     refine ReflTransGen.single ⟨M, st.rhs (st.find c), hrule, le_rfl, ?_⟩
     rw [tsub_self, zero_add, hcanon]

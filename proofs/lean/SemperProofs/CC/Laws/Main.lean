@@ -28,7 +28,7 @@ theorem completion_complete_identity (u : Fin n) (cancel : Prop)
     (hfix : RoundFixed (Laws.identity u cancel) st)
     (hRR : RuleRuleCP (Laws.identity u cancel) st.rules)
     (hu : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : cancel → ∀ M N X,
@@ -56,7 +56,7 @@ theorem completion_complete_nilpotent (k : ℕ) (hk : 2 ≤ k) (cancel : Prop)
     (hax : ∀ A B, (A, B) ∈ st.rules → ∀ a ∈ A,
       Joinable (Rw (plain n) (st.rules ∪ (Laws.nilpotent k hk cancel).axRules))
         (B + Multiset.replicate (k - A.count a) a) (A.filter (· ≠ a)))
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : cancel → ∀ M N X,
@@ -81,7 +81,7 @@ theorem completion_complete_idempotent (cancel : Prop)
     (hlhs : ∀ A B, (A, B) ∈ st.rules → A.Nodup)
     (hax : ∀ A B, (A, B) ∈ st.rules → ∀ a ∈ A,
       Joinable (Rw (plain n) (st.rules ∪ (Laws.idempotent cancel).axRules)) (B + {a}) A)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : cancel → ∀ M N X,
@@ -108,7 +108,7 @@ theorem completion_complete_inverse (inv : Fin n → Option (Fin n)) (cancel : P
     (hmatch : InvMatching inv)
     (hlhs : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A)
     (hax : InverseAxiomCP (Laws.inverse inv cancel) inv st.rules)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : cancel → ∀ M N X,
@@ -142,7 +142,7 @@ theorem completion_complete_combined (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
         (B + Multiset.replicate (k - A.count a) a) (A.filter (· ≠ a)))
     (hax_inv : InverseAxiomCP (Laws.combined u k hk inv cancel hu) inv st.rules)
     (hnilinv : NilpotentInverseCP (st.rules ∪ (Laws.combined u k hk inv cancel hu).axRules) k inv)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : (Laws.combined u k hk inv cancel hu).cancellative → ∀ M N X,

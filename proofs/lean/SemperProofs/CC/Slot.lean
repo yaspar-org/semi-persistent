@@ -342,7 +342,7 @@ theorem fix_sufficient {L : Laws n} {S : Set (Monomial n × Monomial n)}
     (hjoin : ∀ M N, E L S M N → Joinable (Rw L st.rules) M N)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
     (hMN : E L S M N) : st.find c = st.find d :=
-  same_class (roundFixed_converged h0 (state_I5_of_slot (reachable_I5 h5₀ hrun) ha) hcanon hfix)
+  same_class (roundFixed_converged (I0On_of_I0 h0) (state_I5_of_slot (reachable_I5 h5₀ hrun) ha) hcanon hfix)
     hconf h0 hnf hcc hjoin hM hN hMN
 
 end SlotState

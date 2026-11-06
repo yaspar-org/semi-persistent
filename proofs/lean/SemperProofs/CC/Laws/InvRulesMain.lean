@@ -348,7 +348,7 @@ theorem completion_complete_inverse_engine (inv : Fin n → Option (Fin n)) (can
     (hinv : InvNodes st gnodes inv)
     (hRR : RuleRuleCP (Laws.inverse inv cancel) st.rules)
     (hlhs : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : cancel → ∀ M N X,
@@ -358,7 +358,7 @@ theorem completion_complete_inverse_engine (inv : Fin n → Option (Fin n)) (can
     (hMN : E (Laws.inverse inv cancel) S M N) : st.find c = st.find d := by
   have h5 : I5 st := SlotState.state_I5_of_slot (SlotState.reachable_I5 h5₀ hrun) ha
   have hconv : Converged (Laws.inverse inv cancel) st :=
-    roundFixed_converged (I0_of_active h0) h5 hcanon hfix
+    roundFixed_converged (I0On_of_active h0) h5 hcanon hfix
   exact completion_complete_inverse inv cancel h5₀ hrun ha h0 hcanon hfix hRR
     (invMatching_of_fixed hfixinv hinv) hlhs (inverseAxiomCP_of_fixed hconv h3 hfixinv)
     hcc hS hcancel hM hN hMN
@@ -392,7 +392,7 @@ theorem completion_complete_combined_engine (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
       Joinable (Rw (plain n) (st.rules ∪
           (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).axRules))
         (B + Multiset.replicate (k - A.count a) a) (A.filter (· ≠ a)))
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).cancellative →
@@ -408,7 +408,7 @@ theorem completion_complete_combined_engine (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
   set hu := invUnitFree_of_fixed hfixu hinv hurep
   set L := Laws.combined u k hk inv cancel hu with hL
   have h5 : I5 st := SlotState.state_I5_of_slot (SlotState.reachable_I5 h5₀ hrun) ha
-  have hconv : Converged L st := roundFixed_converged (I0_of_active h0) h5 hcanon hfix
+  have hconv : Converged L st := roundFixed_converged (I0On_of_active h0) h5 hcanon hfix
   have hclamp : L.clamp = combinedClamp u k inv := rfl
   have hfixinv' : RoundFixedInv L.clamp inv st := by rw [hclamp]; exact hfixinv
   have hfixk' : RoundFixedInvNil L.clamp inv k st := by rw [hclamp]; exact hfixk
