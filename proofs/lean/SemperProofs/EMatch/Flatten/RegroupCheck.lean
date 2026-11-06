@@ -1,5 +1,6 @@
 import SemperProofs.EMatch.Flatten.RegroupNested
 import SemperProofs.EMatch.Flatten.RegroupSkip
+import SemperProofs.EMatch.Flatten.RegroupBounds
 
 /-! Axiom audit for regrouped views (`RegroupDefs.lean`, `Regroup.lean`,
 `RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`, `RegroupChain.lean`,
@@ -128,5 +129,51 @@ six records, the engine's loop five. -/
   (baseRecsR exNestCtx .both Laws.free exNestRoot)).length
 #eval (regroupAllSkip exNestCtx .both Laws.free
   (baseRecsR exNestCtx .both Laws.free exNestRoot)).length
+
+end Semper.EMatch.Flatten
+
+/-! The engine's regrouping bounds (`RegroupBoundsDefs.lean`, `RegroupBounds.lean`). -/
+
+#print axioms Semper.EMatch.Flatten.regroupBounded_cases
+#print axioms Semper.EMatch.Flatten.regroupBounded_none_records
+#print axioms Semper.EMatch.Flatten.regroupBounded_halt_iff
+#print axioms Semper.EMatch.Flatten.regroupBounded_halt_ok
+#print axioms Semper.EMatch.Flatten.regroupBounded_truncated_iff
+#print axioms Semper.EMatch.Flatten.regroupBounded_exact
+#print axioms Semper.EMatch.Flatten.regroupBounded_sub
+#print axioms Semper.EMatch.Flatten.regroupBounded_sub_skip
+#print axioms Semper.EMatch.Flatten.regroupBounded_reach
+#print axioms Semper.EMatch.Flatten.isCand_of_fitsR
+#print axioms Semper.EMatch.Flatten.takeableRCap_down
+#print axioms Semper.EMatch.Flatten.takenOf_takeableRCap
+#print axioms Semper.EMatch.Flatten.regroupSkipCap_spec
+#print axioms Semper.EMatch.Flatten.atomSat_regroupSkipCap_iff
+#print axioms Semper.EMatch.Flatten.enumerateRDBounded_le
+#print axioms Semper.EMatch.Flatten.enumerateRDBounded_ge
+#print axioms Semper.EMatch.Flatten.runEG_le
+#print axioms Semper.EMatch.Flatten.runB_fst
+#print axioms Semper.EMatch.Flatten.runB_ge
+#print axioms Semper.EMatch.Flatten.regroupBounded_plan_sound
+#print axioms Semper.EMatch.Flatten.regroupBounded_plan_complete
+#print axioms Semper.EMatch.Flatten.regroupBounded_query_exact
+#print axioms Semper.EMatch.Flatten.regroupBounded_match_exact
+
+namespace Semper.EMatch.Flatten
+
+/-- The nested case of `RegroupNested.lean` under the bounds `B`, every use
+list of length one. -/
+def exNestBounded (B : Bounds) : BSt :=
+  regroupBoundedG B (Ix.nat (fun _ => 1)) exNestCtx .both Laws.free (groupsOfEngine exNestCtx)
+    (baseRecsR exNestCtx .both Laws.free exNestRoot)
+
+/- Under the engine's bounds the run does not stop and ends with the loop's
+five records: stopped, views counter, work counter, records. -/
+#eval let b := exNestBounded Bounds.engine
+  (b.halt.isSome, b.views, b.work, b.st.records.length)
+
+/- With a bound of one regrouped record the run is truncated at the second,
+and keeps the walk's record and the first regrouped one. -/
+#eval let b := exNestBounded ⟨some 1, Option.none, Option.none⟩
+  (repr b.halt, b.views, b.st.records.length)
 
 end Semper.EMatch.Flatten
