@@ -420,6 +420,15 @@ egg_test!(
     flatten_regroup_nested_needs,
     "flatten_regroup_nested_needs.egg"
 );
+egg_test!(
+    flatten_regroup_laws_drop_need,
+    "flatten_regroup_laws_drop_need.egg"
+);
+egg_test!(
+    flatten_regroup_laws_insert,
+    "flatten_regroup_laws_insert.egg"
+);
+egg_test!(flatten_regroup_laws_idem, "flatten_regroup_laws_idem.egg");
 egg_test!(checked_add_ok, "checked_add_ok.egg");
 // A partial primitive applied outside its domain is a reported program error,
 // not a panic: the engine cannot pick a value, but the caller has to be able to

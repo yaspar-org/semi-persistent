@@ -475,7 +475,8 @@ thread_local! {
 /// replace a group of its entries by a class `g` holding an `f` node over that group,
 /// recursively. A regrouped view inherits each of its source's opening trees: a leaf
 /// holding a class of the group also holds `g`, the regrouped classes the group absorbs
-/// are no longer needed, and `g` is. A tree needing more than `limit` (the pattern's
+/// are no longer needed, and `g` is, of those only the classes the regrouped view holds
+/// (the laws may drop one), and a leaf that gains a dropped `g` is not inert. A tree needing more than `limit` (the pattern's
 /// items) is dropped once regrouping is done, not before: a later group may absorb the
 /// classes it needs.
 fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Alts>) {
@@ -511,6 +512,11 @@ fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Al
                 if done.contains(&c) {
                     continue;
                 }
+                // The laws may drop `g` or an earlier needed class from the view: no
+                // item can take it, so it is not needed, and a leaf that gains `g` is
+                // satisfied without it.
+                let held: BTreeSet<Class> = c.iter().map(|e| e.0).collect();
+                let gone = !held.contains(g);
                 let entry = by_view.entry(c).or_default();
                 if entry.iter().any(|l| l.is_empty()) {
                     continue;
@@ -524,6 +530,7 @@ fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Al
                             let mut l = l.clone();
                             if !l.need && !l.g.contains(g) && l.g.iter().any(in_group) {
                                 l.g.push(*g);
+                                l.non_inert |= gone;
                             }
                             l
                         })
@@ -536,6 +543,7 @@ fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Al
                             need: true,
                         });
                     }
+                    next.retain(|l| !l.need || held.contains(&l.x));
                     entry.push(next);
                 }
             }

@@ -1299,7 +1299,9 @@ some opening tree giving its view has every leaf satisfied (`Demand::accepts`):
 The walk prunes with the same rule, so it must not prune a leaf that a later choice of the rest
 of the view could make non-inert (`FlattenScratch::may_be_non_inert`). The unit and sequence
 tests read the leaf alone; the clamp and cancel tests read the whole view, so under
-`:nilpotent` or `:inverse` no multiset leaf is pruned. Lean: `prune_engine`
+`:nilpotent` or `:inverse` no multiset leaf is pruned. Under an `:identity` no leaf is pruned
+either, since a regrouping whose class the normalization drops flags the leaves that gain it
+("Regrouped views", "Laws"). Lean: `prune_engine`
 (`Flatten/EngineRule.lean`). The reference in `tests/flatten_differential.rs` computes the
 same flag; `flattened_matches_reference_laws` fails at seed 18 with the flag forced off.
 
@@ -1446,6 +1448,39 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   every `f` member of the model, needs and the item limit on the final records included;
   over its 60 seeds, regrouping changes the matches of 352 (graph, pattern) pairs, and 273
   under laws, and the engine equals the reference on each.
+- **Laws** (2026-11-06, `proofs/lean/SemperProofs/EMatch/Flatten/RegroupLaws.lean`).
+  Regrouping reads normal forms and normalizes its result under the operator's laws, so a
+  group whose class is the unit, clamps to zero under `:nilpotent`, or cancels against its
+  inverse leaves a smaller view. Every such view denotes the node in a model of the laws
+  (`regroup_views_sound_{ac,aci,assoc}_laws`,
+  `regroupSkip_views_sound_{ac,aci,assoc}_laws`). The "Guarantee" bullet holds for any laws,
+  with chains whose steps normalize under the laws (`RegroupsToL`, `RegroupStepL`;
+  `regroup_match_iff_laws`, `regroupSkip_match_iff_laws`, `regroupSkip_plan_complete_laws`).
+  The generators already regroup under each case's laws. Relative to the laws, over the
+  classes present, three kinds of match are lost; `(set-option :completion eager)` proves
+  each equality below.
+  1. *A needed class the normalization drops* (fixed 2026-11-06). The record needed the
+     group's class, which its view no longer held, so no item could take it, and a leaf that
+     gained the class could be satisfied only through it. A regrouped record now needs only
+     the classes its normalized view holds, and a leaf that gains a dropped class is flagged
+     non-inert, in the record and in its signature (`FlattenScratch::regroup`); the walk
+     keeps every leaf under an `:identity` (`may_be_non_inert`), since a later regrouping
+     may flag it. With `zero ∋ add{A, B}`, `(add x y)` binds `x = C, y = D` in `add{A, B, C,
+     D}`; `flatten_regroup_laws_drop_need.egg` pins the same under `:nilpotent`, under
+     `:inverse`, and for a leaf of the walk (Lean:
+     `regroup_drop_need_{unit,nilpotent,inverse,leaf}`, `reach_needs_held`). The model
+     changed the same way (`addG`, `needsAfter`, `mayNonInert`), and the regenerated
+     conformance samples changed in four programs (`conform/c1_0030.egg`,
+     `conform-flatten/f2_0011.egg`, `f2_0035.egg`, `f2_0095.egg`), which hold the new
+     matches.
+  2. *A normal form reached only by inserting* the unit, a cancel pair, or `k` copies under
+     `:nilpotent k`: with `zero ∋ add{B, D}`, `add{A, C}` equals `add{add{A, B}, add{C, D}}`
+     (`regroup_insert_unit_lost`, `flatten_regroup_laws_insert.egg`). A chain opens and
+     contracts but never inserts, and insertions are unbounded: a limit of the guarantee.
+  3. *A set group kept beside its class.* `S{A, B, C}` equals `S{A, C, sab}` by idempotence,
+     but regrouping replaces the group (`regroup_idem_overlap_lost`,
+     `flatten_regroup_laws_idem.egg`); keeping members would multiply the views by up to
+     `2^|group|`.
 - **Cost** (release build, best of three runs per file, 2026-11-05). The 231 `:flatten`
   programs of `tests/egg` and `tests/egg/conform-flatten` other than
   `ac_lazy_budget_inconclusive.egg` take 0.590 s in total before and 0.604 s after.

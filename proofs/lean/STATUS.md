@@ -325,9 +325,9 @@ completion state to the rounds or to the engine's rebuild.
   bounds the needed classes by one per group instead of assuming a limit.
   One group fits, per step (`RegroupFits.lean`):
   `fitsR_ac_complete`, `fitsR_aci_complete`, `fitsR_assoc_complete`,
-  `fitsR_left_complete`, `fitsR_right_complete`. Not covered: operators
-  with laws (identity, nilpotence, inverses) in the completeness theorems;
-  soundness under laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
+  `fitsR_left_complete`, `fitsR_right_complete`. Operators with laws are
+  covered by `RegroupLaws.lean` (below), except a normal form reached only by
+  insertion and an ACI group kept beside its class. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
   with a budget of 45,000 records per node; one committed `conform` sample
   (`c1_0052.egg`) is past it, and the engine stops regrouping a node of it at
   its own bounds too.
@@ -388,6 +388,32 @@ completion state to the rounds or to the engine's rebuild.
   slow for them. Not modelled: the walk's own bounds and overflows, which
   skip or count the node before regrouping; a view size saturated past 2^64
   under a 128-bit width.
+  Regrouped views under laws (2026-11-06, `RegroupLaws.lean`), which settles
+  "operators with laws ... in the completeness theorems" and "soundness under laws" in
+  the list above. Soundness in models of the laws (`LawsModelAC`, `LawsModelACI`,
+  `LawsModelA`: the unit denotes the identity, `k • x = 0` under `:nilpotent k`, a
+  class and its inverse class sum to zero): `denAC_normalizeList`,
+  `denACI_normalizeList`, `denA_normalizeList`,
+  `regroup_step_sound_{ac,aci,assoc}_laws`, `regroup_views_sound_{ac,aci,assoc}_laws`,
+  `regroupSkip_views_sound_{ac,aci,assoc}_laws`. The exact characterization for any
+  laws: `RegroupsToL` (the laws-free `RegroupsTo` to a canonical view, then the normal
+  form under the laws is a node), `RegroupStepL`, `RegroupChainL`;
+  `fit_of_regroupsTo`, `regroupStepL_iff` (a step is exactly a regrouping of the
+  model), `regroupStepL_free_iff`, `regroupChainL_iff`, `regroup_views_iff_laws`,
+  `regroup_match_iff_laws`, `regroupSkip_views_iff_laws`,
+  `regroupSkip_match_iff_laws`, `regroupSkip_match_complete_laws`,
+  `regroupSkip_plan_complete_laws`. Classes the normalization drops (the unit, a clamp
+  to zero, a cancelled inverse; fixed in the engine and the model the same day):
+  `needsAfter` keeps only the needed classes the normalized view holds and `addG`
+  flags a leaf that gains a dropped class, so `reach_needs_held` (every needed class
+  of a reachable record is in its view) and `needs_taken_of_all`; `mayNonInert` keeps
+  every leaf under an identity, `canDrop_of_gone`, `mayNonInert_of_canDrop` and the
+  relaxed `LeafRel` keep `prune_regroup`;
+  `regroup_drop_need_{unit,nilpotent,inverse,leaf}` are the four matches of
+  `flatten_regroup_laws_drop_need.egg`. Beyond chains, two kinds of match stay lost: a
+  normal form reached only by inserting the unit (`regroup_insert_unit_lost`,
+  `flatten_regroup_laws_insert.egg`) and a set group kept beside its class
+  (`regroup_idem_overlap_lost`, `flatten_regroup_laws_idem.egg`).
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);
