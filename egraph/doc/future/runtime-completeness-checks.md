@@ -60,7 +60,7 @@ this kind (stale minimal monomial, stale collapsed flag, stale splice).
 | Every class holding an `f`-node has an active node spelling its minimal monomial; a class with none is a leaf whose normal form is `{c}` | `I0Active` (weakened) | a class whose rule has no node, invisible to matching |
 | No two congruent nodes lie in different classes | the Bridge's congruence premise | a missed congruence after a merge; existing `debug_check_congruent_dup_invariant` |
 | Outcome is `Converged`; not `AbortedGrowthLimit` or `AbortedWorkLimit` | `Converged` | a budget stop reported as a fixpoint |
-| `flatten_regroup_truncated == 0` and `flatten_overflowed == 0` for every query of the last round | the bounded enumeration equals the unbounded one | a match lost to a regroup bound |
+| `flatten_regroup_truncated == 0`, `flatten_skipped == 0` and `flatten_overflowed == 0` for every query of the last round | the bounded enumeration equals the unbounded one (`regroupBounded_query_exact`) | a match lost to a regroup bound; hitting `MAX_ELEMS` skips the whole node and is counted in `flatten_skipped`, not in `flatten_regroup_truncated` |
 
 The result is a per-run verdict, `Complete` or `Incomplete(reason)`, where the reason
 names the first failed check and the class or node it failed on. A run that skips
@@ -113,7 +113,8 @@ maintains a summary would let a defect in that code pass its own check.
 ## 6. Not covered
 
 - The completeness theorems for matching under regrouping are laws-free, and the regroup
-  bounds are not modelled (`07` §7.5); tier 1 covers the bounds by the truncation counters.
+  bounds are modelled (`RegroupBounds.lean`), and tier 1 covers them by the three counters
+  (`regroupBounded_query_exact`).
   The skipping of redundant records needs no check: `regroupSkipG_iff` proves it keeps the
   match set.
 - Completion modulo A alone has no completeness theorem (the word problem for semigroups
