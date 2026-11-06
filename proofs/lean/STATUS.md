@@ -3,7 +3,8 @@
 Lean 4 with Mathlib v4.35.0. `lake build` of the whole project passes;
 `grep -rn sorry SemperProofs/` is empty; every `#print axioms` in the
 `Check.lean` files prints only `propext`, `Classical.choice`, `Quot.sound`.
-Written 2026-11-04 after the second extension; regrouped views added 2026-11-05.
+Written 2026-11-04 after the second extension; regrouped views added 2026-11-05;
+the engine's regrouping skips 2026-11-06.
 
 ## Final theorem (`SemperProofs/Final/Main.lean`)
 
@@ -263,13 +264,34 @@ its two children classes merge (`NoCollapse`).
   the engine's regrouping
   bounds (`MAX_REGROUP_VIEWS`, 2^14 regrouped records added after the skips,
   and `MAX_REGROUP_WORK`, 2^20 use-list entries and member children
-  examined, which also counts views no record reaches) and its skipping of
-  records (a target view with an unconditional record, a source view with
-  one, the per-target signature deduplication; acceptance-preserving,
-  argued, not proved); soundness under laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
+  examined, which also counts views no record reaches); soundness under laws. The generators use `regroupLevelsCapped` (`regroupLevelsCapped_eq`)
   with a budget of 45,000 records per node; one committed `conform` sample
   (`c1_0052.egg`) is past it, and the engine stops regrouping a node of it at
   its own bounds too.
+  The engine's skips (2026-11-06, `RegroupSkipDefs.lean`, `RegroupSkip.lean`):
+  `regroupAllSkip` is `FlattenScratch::regroup` step for step (views by entry,
+  largest first and the latest entry among equal sizes, candidates by node
+  id; a target already regrouped, a target with an unconditional record, the
+  source's other records when it has one, and a derived record whose
+  signature the target has, all skipped). `regroupRec_shrink`: regrouping
+  shrinks a view under any laws, so `mem_regroupLevels_iff_reach` (the full
+  levels are the reachable records) and the skip of a target already
+  regrouped never fires. `Cov` (same view, an equal leaf for each leaf, a
+  subset of the needed classes) with `Cov.accepts`, `Cov.acceptsL`,
+  `Cov.length`, `Cov.derive`, `cov_uncond`, `cov_of_same`; the loop
+  invariant (`addTarget_spec`, `regroupView_spec`, `step_spec`,
+  `run_finished`, `init_inv`) and `regroupSkipG_spec`: every record kept is
+  reachable, every reachable record is covered by one kept. Hence
+  `regroupSkipG_iff` / `regroupSkipG_iffL` (same accepted matches per view
+  after the item limit, any laws, kind, direction, candidate order),
+  `enumerateRSkip_iff`, `enumerateRDSkip_iff`, `regroupSkip_spec`,
+  `atomSat_regroupSkip_iff`, and the final theorems for
+  `Enumerator.regroupSkip`: `regroupSkip_plan_sound`,
+  `regroupSkip_plan_complete`, `regroupSkip_plan_complete_full`,
+  `regroupSkip_views_iff`, `regroupSkip_match_iff`,
+  `regroupSkip_match_complete`. The generators stay on `regroupLevels`: on the
+  engine's loop they emit the same `check-eq` sets in another order, which
+  changes the sampled `check-neq` candidates.
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);

@@ -1390,10 +1390,27 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   and `G2 ∋ f[G1, c]`, within one needed class per step. The disjoint-group AC theorems
   (`regroup_view_complete_ac`, `regroup_match_complete_ac`) are the special case of
   groups over the walk's view, their sum within the view, none the whole view.
-  The generators run this enumeration (`runER` for `conform-flatten`, `regroupLevels` for
+  The engine's loop itself is modelled too (`RegroupSkipDefs.lean`): views by entry, the
+  largest not yet regrouped next (the latest entry among equal sizes), candidates by node
+  id, and its three skips: a target with an unconditional record (no opening, no needed
+  class) gains no record, a source with one derives from it alone, and a derived record
+  whose signature (leaves with opened class, flag and sorted classes; sorted needed
+  classes) the target already has is dropped. `regroupSkipG_iff` (`RegroupSkip.lean`)
+  proves that this loop accepts exactly the matches of the full enumeration on every view,
+  after the item limit, for any laws, kind and fold direction: a kept record *covers* each
+  skipped one (same view, an equal leaf for each of its leaves, a subset of its needed
+  classes), so it passes the demand rule and the item limit whenever the skipped one does,
+  and regrouping two records the same way preserves the cover. Regrouping shrinks a view
+  under any laws (`regroupRec_shrink`), so a target is never a view already regrouped: the
+  engine's skip of such a target never fires (the engine's sizes are `u128` sums of `u64`
+  counts and cannot saturate either). `regroupSkip_match_iff`, `regroupSkip_match_complete`,
+  `regroupSkip_plan_sound` and `regroupSkip_plan_complete` restate the theorems above for
+  `Enumerator.regroupSkip`.
+  The generators run the full enumeration (`runER` for `conform-flatten`, `regroupLevels` for
   the root views of `conform`), so the two samples hold matches through regrouped classes as
-  `check-eq`. Differences from `flatten.rs`: the model keeps every record, where the engine
-  skips a record whose acceptance another record of the same view implies; the bounds are not
+  `check-eq`. Run on the engine's loop instead, they emit the same `check-eq` sets in another
+  order, which changes the sampled `check-neq` candidates, so the generators stay on the full
+  enumeration. Differences from `flatten.rs`: the bounds are not
   modelled, and a generator gives up on a node past a budget of 45,000 records
   (`regroupCap`), saying so in the program. That budget is not the engine's: the engine
   counts the regrouped records it adds after its skips (`MAX_REGROUP_VIEWS`, 2^14) and the
