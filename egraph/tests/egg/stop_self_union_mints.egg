@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Stop-test regression (fidelity row SA11): the first rule's union builds (F (a)) on
+;; both sides, so its two sides already share a class and the action reported no change.
+;; The round minted a node and the loop still stopped on `changes == 0`, so the second
+;; rule never matched (F (a)) and the check failed, naive and semi-naive. The loop now
+;; also compares the graph's size stamp (node count, class count) around the actions.
+(datatype E (F E) (a) (b))
+(let t (a))
+(rule ((a)) ((union (F (a)) (F (a)))))
+(rule ((F x)) ((union (F x) (b))))
+(run 10)
+(check-eq (F (a)) (b))

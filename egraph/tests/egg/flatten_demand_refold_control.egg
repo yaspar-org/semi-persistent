@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; flatten_demand_refold.egg with the item taking X from the leaf: the leaf [X, c] is
+;; hit directly, which the original demand rule already accepted.
+(sort E)
+(function Xc () E) (function Cc () E) (function Yc () E) (function Dc () E) (function Zc () E)
+(function Plus (E) E :assoc-comm)
+(function Pick (E) E)
+(let y (Yc))
+(let z (Zc))
+(union y (Plus (Xc) (Cc)))
+(union z (Plus y (Dc)))
+(let n (Plus y z))
+(rewrite (Plus (Xc) (Dc) ..rest) (Pick (Plus ..rest)) :flatten)
+(run 1)
+(check-eq n (Pick (Plus (Cc) y)))

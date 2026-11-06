@@ -1,0 +1,21 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; MESSAGE: disequality is inconclusive
+;; A lazy check that used to never return. Each rule round grows the graph about 8x
+;; (17, 42, 430, 3774, 29597 nodes: ACI completion folds C back into Min monomials, each a
+;; new :flatten match). The node budget counted only nodes minted inside one completion
+;; rebuild, never the rule rounds, and one completion round over ~19,000 rules and ~22,000
+;; targets ran for minutes while minting almost nothing. The decision now charges every node
+;; minted since it opened and bounds each completion round's work (design 06 §13), so the
+;; check-neq reports the budget stop as inconclusive, which this fixture checks. No test
+;; bounds its wall-clock time: a regression of either budget hangs it, and the CI job's
+;; timeout reports that (design 13 §5 item 21).
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E)
+(function Min (E) E :assoc-comm-idem)
+(function T (E E) E)
+(rewrite (Min x y (C) ..r) (Min (T x y) ..r) :flatten)
+(let i (Min (A) (B) (C) (D)))
+(set-option :check-completion on)
+(check-neq (A) (B))

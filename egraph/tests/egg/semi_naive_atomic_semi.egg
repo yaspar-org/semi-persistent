@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EVAL: semi
+;; The program of `semi_naive_atomic_naive.egg` under semi-naive, which now reaches naive's
+;; fixpoint; `semi_naive_atomic_eager.egg` runs it under eager completion.
+;;
+;; In plain mode the node a right-hand side builds depends on whether a class is `atomic` at
+;; build time (`flatten_mset_children`, design §6c), and the bit flips as the graph grows.
+;; Round 1 builds Q's argument flat, `Add{A,B,C}`, before the H action makes `[Add(A,B)]`
+;; atomic. Naive re-fires the old (P (C)) match and builds the nested `Add{[A+B],C}` the second
+;; rule needs. The flip changes no node, so it is not in the delta, and semi-naive used to
+;; miss the nested spelling (this file expected `check-failed`). The engine now counts the
+;; flip in `spelling_epoch`, and the next semi-naive round matches the rules that build an AC
+;; term in full (design §9.2).
+(sort E)
+(function A () E) (function B () E) (function C () E)
+(function Add (E) E :assoc-comm)
+(function P (E) E) (function Q (E) E) (function H (E) E) (function W (E) E)
+(let p (P (C)))
+(rule ((P y)) ((Q (Add (Add (A) (B)) y)) (H (Add (A) (B)))))
+(rule ((Q (Add (Add (A) (B)) w))) ((W w)))
+(run 10)
+(check (W (C)))

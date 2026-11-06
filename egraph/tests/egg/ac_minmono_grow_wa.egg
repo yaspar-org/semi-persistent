@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; CHECK_AC_BASIS: on
+;; Minimal monomial under node growth (fidelity row EG1). Add{a,b} = Add{c,e} puts both
+;; in one class with minimal monomial Add{a,b}. (union (w) (a)) keeps w, the later and larger id. Under the
+;; id order recanonization grew the node holding it to Add{b,w}, above Add{c,e}; the
+;; stored minimal monomial named that node, so it named Add{b,w}: I5 failed, Add{b,w} was not a rule, and completion
+;; missed Add{c,e,y} = Add{b,w,y} (check failed). Completion now orders by per-class keys
+;; and the merged class takes a's lesser key, so the node does not grow. Lean:
+;; idOrder_grow_breaks_I5, rename_key_le. Control: ac_minmono_grow_aw.egg.
+(sort E)
+(function a () E) (function b () E) (function c () E) (function e () E)
+(function y () E) (function w () E)
+(function Add (E) E :assoc-comm)
+(set-option :completion eager)
+(let n1 (Add (a) (b)))
+(let n2 (Add (c) (e)))
+(union n1 n2)
+(union (w) (a))
+(let d (Add (c) (e) (y)))
+(let f (Add (b) (w) (y)))
+(check-eq d f)

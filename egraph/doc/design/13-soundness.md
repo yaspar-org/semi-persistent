@@ -49,7 +49,9 @@ inter-reduce asserted equations. Explicit inverse pairs are canceled when they
 are visible during construction; pairs formed by later merges are canceled by
 `canon_repair_round` in every mode (in plain mode it alternates with
 `rebuild_congruence` to a joint fixpoint). A pair whose `inv(x)` node was never built
-is not seen. This default closure is not full closure under all
+is not seen. The same repair round also asserts the inverse law across nodes, rules R1, R2,
+R4 and R5 of [§5.2](05-algebraic-operators.md#the-inverse-law-across-nodes-r1-r5), in every
+mode since commit `e1e6aec8`. This default closure is not full closure under all
 of `=_T`. For AC/ACI operators, this chapter's stronger
 claim is conditional: when opt-in eager completion reports
 `CompletionOutcome::Converged`, the paper correspondence argues closure of the
@@ -70,7 +72,10 @@ soundness invariant argued below is state-local: it does not depend on reaching
 a fixpoint or on completion running. It is not yet a machine-checked e-graph
 theorem (§4). Completeness is a fixpoint property and, for AC operators, the
 stronger claim depends on a converged completion pass of the
-[AC congruence completeness chapter](06-ac-congruence-closure.md).
+[AC congruence completeness chapter](06-ac-congruence-closure.md). (Correction, 2026-11-04:
+both properties are now Lean theorems for models of the completion state, the matcher and the
+saturation rounds, listed in §4; no theorem connects those models to the Rust code, and §5
+lists the implementation invariants the models assume.)
 
 ### 1.1 The trustworthy polarity
 
@@ -101,7 +106,8 @@ never a superset. The AC completion pass enlarges that subset toward the
 entailed set; with it off, the engine still decides every equality plain
 congruence reaches and merely misses some AC consequences (§3.3). This is why completion
 can default off, and why a growth-budget abort mid-completion (the divergence
-backstop, reported as `CompletionOutcome::AbortedGrowthLimit`) leaves a sound,
+backstop, reported as `CompletionOutcome::AbortedGrowthLimit`), or a work-budget
+abort of one round (`CompletionOutcome::AbortedWorkLimit`), leaves a sound,
   plain-congruence-closed state, without endangering any consumer that respects the
   polarity above. Before returning from this abort path, `rebuild()` drains the
   pending plain-congruence worklist.
@@ -226,6 +232,10 @@ beyond direct congruence. Each is sound:
 - A semantic-axiom critical pair merges two reducts obtained from the same
   overlap between an asserted rule and the declared idempotent or nilpotent
   law. Each reduct is therefore equal to that overlap in `=_T`.
+- `lattice_round` merges two classes only when their vectors differ by an integer
+  combination of the operator's equations (and of `e_unit`, `order·e_x`, `e_x + e_inv(x)`
+  when declared). The cancelative congruence of a commutative semigroup is exactly that
+  lattice relation, so each merge is in `=_T`; it adds no node.
 - Cancel-closure removes a common summand only for an operator declared
   cancellative. Its merge is justified by the conditional cancellation
   inference included in `=_T`.
@@ -239,15 +249,17 @@ satisfies `=_T`, preserved by each operation, with no appeal to termination or t
 reaching a fixpoint. The argument therefore does not depend on whether completion
 is enabled or converges. Focused fixtures and invariant checks provide finite
 executable evidence for that correspondence; it is not currently a
-machine-checked e-graph theorem.
+machine-checked e-graph theorem. (Correction, 2026-11-04: for a model of the completion state
+it is, `completion_sound` and, for R1-R5, `inv_rules_sound`, in `proofs/lean/SemperProofs/CC/`;
+the correspondence to the Rust code is still finite evidence.)
 
 ### 2.5 Multiple AC symbols: why the rule-RHS storage is per-op
 
 Completion reads each rule's right-hand side from per-class data: the class's minimal
-monomial plus an `atomic` flag (AC chapter §9a). A single `min_monomial` slot per class
+monomial plus an `atomic` flag (AC chapter §9a). A single stored `min_monomial` per class
 would be unsound in the presence of two AC operators: a class may hold monomials of two
 different AC operators at once (assert `a+b = a*b` and the class contains both a `+`-node
-and a `*`-node), each with its own minimum. One slot cannot hold both minima, so a
+and a `*`-node), each with its own minimum. One stored entry cannot hold both minima, so a
 `+`-rule could read the `*`-monomial as its RHS: a wrong closure, not merely a weaker
 one.
 
@@ -312,7 +324,12 @@ stored node spells, and an untagged pattern does not match it. A rule tagged
 `:flatten` matches every flattened view of the node, computed at match time and
 canonized by the one normalization (`nary_canon::normalize`), so for those rules
 matching is complete over nesting within the view and work bounds of §7.5; a
-node over a bound is skipped and counted, not matched partially.
+node over a bound is skipped and counted, not matched partially. (Correction, 2026-11-04:
+until commit `f995e5d6` the views were also unsound on `:assoc-left` and `:assoc-right`,
+because they opened a fold's nested child off its spine; until commits `d95883f5` and
+`96279a6f` the demand rule rejected matches on multisets and under the operator's laws.
+Completeness of the corrected rule is a Lean theorem for a model,
+`demand_engine_complete_{ac,aci,assoc}`; [§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten).)
 
 ### 3.4 Conditional completion claims by operator family
 
@@ -357,17 +374,30 @@ and cancellative critical pairs. Those are implemented correspondences to
 Kapur's constructions, supported by focused fixtures and finite invariant
 checks, not machine-checked completeness theorems. The validation obligation
 for cancellative completion when constants enter the pool late remains open.
+(Correction, 2026-11-05: the cancel-closure and cancelative critical pairs are not complete
+on their own. `cancel_lattice.egg` converged without `c1c3² = ∅`. Commit `cdcb2186` adds
+`lattice_round` (item 23 of §5). In Lean, `completion_complete_at_convergence` takes the
+cancelative case as the hypothesis `hcancel`; `completion_complete_cancellative_engine`
+(`CC/Lattice.lean`) replaces it by `LatticeClosed`, which the fixpoint of `lattice_round`
+gives (`latticeClosed_of_engineFixed`), and `hcancel_not_derivable` shows that `hcancel`
+itself does not follow from lattice closure.)
 
 Inverse support is narrower: the implementation cancels explicit
 `x`/`inv(x)` pairs that are represented in the graph. It does not implement
 signed coefficients, triangular reduction, or full Abelian-group completion.
+(Corrected 2026-11-04: since commit `e1e6aec8` it also asserts the five cross-node
+consequences R1-R5 of the inverse law, and `completion_complete_inverse_engine` proves
+completion complete under `:inverse` for a model with those rules; the remaining limits of
+this paragraph stand.)
 `CompletionOutcome::Converged` therefore reports the implementation's
 full-round fixpoint, not completeness for the general Abelian-group word
 problem.
 
 This completeness is a fixpoint property and, unlike soundness, depends on
 completion running and converging. The argument is on paper, adapting Kapur, and not
-yet discharged in a proof assistant; the verification plan is in
+yet discharged in a proof assistant (corrected 2026-11-04: discharged in Lean for a model,
+`completion_complete_at_convergence`, under hypotheses that include the implementation
+invariants of §5); the verification plan is in
 [Future Work](A3-future-work.md), and the engine-level invariant checks that
 confirm the rule set is reduced at a fixpoint are in the
 [AC completion spec](06-ac-congruence-closure.md#part-iii-min_monomial-a-matcher-invariant-and-implementation-correspondence).
@@ -393,6 +423,165 @@ confirm the rule set is reduced at a fixpoint are in the
   without a completion pass. A canonicalization has only the documented
   merged-spellings repair under completion; no procedure closes the general
   finitely presented monoid word problem (§3.4).
+- **Proved in Lean for a model, tested against the engine** (added 2026-11-04; this
+  corrects the second and third bullets above, which called these claims argued and open).
+  `proofs/lean` proves, for models of the engine's state and with the hypotheses listed in
+  `proofs/lean/STATUS.md`: completion soundness (`completion_sound`), termination
+  (`kapur_termination`) and completeness at convergence (`completion_complete_at_convergence`,
+  with the identity, nilpotent, idempotent and inverse laws); e-matching soundness and
+  completeness for every scheduled plan (`engine_plan_sound`, `engine_plan_complete`) and for
+  `:flatten` views under the demand rule (`demand_engine_complete_{ac,aci,assoc}`); cross-round
+  semi-naive completeness (`delta_complete`, `semi_naive_complete`); and the saturation
+  fixpoint theorem modulo the AC theory (`saturation_modulo_complete`). No theorem connects
+  these models to the Rust code. The conformance generators (`tests/conform.rs`,
+  `tests/egg/conform/`) and the fixtures named in §5 check the engine against the models on
+  finite programs; associativity without commutativity has no complete terminating completion
+  and is not claimed (`proofs/repro/assoc-incomplete.egg`, §3.4).
+- **Scope of the final theorems** (added 2026-11-05, from an audit of the Lean development).
+  `completion_complete_at_convergence`, the theorems of `CC/Bridge/` and
+  `saturation_modulo_complete` cover less of the engine than their names suggest, in four
+  ways. (H1) The hypothesis `I0Active` (`CC/Assemble.lean`) quantifies over every class of
+  `Fin n`, so the theorems cover graphs where every class holds an active node of the
+  operator; a graph with a leaf constant, whose class holds no such node, is outside them.
+  (H2) The theory `E` relates monomials over class ids and does not identify two child
+  classes that a merge joined, so the statements of the `CC/Bridge/` theorems are about the
+  monomials as the state stores them. (H3) The hypothesis that the stored minimal monomials
+  reach the final state by `SlotState.OpsStar` from a state satisfying I5 is met with the
+  initial state equal to the final one, so the main theorems in effect assume I5 at the final
+  state. (M5) The effects of rule actions are fields of `ActRound`
+  (`EMatch/Engine/Saturate/ActRound.lean`), assumed, not modelled from `apply.rs`. Chapters 6
+  §9c, 7 §7.5 and 9 §9.2 point here where they cite these theorems.
+- **Tested against the Lean model on generated programs** (added 2026-11-05). Five generators
+  in `proofs/lean/Conform` write programs the engine must agree with: `semper-conform`
+  (`tests/egg/conform/`), `semper-conform-flatten` (`tests/egg/conform-flatten/`),
+  `semper-conform-cc` (`tests/egg/conform-cc/`), `semper-conform-rounds`
+  (`tests/egg/conform-rounds/`), and `semper-conform-cc-cert` (`tests/egg/conform-cc-cert/`),
+  whose `check-neq` pairs `not_E_of_separates` certifies. Chapter 6 §9c, Chapter 7 §7.5 and
+  Chapter 9 §9.2 ("What is machine-checked") state what each one checks.
+- **Not modelled, evidence by fixtures only** (added 2026-11-05): in `lattice_round`, the
+  echelon form, coset representatives and the hypothesis `FlatSound` (§2.4; item 23 of §5);
+  in `a_round`, recanonicalization by rebuild, termination interleaved with AC rounds and
+  congruence, and the one-element collapse in `add` (§3.4; item 25); the use-list partner
+  search, incremental rounds and budgets of completion; `spelling_epoch` (item 22); the
+  soundness of actions at round level; and the correspondence of every model to the Rust
+  code.
 
+## 5. Implementation invariants the correctness claims depend on
+
+The models of §4 hold only if the engine keeps the invariants below. A Lean proof or a
+conformance generator found each one, most as a confirmed defect, and each arises from two
+mechanisms interacting, so a change to either one can break it. One sentence each; the linked
+section gives the mechanisms, the failing program, the regression and the theorem. Every one
+is fixed on this branch.
+
+**Completion state** ([Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)):
+
+1. A class's stored minimal monomial is its least active monomial (I5), so rebuild refreshes it
+   whenever recanonization shrinks a node below it ([§9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+2. A merge never makes a stored node grow in the completion order, so monomials are
+   compared by a per-class key that a merge only lowers, not by the survivor's id
+   (`ab214e9c`, `ac_minmono_grow_wa.egg`, Lean `keyed_reachable_I5`)
+   ([§9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep);
+   [Chapter 2](02-classes-and-union-find.md#merge-survivor-policy---union-by)).
+3. Completion merges a node's normal form into its class before it flags the node collapsed
+   (I3) ([§9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+4. Completion reads its rule set off the active nodes and their classes every round and stores
+   none, so a merge updates every rule of both classes without visiting them
+   ([§9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+
+**Building nodes and rounds:**
+
+5. `add` passes every child it splices in from a nested same-operator child through `find`,
+   because the round defers rebuild and a union since the last rebuild leaves stored children
+   stale ([§5.2](05-algebraic-operators.md#the-spliced-children-are-found-at-build)).
+6. `add` probes the hash-cons with the fully canonical key, because rebuild re-probes only nodes
+   whose children change and the probe at insertion is the only collision check a fresh node
+   gets ([Chapter 4](04-egraph.md#the-hash-cons-lookup-is-the-only-collision-check-a-fresh-node-gets)).
+7. A round counts a change exactly when it created a node, merged two classes or newly set a
+   subsume flag, because the loop stops on the first round with no counted change
+   ([§9.1](09-saturation.md#the-stop-test-and-action-counting)).
+
+**Semi-naive matching** ([§9.2](09-saturation.md#92-semi-naive-evaluation)):
+
+8. Every semi-naive path records an absorbed class's members in the touched log, because a
+   merge that keeps the id the parents store recanonicalizes nothing
+   ([§9.2](09-saturation.md#the-touched-log-and-merges-that-keep-the-stored-id)).
+9. A rule with an equality to a global runs naive whatever its local, because the merge that
+   satisfies the equality can touch no node any atom of the rule scans
+   ([§9.2](09-saturation.md#which-atoms-count-as-positions)).
+
+**Inverse, unit and nilpotent laws** ([§5.2](05-algebraic-operators.md#the-inverse-law-across-nodes-r1-r5)):
+
+10. The engine asserts the inverse law across nodes, R1 to R5, because pair cancellation inside
+    one monomial misses four kinds of consequences
+    ([§5.2](05-algebraic-operators.md#the-inverse-law-across-nodes-r1-r5)).
+11. The R1-R5 pass scans every inverse node, not the touched log, because R1's premise is a merge
+    that recanonicalizes neither inverse node
+    ([§5.2](05-algebraic-operators.md#the-inverse-law-across-nodes-r1-r5)).
+12. R2 stays as long as normalization drops the unit before it cancels inverse pairs, because
+    `{x, e}` with `g(x) = e` then normalizes to `{x}`
+    ([§5.2](05-algebraic-operators.md#the-inverse-law-across-nodes-r1-r5)).
+
+**`:flatten` views** ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten)):
+
+13. A view opens a fold's nested child only on its spine, because any other opening spells a
+    different term and makes the rewrite unsound
+    ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten); every fold caveat:
+    [§7.5, "Left- and right-associative operators"](07-rules-and-pattern-matching.md#left--and-right-associative-operators)).
+14. The demand rule keeps a match whose untaken leaf opened a taken class (multisets) or whose
+    closing is not inert under the laws, because refolding that leaf does not carry the match
+    ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten)).
+15. The view walk never prunes a leaf that could be non-inert on some completion of the view
+    (`may_be_non_inert`) ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten)).
+16. Sets need no opened-class clause only while rebuild merges a one-child member into its
+    child's class ([§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten)).
+
+**What the guarantees state**, which a test or a claim must not contradict:
+
+17. Matching completeness is stated over the e-nodes present with the result on the class; the
+    per-node transfer modulo the theory is false
+    ([§7.5](07-rules-and-pattern-matching.md#75-matching-a-ac-aci-and-c-operators)).
+18. Matching completeness is "at least once": a commutative pattern on a pair with equal children
+    is emitted twice ([§7.5](07-rules-and-pattern-matching.md#75-matching-a-ac-aci-and-c-operators)).
+19. Maximum partition drops a two-item match when its children's classes merge, by design
+    ([§7.5](07-rules-and-pattern-matching.md#75-matching-a-ac-aci-and-c-operators)).
+20. Associativity without commutativity has no complete terminating completion, and no claim
+    states one (§3.4; [Chapter 6 §14](06-ac-congruence-closure.md#14-the-a-only-transfer-inter-reduction-for-sequences-and-where-it-must-stop)).
+21. Every `tests/egg` fixture is registered by hand in `egg_tests.rs` and no test depends on
+    machine speed ([Developer Guide](A2-developer-guide.md#regression-fixtures-and-tests)).
+22. Naive and semi-naive agree at the fixpoint in plain mode only because the semi-naive
+    loop re-matches the AC-building rules after a spelling change: an `atomic` flip or a
+    minimal-monomial change alters the node a right-hand side builds and enters no delta
+    (`spelling_epoch`; `semi_naive_atomic_semi.egg`, `semi_naive_minmono.egg`;
+    [§9.2](09-saturation.md#a-build-time-choice-the-delta-cannot-see)).
+23. Cancelative completeness needs lattice membership, not per-equation cancelation, so
+    `lattice_round` runs at every completion fixpoint, also for `:identity` with `:nilpotent`
+    (`cancel_lattice.egg`, `nilpotent_group_lattice.egg`; Lean
+    `completion_complete_cancellative_engine`;
+    [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+    (Shortened 2026-11-05: this item and the next gave the mechanisms, which §9c now holds.)
+24. A collapsed node leaves the rule set only while a rule reduces it, so materialization and
+    recanonicalization clear `FLAG_AC_COLLAPSED` (`ac_collapsed_recanon.egg`, Lean
+    `RoundFixed.nf_present`; [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+25. `a_round` rewrites a fold's spelling only on its spine, a prefix for `:assoc-left` and a
+    suffix for `:assoc-right`, because any other run spells no subterm and the merge is unsound
+    (`7beed39f`, `ac_fold_completion_spine.egg`, Lean `aRound_sound`, `left_off_spine_unsound`;
+    [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep); every
+    fold caveat:
+    [§7.5, "Left- and right-associative operators"](07-rules-and-pattern-matching.md#left--and-right-associative-operators)).
+26. Completion skips a partner whose left-hand side is disjoint from the rule's, because the use
+    lists list stored children and the clamp can remove one of them (`e97b80e0`,
+    `conform-cc/cc1_0143.egg`; [Chapter 6 §9c](06-ac-congruence-closure.md#9c-rules-the-completion-state-must-keep)).
+27. A lazy decision charges every node it mints to one budget and meters each completion round,
+    because otherwise a lazy check does not return (`4ee0cf45`,
+    `ac_lazy_budget_inconclusive.egg`; [Chapter 6 §13](06-ac-congruence-closure.md#13-lazy-completion-on-demand-search-paid-per-query)).
+28. An index filter excludes a node only when its content is unmatchable, because the delta
+    holds a content's only witness when a merge flags it `FLAG_CONGRUENT_DUP`
+    (`index::tests::congruent_dup_is_the_only_delta_representative`;
+    [§9.2](09-saturation.md#a-soundness-requirement-on-every-index-filter)).
+29. A rule that references a let-bound global in a child or element position matches the full
+    index every round, because the global's class can grow by absorbing a class that no atom of
+    the rule scans (`semi_recanon_parent_delta.egg`;
+    [§9.2](09-saturation.md#the-touched-log-and-merges-that-keep-the-stored-id)).
 ---
 [← Ch 12: Anti-Unification](12-anti-unification.md) · [Table of Contents](00-table-of-contents.md) · [Ch 14: Proof Logging →](14-proof-logging.md)

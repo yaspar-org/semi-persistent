@@ -108,7 +108,8 @@ struct Mark<Cfg: EGraphConfig, O> {
 /// - `Eager`: every rebuild attempts completion (the `--derive-ac-eqs`
 ///   behavior). `CompletionOutcome::Converged` reports an unchanged full
 ///   implementation round, not a semantic-completeness certificate; the growth
-///   budget can stop earlier with `AbortedGrowthLimit`. Interleaving
+///   budget can stop earlier with `AbortedGrowthLimit`, and the per-round work
+///   budget with `AbortedWorkLimit`. Interleaving
 ///   completion with saturation rules re-runs it on a growing atom pool every
 ///   round. A rule set that continually mints new atoms can prevent the
 ///   combined loop from reaching a fixpoint; the node-growth budget may stop an
@@ -119,8 +120,10 @@ struct Mark<Cfg: EGraphConfig, O> {
 ///   The queried pair is the completion goal: every pass stops with
 ///   `CompletionOutcome::GoalMet` the moment the pair joins, a second phase
 ///   alternates default-ruleset rule rounds with completion passes when the
-///   graph's own closure does not decide the pair, and the node-growth budget
-///   is checked inside a round's apply loops. The first non-equality-check
+///   graph's own closure does not decide the pair. Each decision has one
+///   node-growth budget, charged with every node minted since it opened and
+///   checked in the rule and completion apply loops, and each completion round
+///   a work budget (`lazy_ac_decide`). The first non-equality-check
 ///   command restores the mark, discarding everything the checks derived.
 ///   Restore work includes container diff replay/capture-state reconstruction
 ///   and incremental or full hash-index repair. Lazy and eager share the
@@ -445,8 +448,14 @@ where
     /// congruence consequences. Second, if the pair is still apart and the program has
     /// rules, the saturation driver runs the default ruleset with the pair as
     /// its `:until` goal and completion on, so rounds alternate rule matching
-    /// with completion passes, bounded by `lazy_ac_rounds` and by the
-    /// node-growth budget (checked in-round, not only between rounds).
+    /// with completion passes, bounded by `lazy_ac_rounds`, by the decision's
+    /// node-growth budget and by the completion work budget. The node budget is
+    /// cumulative over the decision (`EGraph::open_decision_budget`): it charges
+    /// every node minted since the decision opened, by rule applications and by
+    /// completion alike, and is checked after every rule in the saturation apply
+    /// loops and inside each completion round's apply loops. The work budget
+    /// bounds the rule containment tests of one completion round, which can cost
+    /// targets times rules while minting almost nothing.
     ///
     /// Returns `(equal, inconclusive)`. `inconclusive` means a budget stopped
     /// the search first. A `false` verdict with `inconclusive == false` reached
@@ -455,14 +464,25 @@ where
     /// nodes, and AC scalar-subterm matching remains incomplete.
     fn lazy_ac_decide(&mut self, a: Cfg::G, b: Cfg::G) -> Result<(bool, bool), InterpError> {
         self.lazy_txn_open();
+        self.eg.open_decision_budget();
+        let r = self.lazy_ac_decide_budgeted(a, b);
+        self.eg.close_decision_budget();
+        r
+    }
+
+    /// [`lazy_ac_decide`](Self::lazy_ac_decide) with the transaction and the
+    /// decision's node budget open.
+    fn lazy_ac_decide_budgeted(
+        &mut self,
+        a: Cfg::G,
+        b: Cfg::G,
+    ) -> Result<(bool, bool), InterpError> {
         self.eg.set_cc_goal(Some((a, b)));
         self.eg.rebuild();
         let mut equal = self.eg.find(a) == self.eg.find(b);
         let aborted = |eg: &EGraph<Cfg, L, TRACK, PROOFS>| {
-            matches!(
-                eg.completion_outcome(),
-                Some(crate::egraph::CompletionOutcome::AbortedGrowthLimit { .. })
-            )
+            eg.completion_outcome()
+                .is_some_and(crate::egraph::CompletionOutcome::is_budget_stop)
         };
         let mut inconclusive = !equal && aborted(&self.eg);
         // The ordinary rules only: the completion check never ran the sequence rules.
@@ -701,11 +721,22 @@ where
         cq: &crate::sortcheck::CheckQuery<Cfg::O, Cfg::S, L>,
         stop_early: bool,
     ) -> Result<(u64, bool), InterpError> {
+        self.eg.open_decision_budget();
+        let r = self.lazy_query_decide_budgeted(cq, stop_early);
+        self.eg.close_decision_budget();
+        r
+    }
+
+    /// [`lazy_query_decide`](Self::lazy_query_decide) with the decision's node budget
+    /// open (`lazy_ac_decide` documents the budgets).
+    fn lazy_query_decide_budgeted(
+        &mut self,
+        cq: &crate::sortcheck::CheckQuery<Cfg::O, Cfg::S, L>,
+        stop_early: bool,
+    ) -> Result<(u64, bool), InterpError> {
         let aborted = |eg: &EGraph<Cfg, L, TRACK, PROOFS>| {
-            matches!(
-                eg.completion_outcome(),
-                Some(crate::egraph::CompletionOutcome::AbortedGrowthLimit { .. })
-            )
+            eg.completion_outcome()
+                .is_some_and(crate::egraph::CompletionOutcome::is_budget_stop)
         };
         let mut n = self.check_count(cq)?;
         if aborted(&self.eg) {

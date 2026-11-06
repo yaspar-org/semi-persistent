@@ -395,11 +395,22 @@ where
         if goal_met(spec, eg) || stop.is_some_and(|f| f(eg)) {
             return Ok(sat_result_seq(seq_report, i, false, true, steps_base));
         }
+        // An open lazy decision that ran out of budget (in this rebuild's completion or
+        // in the previous round's rules) is inconclusive: stop before matching.
+        if eg.decision_budget_exhausted() {
+            return Ok(sat_result_seq(seq_report, i, false, false, steps_base));
+        }
         let index = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
             IndexStore::build_with(eg, scratch)
         };
+        // The fixpoint test compares the graph, not the actions' counts: see `size_stamp`.
+        let stamp = eg.size_stamp();
         let mut changes = 0;
+        // Set when an open lazy decision's node budget runs out mid-round (see
+        // `EGraph::decision_budget_exhausted`): the round stops after the rule that
+        // spent it, and the run returns unsaturated.
+        let mut over_budget = false;
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
             let stats = {
@@ -416,25 +427,35 @@ where
                 // that ends the program, and keeping them would mean either a
                 // guard object or duplicating the recycle on the error path.
                 changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool)?;
+                if eg.decision_budget_exhausted() {
+                    over_budget = true;
+                    break;
+                }
             }
-            changes += apply_sequence_batch(
-                &seqs,
-                eg,
-                &index,
-                &stats,
-                model,
-                seq_globals,
-                &mut pool,
-                None,
-                &mut seq_report,
-            )?;
+            if !over_budget {
+                changes += apply_sequence_batch(
+                    &seqs,
+                    eg,
+                    &index,
+                    &stats,
+                    model,
+                    seq_globals,
+                    &mut pool,
+                    None,
+                    &mut seq_report,
+                )?;
+            }
         }
         // Before any exit from the loop body: the arenas go back so the next
         // round, and the next `(run)`, build into the same span tables.
         index.recycle_into(scratch, true);
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
         crate::phase_timing::round_line("naive");
-        if changes == 0 {
+        if over_budget {
+            return Ok(sat_result_seq(seq_report, i + 1, false, false, steps_base));
+        }
+        // `changes` still carries what the stamp cannot see: a `:subsume` flag newly set.
+        if changes == 0 && eg.size_stamp() == stamp {
             return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
         }
     }
@@ -579,6 +600,55 @@ pub(crate) fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::Va
 ///
 /// The root-binding pattern form `(= v pat)` is what produces such constraints; a rule
 /// that does not use it is unaffected, so this costs the existing corpus nothing.
+/// Whether a rule's right-hand side builds a term of an AC operator, whose spelling
+/// depends on the arguments' `atomic` bits and minimal monomials at build time (see
+/// `respelled` in the semi-naive loop).
+fn rhs_builds_ac<Cfg, L, S, const T: bool, const P: bool>(
+    rule: &PreparedRule<Cfg::O, S, L>,
+    eg: &EGraph<Cfg, L, T, P>,
+) -> bool
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    use crate::apply::{CompiledAction, RhsArg, RhsOp};
+    fn op_builds<Cfg, L, const T: bool, const P: bool>(
+        e: &RhsOp<Cfg::O, L>,
+        eg: &EGraph<Cfg, L, T, P>,
+    ) -> bool
+    where
+        Cfg: EGraphConfig,
+        L: LitVal,
+        Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+        MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    {
+        let RhsOp::App { op, args } = e else {
+            return false;
+        };
+        eg.ops().completion_column(*op).is_some()
+            || args.iter().any(|a| match a {
+                RhsArg::One(b) => op_builds(b, eg),
+                RhsArg::OneMult { body, .. } => op_builds(body, eg),
+                RhsArg::SetComp { body, filter, .. }
+                | RhsArg::MsetComp { body, filter, .. }
+                | RhsArg::SeqComp { body, filter, .. } => {
+                    op_builds(body, eg) || filter.as_deref().is_some_and(|f| op_builds(f, eg))
+                }
+                RhsArg::SpliceSeq(_) | RhsArg::SpliceSet(_) | RhsArg::SpliceMset(_) => false,
+            })
+    }
+    rule.actions.iter().any(|a| match a {
+        CompiledAction::Union(_, x, y) => op_builds(x, eg) || op_builds(y, eg),
+        CompiledAction::Insert(x) => op_builds(x, eg),
+        CompiledAction::Set { args, value, .. } => {
+            args.iter().any(|x| op_builds(x, eg)) || op_builds(value, eg)
+        }
+        CompiledAction::Subsume(_) => false,
+    })
+}
+
 pub(crate) fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> bool {
     // A flattened atom's views change when a class below its node gains a member of
     // the node's operator, and that event is a tuple of the nested node's relation,
@@ -600,17 +670,23 @@ pub(crate) fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> b
     if rq.atoms.iter().any(pattern_refs_global) {
         return true;
     }
-    let has_eq = rq
-        .atoms
-        .iter()
-        .any(|a| matches!(a, RAtom::Eq(..) | RAtom::EqGlobal(..)));
-    if !has_eq {
+    // An equality with a global is the fixed-class constraint above in
+    // disguise, whatever its local names: `(= x g)` with `x` a child of `(h x)`
+    // is satisfied once the global's class absorbs the child's, an event the
+    // delta records only through nodes it recanonicalizes, and the parent is
+    // not recanonicalized when the child's id survives as representative.
+    // `semi_eq_global_local.egg` is the regression test (the rule whose
+    // consequence semi-naive missed; its syntactic twin `((h g))` was already
+    // routed naive by `pattern_refs_global`).
+    if rq.atoms.iter().any(|a| matches!(a, RAtom::EqGlobal(..))) {
+        return true;
+    }
+    if !rq.atoms.iter().any(|a| matches!(a, RAtom::Eq(..))) {
         return false;
     }
     let node_vars: Vec<crate::ast::VarId> = rq.atoms.iter().filter_map(atom_node).collect();
     rq.atoms.iter().any(|a| match a {
         RAtom::Eq(x, y) => node_vars.contains(x) || node_vars.contains(y),
-        RAtom::EqGlobal(x, _) => node_vars.contains(x),
         _ => false,
     })
 }
@@ -860,6 +936,38 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
+    // Semi-naive is the one consumer of the merge-membership delta
+    // (`merge_in_classes`): without it a merge whose surviving representative
+    // is the id the parents already store recanonicalizes nothing, no delta
+    // names the match it enables, and the round misses it
+    // (`semi_merge_membership_delta.egg`). Every entry point reaches this
+    // function, so the flag is set here and restored on return, whatever the
+    // caller did.
+    let was_tracking = eg.track_merge_members();
+    eg.set_track_merge_members(true);
+    let r = saturate_rules_semi_tracked(rules, eg, model, spec, globals, scratch, stop);
+    eg.set_track_merge_members(was_tracking);
+    r
+}
+
+fn saturate_rules_semi_tracked<Cfg, L, M, S, R, const T: bool, const P: bool>(
+    rules: &[R],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    scratch: &mut crate::index::IndexScratch<Cfg>,
+    stop: Option<&StopGoal<'_, Cfg, L, T, P>>,
+) -> Result<SatResult, SatError>
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    R: RuleEntry<Cfg, S, L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
     let limit = spec.limit;
     let seqs = sequence_entries(rules, spec.ruleset);
     let seq_globals = R::sequence_globals(globals);
@@ -868,6 +976,8 @@ where
     // Outside the round loop, and shared by every variant of every rule: a
     // round runs one query per (rule, join atom), all of similar match count.
     let mut pool = MatchPool::new();
+    // The spelling epoch when the previous round's delta was cut (see `respelled` below).
+    let mut epoch_at_cut = eg.spelling_epoch();
     for i in 0..limit {
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
@@ -876,6 +986,11 @@ where
         }
         if goal_met(spec, eg) || stop.is_some_and(|f| f(eg)) {
             return Ok(sat_result_seq(seq_report, i, false, true, steps_base));
+        }
+        // An open lazy decision that ran out of budget (in this rebuild's completion or
+        // in the previous round's rules) is inconclusive: stop before matching.
+        if eg.decision_budget_exhausted() {
+            return Ok(sat_result_seq(seq_report, i, false, false, steps_base));
         }
         let full = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
@@ -909,9 +1024,23 @@ where
             (Vec::new(), Vec::new())
         };
         eg.clear_touched();
+        // In plain mode the node a right-hand side builds for an AC term depends on the
+        // `atomic` bit and the minimal monomial of each argument's class (design §6c), and
+        // a change to either changes no node, so it enters no delta. Naive re-fires every
+        // old match and rebuilds under the new state; semi-naive would not, and the two
+        // reached different fixpoints (`semi_naive_atomic_semi.egg`). When the state
+        // changed since the last cut, the rules that build an AC term match in full this
+        // round. Completion modes join the two spellings, so they need no re-match.
+        let respelled = !eg.cc_enabled() && eg.spelling_epoch() != epoch_at_cut;
+        epoch_at_cut = eg.spelling_epoch();
 
         let match_timer = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
+        // The fixpoint test compares the graph, not the actions' counts: see `size_stamp`.
+        let stamp = eg.size_stamp();
         let mut changes = 0;
+        // As in the naive loop: an open lazy decision's spent node budget stops the
+        // round after the rule (or variant) that spent it.
+        let mut over_budget = false;
         match &delta {
             // Round 0: naive — the whole graph is new.
             None => {
@@ -927,18 +1056,24 @@ where
                 {
                     changes +=
                         run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool)?;
+                    if eg.decision_budget_exhausted() {
+                        over_budget = true;
+                        break;
+                    }
                 }
-                changes += apply_sequence_batch(
-                    &seqs,
-                    eg,
-                    &full,
-                    &stats,
-                    model,
-                    seq_globals,
-                    &mut pool,
-                    None,
-                    &mut seq_report,
-                )?;
+                if !over_budget {
+                    changes += apply_sequence_batch(
+                        &seqs,
+                        eg,
+                        &full,
+                        &stats,
+                        model,
+                        seq_globals,
+                        &mut pool,
+                        None,
+                        &mut seq_report,
+                    )?;
+                }
             }
             // Rounds ≥ 1: one variant per join atom.
             Some(delta) => {
@@ -946,13 +1081,16 @@ where
                     let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
                     IndexStats::from_index(&full)
                 };
-                for rule in rules
+                'rules: for rule in rules
                     .iter()
                     .filter_map(|r| r.ordinary())
                     .filter(|r| r.ruleset == spec.ruleset)
                 {
                     let jatoms = join_atom_indices(&rule.query);
-                    if jatoms.is_empty() || needs_naive_match(&rule.query) {
+                    if jatoms.is_empty()
+                        || needs_naive_match(&rule.query)
+                        || (respelled && rhs_builds_ac(rule, eg))
+                    {
                         // No scanning atoms (e.g. a bare-literal rule), or a
                         // constraint between two atoms' node variables, whose
                         // enabling merge no delta records: run it naive so its
@@ -967,6 +1105,10 @@ where
                             globals,
                             &mut pool,
                         )?;
+                        if eg.decision_budget_exhausted() {
+                            over_budget = true;
+                            break 'rules;
+                        }
                         continue;
                     }
                     for &di in &jatoms {
@@ -978,24 +1120,30 @@ where
                         let vindex = VariantIndex::variant(&full, delta, di);
                         changes +=
                             run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool)?;
+                        if eg.decision_budget_exhausted() {
+                            over_budget = true;
+                            break 'rules;
+                        }
                     }
                 }
-                let rd = RoundDelta {
-                    index: delta,
-                    touched: &touched_ids,
-                    subsumed: &subsumed,
-                };
-                changes += apply_sequence_batch(
-                    &seqs,
-                    eg,
-                    &full,
-                    &full_stats,
-                    model,
-                    seq_globals,
-                    &mut pool,
-                    Some(&rd),
-                    &mut seq_report,
-                )?;
+                if !over_budget {
+                    let rd = RoundDelta {
+                        index: delta,
+                        touched: &touched_ids,
+                        subsumed: &subsumed,
+                    };
+                    changes += apply_sequence_batch(
+                        &seqs,
+                        eg,
+                        &full,
+                        &full_stats,
+                        model,
+                        seq_globals,
+                        &mut pool,
+                        Some(&rd),
+                        &mut seq_report,
+                    )?;
+                }
             }
         }
         match_timer.stop();
@@ -1008,8 +1156,12 @@ where
         full.recycle_into(scratch, true);
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
         crate::phase_timing::round_line(if had_delta { "semi" } else { "semi-r0" });
+        if over_budget {
+            return Ok(sat_result_seq(seq_report, i + 1, false, false, steps_base));
+        }
 
-        if changes == 0 {
+        // `changes` still carries what the stamp cannot see: a `:subsume` flag newly set.
+        if changes == 0 && eg.size_stamp() == stamp {
             return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
         }
     }
@@ -1050,6 +1202,7 @@ where
         let index = IndexStore::build(eg);
         let stats = crate::schedule::IndexStats::from_index(&index);
         let vindex = crate::index::VariantIndex::naive(&index);
+        let stamp = eg.size_stamp();
         let mut changes = 0;
         for (label, rule) in rules {
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
@@ -1105,7 +1258,7 @@ where
                 changes += applied.map_err(|e| crate::apply::name_fault(e, rule, eg))?;
             }
         }
-        if changes == 0 {
+        if changes == 0 && eg.size_stamp() == stamp {
             eprintln!("-- fixpoint after {total_iter} iterations --");
             return Ok(sat_result(total_iter, true, false, steps_base));
         }

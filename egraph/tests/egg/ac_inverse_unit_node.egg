@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; R2 (InvUnitFree), the other direction: the inverse of the unit is the unit.
+;; {Zero, Neg(Zero)} = {} and the unit drop give {Neg(Zero)} = {}.
+(sort E)
+(constructor A () E)
+(constructor C () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(let y (Neg (Zero)))
+(let s (Add (Zero) (Neg (Zero))))
+(check-eq y (Zero))

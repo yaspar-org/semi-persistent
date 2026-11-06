@@ -160,6 +160,7 @@ fn run_with<
             if d.check_ac_basis {
                 let report = interp.eg.cc_basis_report();
                 let (nonmin, _) = interp.eg.cc_min_used_nonminimal();
+                let (slot_nonmin, slot_offenders) = interp.eg.cc_slot_nonminimal();
                 let (lhs_red, _rhs_red) = interp.eg.cc_not_kapur_reduced();
                 let (axiom_nonjoin, axiom_offenders) = interp.eg.cc_axiom_cps_nonjoinable();
                 assert_eq!(
@@ -167,6 +168,11 @@ fn run_with<
                     0,
                     "CHECK_AC_BASIS: {nonmin} rules use a non-minimal min_monomial (active_rules={})",
                     report.rules.len()
+                );
+                assert_eq!(
+                    slot_nonmin, 0,
+                    "CHECK_AC_BASIS: {slot_nonmin} classes store a non-minimal min_monomial slot \
+                     (I5; offenders (class, op): {slot_offenders:?})"
                 );
                 assert_eq!(
                     lhs_red,
@@ -402,6 +408,14 @@ egg_test!(flatten_inverse, "flatten_inverse.egg");
 egg_test!(flatten_inverse_control, "flatten_inverse_control.egg");
 egg_test!(flatten_rest_only, "flatten_rest_only.egg");
 egg_test!(flatten_rest_only_control, "flatten_rest_only_control.egg");
+egg_test!(flatten_regroup_ac, "flatten_regroup_ac.egg");
+egg_test!(flatten_regroup_assoc, "flatten_regroup_assoc.egg");
+egg_test!(flatten_regroup_assoc_left, "flatten_regroup_assoc_left.egg");
+egg_test!(
+    flatten_regroup_assoc_right,
+    "flatten_regroup_assoc_right.egg"
+);
+egg_test!(flatten_regroup_control, "flatten_regroup_control.egg");
 egg_test!(checked_add_ok, "checked_add_ok.egg");
 // A partial primitive applied outside its domain is a reported program error,
 // not a panic: the engine cannot pick a value, but the caller has to be able to
@@ -518,11 +532,47 @@ egg_test!(ac_multiplicity_variant, "ac_multiplicity_variant.egg");
 egg_test!(ac_lazy_entailment, "ac_lazy_entailment.egg");
 egg_test!(ac_lazy_neq_derived, "ac_lazy_neq_derived.egg");
 egg_test!(ac_lazy_alternation, "ac_lazy_alternation.egg");
+// A lazy check whose rule rounds grow the graph 8x per round: the decision's cumulative
+// node budget and the per-round completion work budget stop it, and the check-neq reports
+// the stop as inconclusive. A regression of either budget hangs this fixture, which the
+// CI job's timeout reports; no test here bounds wall-clock time (design 13 §5).
+egg_test!(
+    ac_lazy_budget_inconclusive,
+    "ac_lazy_budget_inconclusive.egg"
+);
 egg_test!(semi_recanon_parent_delta, "semi_recanon_parent_delta.egg");
+egg_test!(semi_eq_global_local, "semi_eq_global_local.egg");
 egg_test!(
     semi_merge_membership_delta,
     "semi_merge_membership_delta.egg"
 );
+// The stop test: a round that minted nodes is not a fixpoint (fidelity row SA11).
+egg_test!(stop_self_union_mints, "stop_self_union_mints.egg");
+egg_test!(stop_assoc_flatten_mints, "stop_assoc_flatten_mints.egg");
+egg_test!(stop_insert_control, "stop_insert_control.egg");
+// Completion over a fold rewrites only on its spine (soundness hunt).
+egg_test!(ac_fold_completion_spine, "ac_fold_completion_spine.egg");
+// The minimal monomial under node growth (fidelity row EG1), and the twelve
+// AC-congruence conformance cases it failed.
+egg_test!(ac_minmono_grow_wa, "ac_minmono_grow_wa.egg");
+egg_test!(ac_minmono_grow_aw, "ac_minmono_grow_aw.egg");
+egg_test!(ac_key_survivor_lowered, "ac_key_survivor_lowered.egg");
+egg_test!(
+    ac_key_survivor_lowered_control,
+    "ac_key_survivor_lowered_control.egg"
+);
+egg_test!(ac_minmono_cc1_0007, "ac_minmono_cc1_0007.egg");
+egg_test!(ac_minmono_cc1_0039, "ac_minmono_cc1_0039.egg");
+egg_test!(ac_minmono_cc1_0073, "ac_minmono_cc1_0073.egg");
+egg_test!(ac_minmono_cc1_0344, "ac_minmono_cc1_0344.egg");
+egg_test!(ac_minmono_cc1_0425, "ac_minmono_cc1_0425.egg");
+egg_test!(ac_minmono_cc1_0798, "ac_minmono_cc1_0798.egg");
+egg_test!(ac_minmono_cc1_0856, "ac_minmono_cc1_0856.egg");
+egg_test!(ac_minmono_cc1_0897, "ac_minmono_cc1_0897.egg");
+egg_test!(ac_minmono_cc1_1299, "ac_minmono_cc1_1299.egg");
+egg_test!(ac_minmono_cc1_1550, "ac_minmono_cc1_1550.egg");
+egg_test!(ac_minmono_cc1_1904, "ac_minmono_cc1_1904.egg");
+egg_test!(ac_minmono_cc1_1941, "ac_minmono_cc1_1941.egg");
 egg_test!(rhs_mult_expr, "rhs_mult_expr.egg");
 egg_test!(rhs_mult_expr_underflow, "rhs_mult_expr_underflow.egg");
 egg_test!(rhs_comprehensions, "rhs_comprehensions.egg");
@@ -568,6 +618,20 @@ egg_test!(
     ac_flatten_order_dependence_eager,
     "ac_flatten_order_dependence_eager.egg"
 );
+// The same plain-mode order dependence, seen as a strategy difference: naive re-fires an
+// old match after a class turned `atomic` and builds the nested spelling the second rule
+// needs, semi-naive does not (`09-saturation.md` §9.2). The two files run one strategy
+// each; under eager completion both strategies pass.
+egg_test!(semi_naive_atomic_naive, "semi_naive_atomic_naive.egg");
+egg_test!(semi_naive_atomic_semi, "semi_naive_atomic_semi.egg");
+egg_test!(semi_naive_atomic_eager, "semi_naive_atomic_eager.egg");
+egg_test!(semi_naive_minmono, "semi_naive_minmono.egg");
+egg_test!(cancel_lattice, "cancel_lattice.egg");
+egg_test!(cancel_crit_pair, "cancel_crit_pair.egg");
+egg_test!(cancel_lattice_lazy, "cancel_lattice_lazy.egg");
+egg_test!(nilpotent_group_lattice, "nilpotent_group_lattice.egg");
+egg_test!(ac_collapsed_recanon, "ac_collapsed_recanon.egg");
+egg_test!(cc_disjoint_partner, "cc_disjoint_partner.egg");
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");
@@ -587,6 +651,21 @@ egg_test!(set_flatten_build, "set_flatten_build.egg");
 // the A row of design §5.3 and §5.2 (`05-algebraic-operators.md`). These two files
 // pin both behaviors; the AC/ACI counterparts above pin the multiset forms.
 egg_test!(a_flatten_build, "a_flatten_build.egg");
+// A spliced child is `find`'d at build: a stale stored child kept the node's key
+// non-canonical and unrecanonicalized (hash-cons miss after rebuild).
+egg_test!(seq_hashcons_miss_min, "seq_hashcons_miss_min.egg");
+egg_test!(rounds_r1_0581, "rounds_r1_0581.egg");
+egg_test!(flatten_stale_splice_assoc, "flatten_stale_splice_assoc.egg");
+egg_test!(
+    flatten_stale_splice_assoc_left,
+    "flatten_stale_splice_assoc_left.egg"
+);
+egg_test!(
+    flatten_stale_splice_assoc_right,
+    "flatten_stale_splice_assoc_right.egg"
+);
+egg_test!(flatten_stale_splice_ac, "flatten_stale_splice_ac.egg");
+egg_test!(flatten_stale_splice_aci, "flatten_stale_splice_aci.egg");
 egg_test!(a_singleton_collapse, "a_singleton_collapse.egg");
 
 // ── A-only matching: a fixed child an earlier atom already bound ──
@@ -603,6 +682,48 @@ egg_test!(a_matrix_kron_fusion, "a_matrix_kron_fusion.egg");
 egg_test!(ac_complete_containment, "ac_complete_containment.egg");
 egg_test!(ac_complete_superposition, "ac_complete_superposition.egg");
 egg_test!(ac_complete_cancel, "ac_complete_cancel.egg");
+// Consequences of `:inverse` beyond pair cancellation inside one monomial, asserted at
+// rebuild (R1, R2, R4, R5) and as rule-inverse critical pairs (R3); each with its control.
+egg_test!(ac_inverse_matching, "ac_inverse_matching.egg");
+egg_test!(ac_inverse_involution, "ac_inverse_involution.egg");
+egg_test!(ac_inverse_unit_free, "ac_inverse_unit_free.egg");
+egg_test!(ac_inverse_unit_node, "ac_inverse_unit_node.egg");
+egg_test!(ac_inverse_rule_cp, "ac_inverse_rule_cp.egg");
+egg_test!(ac_inverse_nilpotent, "ac_inverse_nilpotent.egg");
+egg_test!(ac_inverse_nilpotent_self, "ac_inverse_nilpotent_self.egg");
+egg_test!(
+    ac_inverse_nilpotent_absent,
+    "ac_inverse_nilpotent_absent.egg"
+);
+egg_test!(
+    ac_inverse_nilpotent_control,
+    "ac_inverse_nilpotent_control.egg"
+);
+egg_test!(ac_inverse_cancel_control, "ac_inverse_cancel_control.egg");
+// The min-monomial slot refresh (I5) and the flatten demand refold, fixtures of the two
+// previous fixes on this branch that were never registered.
+egg_test!(ac_min_slot_refresh, "ac_min_slot_refresh.egg");
+egg_test!(flatten_demand_refold, "flatten_demand_refold.egg");
+egg_test!(
+    flatten_demand_refold_control,
+    "flatten_demand_refold_control.egg"
+);
+// The demand rule under the laws: a leaf whose closing is not inert (the unit, a clamp
+// to zero, a cancel pair on either side) is satisfied; counterexamples 1-5 of the laws
+// proof (`demand_laws_complete_{ac,aci,assoc}`). The sequence case is unreachable (a
+// sequence has no unit) and the fixture pins that.
+egg_test!(flatten_laws_inverse, "flatten_laws_inverse.egg");
+egg_test!(flatten_laws_identity, "flatten_laws_identity.egg");
+egg_test!(flatten_laws_nilpotent, "flatten_laws_nilpotent.egg");
+egg_test!(flatten_laws_inverse_leaf, "flatten_laws_inverse_leaf.egg");
+// A fold opens only its spine under `:flatten`.
+egg_test!(flatten_fold_spine, "flatten_fold_spine.egg");
+// A binary pattern does not match a flattened fold; a rest variable does.
+egg_test!(
+    flatten_fold_binary_pattern,
+    "flatten_fold_binary_pattern.egg"
+);
+egg_test!(flatten_laws_assoc_unit, "flatten_laws_assoc_unit.egg");
 // Regression for the leapfrog_join target-clear bug: a rule with two same-op AC atoms +
 // rest-vars (the bound-node ByRepr re-join cleared a target bound upstream). Completion off.
 egg_test!(ac_two_same_op_atoms, "ac_two_same_op_atoms.egg");

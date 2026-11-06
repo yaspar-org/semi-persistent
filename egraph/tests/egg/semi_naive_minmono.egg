@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Plain mode: a merge that changes a class's minimal monomial changes the node a
+;; right-hand side builds, and no node changes, so the semi-naive delta does not record it.
+;; Round 1 builds Q's argument by splicing `[Add(C,D)]`'s minimal monomial, `Add{C,D,Y}`,
+;; and the same round's union joins it with `Add(A,B)`, whose summands carry lower keys, so
+;; the class's minimal monomial becomes `{A,B}`. Naive re-fires `(P (Y))` in round 2 and
+;; builds `Add{A,B,Y}`, which the second rule matches. Semi-naive did not re-fire it, and
+;; `(W (Y))` failed under it alone; the semi-naive loop now re-matches the rules that build
+;; an AC term in full after such a change (`spelling_epoch`, design §9.2).
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E) (function Y () E)
+(function Add (E) E :assoc-comm)
+(function P (E) E) (function Q (E) E) (function W (E) E)
+(let a (A))
+(let b (B))
+(let k (Add (C) (D)))
+(let p (P (Y)))
+(rule ((P y)) ((Q (Add (Add (C) (D)) y)) (union (Add (C) (D)) (Add (A) (B)))))
+(rule ((Q (Add (A) (B) w))) ((W w)))
+(run 10)
+(check (W (Y)))

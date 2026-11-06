@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+(sort E)
+(constructor X () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :nilpotent 3 :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(let s (Add (X) (X)))
+(let t (Neg (X)))
+(let u (Add (X) (X) (X)))
+(check-eq u (Zero))
+(check-eq s t)

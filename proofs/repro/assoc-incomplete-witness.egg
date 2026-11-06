@@ -1,0 +1,35 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Incompleteness of congruence closure modulo associativity alone.
+;;
+;; Cat is associative, not commutative. Two asserted equalities:
+;;   Cat[a, b] = x      and      Cat[b, c] = y
+;; Completion orients both toward the shorter side (shortlex):
+;;   Cat[a, b] -> x,  Cat[b, c] -> y
+;; The word Cat[a, b, c] rewrites two ways, overlapping on b:
+;;   Cat[a, b, c] -> Cat[x, c]   and   Cat[a, b, c] -> Cat[a, y]
+;; so Cat[x, c] = Cat[a, y] is a consequence. Both sides are normal forms
+;; of the two rules, and the only derivation between them goes through
+;; the longer word Cat[a, b, c]. The engine's A-only completion reduces
+;; contiguous factors and never superposes (a_round, egraph.rs ~2420), so
+;; it does not add the critical-pair rule and the check fails.
+;;
+;; Adding superposition would close this instance, but not the problem:
+;; ground congruence closure modulo associativity is the word problem for
+;; finitely presented semigroups, undecidable (Markov 1947, Post 1947),
+;; so no terminating completion is complete for every program.
+(sort E)
+(function a () E) (function b () E) (function c () E)
+(function x () E) (function y () E)
+(function Cat (E) E :assoc)
+(set-option :completion eager)
+(union (Cat a b) (x))
+(union (Cat b c) (y))
+;; Variant: the longer word Cat[a, b, c] is materialized as a node. The
+;; check still fails: reduction rewrites the node to one normal form and
+;; merges it there; the second reduct is never produced because the rules
+;; are not confluent and no critical pair is computed.
+(let w (Cat a b c))
+(let lhs (Cat x c))
+(let rhs (Cat a y))
+(check-eq lhs rhs)

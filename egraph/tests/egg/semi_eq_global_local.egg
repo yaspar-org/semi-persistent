@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; TYPES: machine
+;; Regression: a rule whose pattern equates a global to a non-node local,
+;; `((h x) (= x g))`, must run naive. The match appears when g's class absorbs
+;; b's, and b's id survives as representative (its class is the heavier one),
+;; so (h b) is not recanonicalized and no delta names it; the only touched
+;; node is the absorbed (a). The syntactic twin `((h g))` was already routed
+;; naive. Found by the cross-round delta proof (proofs/lean,
+;; Rounds/Counter.lean, `delta_incomplete_global`). EVAL both.
+(datatype E (h E) (a) (b) (c) (d) (b1) (b2) (b3))
+(let g (a))
+(let t (h (b)))
+(union (b) (b1))
+(union (b) (b2))
+(union (b) (b3))
+(rule ((h x) (= x g)) ((union (c) (d))))
+(rewrite (a) (b))
+(run 3)
+(check-eq (c) (d))

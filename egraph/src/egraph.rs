@@ -209,6 +209,15 @@ pub struct EGraph<
     /// a union joined). Folded into `width_error` by the next check: atomic so a shared
     /// read can record it and the e-graph stays `Sync`.
     monomial_overflow: std::sync::atomic::AtomicBool,
+    /// Counts the events that change how a build spells an AC term: a class holding a
+    /// completion monomial turns `atomic` (the build stops splicing it), or a merge changes
+    /// a class's minimal monomial for an op (the build splices a different monomial).
+    /// Neither event changes a node, so neither enters the semi-naive delta; the semi-naive
+    /// loop reads this counter instead and, in plain mode, re-matches in full the rules
+    /// whose right-hand side builds an AC term (design §9.2, "A build-time choice the delta
+    /// cannot see"). Monotone, and not rolled back by `restore`: a spurious increase only
+    /// costs a full match.
+    spelling_epoch: u64,
     /// Goal pair for goal-directed completion (the lazy-check transaction):
     /// the completion loop polls it between passes and inside a round's apply
     /// loops, and stops with [`CompletionOutcome::GoalMet`] as soon as the
@@ -216,8 +225,31 @@ pub struct EGraph<
     cc_goal: Option<(Cfg::G, Cfg::G)>,
     /// Node count at the start of the current completion run, for the
     /// in-round budget check (`cc_should_stop`): a single blown-up round is
-    /// stopped mid-apply instead of only between rounds.
+    /// stopped mid-apply instead of only between rounds. Inside a lazy decision
+    /// it is the decision's own start (`decision_start`), so the budget is
+    /// cumulative over the decision.
     cc_start_nodes: usize,
+    /// Node count when the current lazy decision opened
+    /// ([`open_decision_budget`](Self::open_decision_budget)), `None` outside one.
+    /// While set, `completion_node_budget` counts every node minted since that point,
+    /// by rule applications and by completion alike: each completion `rebuild`
+    /// measures its growth from here instead of from its own start, and the
+    /// saturation apply loops stop once the count passes it
+    /// ([`decision_budget_exhausted`](Self::decision_budget_exhausted)).
+    decision_start: Option<usize>,
+    /// Set when a completion `rebuild` inside the open lazy decision stopped on a budget
+    /// (node growth or round work). The decision is inconclusive from then on, so the
+    /// saturation loops stop at their next check instead of growing the graph further.
+    decision_spent: bool,
+    /// Work budget for one completion round, in rule containment tests (the
+    /// normalizers' `find_applicable` and the round's reducibility pass). A round past
+    /// it stops and `rebuild` reports [`CompletionOutcome::AbortedWorkLimit`]. Like
+    /// `completion_node_budget`, a resource backstop and a config knob, not
+    /// semi-persistent state; default [`DEFAULT_COMPLETION_WORK_BUDGET`].
+    completion_work_budget: u64,
+    /// Set by a completion round that passed `completion_work_budget`: the work it had
+    /// spent. `rebuild` takes it and reports the abort.
+    cc_work_stop: Option<u64>,
     /// Whether `rebuild` runs the AC congruence-completion pass (superposition +
     /// inter-reduction). **Default off** because ground AC completion is doubly
     /// exponential in the worst case. The growth backstop is checked between rounds and
@@ -237,6 +269,16 @@ pub struct EGraph<
     /// per-class `min_monomial`, §9a). Two buffers to hold both sides without aliasing;
     /// cleared and refilled per comparison, never grown per merge.
     cmp_buf_a: Vec<(Cfg::G, Cfg::M)>,
+    /// Scratch for `rebuild_congruence`: parents whose span shrank in the absorbed-uses
+    /// sweep, refreshed into the min-monomial pool after the sweep releases the use-list
+    /// borrow. Round-local, never restored.
+    refresh_buf: Vec<Cfg::G>,
+    /// Classes whose completion order key a merge lowered (`fold_min_monomial`): the
+    /// survivor took the absorbed side's lesser key. Every completion node holding such a
+    /// class as a child shrank in the key order with no change to its span, so no
+    /// recanonization refreshes it; `rebuild_congruence` refreshes those parents. Cleared
+    /// by `restore` with the worklist.
+    key_lowered: Vec<Cfg::G>,
     cmp_buf_b: Vec<(Cfg::G, Cfg::M)>,
     /// Reusable scratch for flattening nested same-op AC children (`WF_flat`,
     /// design §6c). Worklist of children still to expand; never grown per add.
@@ -281,9 +323,16 @@ pub struct EGraph<
     repair_state: Option<(usize, usize)>,
 }
 
-/// Default node-growth budget for one completion-enabled `rebuild` (see
-/// [`EGraph::set_completion_node_budget`]).
+/// Default node-growth budget for one completion-enabled `rebuild`, or for one lazy
+/// decision (see [`EGraph::set_completion_node_budget`]).
 pub const DEFAULT_COMPLETION_NODE_BUDGET: usize = 50_000;
+
+/// Default work budget for one completion round, in rule containment tests (see
+/// [`EGraph::set_completion_work_budget`]). The largest round of the test suite,
+/// the 200-program `conform-cc` sample included, costs 122,750 tests, so the default
+/// is about 800 times above it; at the measured 3 to 10 ns per test a round stops
+/// within about a second. `ac_lazy_budget_inconclusive.egg` is the round it stops.
+pub const DEFAULT_COMPLETION_WORK_BUDGET: u64 = 100_000_000;
 
 /// Outcome of the AC congruence-completion pass inside `rebuild`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -302,6 +351,11 @@ pub enum CompletionOutcome {
     /// Completion aborted because the node-growth budget was exceeded. The e-graph is
     /// sound-but-incomplete: some AC-entailed equalities may be missing.
     AbortedGrowthLimit { added_nodes: usize, limit: usize },
+    /// Completion aborted because one round tested more rules for containment than the
+    /// work budget allows ([`EGraph::set_completion_work_budget`]): a round over a large
+    /// rule set can cost targets times rules while minting almost nothing, which the
+    /// node budget cannot see. Sound-but-incomplete, as for the growth limit.
+    AbortedWorkLimit { work: u64, limit: u64 },
     /// Completion stopped because a critical pair or a normal form needed a multiplicity
     /// the configured width cannot hold. The e-graph is a valid plain-congruence-closed
     /// state and incomplete; the overflow is also recorded for the caller to report
@@ -312,6 +366,17 @@ pub enum CompletionOutcome {
     /// deliberately unfinished — the caller asked a question and it is
     /// answered. Only the lazy-check transaction sets a goal.
     GoalMet { rounds: usize },
+}
+
+impl CompletionOutcome {
+    /// Whether completion stopped on a resource budget (node growth or round work)
+    /// before its fixpoint: the lazy checks report such a stop as inconclusive.
+    pub fn is_budget_stop(self) -> bool {
+        matches!(
+            self,
+            Self::AbortedGrowthLimit { .. } | Self::AbortedWorkLimit { .. }
+        )
+    }
 }
 
 /// Aggregate counts from [`EGraph::dump_all_proofs`].
@@ -410,11 +475,18 @@ where
             width_error: None,
             no_value: 0,
             monomial_overflow: std::sync::atomic::AtomicBool::new(false),
+            spelling_epoch: 0,
             cc_goal: None,
             cc_start_nodes: 0,
+            decision_start: None,
+            decision_spent: false,
+            completion_work_budget: DEFAULT_COMPLETION_WORK_BUDGET,
+            cc_work_stop: None,
             cc: false,
             basis_checks: std::env::var_os("AC_BASIS_DUMP").is_some(),
             cmp_buf_a: Vec::new(),
+            refresh_buf: Vec::new(),
+            key_lowered: Vec::new(),
             cmp_buf_b: Vec::new(),
             flatten_buf: Vec::new(),
             mset_flatten_buf: Vec::new(),
@@ -461,6 +533,57 @@ where
         self.completion_node_budget = budget;
     }
 
+    /// Set the work budget for one completion round, in rule containment tests (default
+    /// [`DEFAULT_COMPLETION_WORK_BUDGET`]). Exceeding it aborts completion soundly and
+    /// records [`CompletionOutcome::AbortedWorkLimit`]. A config knob, not
+    /// semi-persistent state.
+    pub fn set_completion_work_budget(&mut self, budget: u64) {
+        self.completion_work_budget = budget;
+    }
+
+    /// Open a lazy decision's cumulative node budget at the current node count (see the
+    /// `decision_start` field). Until [`close_decision_budget`](Self::close_decision_budget),
+    /// `completion_node_budget` bounds every node minted since this call, and completion
+    /// rebuilds report [`CompletionOutcome::AbortedGrowthLimit`] once it is spent.
+    pub fn open_decision_budget(&mut self) {
+        self.decision_start = Some(self.node_count());
+        self.decision_spent = false;
+    }
+
+    /// Close the lazy decision's node budget: completion rebuilds measure from their own
+    /// start again.
+    pub fn close_decision_budget(&mut self) {
+        self.decision_start = None;
+        self.decision_spent = false;
+    }
+
+    /// Whether the open lazy decision is out of budget: it has minted more nodes than
+    /// `completion_node_budget` allows, or one of its completion rebuilds stopped on a
+    /// budget. Always false outside a decision. The saturation loops read it after each
+    /// round's rebuild and after every rule.
+    pub fn decision_budget_exhausted(&self) -> bool {
+        self.decision_start.is_some_and(|start| {
+            self.decision_spent
+                || self.node_count() > start.saturating_add(self.completion_node_budget)
+        })
+    }
+
+    /// Whether the class holds a completion monomial for some op.
+    fn class_has_monomial(&self, repr: Cfg::ClassKey) -> bool {
+        self.key_col()
+            .is_some_and(|k| (0..k).any(|col| self.classes.min_monomial(repr, col).is_some()))
+    }
+
+    /// The count of build-spelling changes (see the `spelling_epoch` field).
+    pub fn spelling_epoch(&self) -> u64 {
+        self.spelling_epoch
+    }
+
+    /// Whether AC completion runs in `rebuild` (any completion mode).
+    pub fn cc_enabled(&self) -> bool {
+        self.cc
+    }
+
     /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
     /// See the `cc` field docs and `doc/future/ac-completion-limitations.md` §1.
     pub fn set_cc(&mut self, enabled: bool) {
@@ -497,8 +620,8 @@ where
     }
 
     /// Goal-directed early stop for the completion loops: the goal pair
-    /// joined, or the in-round node budget is exhausted. `rebuild` sorts out
-    /// which of the two happened.
+    /// joined, or the in-round node budget is exhausted (counted from the open lazy
+    /// decision's start, if any). `rebuild` sorts out which of the two happened.
     fn cc_should_stop(&self) -> bool {
         if let Some((a, b)) = self.cc_goal
             && self.classes.find_const(a) == self.classes.find_const(b)
@@ -913,6 +1036,11 @@ where
         self.track_merge_members = on;
     }
 
+    /// Whether merges record their absorbed members in the touched log.
+    pub fn track_merge_members(&self) -> bool {
+        self.track_merge_members
+    }
+
     /// The number of distinct e-classes over the current node set. A scan, not a maintained
     /// counter: `(print-size)` / `(print-stats)` ask for it a handful of times per program.
     pub fn class_count(&self) -> usize {
@@ -1127,6 +1255,14 @@ where
         if result.is_fresh() {
             for &child in &self.g_buf {
                 if let Some(repr) = self.classes.repr_id(child) {
+                    if !self.classes.atomic(repr)
+                        && (0..self.classes.min_width().saturating_sub(1))
+                            .any(|col| self.classes.min_monomial(repr, col).is_some())
+                    {
+                        // A class holding a completion monomial turns `atomic`: from now on
+                        // a build keeps it nested (see the `spelling_epoch` field).
+                        self.spelling_epoch += 1;
+                    }
                     self.classes.add_use(repr, id);
                 }
             }
@@ -1221,6 +1357,14 @@ where
         if result.is_fresh() {
             for c in &self.mset_buf {
                 if let Some(repr) = self.classes.repr_id(Cfg::mset_child_id(c)) {
+                    if !self.classes.atomic(repr)
+                        && (0..self.classes.min_width().saturating_sub(1))
+                            .any(|col| self.classes.min_monomial(repr, col).is_some())
+                    {
+                        // A class holding a completion monomial turns `atomic`: from now on
+                        // a build keeps it nested (see the `spelling_epoch` field).
+                        self.spelling_epoch += 1;
+                    }
                     self.classes.add_use(repr, id);
                 }
             }
@@ -1511,28 +1655,72 @@ where
         node.map(|n| self.classes.find_const(n))
     }
 
-    /// After a merge, fold the absorbed class's per-class AC data into the survivor's,
-    /// per completion column: keep the `monomial_cmp`-least min-monomial node for each op, and
-    /// OR-in the `atomic` flag (§9a). O(nb_completion) columns, each O(1) plus a monomial read,
-    /// into reusable buffers. Done here, not in `EClasses`, because the comparison needs node
-    /// (AC-children) access and the op→column map. Best-effort under merge-cascade staleness;
-    /// completion's read-time orientation guard makes that safe (§9b).
+    /// After a merge, fold the absorbed class's per-class AC data into the survivor's:
+    /// the merged class takes the lesser of the two completion order keys (`order_key`),
+    /// then, per completion column, keeps the `monomial_cmp_key`-least min-monomial node
+    /// for each op and ORs in the `atomic` flag (§9a). The key is folded first, so the
+    /// two minimal monomials are compared in the order as it stands after the merge. O(nb_completion)
+    /// columns, each O(1) plus a monomial read, into reusable buffers. Done here, not in
+    /// `EClasses`, because the comparison needs node (AC-children) access and the
+    /// op→column map. Best-effort under merge-cascade staleness; completion's read-time
+    /// orientation guard makes that safe (§9b).
     fn fold_min_monomial(
         &mut self,
         survivor: Cfg::G,
+        absorbed: Cfg::G,
         absorbed_min_row: Option<<Cfg::G as DenseId>::Index>,
         absorbed_atomic: bool,
     ) {
-        let surv_repr = match self.classes.repr_id(self.classes.find_const(survivor)) {
+        let surv_root = self.classes.find_const(survivor);
+        let surv_repr = match self.classes.repr_id(surv_root) {
             Some(r) => r,
             None => return,
         };
+        let Some(key_col) = self.key_col() else {
+            if absorbed_atomic {
+                self.classes.set_atomic(surv_repr);
+            }
+            return;
+        };
+        let surv_atomic = self.classes.atomic(surv_repr);
+        if surv_atomic != absorbed_atomic {
+            // The joined class is atomic; the side that was not had its monomials spliced.
+            let was_spliced = if surv_atomic {
+                (0..key_col).any(|col| {
+                    self.classes
+                        .min_monomial_at_row(absorbed_min_row, col)
+                        .is_some()
+                })
+            } else {
+                self.class_has_monomial(surv_repr)
+            };
+            if was_spliced {
+                self.spelling_epoch += 1;
+            }
+        }
         if absorbed_atomic {
             self.classes.set_atomic(surv_repr);
         }
+        // The merged class's key is the lesser of the two. A class with no stored key has
+        // its root as key: it has not merged since keys were first kept (the first
+        // completion node), and its root has not changed since. Written only when the
+        // absorbed side's key is the lesser, so a merge that keeps the survivor's key
+        // allocates no pool row.
+        let surv_key = self
+            .classes
+            .min_monomial(surv_repr, key_col)
+            .unwrap_or(surv_root);
+        let abs_key = self
+            .classes
+            .min_monomial_at_row(absorbed_min_row, key_col)
+            .unwrap_or(absorbed);
+        if abs_key < surv_key {
+            self.classes.set_min_monomial(surv_repr, key_col, abs_key);
+            self.key_lowered.push(surv_root);
+        }
         let mut a = std::mem::take(&mut self.cmp_buf_a);
         let mut b = std::mem::take(&mut self.cmp_buf_b);
-        for col in 0..self.classes.min_width() {
+        for col in 0..key_col {
             let Some(absorbed_min) = self.classes.min_monomial_at_row(absorbed_min_row, col) else {
                 continue; // absorbed class has no monomial for this op
             };
@@ -1540,19 +1728,123 @@ where
                 None => {
                     // survivor had no monomial for this op; take the absorbed one.
                     self.classes.set_min_monomial(surv_repr, col, absorbed_min);
+                    self.spelling_epoch += 1;
                 }
                 Some(surv_min) if surv_min != absorbed_min => {
                     self.node_monomial_into(surv_min, &mut a);
                     self.node_monomial_into(absorbed_min, &mut b);
-                    if crate::multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
+                    if self.monomial_cmp_key(&b, &a) == std::cmp::Ordering::Less {
                         self.classes.set_min_monomial(surv_repr, col, absorbed_min);
                     }
+                    // Either side's references now splice one monomial where they spliced
+                    // two different ones.
+                    self.spelling_epoch += 1;
                 }
                 Some(_) => {} // equal; nothing to do
             }
         }
         self.cmp_buf_a = a;
         self.cmp_buf_b = b;
+    }
+
+    /// The pool column of the completion order key: the last one, after one column per
+    /// completion op. `None` before the first completion node, when no class keeps a key
+    /// and completion has nothing to order.
+    fn key_col(&self) -> Option<usize> {
+        self.classes.min_width().checked_sub(1)
+    }
+
+    /// The completion order key of `g`'s class. Completion orders monomials by keys, not
+    /// by class ids (`monomial_cmp_key`): a fresh class's key is its id, and a merged
+    /// class takes the lesser of the two keys (`fold_min_monomial`), so keys are distinct
+    /// across live classes and a merge only ever lowers the key of the classes it joins.
+    /// The union-find keeps its own survivor policy (rank, size, `--union-by`), and the
+    /// representative id can be the larger one. Ordering by representative id made a
+    /// node grow when a child merged into a class with a larger representative, which left
+    /// the class's stored minimal monomial above another member (I5) and lost completion
+    /// consequences (`ac_minmono_grow_wa.egg`; Lean `idOrder_grow_breaks_I5`). With keys a
+    /// child's key only goes down, so recanonization never grows a node and the shrink
+    /// refresh (`refresh_min_monomial`) keeps I5. The key lives in the classes' tracked
+    /// min-monomial pool, so `restore` rolls it back.
+    pub(crate) fn order_key(&self, g: Cfg::G) -> Cfg::G {
+        let root = self.classes.find_const(g);
+        if let Some(col) = self.key_col()
+            && let Some(repr) = self.classes.repr_id(root)
+            && let Some(k) = self.classes.min_monomial(repr, col)
+        {
+            return k;
+        }
+        root
+    }
+
+    /// Degree-lex over completion order keys: total size first, then the `(key, count)`
+    /// entries from the largest key down, the larger count winning at the first
+    /// difference. This is `multiset::monomial_cmp` with each class replaced by its
+    /// `order_key`; stored monomials stay sorted by class id (the hash-cons, the
+    /// decompositions and the indexes depend on that), so each side is copied and sorted
+    /// by key into an inline buffer, with no allocation up to 16 distinct classes. Every
+    /// order completion uses goes through here: rule orientation, the minimal monomial
+    /// (fold, refresh) and the basis diagnostics, so orientation and the minimal monomial
+    /// agree.
+    pub(crate) fn monomial_cmp_key(
+        &self,
+        a: &[(Cfg::G, Cfg::M)],
+        b: &[(Cfg::G, Cfg::M)],
+    ) -> std::cmp::Ordering {
+        type Keyed<G, M> = smallvec::SmallVec<[(G, M); 16]>;
+        crate::multiset::monomial_size_cmp(a, b).then_with(|| {
+            let keyed = |m: &[(Cfg::G, Cfg::M)]| -> Keyed<Cfg::G, Cfg::M> {
+                let mut v: Keyed<Cfg::G, Cfg::M> =
+                    m.iter().map(|&(g, k)| (self.order_key(g), k)).collect();
+                v.sort_unstable();
+                v
+            };
+            let (ka, kb) = (keyed(a), keyed(b));
+            ka.iter().rev().cmp(kb.iter().rev())
+        })
+    }
+
+    /// Keep the min-monomial slot least after an in-place recanonization. Invariant (I5):
+    /// the slot of a class in `id`'s op column is the degree-lex-least *active* same-op
+    /// monomial of that class. The slot is written at creation (`register_if_fresh`) and
+    /// folded on merge (`fold_min_monomial`); recanonization rewrites a stored node's span
+    /// in place (coalesce, unit drop, clamp after a child merge) and can shrink `id` below
+    /// the stored minimum. It never grows `id`: completion orders by `order_key`, and a merge
+    /// only lowers keys, so this one-sided update keeps the stored minimum least. A key
+    /// lowered on the
+    /// survivor's side shrinks parents without rewriting them; `refresh_key_lowered` calls
+    /// this for those. The trap: with a stale minimum the old minimum is not a rule
+    /// (`M = r(c)`) and the shrunk node is dropped by the orientation guard (`M ≺ r(c)`), so
+    /// the class yields no rule and completion misses `a+b+z = p+q+z` from `a+b = p+q+r`,
+    /// `r = 0`.
+    /// O(1) plus two monomial reads; the write goes through the tracked pool, so `restore`
+    /// rolls it back with the recanonization.
+    fn refresh_min_monomial(&mut self, id: Cfg::G) {
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        if self.node_flags(id) & (FLAG_SUBSUMED | FLAG_AC_COLLAPSED) != 0 {
+            return;
+        }
+        let Some(col) = self.completion_column(id) else {
+            return;
+        };
+        let Some(repr) = self.classes.repr_id(self.classes.find_const(id)) else {
+            return;
+        };
+        match self.classes.min_monomial(repr, col) {
+            None => self.classes.set_min_monomial(repr, col, id),
+            Some(cur) if cur != id => {
+                let mut a = std::mem::take(&mut self.cmp_buf_a);
+                let mut b = std::mem::take(&mut self.cmp_buf_b);
+                self.node_monomial_into(cur, &mut a);
+                self.node_monomial_into(id, &mut b);
+                if self.monomial_cmp_key(&b, &a) == std::cmp::Ordering::Less {
+                    self.classes.set_min_monomial(repr, col, id);
+                }
+                self.cmp_buf_a = a;
+                self.cmp_buf_b = b;
+            }
+            Some(_) => {}
+        }
     }
 
     pub fn merge(&mut self, a: Cfg::G, b: Cfg::G) -> Option<(Cfg::G, Cfg::G)> {
@@ -1571,7 +1863,12 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.merge_in_classes(a, b, None)?;
-        self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+        self.fold_min_monomial(
+            m.survivor,
+            m.absorbed,
+            m.absorbed_min_row,
+            m.absorbed_atomic,
+        );
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -1746,7 +2043,12 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.merge_in_classes(a, b, Some(just))?;
-        self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+        self.fold_min_monomial(
+            m.survivor,
+            m.absorbed,
+            m.absorbed_min_row,
+            m.absorbed_atomic,
+        );
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -2120,7 +2422,8 @@ where
     /// another congruence pass, then complete again, until a whole completion round
     /// adds nothing. Only [`CompletionOutcome::Converged`] reports that joint
     /// fixpoint. [`CompletionOutcome::Disabled`], [`CompletionOutcome::GoalMet`],
-    /// and [`CompletionOutcome::AbortedGrowthLimit`] guarantee plain congruence
+    /// [`CompletionOutcome::AbortedGrowthLimit`] and
+    /// [`CompletionOutcome::AbortedWorkLimit`] guarantee plain congruence
     /// closure but not complete AC/ACI congruence closure. Inspect
     /// [`completion_outcome`](Self::completion_outcome) after each call.
     pub fn rebuild(&mut self) {
@@ -2162,8 +2465,10 @@ where
         // where it started, we stop rather than continue materializing nodes. This is NOT a
         // termination argument or a work bound — it is a growth guard, and the
         // abort is REPORTED (`CompletionOutcome::AbortedGrowthLimit`), never silent.
+        // Inside a lazy decision the budget is cumulative: growth counts from the
+        // decision's start, so nodes minted by rule rounds and earlier rebuilds are charged.
         let budget = self.completion_node_budget;
-        let start_nodes = self.node_count();
+        let start_nodes = self.decision_start.unwrap_or_else(|| self.node_count());
         self.cc_start_nodes = start_nodes;
         let basis_dump = self.basis_checks;
         let mut round = 0usize;
@@ -2198,6 +2503,19 @@ where
                 self.completion_outcome = Some(CompletionOutcome::GoalMet { rounds: round });
                 return;
             }
+            // A budget already spent (by the open lazy decision's rule rounds or by an
+            // earlier rebuild of it) stops before a round: the round's rule scan and
+            // reducibility pass cost rules squared before any in-round check runs.
+            if self.decision_spent {
+                // An earlier rebuild of the open lazy decision already stopped on a
+                // budget: the decision is inconclusive, and its outcome stays the one
+                // that rebuild reported. The graph is plain-congruence-closed here.
+                return;
+            }
+            if self.node_count() - start_nodes > budget {
+                self.abort_growth(start_nodes, budget, trace);
+                return;
+            }
             if basis_dump {
                 self.cc_basis_dump(&format!("round {round} pre"));
             }
@@ -2210,10 +2528,32 @@ where
                 self.cc_round(full, prev_mark, mark) | self.a_round() | self.canon_repair_round();
             prev_mark = mark;
             if std::mem::take(&mut self.cc_overflow) {
-                // Sound-but-incomplete stop, as for the growth budget, and reported.
+                // Sound-but-incomplete stop, as for the growth budget, and reported. A
+                // work stop the same round recorded is superseded, not left for the next
+                // rebuild to read.
+                self.cc_work_stop = None;
                 self.rebuild_congruence();
                 self.width_error.get_or_insert(MultOverflow);
                 self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
+                return;
+            }
+            if let Some(work) = self.cc_work_stop.take() {
+                // The round stopped on its work budget: same sound-but-incomplete stop,
+                // reported, and never read as a fixpoint (the round may have stopped
+                // before changing anything).
+                self.rebuild_congruence();
+                let limit = self.completion_work_budget;
+                self.completion_outcome = Some(CompletionOutcome::AbortedWorkLimit { work, limit });
+                self.decision_spent = self.decision_start.is_some();
+                if trace {
+                    eprintln!("[ac-complete] ABORT: round work {work} > budget {limit}");
+                }
+                return;
+            }
+            // A round the node budget stopped mid-apply may report no change, so the
+            // budget is checked before the fixpoint test, not after it.
+            if self.node_count() - start_nodes > budget {
+                self.abort_growth(start_nodes, budget, trace);
                 return;
             }
             if trace {
@@ -2230,6 +2570,12 @@ where
                 // A full round that also finds nothing is the implemented fixpoint reported
                 // by CompletionOutcome::Converged.
                 if was_full {
+                    // The exact cancelative closure runs at the fixpoint only: it merges
+                    // classes without adding nodes, and each merge reopens completion.
+                    if self.lattice_round() {
+                        full = false;
+                        continue;
+                    }
                     self.completion_outcome = Some(CompletionOutcome::Converged { rounds: round });
                     return;
                 }
@@ -2238,27 +2584,214 @@ where
             }
             // Made progress: stay incremental for the next round.
             full = false;
-            let added = self.node_count() - start_nodes;
-            if added > budget {
-                // Sound-but-incomplete stop: drain the pending congruence work so the
-                // graph is a valid (plain-congruence-closed) state, then report the abort
-                // through `completion_outcome` — the caller decides what to do with a
-                // partial completion (there is deliberately NO assert here: the abort is
-                // an expected, reported condition on pathological inputs, and tests drive
-                // it directly with a tiny budget).
-                self.rebuild_congruence();
-                self.completion_outcome = Some(CompletionOutcome::AbortedGrowthLimit {
-                    added_nodes: added,
-                    limit: budget,
-                });
-                if trace {
-                    eprintln!(
-                        "[ac-complete] ABORT: added {added} nodes > budget {budget} \
-                         without converging"
-                    );
+        }
+    }
+
+    /// The exact closure of a cancelative operator's equations, run when a full completion
+    /// round finds nothing. Over the commutative semigroup (or monoid) freely generated by
+    /// the classes, the cancelative congruence generated by equations `uᵢ = vᵢ` relates `x`
+    /// and `y` exactly when `x − y` lies in the lattice `L ⊆ ℤⁿ` spanned by the vectors
+    /// `uᵢ − vᵢ`: the quotient is cancelative, so it embeds in its universal group, which is
+    /// `ℤⁿ / L`. Kapur's §5 inferences (cancel-close each rule, superpose disjoint pairs)
+    /// cancel the common part of one equation at a time and do not reach every member of
+    /// `L`: in tests/egg/cancel_lattice.egg `c1c3² = ∅` needs
+    /// `c1c4² = c0²` added to two copies of `c4 = c0c3`, and no rule pair yields it.
+    ///
+    /// The step reads every node of the op (collapsed ones included: their equations still
+    /// hold) as the row `e_class − Σ mult·e_child`, adds `e_unit` for a declared identity,
+    /// `order·e_x` for every class under `:nilpotent` (which requires `:identity`, so the
+    /// structure is a group of exponent `order`, cancelative whether or not `:cancellative`
+    /// is declared; tests/egg/nilpotent_group_lattice.egg), and
+    /// `e_x + e_inv(x)` for every inverse node. It brings the rows to echelon form over ℤ
+    /// with exact integers, reduces each `e_class` to its coset representative (the entry at
+    /// each pivot column in `[0, pivot)`), and merges classes with equal representatives.
+    /// Two vectors in one coset reduce to one representative because a nonzero member of
+    /// `L` has a leading entry that is a nonzero multiple of that column's pivot.
+    ///
+    /// Each merge is a consequence of the declared laws, so the step is sound; it adds no
+    /// node, so it cannot grow the graph. A merge reopens completion: the caller runs
+    /// another round, and the next fixpoint runs this step again.
+    fn lattice_round(&mut self) -> bool {
+        use num_bigint::BigInt;
+        use num_traits::{Signed, Zero};
+        let mut ops: Vec<Cfg::O> = self
+            .completion_node_ids()
+            .map(|g| self.node_op(g))
+            .filter(|&op| {
+                self.op_cancellative(op)
+                    || matches!(self.op_clamp(op), CompletionClamp::Nilpotent { .. })
+            })
+            .collect();
+        ops.sort_unstable();
+        ops.dedup();
+        let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
+        let mut mono: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        for op in ops {
+            let mut var: std::collections::HashMap<Cfg::G, usize> = Default::default();
+            let mut classes: Vec<Cfg::G> = Vec::new();
+            let mut sparse: Vec<Vec<(usize, BigInt)>> = Vec::new();
+            let mut index = |g: Cfg::G, var: &mut std::collections::HashMap<Cfg::G, usize>| {
+                *var.entry(g).or_insert_with(|| {
+                    classes.push(g);
+                    classes.len() - 1
+                })
+            };
+            let nodes: Vec<Cfg::G> = self
+                .completion_node_ids()
+                .filter(|&g| self.node_op(g) == op)
+                .collect();
+            for node in nodes {
+                mono.clear();
+                self.node_monomial_into(node, &mut mono);
+                let mut row = vec![(
+                    index(self.classes.find_const(node), &mut var),
+                    BigInt::from(1),
+                )];
+                for &(c, m) in &mono {
+                    let k = index(self.classes.find_const(c), &mut var);
+                    row.push((k, -BigInt::from(m.to_biguint())));
                 }
-                return;
+                sparse.push(row);
             }
+            if let Some(u) = self.unit_node(op) {
+                sparse.push(vec![(
+                    index(self.classes.find_const(u), &mut var),
+                    BigInt::from(1),
+                )]);
+            }
+            if let Some(inv) = self.inverse_op(op) {
+                for (y, x) in self.inverse_classes(inv) {
+                    let a = index(self.classes.find_const(y), &mut var);
+                    let b = index(self.classes.find_const(x), &mut var);
+                    sparse.push(vec![(a, BigInt::from(1)), (b, BigInt::from(1))]);
+                }
+            }
+            let n = classes.len();
+            if let CompletionClamp::Nilpotent { order } = self.op_clamp(op) {
+                for k in 0..n {
+                    sparse.push(vec![(k, BigInt::from(order))]);
+                }
+            }
+            let mut rows: Vec<Vec<BigInt>> = sparse
+                .into_iter()
+                .map(|r| {
+                    let mut d = vec![BigInt::zero(); n];
+                    for (k, v) in r {
+                        d[k] += v;
+                    }
+                    d
+                })
+                .filter(|d| d.iter().any(|v| !v.is_zero()))
+                .collect();
+            // Echelon form by Euclid's algorithm per column.
+            let mut pivots: Vec<(usize, Vec<BigInt>)> = Vec::new();
+            for col in 0..n {
+                loop {
+                    let mut best: Option<usize> = None;
+                    for (i, r) in rows.iter().enumerate() {
+                        if !r[col].is_zero()
+                            && best.is_none_or(|b| r[col].abs() < rows[b][col].abs())
+                        {
+                            best = Some(i);
+                        }
+                    }
+                    let Some(b) = best else { break };
+                    let mut pivot = rows.swap_remove(b);
+                    if pivot[col].is_negative() {
+                        pivot.iter_mut().for_each(|v| *v = -&*v);
+                    }
+                    let mut reduced_all = true;
+                    for r in rows.iter_mut() {
+                        if r[col].is_zero() {
+                            continue;
+                        }
+                        let q = &r[col] / &pivot[col];
+                        for k in col..n {
+                            let t = &q * &pivot[k];
+                            r[k] -= t;
+                        }
+                        if !r[col].is_zero() {
+                            reduced_all = false;
+                        }
+                    }
+                    rows.retain(|r| r.iter().any(|v| !v.is_zero()));
+                    if reduced_all {
+                        pivots.push((col, pivot));
+                        break;
+                    }
+                    rows.push(pivot);
+                }
+            }
+            let mut by_rep: std::collections::HashMap<Vec<BigInt>, Cfg::G> = Default::default();
+            for (k, &g) in classes.iter().enumerate() {
+                let mut v = vec![BigInt::zero(); n];
+                v[k] = BigInt::from(1);
+                for (col, pivot) in &pivots {
+                    let p = &pivot[*col];
+                    let mut q = &v[*col] / p;
+                    if (&v[*col] - &q * p).is_negative() {
+                        q -= 1;
+                    }
+                    if !q.is_zero() {
+                        for j in *col..n {
+                            let t = &q * &pivot[j];
+                            v[j] -= t;
+                        }
+                    }
+                }
+                match by_rep.entry(v) {
+                    std::collections::hash_map::Entry::Occupied(e) => merges.push((*e.get(), g)),
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(g);
+                    }
+                }
+            }
+        }
+        let mut changed = false;
+        for (x, y) in merges {
+            if self.classes.find_const(x) == self.classes.find_const(y) {
+                continue;
+            }
+            let just = Justification::Cancellative {
+                node_a: x,
+                node_b: y,
+            };
+            let m = if PROOFS {
+                self.merge_in_classes(x, y, Some(just))
+            } else {
+                self.merge_in_classes(x, y, None)
+            };
+            if let Some(m) = m {
+                self.fold_min_monomial(
+                    m.survivor,
+                    m.absorbed,
+                    m.absorbed_min_row,
+                    m.absorbed_atomic,
+                );
+                self.worklist.push((m.absorbed_uses, m.survivor));
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Stop completion on the node budget: drain the pending congruence work so the
+    /// graph is a valid (plain-congruence-closed) state, then report the abort through
+    /// `completion_outcome`. The caller decides what to do with a partial completion
+    /// (there is deliberately no assert here: the abort is an expected, reported
+    /// condition on pathological inputs, and tests drive it directly with a tiny budget).
+    fn abort_growth(&mut self, start_nodes: usize, budget: usize, trace: bool) {
+        self.rebuild_congruence();
+        let added = self.node_count() - start_nodes;
+        self.completion_outcome = Some(CompletionOutcome::AbortedGrowthLimit {
+            added_nodes: added,
+            limit: budget,
+        });
+        self.decision_spent = self.decision_start.is_some();
+        if trace {
+            eprintln!(
+                "[ac-complete] ABORT: added {added} nodes > budget {budget} without converging"
+            );
         }
     }
 
@@ -2298,6 +2831,7 @@ where
                 .copied()
                 .map(|u| classes.find_const(u))
         };
+        let touched_before = self.touched.len();
         let normal = self.nodes.recanonize_node(
             parent,
             find,
@@ -2308,6 +2842,20 @@ where
             &mut self.touched,
             &self.ops,
         );
+        // The span changed (recanonize pushes to `touched` only then) and still forms a
+        // node: keep the class's min-monomial slot least (I5).
+        if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before {
+            self.refresh_min_monomial(parent);
+            // A collapse retired the node because another rule's left-hand side was
+            // contained in its old monomial; the new monomial may contain none, and then
+            // the node is a rule completion must superpose. Reactivate it: the next round
+            // re-tests reducibility and collapses it again if a rule still reduces it.
+            // Left set, `Add{c2,c3,c5}` collapsed by `c2c4 → c2c3` became `Add{c2²,c5}` at
+            // `C2 = C3`, and `C5 = C5·C5` was never derived (`ac_collapsed_recanon.egg`).
+            if self.node_flags(parent) & crate::node_types::FLAG_AC_COLLAPSED != 0 {
+                self.clear_node_flag(parent, crate::node_types::FLAG_AC_COLLAPSED);
+            }
+        }
         // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
         // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
         // then *equals* an existing class — empty ⇒ the unit, size-1 mult-1 ⇒ that child.
@@ -2322,6 +2870,35 @@ where
         }
     }
 
+    /// Refresh the minimal monomial for every completion parent of a class whose order
+    /// key a merge lowered (`key_lowered`). Lowering a child's key shrinks the parent in
+    /// the key order without touching its span, so the recanonization sweep, which visits
+    /// the absorbed side's parents only, does not see it; each such parent is folded into
+    /// its class's minimal monomial as an in-place shrink (`refresh_min_monomial`). The walk covers
+    /// the merged class's whole use list: the absorbed side's parents were refreshed
+    /// already, and a second refresh of them changes nothing.
+    fn refresh_key_lowered(&mut self) {
+        while let Some(class) = self.key_lowered.pop() {
+            let root = self.classes.find_const(class);
+            let Some(repr) = self.classes.repr_id(root) else {
+                continue;
+            };
+            let mut refresh = std::mem::take(&mut self.refresh_buf);
+            refresh.clear();
+            let list = self.classes.use_list_id(repr);
+            refresh.extend(
+                self.classes
+                    .uses()
+                    .iter(list)
+                    .filter(|&p| self.ops.completion_column(self.node_op(p)).is_some()),
+            );
+            for &parent in &refresh {
+                self.refresh_min_monomial(parent);
+            }
+            self.refresh_buf = refresh;
+        }
+    }
+
     /// Ordinary worklist-driven congruence closure: drain the merge worklist,
     /// recanonicalizing the parents of each absorbed class and merging the
     /// resulting hash-cons collisions, to a fixpoint.
@@ -2332,6 +2909,8 @@ where
             // mirrors `recanonize_parent` — it cannot be a method call here because the
             // use-list iterator holds `self.classes` for the whole loop, and only inline
             // field-disjoint borrows split around it.
+            let mut refresh = std::mem::take(&mut self.refresh_buf);
+            refresh.clear();
             for parent in self.classes.uses().iter(absorbed_uses) {
                 let find = |g: Cfg::G| self.classes.find_const(g);
                 let units = &self.unit_node;
@@ -2342,6 +2921,7 @@ where
                         .copied()
                         .map(|u| classes.find_const(u))
                 };
+                let touched_before = self.touched.len();
                 let normal = self.nodes.recanonize_node(
                     parent,
                     find,
@@ -2352,6 +2932,13 @@ where
                     &mut self.touched,
                     &self.ops,
                 );
+                // As in `recanonize_parent`: a changed span that is still a node refreshes
+                // the class's min-monomial slot (I5). Deferred past the loop, which holds
+                // the use-list borrow.
+                if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before
+                {
+                    refresh.push(parent);
+                }
                 if normal == crate::nary_canon::Normal::Overflow {
                     self.width_error.get_or_insert(MultOverflow);
                 }
@@ -2360,10 +2947,16 @@ where
                 }
             }
 
+            for &parent in &refresh {
+                self.refresh_min_monomial(parent);
+            }
+            self.refresh_buf = refresh;
+
             let current_surv = self.classes.find_const(survivor);
             let surv_repr = self.classes.repr_id(current_surv).unwrap();
             let surv_list = self.classes.use_list_id(surv_repr);
             self.classes.splice_uses(surv_list, absorbed_uses);
+            self.refresh_key_lowered();
 
             // If this merge made the merged class an op's identity (unit) class, the
             // unit-drop law now applies to EVERY parent holding this class as a summand —
@@ -2403,11 +2996,18 @@ where
                     self.merge_in_classes(a, b, None)
                 };
                 if let Some(m) = m {
-                    self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+                    self.fold_min_monomial(
+                        m.survivor,
+                        m.absorbed,
+                        m.absorbed_min_row,
+                        m.absorbed_atomic,
+                    );
                     self.worklist.push((m.absorbed_uses, m.survivor));
                 }
             }
         }
+        // A key lowered by a merge that pushed no worklist entry of its own.
+        self.refresh_key_lowered();
     }
 
     /// One A-only (`Seq`) inter-reduction round: the transfer of the AC
@@ -2499,9 +3099,26 @@ where
                 if *op != g_op || lhs.len() > buf.len() {
                     continue;
                 }
-                let Some(s) =
-                    (0..=buf.len() - lhs.len()).find(|&s| &buf[s..s + lhs.len()] == lhs.as_slice())
-                else {
+                // Where `lhs` may be replaced: only at an offset where it spells a subterm of
+                // the stored term. `:assoc` is associative, so every contiguous run is one.
+                // A fold is not: `:assoc-left` stores `f(f(a, b), c)` as `[a, b, c]` and keeps
+                // `f(a, f(b, c))` as `[a, f[b, c]]`, so in `[x, c, d]`, which is
+                // `f(f(x, c), d)`, the run `[c, d]` spells no subterm, and the only run that
+                // does is a prefix. Rewriting `[c, d]` there would derive `(x - c) - d =
+                // (x - a) - b` from `a - b = c - d`: an unsound equality. A right fold keeps
+                // only suffixes. The same rule bounds `:flatten` views (`flatten::spine`).
+                let last = buf.len() - lhs.len();
+                let allowed = match self.ops().info(*op).kind {
+                    crate::registry::OpKind::A { dir, .. } => dir,
+                    _ => crate::registry::AssocDir::Both,
+                };
+                let at = |s: usize| &buf[s..s + lhs.len()] == lhs.as_slice();
+                let found = match allowed {
+                    crate::registry::AssocDir::Both => (0..=last).find(|&s| at(s)),
+                    crate::registry::AssocDir::Left => at(0).then_some(0),
+                    crate::registry::AssocDir::Right => at(last).then_some(last),
+                };
+                let Some(s) = found else {
                     continue;
                 };
                 new_children.clear();
@@ -2590,7 +3207,7 @@ where
         if self.repair_state == Some(state) {
             return false;
         }
-        let changed = self.inverse_cancel_repair();
+        let changed = self.inverse_cancel_repair() | self.inverse_law_repair();
         if !changed {
             // Arm the skip only on a clean round. A round that merged left `touched` and
             // `num_classes` moved, and the caller drains congruence and calls again.
@@ -2616,7 +3233,12 @@ where
         };
         match m {
             Some(m) => {
-                self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+                self.fold_min_monomial(
+                    m.survivor,
+                    m.absorbed,
+                    m.absorbed_min_row,
+                    m.absorbed_atomic,
+                );
                 self.worklist.push((m.absorbed_uses, m.survivor));
                 true
             }
@@ -2688,6 +3310,140 @@ where
         changed
     }
 
+    /// The nodes `inv(x)` of the unary op `inv`, as `(node, class of x)`: a scan of the
+    /// unary partition.
+    fn inverse_nodes(&self, inv: Cfg::O) -> Vec<(Cfg::G, Cfg::G)> {
+        use crate::typed_routing::NodeIds;
+        let n = self.nodes.plain1.len().to_usize();
+        let mut out = Vec::new();
+        for i in 0..n {
+            let node = self
+                .nodes
+                .plain1
+                .get(<Cfg::Ids as NodeIds>::L1::from_usize(i));
+            if node.op() == inv {
+                out.push((node.global_id(), self.classes.find_const(node.children[0])));
+            }
+        }
+        out
+    }
+
+    /// `(class of inv(x), class of x)` over the nodes of `inv`, sorted by the first: the
+    /// reverse of `inverse_class`, answering which class a class is the inverse of.
+    pub(crate) fn inverse_classes(&self, inv: Cfg::O) -> Vec<(Cfg::G, Cfg::G)> {
+        let mut out: Vec<(Cfg::G, Cfg::G)> = self
+            .inverse_nodes(inv)
+            .into_iter()
+            .map(|(node, x)| (self.classes.find_const(node), x))
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// The consequences of the group law `x ∘ inv(x) = e` that cancelling pairs inside one
+    /// monomial cannot reach, over the nodes of every `:inverse` op (the `InvMatching`,
+    /// `InvUnitFree` and `NilpotentInverseCP` hypotheses of the completeness proof):
+    /// - `inv(a) = inv(c)` gives `a = c`, and the node `inv(inv(x))` equals `x`
+    ///   (`{a, inv a} = ∅ = {c, inv c}` cancelled on the shared inverse);
+    /// - with `:identity e`: `inv(x) = e` gives `x = e` and `x = e` gives `inv(x) = e`
+    ///   (`{x, inv x} = ∅` with the unit dropped);
+    /// - with `:nilpotent k`: `inv(x) = x^(k−1)` (`x^k = ∅` and `{x, inv x} = ∅` overlap
+    ///   on `x`), and for `inv(x)` of class `y ≠ x`, `y^(k−1) = x` (the overlap on `y`,
+    ///   whether or not the node `inv(y)` exists); both nodes are built. A self-inverse
+    ///   class is not exempt: for odd `k` its `x^(k−1)` normalizes to the unit, so `x = e`.
+    ///
+    /// Collect over a snapshot of the union-find, then apply through `repair_merge` and
+    /// `add_monomial`, so `restore` rolls everything back. The whole unary partition is
+    /// read, not the touched log: the first premise is a merge of two classes each holding
+    /// an inverse node, which recanonizes neither node. Free for a graph with no `:inverse`
+    /// op; otherwise it runs only when `canon_repair_round` sees a change.
+    fn inverse_law_repair(&mut self) -> bool {
+        if self.inverse_op.is_empty() {
+            return false;
+        }
+        let ops: Vec<(Cfg::O, Cfg::O)> = self.inverse_op.iter().copied().collect();
+        let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
+        // `(op, base, k−1, target)`: the node `base^(k−1)` to build and merge with `target`.
+        let mut powers: Vec<(Cfg::O, Cfg::G, Cfg::M, Cfg::G)> = Vec::new();
+        for (op, inv) in ops {
+            let nodes = self.inverse_nodes(inv);
+            if nodes.is_empty() {
+                continue;
+            }
+            let unit = self.unit_node(op).map(|u| self.classes.find_const(u));
+            let power = match self.ops.info(op).kind {
+                OpKind::MSet {
+                    clamp: crate::registry::Clamp::Nilpotent { order },
+                    ..
+                } => Some(
+                    Cfg::M::try_from_u64(u64::from(order) - 1)
+                        .expect("a u8 nilpotent order fits every multiplicity width"),
+                ),
+                _ => None,
+            };
+            // `(class of inv(x), class of x)`, sorted: equal first components are two
+            // inverse nodes in one class.
+            let mut classes: Vec<(Cfg::G, Cfg::G)> = Vec::with_capacity(nodes.len());
+            for &(node, x) in &nodes {
+                let y = self.classes.find_const(node);
+                classes.push((y, x));
+                if let Some(e) = unit {
+                    if y == e && x != e {
+                        merges.push((x, node));
+                    }
+                    if x == e && y != e {
+                        merges.push((node, x));
+                    }
+                }
+                if let Some(k) = power {
+                    powers.push((op, x, k, node));
+                    if y != x {
+                        powers.push((op, y, k, x));
+                    }
+                }
+            }
+            classes.sort_unstable();
+            for w in classes.windows(2) {
+                if w[0].0 == w[1].0 && w[0].1 != w[1].1 {
+                    merges.push((w[0].1, w[1].1));
+                }
+            }
+            for &(node, x) in &nodes {
+                // `x` holds some `inv(z)`, so `node` is `inv(inv(z))`.
+                if let Ok(i) = classes.binary_search_by(|p| p.0.cmp(&x)) {
+                    merges.push((node, classes[i].1));
+                }
+            }
+        }
+        let mut changed = false;
+        for (a, b) in merges {
+            changed |= self.repair_merge(
+                a,
+                b,
+                Justification::InverseCancel {
+                    node_a: a,
+                    node_b: b,
+                },
+            );
+        }
+        let mut scratch: Vec<Cfg::C> = Vec::new();
+        for (op, base, k, target) in powers {
+            let c = self
+                .add_monomial(op, &[(base, k)], &mut scratch)
+                .expect("a count below the nilpotent order fits every multiplicity width");
+            changed |= self.repair_merge(
+                c,
+                target,
+                Justification::InverseCancel {
+                    node_a: c,
+                    node_b: target,
+                },
+            );
+        }
+        changed
+    }
+
     /// One AC congruence-completion round (Kapur FSCD 2021 Algorithm 1, the steps our
     /// rebuild otherwise omits). Returns `true` if it scheduled any new merge.
     ///
@@ -2733,6 +3489,13 @@ where
         // pair cannot be represented, so completion stops there (`rebuild` reports
         // `CompletionOutcome::AbortedOverflow` and records the error) instead of panicking.
         let overflow = std::cell::Cell::new(false);
+        // The round's work meter, in rule containment tests: the reducibility pass and
+        // every normalization step charge it. A round past `completion_work_budget`
+        // stops and leaves the work spent in `cc_work_stop` for `rebuild` to report. A
+        // round over a large rule set costs targets times rules while minting almost
+        // nothing, which the node budget cannot see.
+        let work = std::cell::Cell::new(0u64);
+        let work_limit = self.completion_work_budget;
         let multiset_union = |a: &[(Cfg::G, Cfg::M)], b: &[(Cfg::G, Cfg::M)]| {
             try_multiset_union(a, b).unwrap_or_else(|_| {
                 overflow.set(true);
@@ -2749,7 +3512,6 @@ where
             out
         };
 
-        use crate::multiset::monomial_cmp;
         use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
 
         // Completion's active set excludes nodes that are user-subsumed (not matchable)
@@ -2788,7 +3550,7 @@ where
                 continue;
             }
             // Read-time orientation guard (§9b): only `M ≫ rhs` is a rule.
-            if monomial_cmp(&lhs, &rhs_buf) == std::cmp::Ordering::Greater {
+            if self.monomial_cmp_key(&lhs, &rhs_buf) == std::cmp::Ordering::Greater {
                 rules.push(Rule {
                     op,
                     lhs,
@@ -2851,6 +3613,7 @@ where
         let reducible: Vec<bool> = (0..rules.len())
             .map(|i| {
                 rules.iter().enumerate().any(|(j, rj)| {
+                    work.set(work.get() + 1);
                     j != i
                         && rj.op == rules[i].op
                         && rj.lhs != rules[i].lhs
@@ -2859,14 +3622,33 @@ where
             })
             .collect();
         let dt_reducible = t_reducible.elapsed();
+        if work.get() > work_limit {
+            self.cc_work_stop = Some(work.get());
+            return false;
+        }
 
         // Build a normal form as a node, one entry per distinct summand, into a reused
         // scratch. The combinators that form these monomials (`multiset_union`) already
         // panic on a sum past the width, so an overflow here is the same condition.
         let mut mat_buf: Vec<Cfg::C> = Vec::new();
+        // A materialized monomial is a normal form under the round's rules. If hash-consing
+        // returns a node an earlier round collapsed (against a rule since retired or
+        // reoriented), that node is irreducible now and must be a rule again: otherwise
+        // its superpositions are never generated. `ac_collapsed_recanon.egg`: the normal
+        // form `c2²c5` of `c2c4c5` was such a node, and `C5 = C5·C5` was never derived.
+        // Reactivation counts as a change, so the round loop does not report a fixpoint
+        // before the node is processed.
+        let reactivated = std::cell::Cell::new(false);
         let materialize =
             |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::C>| {
-                eg.add_monomial(op, ms, buf).ok()
+                let id = eg.add_monomial(op, ms, buf).ok()?;
+                if matches!(eg.node_ref(id), NodeRef::MSet(_) | NodeRef::Set(_))
+                    && eg.node_flags(id) & crate::node_types::FLAG_AC_COLLAPSED != 0
+                {
+                    eg.clear_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
+                    reactivated.set(true);
+                }
+                Some(id)
             };
         let do_merge = |eg: &mut Self, x: Cfg::G, y: Cfg::G, just: Justification<Cfg::G>| -> bool {
             if eg.classes.find_const(x) == eg.classes.find_const(y) {
@@ -2879,7 +3661,12 @@ where
             };
             match m {
                 Some(m) => {
-                    eg.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+                    eg.fold_min_monomial(
+                        m.survivor,
+                        m.absorbed,
+                        m.absorbed_min_row,
+                        m.absorbed_atomic,
+                    );
                     eg.worklist.push((m.absorbed_uses, m.survivor));
                     true
                 }
@@ -2949,6 +3736,13 @@ where
         let mut sub_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut delta_skipped = 0usize;
         let delta_in_rules = rules.iter().filter(|r| in_delta(r.node)).count();
+        // The rule-inverse pairs below need the reverse of `inverse_class`: which class a
+        // summand is the inverse of. One scan per op with an inverse, per round.
+        let inv_classes: Vec<(Cfg::O, Vec<(Cfg::G, Cfg::G)>)> = self
+            .inverse_op
+            .iter()
+            .map(|&(op, inv)| (op, self.inverse_classes(inv)))
+            .collect();
         for ti in 0..rules.len() {
             // A reducible rule is not a member of the antichain: collapse will retire it,
             // so it must not seed critical pairs.
@@ -3002,6 +3796,38 @@ where
                     }
                     CompletionClamp::Multiset => {} // plain AC / identity-only: none (Lemma 4.3)
                 }
+                // The rule's pairs with the group law `{a, inv a} = ∅` (Lean
+                // `cp_rule_invGen_left/right`): for `a ∈ M` whose inverse node exists with
+                // class `y`, `(N ⊎ {y}, M − {a})`; for `y ∈ M` the class of some `inv(x)`,
+                // `(N ⊎ {x}, M − {y})`. Without them `a + c = d` misses `d + neg(a) = c`.
+                if let Some(inv) = self.inverse_op(op) {
+                    let inverted: &[(Cfg::G, Cfg::G)] = inv_classes
+                        .iter()
+                        .find(|(o, _)| *o == op)
+                        .map_or(&[], |(_, v)| v.as_slice());
+                    let order = match self.op_clamp(op) {
+                        CompletionClamp::Nilpotent { order } => Some(order),
+                        _ => None,
+                    };
+                    for &(a, _) in &rules[ti].lhs {
+                        let inverse_of_a = self.inverse_class(inv, a);
+                        let inverted_by_a = inverted
+                            .binary_search_by(|p| p.0.cmp(&a))
+                            .ok()
+                            .map(|i| inverted[i].1);
+                        for z in inverse_of_a.into_iter().chain(inverted_by_a) {
+                            let mut r1 = multiset_union(&rules[ti].rhs, &[(z, Cfg::M::ONE)]);
+                            if let Some(order) = order {
+                                crate::multiset::clamp_nilpotent(&mut r1, order);
+                            }
+                            let r2 = crate::multiset::multiset_subtract(
+                                &rules[ti].lhs,
+                                &[(a, Cfg::M::ONE)],
+                            );
+                            crit.push((op, CpOrigin::AxiomCp, r1, r2));
+                        }
+                    }
+                }
             }
 
             // Gather candidate partner nodes from the use-lists of M's distinct children.
@@ -3043,10 +3869,16 @@ where
                 }
                 let m = &rules[ti].lhs;
                 let a = &rules[pi].lhs;
-                // Shared by construction; skip the non-overlap / containment cases
-                // (containment is handled by the (A′) normalize pass).
-                debug_assert!(!multiset_disjoint(a, m));
-                if multiset_subset(a, m) || multiset_subset(m, a) {
+                // Partners come from the use lists of `m`'s children, which over-approximate
+                // the rules sharing a class with `m`: a rule's left-hand side is the node's
+                // children read through the clamp (unit drop, nilpotent reduction, inverse
+                // cancellation), which can remove a class the stored node still lists as a
+                // child. Two disjoint left-hand sides have a trivially joinable critical pair
+                // (each reduct rewrites to the other by the other rule), so the pair is skipped
+                // rather than assumed absent; containment is handled by the (A′) normalize
+                // pass. tests/egg/cc_disjoint_partner.egg (`:identity` with `:nilpotent 3`) reaches a
+                // disjoint pair; an earlier `debug_assert` here failed on it in debug builds.
+                if multiset_disjoint(a, m) || multiset_subset(a, m) || multiset_subset(m, a) {
                     continue;
                 }
                 multiset_lcm_into(&mut ab_buf, m, a);
@@ -3234,6 +4066,10 @@ where
             if self.cc_should_stop() {
                 break;
             }
+            if work.get() > work_limit {
+                self.cc_work_stop = Some(work.get());
+                break;
+            }
             nf_refs.clear();
             nf_refs.extend(
                 rules
@@ -3250,7 +4086,7 @@ where
             // normalized by every rule but its own), so there is no reuse to amortize an
             // index over. Any relative phase cost is workload-dependent and belongs in the
             // Criterion completion benchmark, not in this correctness comment.
-            let nf = NfRules::linear(&nf_refs);
+            let nf = NfRules::linear(&nf_refs).with_work(&work);
             let normalized = match self.op_clamp(op) {
                 CompletionClamp::Idempotent => {
                     try_normalize_set_into(&mut nf_out, &mut nf_ping, &mset, nf)
@@ -3352,8 +4188,12 @@ where
         let mut n1_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut n2_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for (op, origin, r1, r2) in crit {
-            // Same in-round stop as the (A′) loop above.
+            // Same in-round stops as the (A′) loop above.
             if self.cc_should_stop() {
+                break;
+            }
+            if work.get() > work_limit {
+                self.cc_work_stop = Some(work.get());
                 break;
             }
             // Cheap raw-equality reject: most critical pairs are trivial (the two reducts
@@ -3366,7 +4206,8 @@ where
             let nf_rules = match nf_by_op.iter().position(|(o, _)| *o == op) {
                 Some(i) => NfRules::indexed(&nf_by_op[i].1, &nf_index_by_op[i]),
                 None => NfRules::linear(&empty_nf),
-            };
+            }
+            .with_work(&work);
             // Normalize both reducts in the op's count domain (idempotent → set, nilpotent →
             // mod-n, plain AC → ℕ) before comparing/merging.
             let normalized = match self.op_clamp(op) {
@@ -3447,6 +4288,9 @@ where
                 rules.len(),
             );
         }
+        if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
+            eprintln!("[ac-complete]   work={} (budget {work_limit})", work.get());
+        }
         if phase_time {
             let dt_bclose = t_bclose.elapsed();
             eprintln!(
@@ -3461,7 +4305,7 @@ where
         if overflow.get() {
             self.cc_overflow = true;
         }
-        changed
+        changed || reactivated.get()
     }
 
     /// Always sequential: a mark is a per-member frame push, and the fan-out
@@ -3590,6 +4434,7 @@ where
         // outcome computed for the discarded scope.
         self.completion_outcome = token.completion_outcome;
         self.worklist.clear();
+        self.key_lowered.clear();
         self.collisions.clear();
         self.touched.clear();
         // Merges captured before this restore belong to the discarded scope.
@@ -3633,6 +4478,7 @@ where
         }
         self.completion_outcome = token.completion_outcome;
         self.worklist.clear();
+        self.key_lowered.clear();
         self.collisions.clear();
         self.touched.clear();
         self.repair_state = None;
@@ -3659,6 +4505,7 @@ where
         let ok = self.history.pop_member(&mut members);
         assert!(ok, "pop_scope: the members are in step with the history");
         self.worklist.clear();
+        self.key_lowered.clear();
         self.collisions.clear();
         self.touched.clear();
         self.repair_state = None;
@@ -3705,6 +4552,14 @@ where
             if result.is_fresh() {
                 for &child in &canonical {
                     if let Some(repr) = self.classes.repr_id(child) {
+                        if !self.classes.atomic(repr)
+                            && (0..self.classes.min_width().saturating_sub(1))
+                                .any(|col| self.classes.min_monomial(repr, col).is_some())
+                        {
+                            // A class holding a completion monomial turns `atomic`: from now on
+                            // a build keeps it nested (see the `spelling_epoch` field).
+                            self.spelling_epoch += 1;
+                        }
                         self.classes.add_use(repr, id);
                     }
                 }
@@ -3723,6 +4578,14 @@ where
                 let id = self.register_if_fresh(Added::Fresh(dup), op);
                 for &child in &canonical {
                     if let Some(repr) = self.classes.repr_id(child) {
+                        if !self.classes.atomic(repr)
+                            && (0..self.classes.min_width().saturating_sub(1))
+                                .any(|col| self.classes.min_monomial(repr, col).is_some())
+                        {
+                            // A class holding a completion monomial turns `atomic`: from now on
+                            // a build keeps it nested (see the `spelling_epoch` field).
+                            self.spelling_epoch += 1;
+                        }
                         self.classes.add_use(repr, id);
                     }
                 }
@@ -3736,6 +4599,14 @@ where
                 if result.is_fresh() {
                     for &child in &canonical {
                         if let Some(repr) = self.classes.repr_id(child) {
+                            if !self.classes.atomic(repr)
+                                && (0..self.classes.min_width().saturating_sub(1))
+                                    .any(|col| self.classes.min_monomial(repr, col).is_some())
+                            {
+                                // A class holding a completion monomial turns `atomic`: from now on
+                                // a build keeps it nested (see the `spelling_epoch` field).
+                                self.spelling_epoch += 1;
+                            }
                             self.classes.add_use(repr, id);
                         }
                     }
@@ -3759,7 +4630,12 @@ where
                 }),
             );
             if let Some(m) = m {
-                self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
+                self.fold_min_monomial(
+                    m.survivor,
+                    m.absorbed,
+                    m.absorbed_min_row,
+                    m.absorbed_atomic,
+                );
                 self.worklist.push((m.absorbed_uses, m.survivor));
             }
         }
@@ -3813,7 +4689,10 @@ where
                     // Ops are declared before terms (declare-before-build), so the count is
                     // stable here; `set_min_width` is idempotent when unchanged and rejects a
                     // change once rows exist.
-                    self.classes.set_min_width(self.ops.completion_op_count());
+                    // One column per completion op, plus the completion order key
+                    // (`order_key`) in the last one.
+                    self.classes
+                        .set_min_width(self.ops.completion_op_count() + 1);
                     self.classes.set_min_monomial(repr, col, id);
                 }
                 None => self.classes.set_atomic(repr),
@@ -3844,6 +4723,20 @@ where
         self.nodes.routing().len()
     }
 
+    /// The graph's size as `(node count, live class count)`, both O(1). Within one
+    /// saturation round's action phase nodes are only created and classes only merged, so
+    /// the stamp differs before and after iff a node was created or two classes merged:
+    /// creation moves the node count, and a merge without creation moves the class count.
+    /// The saturation loops compare it around the action phase to decide the fixpoint,
+    /// rather than trusting each action's own count (a `union` whose sides were already
+    /// equal can still have built the nodes it names).
+    pub fn size_stamp(&self) -> (usize, usize) {
+        (
+            self.node_count(),
+            crate::containers::IndexLike::as_usize(self.classes.num_classes()),
+        )
+    }
+
     pub fn class_repr(&self, id: Cfg::G) -> Cfg::G {
         self.classes.find_const(id)
     }
@@ -3867,6 +4760,16 @@ where
     pub(crate) fn class_min_monomial(&self, id: Cfg::G) -> Option<Cfg::G> {
         let repr = self.classes.repr_id(self.classes.find_const(id))?;
         let col = self.completion_column(id)?;
+        self.classes.min_monomial(repr, col)
+    }
+
+    /// The minimum-monomial node stored for the class of `cls` in `op`'s completion column,
+    /// for any `cls` (a representative or a member of any kind). `None` if `op` has no
+    /// completion column or the column holds no node for that class. Read by diagnostics.
+    #[allow(dead_code)]
+    pub(crate) fn class_min_monomial_of_op(&self, cls: Cfg::G, op: Cfg::O) -> Option<Cfg::G> {
+        let repr = self.classes.repr_id(self.classes.find_const(cls))?;
+        let col = self.ops.completion_column(op)?;
         self.classes.min_monomial(repr, col)
     }
 
@@ -4290,7 +5193,10 @@ where
                 }
                 continue;
             }
-            out.push(c);
+            // The class, not the stored id: a spliced `c` is a stored child of `min_node`,
+            // stale until the next rebuild (see `flatten_seq_children`), and a stale id
+            // would also escape the coalescing that `normalize_by` does on equal ids.
+            out.push(Cfg::mset_child_with_mult(cls, Cfg::mset_child_mult(&c)));
         }
         assert!(
             out.len() <= cap,
@@ -4311,7 +5217,8 @@ where
     /// - otherwise (the class is `atomic`: referenced as a child, or has a non-AC node) the
     ///   single atom `{class}` is its canonical summand form, so keep the child as a summand.
     ///
-    /// `g_buf` already holds `find`'d ids. Preserves §5b: `+{a,b}` used as `neg`'s child is
+    /// `g_buf` already holds `find`'d ids; a spliced child is `find`'d as it is emitted,
+    /// since `min_node`'s stored children may predate this round's unions. Preserves §5b: `+{a,b}` used as `neg`'s child is
     /// `atomic`, so it is kept, not flattened. The semantic invariants make recursive
     /// expansion well-founded; a work/output budget is nevertheless enforced in every build
     /// profile so corrupted cyclic state is refused instead of looping or returning a
@@ -4371,7 +5278,9 @@ where
                 spliced = true;
             }
             if !spliced {
-                out.push(g);
+                // The class, not `g`: a spliced `g` is a stored child of `min_node`,
+                // stale until the next rebuild (see `flatten_seq_children`).
+                out.push(cls);
             }
         }
         assert!(
@@ -4447,7 +5356,8 @@ where
     /// child for `Right`, or any child for `Both`. A non-selected nested child remains one
     /// element, preserving explicit grouping such as `a - (b - c)`.
     ///
-    /// `g_buf` already holds `find`'d ids. The least-node choice makes expansion
+    /// `g_buf` already holds `find`'d ids; a spliced element is `find`'d as it is emitted,
+    /// since the nested node's stored children may predate this round's unions. The least-node choice makes expansion
     /// well-founded for a valid append-only graph. The same work/output budget as
     /// `flatten_ac_children` is still enforced in every build profile: malformed state such
     /// as `X = {seq(X)}` is refused rather than looping or producing a partial normal form.
@@ -4492,7 +5402,14 @@ where
                         spliced = true;
                     }
                     if !spliced {
-                        out.push(g);
+                        // `find` here, not only at the seed: a spliced element is read
+                        // from the nested node's *stored* children, which are stale when
+                        // a union of this round has not been rebuilt yet. Kept raw, the
+                        // node is stored under a non-canonical key that no later lookup
+                        // spells, and `add` registers no use for it (an absorbed id has
+                        // no `repr_id`), so no rebuild ever recanonicalizes it
+                        // (seq_hashcons_miss_min.egg).
+                        out.push(self.classes.find_const(g));
                     }
                 }
             }
@@ -4522,8 +5439,9 @@ where
                 if dir == AssocDir::Right {
                     scratch.extend_from_slice(&out[..out.len() - 1]);
                 }
+                // `find` each stored element: see the `Both` arm.
                 for i in s..e {
-                    scratch.push(self.nodes.seq.pool_get(i));
+                    scratch.push(self.classes.find_const(self.nodes.seq.pool_get(i)));
                 }
                 if dir == AssocDir::Left {
                     scratch.extend_from_slice(&out[1..]);
@@ -4629,6 +5547,72 @@ mod tests {
             f4: eg.register_opn("f4", &[int, int, int, int], int),
         };
         (eg, th)
+    }
+
+    // I5 under in-place recanonization: a child merge into the identity class shrinks a stored
+    // node below its class's min-monomial slot. The slot must follow the shrunk node (else the
+    // class yields no completion rule), and roll back with the e-graph token.
+    #[test]
+    fn min_monomial_refreshes_on_recanonization_shrink_and_rolls_back() {
+        use crate::registry::{Clamp, OpKind};
+        let mut eg = EGraph31::<NiraLitVal, true, false>::new();
+        let s = eg.intern_sort("E");
+        let zero_op = eg.register_op0("zero", s);
+        let zero = eg.add(zero_op, &[]);
+        let add = eg.register_kind(
+            "add",
+            s,
+            OpKind::MSet {
+                arg_sort: s,
+                clamp: Clamp::None,
+                identity: None,
+                cancellative: false,
+            },
+        );
+        eg.set_unit_node(add, zero);
+        // p, q get smaller ids than a, b: at equal size Add{p,q} ≺ Add{a,b} in degree-lex.
+        let leaf = |eg: &mut EGraph31<NiraLitVal, true, false>, name: &str| {
+            let op = eg.register_op0(name, s);
+            eg.add(op, &[])
+        };
+        let p = leaf(&mut eg, "p");
+        let q = leaf(&mut eg, "q");
+        let a = leaf(&mut eg, "a");
+        let b = leaf(&mut eg, "b");
+        let z = leaf(&mut eg, "z");
+        let r = leaf(&mut eg, "r");
+        let n1 = eg.add(add, &[a, b]);
+        let n2 = eg.add(add, &[p, q, r]);
+        eg.set_cc(true);
+        eg.merge(n1, n2);
+        eg.rebuild();
+        assert_eq!(eg.class_min_monomial(n1), Some(n1), "size 2 beats size 3");
+        let d = eg.add(add, &[a, b, z]);
+        let e = eg.add(add, &[p, q, z]);
+        eg.rebuild();
+        assert_ne!(eg.find(d), eg.find(e), "nothing joins d and e yet");
+
+        let token = eg.mark(ShrinkPolicy::Never);
+        eg.merge(r, zero);
+        eg.rebuild();
+        assert_eq!(
+            eg.class_min_monomial(n1),
+            Some(n2),
+            "the shrunk node Add{{p,q}} is the class's least monomial and must be the slot"
+        );
+        assert_eq!(
+            eg.find(d),
+            eg.find(e),
+            "a+b+z = p+q+z follows from a+b = p+q+r, r = 0"
+        );
+
+        eg.restore(token);
+        assert_eq!(
+            eg.class_min_monomial(n1),
+            Some(n1),
+            "the slot refresh must roll back with the e-graph token"
+        );
+        assert_ne!(eg.find(d), eg.find(e));
     }
 
     /// Randomized canonization coverage for the AC count-clamp / identity-drop / degenerate-arity

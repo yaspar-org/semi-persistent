@@ -1,0 +1,32 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Regrouped views (design 07 §7.5, "Regrouped views") for `:assoc`: under `:flatten` a
+;; variable binds a class holding a node over a contiguous run of the matched node's
+;; entries, at any position. A run that is not contiguous, or that no node spells, is not
+;; matched. The plain rule's behavior is pinned in flatten_regroup_control.egg.
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E)
+(function F (E) E :assoc)
+(function T2 (E E) E)
+(function T3 (E E E) E)
+(let ab (F (A) (B)))
+(let bc (F (B) (C)))
+(let ac (F (A) (C)))
+(let t (F (A) (B) (C)))
+(let t4 (F (A) (B) (C) (D)))
+(rewrite (F x y) (T2 x y) :flatten)
+(rewrite (F x y z) (T3 x y z) :flatten)
+(run 2)
+;; Both groupings of [A, B, C] are runs: (A B) C and A (B C).
+(check-eq t (T2 ab (C)))
+(check-eq t (T2 (A) bc))
+;; Inside [A, B, C, D]: the runs [A, B] and [B, C] give the two three-element groupings
+;; whose class exists.
+(check-eq t4 (T3 ab (C) (D)))
+(check-eq t4 (T3 (A) bc (D)))
+;; [A, C] is not contiguous in [A, B, C, D].
+(check-neq t4 (T3 ac (B) (D)))
+;; No node spells [C, D] during the run.
+(check-neq t4 (T3 (A) (B) (F (C) (D))))

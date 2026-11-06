@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; Control for the inverse fixtures: pair cancellation at build, x + Neg(x) = Zero,
+;; passed before R1-R4 and must keep passing.
+(sort E)
+(constructor A () E)
+(constructor C () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(let s (Add (A) (Neg (A))))
+(check-eq s (Zero))

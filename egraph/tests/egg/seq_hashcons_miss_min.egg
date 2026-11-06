@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; EVAL: both
+;; Minimized (delta debugging, scratchpad/rounds-tools/dupcheck.py) from r1_0581.egg of
+;; semper-conform-rounds seed 1. After (run 3) the rebuilt graph holds the sequence node
+;; (Cat c c c c) in the class c of (C3) (dump-egraph shows it), yet building the same term
+;; misses the hash-cons: a fresh node in a fresh class, and the rebuild that follows leaves
+;; two nodes of equal content in two classes (Round.WF.dedup, spec-semi-naive-rounds A.3).
+;; Fails under naive and semi-naive alike.
+(sort E)
+(function C0 () E)
+(function C3 () E)
+(function F (E E) E)
+(function Cat (E) E :assoc)
+(function And (E) E :assoc-comm-idem)
+(union (C3) (And (C3) (C0)))
+(rewrite (And x0 x1) (F x1 x1))
+(rule ((And x0 (And x1 ..r300) ..r301)) ((And x1 (Cat x0 x0)) (union x0 x0)))
+(rule ((And x0 x1)) ((union x1 (C3))))
+(run 3)
+(check-eq (Cat (C0) (C0) (C0) (C0)) (C3))

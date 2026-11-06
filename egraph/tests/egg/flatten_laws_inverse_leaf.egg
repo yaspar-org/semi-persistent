@@ -1,0 +1,26 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; The demand rule under `:inverse` needs the leaf side of the cancel test
+;; (counterexample 4 of the laws proof): n = add{t, t, X}, X ∋ add{b, c}, neg(b) = t.
+;; Opening X gives {t:2, b, c}, which cancels to {t, c}, and (add (Tc) ..rest), whose
+;; item takes t with count exactly 1, matches it with rest = {c}. The leaf (X, [b, c])
+;; takes nothing, X is not taken, X is neither the unit nor in a cancel pair, so any
+;; test on the opened class alone (and the old rule) rejected the match; closing the
+;; leaf gives {t:2, X}, where t has count 2 and the item does not take it, and that is
+;; the only other view. The leaf is non-inert (its element b has its inverse t present)
+;; and the match is kept. Before the rule was extended this check failed.
+(sort E)
+(function zero () E)
+(function Tc () E) (function Bc () E) (function Cc () E) (function Xc () E)
+(function neg (E) E)
+(function add (E) E :assoc :comm :identity (zero) :inverse neg)
+(function Pick (E) E)
+(let x (Xc))
+(union x (add (Bc) (Cc)))
+(let n (add (Tc) (Tc) x))
+(union (neg (Bc)) (Tc))
+(rewrite (add (Tc) ..rest) (Pick (add ..rest)) :flatten)
+(run 1)
+(check-eq n (Pick (add (Cc))))

@@ -1,0 +1,180 @@
+name: Lean Proofs
+on:
+  pull_request:
+    paths:
+      - 'proofs/lean/**'
+      - 'egraph/tests/egg/conform/**'
+      - 'egraph/tests/egg/conform-flatten/**'
+      - 'egraph/tests/egg/conform-cc/**'
+      - 'egraph/tests/egg/conform-cc-cert/**'
+      - '.github/workflows/lean.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'proofs/lean/**'
+      - 'egraph/tests/egg/conform/**'
+      - 'egraph/tests/egg/conform-flatten/**'
+      - 'egraph/tests/egg/conform-cc/**'
+      - 'egraph/tests/egg/conform-cc-cert/**'
+      - '.github/workflows/lean.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Builds the Lean development under proofs/lean and runs its two gates:
+  # no declaration uses `sorry`, and every `#print axioms` in the *Check.lean
+  # files reports only propext, Classical.choice and Quot.sound
+  # (proofs/lean/scripts/check-proofs.sh, which runs locally the same way).
+  #
+  # Mathlib is never compiled here: `lake exe cache get` downloads the prebuilt
+  # oleans for the commit pinned in lake-manifest.json from Mathlib's cache
+  # server. The toolchain is the one pinned in proofs/lean/lean-toolchain,
+  # which elan selects from the project directory. The project's own modules
+  # are rebuilt from source on every run; their build time is the measured
+  # cost of the job, the cache download is the rest.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: proofs/lean
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install elan
+        env:
+          ELAN_VERSION: v4.2.4
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 -o /tmp/elan.tar.gz \
+            "https://github.com/leanprover/elan/releases/download/${ELAN_VERSION}/elan-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf /tmp/elan.tar.gz -C /tmp
+          /tmp/elan-init -y --no-modify-path --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          cat lean-toolchain
+          lean --version
+          lake --version
+
+      # The Mathlib oleans for the pinned commit. `lake exe cache get` needs
+      # the manifest's packages checked out, which `lake build` of the cache
+      # executable does without building Mathlib itself.
+      - name: Fetch the Mathlib cache
+        run: |
+          set -euo pipefail
+          lake exe cache get
+
+      - name: Build and gate
+        run: bash scripts/check-proofs.sh
+
+      # The conformance fixtures under egraph/tests/egg/conform are the
+      # output of the model's generator (proofs/lean/Conform) for seed 1.
+      # They are regenerated here and compared file by file, so that a
+      # change to the model's executable definitions or to the generator
+      # shows up as a diff of the committed fixtures, which must then be
+      # regenerated (egraph/tests/egg/conform/README.md).
+      - name: Regenerate the conformance fixtures
+        run: |
+          set -euo pipefail
+          lake build semper-conform
+          out=$(mktemp -d)
+          lake exe semper-conform 1 2000 "$out"
+          fixtures=../../egraph/tests/egg/conform
+          status=0
+          for f in "$fixtures"/*.egg; do
+            name=$(basename "$f")
+            if ! diff -u "$f" "$out/$name"; then
+              echo "::error::$name differs from the generator's output"
+              status=1
+            fi
+          done
+          exit $status
+
+      # The fixtures under egraph/tests/egg/conform-flatten are the output of
+      # the `:flatten` generator (proofs/lean/Conform/Flatten) for seed 2,
+      # whose expected matches come from the model's flattened plan
+      # (SemperProofs/EMatch/Flatten/PlanDefs.lean). Same check as above.
+      - name: Regenerate the :flatten conformance fixtures
+        run: |
+          set -euo pipefail
+          lake build semper-conform-flatten
+          out=$(mktemp -d)
+          lake exe semper-conform-flatten 2 200 "$out"
+          fixtures=../../egraph/tests/egg/conform-flatten
+          status=0
+          for f in "$fixtures"/*.egg; do
+            name=$(basename "$f")
+            if ! diff -u "$f" "$out/$name"; then
+              echo "::error::$name differs from the generator's output"
+              status=1
+            fi
+          done
+          if [ "$(ls "$out" | wc -l)" -ne "$(ls "$fixtures"/*.egg | wc -l)" ]; then
+            echo "::error::the generator writes $(ls "$out" | wc -l) files, the fixtures hold $(ls "$fixtures"/*.egg | wc -l)"
+            status=1
+          fi
+          exit $status
+
+      # The fixtures under egraph/tests/egg/conform-cc are the output of the
+      # AC-congruence closure generator (proofs/lean/Conform/CC) for seed 1,
+      # whose expected equalities come from a bounded closure of the theory
+      # proved sound in SemperProofs/CC/BoundedOracle.lean. Same check as above.
+      # The rounds sample (egraph/tests/egg/conform-rounds) is not regenerated
+      # here: its oracle reads the engine's own dumps, so it needs the binary.
+      - name: Regenerate the AC-congruence closure conformance fixtures
+        run: |
+          set -euo pipefail
+          lake build semper-conform-cc
+          out=$(mktemp -d)
+          lake exe semper-conform-cc 1 200 "$out"
+          fixtures=../../egraph/tests/egg/conform-cc
+          status=0
+          for f in "$fixtures"/*.egg; do
+            name=$(basename "$f")
+            if ! diff -u "$f" "$out/$name"; then
+              echo "::error::$name differs from the generator's output"
+              status=1
+            fi
+          done
+          if [ "$(ls "$out" | wc -l)" -ne "$(ls "$fixtures"/*.egg | wc -l)" ]; then
+            echo "::error::the generator writes $(ls "$out" | wc -l) files, the fixtures hold $(ls "$fixtures"/*.egg | wc -l)"
+            status=1
+          fi
+          exit $status
+
+      # The fixtures under egraph/tests/egg/conform-cc-cert are the output of the
+      # certifying generator (proofs/lean/Conform/CC/Cert.lean) for seed 1, written
+      # with --fixture. Every check-neq is separated by a countermodel
+      # (SemperProofs/CC/Countermodel.lean). Same check as above.
+      - name: Regenerate the certified AC-congruence closure conformance fixtures
+        run: |
+          set -euo pipefail
+          lake build semper-conform-cc-cert
+          out=$(mktemp -d)
+          lake exe semper-conform-cc-cert 1 200 "$out" --fixture
+          fixtures=../../egraph/tests/egg/conform-cc-cert
+          status=0
+          for f in "$fixtures"/*.egg; do
+            name=$(basename "$f")
+            if ! diff -u "$f" "$out/$name"; then
+              echo "::error::$name differs from the generator's output"
+              status=1
+            fi
+          done
+          if [ "$(ls "$out" | wc -l)" -ne "$(ls "$fixtures"/*.egg | wc -l)" ]; then
+            echo "::error::the generator writes $(ls "$out" | wc -l) files, the fixtures hold $(ls "$fixtures"/*.egg | wc -l)"
+            status=1
+          fi
+          exit $status
