@@ -43,11 +43,13 @@ step, executably, over the records the opening walk produces:
 * `Enumerator.regroup` packs the two for the plan interpreter `runEG`;
   `runER` is the flattened plan with regrouped views.
 
-The engine's own bounds (`MAX_REGROUP_VIEWS`, `MAX_REGROUP_WORK`, the cap
-on the takeable closure) and its shortcuts (a target with an unconditional
-record, a source with one, the signature deduplication) are not modelled:
-the shortcuts drop only records whose acceptance another record of the same
-view implies, and past a bound the engine reports the node.
+The engine regroups view by view, largest first, and skips records another
+record of the same view covers (a target with an unconditional record, a
+source with one, the signature deduplication): `RegroupSkipDefs.lean` models
+that loop and `RegroupSkip.lean` proves it accepts the same matches as
+`regroupAll`. The engine's own bounds (`MAX_REGROUP_VIEWS`,
+`MAX_REGROUP_WORK`, the cap on the takeable closure) are not modelled: past
+a bound the engine reports the node.
 -/
 
 namespace Semper.EMatch.Flatten
