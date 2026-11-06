@@ -11,8 +11,9 @@ for a laws-free AC operator:
 
 * `fitsR_ac_complete`: a sub-multiset of at least two entries, not the whole
   view, spelled by a member of `g` not over `g` itself, fits;
-* `regroup_chain_ac`: disjoint groups `gs` (their sum strictly below the
-  view) are regrouped one after the other, at most one regrouped class per
+* `regroup_chain_ac`: disjoint groups `gs` (their sum within the view, none
+  the whole view, so groups covering the view together are included) are
+  regrouped one after the other, at most one regrouped class per
   group, each regrouped leaf holding `g` whenever it holds a class of `g`'s
   group;
 * `regroup_view_complete_ac`: the view `w₀ - Σ groups + Σ {g}` is in the
@@ -24,9 +25,12 @@ for a laws-free AC operator:
   `regroup_plan_complete` emits the binding.
 
 The groups are the engine's: a group spelled by a member over its own class
-(`g ∋ f{g, c}`) and the whole view are excluded (`hself`, `hlt`), as
-`fits` excludes them; the number of groups is at most the number of items
-(`hlim`, `Demand::needs`).
+(`g ∋ f{g, c}`) and a group that is the whole view are excluded (`hself`,
+`hne`), as `fits` excludes them; the number of groups is at most the number
+of items (`hlim`, `Demand::needs`). Groups are disjoint here, each over
+entries of the walk's view; nested groups (a group holding the class of an
+earlier one) and every other kind are covered by the chain theorems of
+`RegroupChain.lean`.
 -/
 
 namespace Semper.EMatch.Flatten
@@ -235,8 +239,8 @@ theorem regroupLevels_fuel_mono (ctx : Ctx) (dir : Dir) (laws : Laws) (limit : N
 
 /-- **A chain of groups, AC, laws-free.** From a record whose view is
 canonical, the disjoint groups `gs` (each a member's children, not over its
-own class, of at least two entries, their sum strictly below the view) are
-regrouped one after the other within `gs.length` levels: the view becomes
+own class, of at least two entries, their sum within the view, none the
+whole view) are regrouped one after the other within `gs.length` levels: the view becomes
 `w₀ - Σ groups + Σ {g}`, the needed classes are among the `g`, and every
 leaf keeps its classes and holds `g` whenever it holds a class of `g`'s
 group. -/
@@ -244,7 +248,8 @@ theorem regroup_chain_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {limit : N
     ∀ (gs : List (C × List (C × Nat))) (r₀ : RecR),
       (∀ p ∈ gs, p ∈ groupsOf ctx) → (∀ p ∈ gs, p.1 ∉ p.2.map Prod.fst) →
       (∀ p ∈ gs, 2 ≤ Multiset.card (ofEntries p.2)) →
-      groupSum gs < ofEntries r₀.1 → Multiset.entries (ofEntries r₀.1) = r₀.1 →
+      groupSum gs ≤ ofEntries r₀.1 → (∀ p ∈ gs, ofEntries p.2 ≠ ofEntries r₀.1) →
+      Multiset.entries (ofEntries r₀.1) = r₀.1 →
       r₀.2.2.length + gs.length ≤ limit →
       ∃ r ∈ regroupLevels ctx dir Laws.free limit gs.length [r₀],
         ofEntries r.1 = ofEntries r₀.1 - groupSum gs + groupCls gs ∧
@@ -252,20 +257,16 @@ theorem regroup_chain_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {limit : N
         ∃ φ : LeafF → LeafF, r.2.1 = r₀.2.1.map φ ∧ ∀ l, l.1.X = (φ l).1.X ∧
           l.2 = (φ l).2 ∧ l.1.g ⊆ (φ l).1.g ∧
           ∀ p ∈ gs, (∃ c ∈ l.1.g, c ∈ p.2.map Prod.fst) → p.1 ∈ (φ l).1.g
-  | [], r₀, _, _, _, _, _, _ => by
+  | [], r₀, _, _, _, _, _, _, _ => by
       refine ⟨r₀, by simp [regroupLevels], by simp [groupSum, groupCls], fun c hc => Or.inl hc,
         id, by simp, fun l => ⟨rfl, rfl, fun _ h => h, by simp⟩⟩
-  | (g, grp) :: gs, r₀, hgs, hself, h2, hlt, hcan, hlim => by
+  | (g, grp) :: gs, r₀, hgs, hself, h2, hsum0, hnes, hcan, hlim => by
       have hgg := hgs (g, grp) (List.mem_cons_self ..)
-      simp only [groupSum, List.map_cons, List.sum_cons] at hlt
+      have hlt : ofEntries grp + groupSum gs ≤ ofEntries r₀.1 := by
+        simpa only [groupSum, List.map_cons, List.sum_cons] using hsum0
       have hle : ofEntries grp ≤ ofEntries r₀.1 :=
-        le_trans (Multiset.le_add_right _ _) hlt.le
-      have hne : ofEntries grp ≠ ofEntries r₀.1 := by
-        intro he
-        have h2' := h2 (g, grp) (List.mem_cons_self ..)
-        rw [he] at hlt
-        have := Multiset.le_add_right (ofEntries r₀.1) (groupSum gs)
-        exact (lt_of_le_of_lt this hlt).ne rfl
+        le_trans (Multiset.le_add_right _ _) hlt
+      have hne : ofEntries grp ≠ ofEntries r₀.1 := hnes (g, grp) (List.mem_cons_self ..)
       have hnd : (r₀.1.map Prod.fst).Nodup := by
         have := (coalesce_canonical r₀.1).nodup
         unfold coalesce at this
@@ -290,7 +291,7 @@ theorem regroup_chain_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {limit : N
         simp only [List.length_cons] at hlim
         omega
       have hstep : r₁ ∈ regroupRec ctx dir Laws.free limit r₀ := regroupRec_of hgg hfit hn hlen₁
-      have hS : groupSum gs ≤ ofEntries r₀.1 - ofEntries grp := le_tsub_of_add_le_left hlt.le
+      have hS : groupSum gs ≤ ofEntries r₀.1 - ofEntries grp := le_tsub_of_add_le_left hlt
       have hofr₁ : ofEntries r₁.1 = ofEntries r₀.1 - ofEntries grp + {g} := by
         simp only [hr₁, ofEntries_coalesce, ofEntries_append]
         rw [eq_tsub_of_add_eq hsum]
@@ -298,12 +299,18 @@ theorem regroup_chain_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {limit : N
       have hlt₁ : groupSum gs < ofEntries r₁.1 := by
         rw [hofr₁, add_comm, Multiset.singleton_add]
         exact lt_of_le_of_lt hS (Multiset.lt_cons_self _ g)
+      have hne₁ : ∀ p ∈ gs, ofEntries p.2 ≠ ofEntries r₁.1 := by
+        intro p hp he
+        have h1 : ofEntries p.2 ≤ groupSum gs :=
+          List.le_sum_of_mem (List.mem_map_of_mem (f := fun p => ofEntries p.2) hp)
+        rw [he] at h1
+        exact absurd (lt_of_le_of_lt h1 hlt₁) (lt_irrefl _)
       have hcan₁ : Multiset.entries (ofEntries r₁.1) = r₁.1 := by
         simp only [hr₁, ofEntries_coalesce]; rfl
       obtain ⟨r, hr, hof, hneeds, φ, hφ, hrel⟩ := regroup_chain_ac hκ gs r₁
         (fun p hp => hgs p (List.mem_cons_of_mem _ hp))
         (fun p hp => hself p (List.mem_cons_of_mem _ hp))
-        (fun p hp => h2 p (List.mem_cons_of_mem _ hp)) hlt₁ hcan₁ (by
+        (fun p hp => h2 p (List.mem_cons_of_mem _ hp)) hlt₁.le hne₁ hcan₁ (by
           have := needsAfter_length g (grp.map Prod.fst) r₀.2.2
           simp only [List.length_cons] at hlim
           show (needsAfter g (grp.map Prod.fst) r₀.2.2).length + gs.length ≤ limit
@@ -367,7 +374,7 @@ theorem card_groupSum {gs : List (C × List (C × Nat))}
 /-- **Completeness of regrouped views, AC, laws-free.** Let `w₀` be a view of
 the walk at node `n` and `gs` groups of its entries, each the children of an
 `f`-member of its class `g` (not over `g` itself, at least two entries),
-their sum strictly below `w₀`, at most `limit` of them. Then the view
+their sum within `w₀`, none all of `w₀`, at most `limit` of them. Then the view
 `w₀ - Σ groups + Σ {g}` is enumerated, and its demand accepts every `taken`
 holding each `g` and satisfying each leaf of `w₀`'s opening tree, where a
 leaf class of a group counts as satisfied. -/
@@ -375,7 +382,8 @@ theorem regroup_view_complete_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {l
     {n : Node} {r₀ : RecR} (h₀ : r₀ ∈ baseRecsR ctx dir Laws.free n)
     {gs : List (C × List (C × Nat))} (hgs : ∀ p ∈ gs, p ∈ groupsOf ctx)
     (hself : ∀ p ∈ gs, p.1 ∉ p.2.map Prod.fst)
-    (h2 : ∀ p ∈ gs, 2 ≤ Multiset.card (ofEntries p.2)) (hlt : groupSum gs < ofEntries r₀.1)
+    (h2 : ∀ p ∈ gs, 2 ≤ Multiset.card (ofEntries p.2)) (hle : groupSum gs ≤ ofEntries r₀.1)
+    (hne : ∀ p ∈ gs, ofEntries p.2 ≠ ofEntries r₀.1)
     (hlim : gs.length ≤ limit) {taken : List C} (hneed : ∀ p ∈ gs, p.1 ∈ taken)
     (hleaf : ∀ l ∈ r₀.2.1, (mergeOnClose .ac = true ∧ l.1.X ∈ taken) ∨
       (∃ c ∈ l.1.g, c ∈ taken ∨ ∃ p ∈ gs, c ∈ p.2.map Prod.fst) ∨ l.2 = true) :
@@ -385,10 +393,10 @@ theorem regroup_view_complete_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {l
   rw [hκ] at hn
   have hcan := entries_ofEntries_of_canonical (normalize_ac_canonical hn)
   obtain ⟨r, hr, hof, hrn, φ, hφ, hrel⟩ := regroup_chain_ac (dir := dir) (limit := limit) hκ gs r₀
-    hgs hself h2 hlt hcan (by rw [hneeds]; simpa using hlim)
+    hgs hself h2 hle hne hcan (by rw [hneeds]; simpa using hlim)
   have hfuel : gs.length ≤ regroupFuel (baseRecsR ctx dir Laws.free n) := by
     have h1 := card_groupSum h2
-    have h3 := Multiset.card_lt_card hlt
+    have h3 := Multiset.card_le_card hle
     have h4 := viewSize_le_regroupFuel h₀
     rw [viewSize_eq_card] at h4
     omega
@@ -430,7 +438,8 @@ theorem regroup_match_complete_ac {c : FCtx} {dir : Sym → Dir} {σ : Binding} 
     {r₀ : RecR} (h₀ : r₀ ∈ baseRecsR (c.ctx f .ac) (dir f) Laws.free n)
     {gs : List (C × List (C × Nat))} (hgs : ∀ p ∈ gs, p ∈ groupsOf (c.ctx f .ac))
     (hself : ∀ p ∈ gs, p.1 ∉ p.2.map Prod.fst)
-    (h2 : ∀ p ∈ gs, 2 ≤ Multiset.card (ofEntries p.2)) (hlt : groupSum gs < ofEntries r₀.1)
+    (h2 : ∀ p ∈ gs, 2 ≤ Multiset.card (ofEntries p.2)) (hle : groupSum gs ≤ ofEntries r₀.1)
+    (hne : ∀ p ∈ gs, ofEntries p.2 ≠ ofEntries r₀.1)
     (hlim : gs.length ≤ es.length) (hneed : ∀ p ∈ gs, p.1 ∈ takenOf σ (es.map Prod.fst))
     (hleaf : ∀ l ∈ r₀.2.1, (mergeOnClose .ac = true ∧ l.1.X ∈ takenOf σ (es.map Prod.fst)) ∨
       (∃ c ∈ l.1.g, c ∈ takenOf σ (es.map Prod.fst) ∨ ∃ p ∈ gs, c ∈ p.2.map Prod.fst) ∨
@@ -439,7 +448,7 @@ theorem regroup_match_complete_ac {c : FCtx} {dir : Sym → Dir} {σ : Binding} 
       ⟨f, .mset (ofEntries r₀.1 - groupSum gs + groupCls gs)⟩ σ) :
     AtomSatG (Enumerator.regroup dir) c σ ⟨nv, f, .ac es rest⟩ := by
   obtain ⟨w, d, hd, hof, hacc⟩ := regroup_view_complete_ac (ctx := c.ctx f .ac) rfl
-    (limit := es.length) h₀ hgs hself h2 hlt (by simpa using hlim) hneed hleaf
+    (limit := es.length) h₀ hgs hself h2 hle hne (by simpa using hlim) hneed hleaf
   unfold AtomSatG
   simp only [Shape.flatKind]
   refine ⟨id, n, hnode, hmem, hcls, hop, w, d, ?_, ?_, hacc⟩
