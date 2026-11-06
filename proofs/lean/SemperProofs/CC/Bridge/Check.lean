@@ -1,4 +1,4 @@
-import SemperProofs.CC.Bridge.Modulo
+import SemperProofs.CC.Bridge.Sub
 
 /-! Axiom audit for the bridge. Expected: only `propext`, `Classical.choice`,
 `Quot.sound`. -/
@@ -16,3 +16,7 @@ import SemperProofs.CC.Bridge.Modulo
 #print axioms SemperProofs.CC.Bridge.engine_match_modulo_complete
 #print axioms SemperProofs.CC.Bridge.engine_match_modulo_sound
 #print axioms SemperProofs.CC.Bridge.CompleteHyps.ofAtoms
+#print axioms SemperProofs.CC.Bridge.represents_subRep
+#print axioms SemperProofs.CC.Bridge.represents_fcover
+#print axioms SemperProofs.CC.Bridge.ac_equal_same_class_sub
+#print axioms SemperProofs.CC.Bridge.matches_closed_under_theory_sub

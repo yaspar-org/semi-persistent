@@ -1,5 +1,5 @@
 import SemperProofs.EMatch.Engine.Saturate.Invariant
-import SemperProofs.CC.Bridge.Modulo
+import SemperProofs.CC.Bridge.Sub
 
 /-!
 # The final theorem: saturation is complete modulo the AC theory
@@ -21,6 +21,20 @@ state, a match at a node is a match at the class of every node
 * `saturation_modulo_sound`: every binding the naive run of a rule's plan
   emits (what the loop fires on) is a match, at the node of some active
   `p'`, and a class-level match for every active `p` theory-equal to `p'`.
+* `saturation_modulo_complete_sub`: the completeness statement on any
+  after snapshot that holds the represented graph as a part (`SubRep`),
+  so that other operators, leaf constants and the nodes the right-hand
+  sides build may be stored; `saturation_modulo_complete_within` is its
+  case `A.R.after = represents st f act`.
+
+With `A.R.after = represents st f act` and literal right-hand sides
+(`Den`), `saturation_modulo_complete` and `saturation_modulo_complete_atoms`
+hold vacuously for a rule set with a match whose right-hand side builds
+any node other than an active `f`-multiset node: `saturation_complete`
+derives `Fired` for it, and the represented graph has no such node. The
+statement over the store with normalized right-hand sides is
+`saturation_modulo_complete_store_atoms` (`Final/Store.lean`), and
+`Final/Witness.lean` exhibits a run that meets all of its hypotheses.
 -/
 
 namespace SemperProofs.Final
@@ -46,6 +60,59 @@ theorem matches_at_active {st : State n} {f : Sym} {act : Finset (Monomial n × 
   obtain ⟨p', hp', rfl, rfl⟩ := mem_represents.1 hmem
   exact ⟨p', hp', hid, hcls, hmn⟩
 
+/-- A binding satisfying the atoms of a pattern with head `f` on any graph
+the represented graph is a part of, rooted at the id `ι p'` of an active
+node, binds the root's class to that node's class and matches the pattern
+at the represented node. -/
+theorem matches_at_sub {G : Graph} {st : State n} {f : Sym} {act : Finset (Monomial n × Fin n)}
+    {ι : Monomial n × Fin n → NodeId} (hs : SubRep G st f act ι) (hk : G.KeysNodup)
+    {P : Pat} {r : Var} (hhead : P.head = some f) {σ : Binding}
+    (hm : Matches G ((atoms P r).map QAtom.scan) σ) {p' : Monomial n × Fin n} (hp' : p' ∈ act)
+    (hroot : σ.node r = some (ι p')) :
+    σ.cls r = some (G.find (ι p')) ∧ MatchN G P (mkNode st f p') σ := by
+  have hP : P.head.isSome = true := by rw [hhead]; rfl
+  have hall : ∀ a ∈ (atomsAt P r (P.freshAbove r)).1, AtomSat G σ a :=
+    fun a ha => hm.sat _ (List.mem_map_of_mem ha)
+  obtain ⟨id, nd, hid, hmem, hcls, -, hmn⟩ := backOk P hP r _ hall
+  rw [hroot] at hid
+  obtain rfl := Option.some.inj hid
+  obtain rfl := hs.node_eq hk hp' hmem
+  exact ⟨hcls, hmn⟩
+
+/-- **Saturation is complete modulo the AC theory, on a graph holding the
+represented graph as a part.** `saturation_modulo_complete` with the
+after snapshot any graph that holds the active `f`-nodes of `st` under the
+ids `ι` (`SubRep`), so that leaf constants, other operators and the nodes
+the right-hand sides build may be stored. The conclusion adds that the
+matched node is the represented node of `p'`. Literal right-hand sides
+(`Den`); `Fidelity` / `Final/Store.lean` has the normalized ones. -/
+theorem saturation_modulo_complete_sub {sig : Sym → Kind} {naive : Rule → Bool}
+    {rules : List Rule}
+    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
+    (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
+    {A : ActRound} (hA : A ∈ A₀ :: As) (hfix : A.R.Unchanged)
+    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    {act : Finset (Monomial n × Fin n)} (hcomp : CompleteHyps L S st)
+    (hw : Within st act) {f : Sym} {ι : Monomial n × Fin n → NodeId}
+    (hs : SubRep A.R.after st f act ι) :
+    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
+      P.head = some f →
+      ∀ p ∈ act, ∀ p' ∈ act, E L S p.1 p'.1 →
+      ∀ σ, Matches A.R.after rule.atoms σ → σ.node r = some (ι p') →
+        Fired A.R.after σ rule ∧
+        σ.cls r = some (A.R.after.find (ι p)) ∧
+        MatchC A.R.after P (A.R.after.find (ι p)) σ ∧
+        MatchN A.R.after P (mkNode st f p') σ := by
+  intro rule hr P r hatoms hhead p hp p' hp' hE σ hm hroot
+  have hinv := (saturation_complete A₀ As hplan h₀ hok hemit₀ hchain hA hfix).2
+  have hk : A.R.after.KeysNodup := ((hok A hA).atoms rule hr).keys
+  refine ⟨hinv rule hr σ hm, ?_⟩
+  rw [hatoms] at hm
+  obtain ⟨hcls, hmn⟩ := matches_at_sub hs hk hhead hm hp' hroot
+  refine ⟨?_, matches_closed_under_theory_sub hcomp hw hs hp hp' hE hhead hmn, hmn⟩
+  rw [hcls, ac_equal_same_class_sub hcomp hw hs hp' hp (E.symm hE)]
+
 /-- `saturation_modulo_complete` with `act` within the active nodes
 (`Within`) instead of enumerating them; the form the leaf-constant
 statement instantiates. -/
@@ -65,15 +132,10 @@ theorem saturation_modulo_complete_within {sig : Sym → Kind} {naive : Rule →
         σ.cls r = some (A.R.after.find (nodeId p)) ∧
         MatchC A.R.after P (A.R.after.find (nodeId p)) σ := by
   intro rule hr P r hatoms hhead p hp p' hp' hE σ hm hroot
-  have hinv := (saturation_complete A₀ As hplan h₀ hok hemit₀ hchain hA hfix).2
-  refine ⟨hinv rule hr σ hm, ?_⟩
-  rw [hG] at hm ⊢
-  rw [hatoms] at hm
-  obtain ⟨q, hq, hroot', hcls, hmn⟩ := matches_at_active hhead hm
-  rw [hroot] at hroot'
-  obtain rfl : q = p' := nodeId_injective (Option.some.inj hroot').symm
-  refine ⟨?_, matches_closed_under_theory hcomp hw hp hq hE hhead hmn⟩
-  rw [hcls, ac_equal_same_class_graph hcomp hw f hp hq hE]
+  have hs : SubRep A.R.after st f act nodeId := hG ▸ represents_subRep st f act
+  obtain ⟨h1, h2, h3, -⟩ := saturation_modulo_complete_sub A₀ As hplan h₀ hok hemit₀ hchain hA
+    hfix hcomp hw hs rule hr P r hatoms hhead p hp p' hp' hE σ hm hroot
+  exact ⟨h1, h2, h3⟩
 
 /-- **Saturation is complete modulo the AC theory.**
 
@@ -153,7 +215,13 @@ Known limits.
    semantics choice; a merge of two children of one node can lose a match
    (`Round.NoCollapse`). The fixpoint theorem does not need the transport
    of matches across such a merge (it case-splits on whether a match
-   existed before the round), so no `NoCollapse` hypothesis appears. -/
+   existed before the round), so no `NoCollapse` hypothesis appears.
+3. The hypotheses are contradictory for a rule with a match whose
+   right-hand side builds a node other than an active `f`-multiset node of
+   `act` (another operator, a leaf constant, a one-element `(f x)`):
+   `Fired` asks for it in `represents st f act`, which has no such node.
+   `saturation_modulo_complete_store_atoms` (`Final/Store.lean`) is the
+   statement without this restriction. -/
 theorem saturation_modulo_complete {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
     (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
@@ -179,7 +247,11 @@ and whose unit class `u`, if any, as the empty monomial (`State.withAtoms`,
 `completion_complete_atoms` (`CompleteAtoms`), `act` enumerates the stored
 active nodes and the graph is the one of the stored nodes. The asserted
 equations `S` and the theory may relate a node to a constant (`a + b = c`);
-the conclusion is about the stored nodes `p`, `p'` of `act`. -/
+the conclusion is about the stored nodes `p`, `p'` of `act`. The graph has
+no node for a leaf constant, so the vacuity of `saturation_modulo_complete`
+(limit 3) holds here too, and a right-hand side naming a leaf constant
+also makes the hypotheses contradictory; see
+`saturation_modulo_complete_store_atoms`. -/
 theorem saturation_modulo_complete_atoms {sig : Sym → Kind} {naive : Rule → Bool}
     {rules : List Rule}
     (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
