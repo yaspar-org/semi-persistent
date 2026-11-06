@@ -1,7 +1,7 @@
-import SemperProofs.EMatch.Flatten.RegroupFits
+import SemperProofs.EMatch.Flatten.RegroupChain
 
 /-! Axiom audit for regrouped views (`RegroupDefs.lean`, `Regroup.lean`,
-`RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`) and the plan theorems over any
+`RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`, `RegroupChain.lean`) and the plan theorems over any
 enumeration (`Plan.lean`). Expected: only `propext`, `Classical.choice`,
 `Quot.sound`. -/
 
@@ -39,6 +39,23 @@ enumeration (`Plan.lean`). Expected: only `propext`, `Classical.choice`,
 #print axioms Semper.EMatch.Flatten.fitsR_assoc_complete
 #print axioms Semper.EMatch.Flatten.fitsR_left_complete
 #print axioms Semper.EMatch.Flatten.fitsR_right_complete
+#print axioms Semper.EMatch.Flatten.viewOK_base
+#print axioms Semper.EMatch.Flatten.kept_mem_baseRecsR
+#print axioms Semper.EMatch.Flatten.regroupsTo_left_iff
+#print axioms Semper.EMatch.Flatten.regroupsTo_right_iff
+#print axioms Semper.EMatch.Flatten.regroupStep_ac
+#print axioms Semper.EMatch.Flatten.regroupStep_aci
+#print axioms Semper.EMatch.Flatten.regroupStep_assoc
+#print axioms Semper.EMatch.Flatten.regroupStep_mem
+#print axioms Semper.EMatch.Flatten.regroupChain_mem_levels
+#print axioms Semper.EMatch.Flatten.regroup_view_complete
+#print axioms Semper.EMatch.Flatten.regroup_match_complete
+#print axioms Semper.EMatch.Flatten.fitsR_ms
+#print axioms Semper.EMatch.Flatten.regroupsTo_of_fitsR
+#print axioms Semper.EMatch.Flatten.regroupStep_of_mem
+#print axioms Semper.EMatch.Flatten.regroupChain_of_mem_levels
+#print axioms Semper.EMatch.Flatten.regroup_views_iff
+#print axioms Semper.EMatch.Flatten.regroup_match_iff
 
 namespace Semper.EMatch.Flatten
 open Semper.EMatch

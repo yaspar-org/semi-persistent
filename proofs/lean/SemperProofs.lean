@@ -13,6 +13,7 @@ import SemperProofs.EMatch.Flatten.Plan
 import SemperProofs.EMatch.Flatten.FoldPlan
 import SemperProofs.EMatch.Flatten.RegroupComplete
 import SemperProofs.EMatch.Flatten.RegroupFits
+import SemperProofs.EMatch.Flatten.RegroupChain
 import SemperProofs.EMatch.Steps.Main
 import SemperProofs.EMatch.Env.Main
 import SemperProofs.EMatch.Engine.Rounds.Complete
