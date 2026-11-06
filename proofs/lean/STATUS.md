@@ -3,7 +3,8 @@
 Lean 4 with Mathlib v4.35.0. `lake build` of the whole project passes;
 `grep -rn sorry SemperProofs/` is empty; every `#print axioms` in the
 `Check.lean` files prints only `propext`, `Classical.choice`, `Quot.sound`.
-Written 2026-11-04 after the second extension; regrouped views added 2026-11-05.
+Written 2026-11-04 after the second extension; regrouped views added 2026-11-05;
+leaf constants added 2026-11-06.
 
 ## Final theorem (`SemperProofs/Final/Main.lean`)
 
@@ -14,7 +15,10 @@ represented graph of a completion state satisfying the convergence
 hypotheses, at a round that changed nothing, for every rule with head `f`
 and every pair of theory-equal active nodes, every match at one node is
 fired and its root binds the class of the other. `saturation_modulo_sound`
-is the matching-side converse. The two known limits are in the docstring:
+is the matching-side converse. `saturation_modulo_complete_atoms` is the
+same theorem for a graph with leaf constants: its completion hypotheses are
+`CompleteAtoms` (below), on the stored state and its completion view. The
+two known limits are in the docstring:
 a theory-equal term that is absent is matched through its class only
 (`per_node_form_fails`), and maximum partition drops a two-item match when
 its two children classes merge (`NoCollapse`).
@@ -24,9 +28,40 @@ its two children classes merge (`NoCollapse`).
 - `completion_sound`: invariant I2 (nodes of one class are `=_E`-equal) is
   preserved by every inference step.
 - `completion_complete_at_convergence`: at a fixed round, `=_E`-equal active
-  nodes are in one class. Hypotheses: slot maintenance with the refresh
-  (`SlotState.OpsStar`, `I5` initially, `Agrees`), `I0Active`, `hcanon`,
-  `RoundFixed`, law facts `hlaw`/`hnf_ax`/`hcp`, `hcc`, `hS`, `hcancel`.
+  nodes are in one class. Hypotheses: minimal-monomial maintenance with the
+  refresh (`SlotState.OpsStar`, `I5` initially, `Agrees`), `I0Active`,
+  `hcanon`, `RoundFixed`, law facts `hlaw`/`hnf_ax`/`hcp`, `hcc`, `hS`,
+  `hcancel`. Since 2026-11-06 `I0Active` constrains only the classes that
+  hold an active node and `hcc` only the active nodes; the former statement
+  (`I0ActiveAll`, every class of `Fin n`, which no state with a leaf constant
+  meets) is the corollary `completion_complete_at_convergence_of_all`.
+- `Atoms.lean`, `AtomsEngine.lean`, `AtomsWitness.lean` (leaf constants,
+  2026-11-06): the engine identifies the one-element monomial `{x}` with the
+  class `x` (`Normal::Single`, `degeneracy_pair`, the right-hand side
+  `{find c}` of an atomic class) and the empty monomial with the unit's
+  class. `State.withAtoms A u` is the completion view with these implicit
+  nodes: `({x}, x)` for each atomic class `x ∈ A`, `(∅, u)` for the unit.
+  `RoundFixedA` is a fixed round of the view plus the one-element collapse
+  `AtomCollapse` (a node whose normal form is an implicit node's monomial
+  is in that node's class; `roundFixedA_iff`). From it and `hcc` on the
+  stored active nodes, `RoundFixedA.materialized` proves that a stored node
+  with an implicit node's monomial (a one-element node the engine keeps
+  until the degeneracy merge) is in that node's class, and
+  `RoundFixedA.congr` gives congruence on the view.
+  `completion_complete_atoms` (packaged as `CompleteAtoms`, with
+  `atom_class`: a node `=_E` a constant `{x}` is in `x`'s class, `atoms`,
+  `unit_class`, `materialized`) and
+  `completion_complete_{cancellative,inverse,combined}_engine_atoms` are the
+  completeness theorems for graphs with leaf constants;
+  `invNodes_withAtoms` derives the one-element nodes the inverse rules R1-R5
+  are stated on from atomic `g`-node classes. `AtomsWitness.witness_complete`
+  proves every hypothesis of `CompleteAtoms` for the converged state of
+  `(union (+ a b) c)`, `t = a+b+d`, `u = c+d` (four leaf constants, a
+  normal form `{c}` collapsed into `c`'s class), by hand and `decide`;
+  `witness_not_all` shows `I0ActiveAll` fails on it. Not modelled: which
+  classes are atomic (`A` is a parameter; the engine's `atomic` bit, set on
+  use as a child and on holding a non-AC node, is not derived; the
+  theorems hold for every `A` that meets their hypotheses).
 - `reachable_I5`, `fix_sufficient`, `shrinkNoRefresh_breaks_I5`: the
   min-monomial refresh keeps I5; the unrefreshed shrink is the repro state.
 - `MinMonoKey.lean` (row EG1): completion orders monomials by per-class order

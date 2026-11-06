@@ -239,11 +239,13 @@ end RoundFixedA
 round is fixed in the sense of `RoundFixedA` (the one-element collapse
 included), and congruence `hcc` ranges over the stored active nodes. Two
 `=_E`-equal monomials of the view, each a stored active node or the
-one-element monomial `{x}` of an atom `x ∈ A`, are in one class.
+one-element monomial `{x}` of an atom `x ∈ A` or the empty monomial of the
+unit, are in one class.
 
-The view's slot state (`ha`) holds each atom `{x}` as an active monomial of
-`x`'s class, so the right-hand side of a class with an atom is a
-one-element monomial, as `class_rhs_into` returns for an atomic class.
+The minimal-monomial state the view agrees with (`ha`, a `SlotState`) holds
+each atom `{x}` as an active monomial of `x`'s class, so the right-hand
+side of a class with an atom is a one-element monomial (or `∅` for the
+unit's class), as `class_rhs_into` returns for an atomic class.
 `I0Active` constrains only the classes holding an active node of the view;
 a class neither atomic nor holding a node (a class of another operator
 that no node references) is unconstrained. -/
