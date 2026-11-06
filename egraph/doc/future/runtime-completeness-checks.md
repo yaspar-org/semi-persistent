@@ -76,7 +76,10 @@ a full round. The engine already performs both before it reports a fixpoint:
   `Converged` only after a full round over every overlapping pair merges nothing
   (`06-ac-congruence-closure.md` §10). Pairs are found through the use lists, so the cost
   is proportional to the number of overlapping pairs, not to the square of the rule count;
-  it is still one completion round.
+  it is still one completion round. The round skips disjoint pairs and pairs where one
+  left-hand side contains the other (`egraph.rs`, `cc_round`), relying on the normalize pass
+  for containment; no theorem connects that pass to `hcp`, so the containment pairs are
+  checked in tier 2 only, and the confirmation round does not discharge `hcp` for them.
 - `A.R.Unchanged` is what the stop test checks: saturation stops only after a round
   leaves the graph's size stamp unchanged.
 - `nf_present` needs one normalization per active node.
@@ -110,8 +113,9 @@ maintains a summary would let a defect in that code pass its own check.
 ## 6. Not covered
 
 - The completeness theorems for matching under regrouping are laws-free, and the regroup
-  bounds and the skipping of redundant records are not modelled (`07` §7.5). Tier 1 covers
-  the bounds by the truncation counters; the skipping has no check.
+  bounds are not modelled (`07` §7.5); tier 1 covers the bounds by the truncation counters.
+  The skipping of redundant records needs no check: `regroupSkipG_iff` proves it keeps the
+  match set.
 - Completion modulo A alone has no completeness theorem (the word problem for semigroups
   is undecidable), so for `:assoc` operators the checks establish matching completeness
   relative to the classes present and nothing about completion.
