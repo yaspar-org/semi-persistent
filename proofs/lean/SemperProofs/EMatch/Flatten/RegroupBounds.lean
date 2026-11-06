@@ -831,4 +831,465 @@ theorem regroupBounded_reach (B : Bounds) (ix : Ix) {gs : List (C × List (C × 
 
 end Reach
 
+/-! ## The takeable set with the engine's cap -/
+
+theorem takeableRCap_down (ctx : Ctx) (σ : Binding) (items : List Var) :
+    DownClosed ctx (takeableRCap ctx σ items) := by
+  intro a b hk ha
+  cases h : items.mapM σ.cls with
+  | none => simp [takeableRCap, h]
+  | some bound =>
+      simp only [takeableRCap, h] at ha ⊢
+      split
+      · rename_i hcl
+        rw [if_pos hcl] at ha
+        simp only [decide_eq_true_eq] at ha ⊢
+        exact hcl.1 (kidOf_mem_belowStep ha hk)
+      · rfl
+
+theorem takenOf_takeableRCap {ctx : Ctx} {σ σ' : Binding} (hext : Extends σ σ')
+    {items : List Var} (hb : ∀ x ∈ items, ∃ c, σ'.cls x = some c) :
+    ∀ c ∈ takenOf σ' items, takeableRCap ctx σ items c = true := by
+  intro c hc
+  cases h : items.mapM σ.cls with
+  | none => simp [takeableRCap, h]
+  | some bound =>
+    rw [← takenOf_extends hext items (bound_of_mapM h), takenOf_of_mapM h] at hc
+    have hc' := subset_belowIter ctx ((classesOf ctx.G).card + 1) bound hc
+    simp only [takeableRCap, h]
+    split <;> simp [hc']
+
+/-- **The engine's enumeration with the capped takeable set meets the plan
+specification**: past the cap every class is takeable, which prunes less. -/
+theorem regroupSkipCap_spec (dir : Sym → Dir) : (Enumerator.regroupSkipCap dir).Spec where
+  normal {ctx laws items n w d} h := by
+    unfold Enumerator.regroupSkipCap enumerateRSkip at h
+    exact normal_enumerateFromRSkip (baseGood_baseRecsR ctx (dir ctx.f) laws n)
+      normal_baseRecsR h
+  normalP {ctx laws σ items n w d} h := by
+    unfold Enumerator.regroupSkipCap enumerateRDSkip at h
+    exact normal_enumerateFromRSkip (baseGood_filter (baseGood_baseRecsR ctx (dir ctx.f) laws n) _)
+      (fun r hr => normal_baseRecsR r (List.mem_filter.1 hr).1) h
+  to_full {ctx laws σ σ' items n w d} hext hb h hacc := by
+    have h' : (w, d) ∈ enumerateRDSkip (takeableRCap ctx σ items) ctx (dir ctx.f) laws
+        items.length n := h
+    obtain ⟨d₁, hd₁, hacc₁⟩ := enumerateRDSkip_iff.1 ⟨d, h', hacc⟩
+    obtain ⟨d₂, hd₂, hacc₂⟩ :=
+      (prune_regroup (takeableRCap_down _ _ _) (takenOf_takeableRCap hext hb)).1 ⟨d₁, hd₁, hacc₁⟩
+    show ∃ d', (w, d') ∈ enumerateRSkip ctx (dir ctx.f) laws items.length n ∧ _
+    exact enumerateRSkip_iff.2 ⟨d₂, hd₂, hacc₂⟩
+  to_pruned {ctx laws σ σ' items n w d} hext hb h hacc := by
+    have h' : (w, d) ∈ enumerateRSkip ctx (dir ctx.f) laws items.length n := h
+    obtain ⟨d₁, hd₁, hacc₁⟩ := enumerateRSkip_iff.1 ⟨d, h', hacc⟩
+    obtain ⟨d₂, hd₂, hacc₂⟩ :=
+      (prune_regroup (takeableRCap_down _ _ _) (takenOf_takeableRCap hext hb)).2 ⟨d₁, hd₁, hacc₁⟩
+    show ∃ d', (w, d') ∈ enumerateRDSkip (takeableRCap ctx σ items) ctx (dir ctx.f) laws
+      items.length n ∧ _
+    exact enumerateRDSkip_iff.2 ⟨d₂, hd₂, hacc₂⟩
+
+/-- The two enumerations share their full side: an atom holds under one iff
+under the other. -/
+theorem atomSat_regroupSkipCap_iff {c : FCtx} {dir : Sym → Dir} {σ : Binding} {a : RAtom} :
+    AtomSatG (Enumerator.regroupSkipCap dir) c σ a ↔ AtomSatG (Enumerator.regroupSkip dir) c σ a := by
+  unfold AtomSatG Enumerator.regroupSkipCap Enumerator.regroupSkip
+  exact Iff.rfl
+
+/-! ## Views of record lists -/
+
+/-- The views of `recs₁` are views of `recs₂`, each with a demand accepting
+at least what the first accepts. -/
+def ViewLe (recs₁ recs₂ : List RecR) : Prop :=
+  ∀ w d, (w, d) ∈ enumerateFromR recs₁ → ∃ d', (w, d') ∈ enumerateFromR recs₂ ∧
+    ∀ κ taken, d.acceptsEB κ taken = true → d'.acceptsEB κ taken = true
+
+theorem enumerateFromR_unique {recs : List RecR} {w : List (C × Nat)} {d d' : DemandL}
+    (h : (w, d) ∈ enumerateFromR recs) (h' : (w, d') ∈ enumerateFromR recs) : d = d' := by
+  unfold enumerateFromR at h h'
+  obtain ⟨w₁, -, he⟩ := List.mem_map.1 h
+  obtain ⟨w₂, -, he'⟩ := List.mem_map.1 h'
+  simp only [Prod.mk.injEq] at he he'
+  rw [← he.2, ← he'.2, he.1, he'.1]
+
+theorem enumerateFromR_of_mem {recs : List RecR} {r : RecR} (h : r ∈ recs) :
+    ∃ d, (r.1, d) ∈ enumerateFromR recs := by
+  unfold enumerateFromR
+  exact ⟨_, List.mem_map.2 ⟨r.1, mem_dedupH.2 (List.mem_map_of_mem h), rfl⟩⟩
+
+/-- Every record of `recs₁` covered by one of `recs₂`: the views compare. -/
+theorem viewLe_of_cov {recs₁ recs₂ : List RecR} (h : ∀ r ∈ recs₁, ∃ c ∈ recs₂, Cov c r) :
+    ViewLe recs₁ recs₂ := by
+  intro w d hd
+  obtain ⟨r, hr, rfl⟩ := mem_enumerateFromR hd
+  obtain ⟨c, hc, hcov⟩ := h r hr
+  obtain ⟨d', hd'⟩ := enumerateFromR_of_mem hc
+  rw [hcov.1] at hd'
+  refine ⟨d', hd', fun κ taken hacc => ?_⟩
+  rw [DemandL.acceptsEB_iff] at hacc ⊢
+  obtain ⟨r₁, hr₁, hw₁, hok₁⟩ := acceptsE_enumerateFromR.1 ⟨d, hd, hacc⟩
+  obtain ⟨c₁, hc₁, hcov₁⟩ := h r₁ hr₁
+  obtain ⟨d'', hd'', hacc''⟩ :=
+    (acceptsE_enumerateFromR (κ := κ)).2 ⟨c₁, hc₁, hcov₁.1.trans hw₁, hcov₁.accepts hok₁⟩
+  rwa [enumerateFromR_unique hd'' hd'] at hacc''
+
+theorem viewLe_refl (recs : List RecR) : ViewLe recs recs :=
+  viewLe_of_cov (fun r hr => ⟨r, hr, Cov.refl r⟩)
+
+theorem viewLe_nil (recs : List RecR) : ViewLe [] recs := by
+  intro w d hd
+  simp [enumerateFromR, dedupH] at hd
+
+/-! ## One `Flatten` evaluation -/
+
+theorem needsAfter_ne_nil (g : C) (grp ns : List C) : needsAfter g grp ns ≠ [] := by
+  unfold needsAfter
+  dsimp only
+  split
+  · rename_i h; exact List.ne_nil_of_mem h
+  · simp
+
+/-- A reachable record needing no class is a walk record. -/
+theorem mem_base_of_reach {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR} {r : RecR}
+    (h : Reach ctx dir laws base r) (hn : r.2.2 = []) : r ∈ base := by
+  obtain ⟨r₀, h₀, hch⟩ := h
+  cases hch with
+  | refl => exact h₀
+  | tail _ hs =>
+      obtain ⟨_, _, _, -, -, -, -, he⟩ := mem_regroupRec hs
+      exact absurd (he.symm.trans hn) (needsAfter_ne_nil _ _ _)
+
+/-- The walk's records within any limit are covered by the engine's
+regrouping within the limit. -/
+theorem cov_skip {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR}
+    (hb : BaseGood ctx.κ base) {limit : Nat} {r : RecR} (hr : Reach ctx dir laws base r)
+    (hl : r.2.2.length ≤ limit) :
+    ∃ c ∈ withinLimit limit (regroupSkipG ctx dir laws (groupsOfEngine ctx) base), Cov c r := by
+  obtain ⟨hs, hc⟩ := regroupSkipG_spec (dir := dir) (laws := laws) hb (groupsOfEngine_sub ctx)
+    (groupsOfEngine_sup ctx)
+  obtain ⟨c, hc', hcov⟩ := hc r hr
+  exact ⟨c, mem_withinLimit.2 ⟨hc', le_trans (hcov.length (reach_good hb (hs c hc')).2) hl⟩, hcov⟩
+
+section Eval
+
+variable (B : Bounds) (ix : Ix) (T : C → Bool) (ctx : Ctx) (dir : Dir) (laws : Laws)
+  (limit : Nat) (n : Node)
+
+/-- **Soundness of one evaluation**: every view of the bounded enumeration is
+a view of the engine's enumeration without bounds, whose demand accepts at
+least as much, whatever stopped it. -/
+theorem enumerateRDBounded_le :
+    ∀ w d, (w, d) ∈ (enumerateRDBounded B ix T ctx dir laws limit n).views →
+      ∃ d', (w, d') ∈ enumerateRDSkip T ctx dir laws limit n ∧
+        ∀ κ taken, d.acceptsEB κ taken = true → d'.acceptsEB κ taken = true := by
+  have hb := baseGood_filter (baseGood_baseRecsR ctx dir laws n) (keepRec ctx.κ T laws)
+  unfold enumerateRDBounded enumerateRDSkip regroupAllSkip
+  dsimp only
+  split
+  · refine viewLe_of_cov (fun r hr => cov_skip hb ⟨r, hr, Relation.ReflTransGen.refl⟩ ?_)
+    obtain ⟨-, -, -, -, hn⟩ := mem_baseRecsR (List.mem_filter.1 hr).1
+    rw [hn]; exact Nat.zero_le _
+  · split
+    · exact viewLe_nil _
+    · refine viewLe_of_cov (fun r hr => ?_)
+      obtain ⟨hr, hl⟩ := mem_withinLimit.1 hr
+      exact cov_skip hb (regroupBounded_reach B ix (groupsOfEngine_sub ctx) hr) hl
+
+/-- **Exactness of one evaluation**: with no truncation, no skip and no
+overflow, the engine's enumeration without bounds has no view the bounded
+one lacks, nor a demand accepting more. -/
+theorem enumerateRDBounded_ge (h : (enumerateRDBounded B ix T ctx dir laws limit n).counts = 0) :
+    ∀ w d, (w, d) ∈ enumerateRDSkip T ctx dir laws limit n →
+      ∃ d', (w, d') ∈ (enumerateRDBounded B ix T ctx dir laws limit n).views ∧
+        ∀ κ taken, d.acceptsEB κ taken = true → d'.acceptsEB κ taken = true := by
+  have hb := baseGood_filter (baseGood_baseRecsR ctx dir laws n) (keepRec ctx.κ T laws)
+  revert h
+  unfold enumerateRDBounded enumerateRDSkip regroupAllSkip
+  dsimp only
+  split
+  · rename_i hl
+    intro _
+    subst hl
+    refine viewLe_of_cov (fun r hr => ?_)
+    obtain ⟨hr, hl⟩ := mem_withinLimit.1 hr
+    have hreach := (regroupSkipG_spec (dir := dir) (laws := laws) hb (groupsOfEngine_sub ctx)
+      (groupsOfEngine_sup ctx)).1 r hr
+    exact ⟨r, mem_base_of_reach hreach (List.eq_nil_of_length_eq_zero (Nat.le_zero.1 hl)),
+      Cov.refl r⟩
+  · split
+    · intro h; simp [BOut.counts] at h; cases h
+    · rename_i hov
+      intro h
+      simp only [BOut.counts] at h
+      have hc : ∀ {a b c d e f : Nat}, (⟨a, b, c⟩ : Counts) = ⟨d, e, f⟩ → a = d ∧ c = f :=
+        fun h => by cases h; exact ⟨rfl, rfl⟩
+      obtain ⟨htr, ho⟩ := hc h
+      have hnone : (regroupBoundedG B ix ctx dir laws (groupsOfEngine ctx)
+          ((baseRecsR ctx dir laws n).filter (keepRec ctx.κ T laws))).halt = Option.none := by
+        cases hH : (regroupBoundedG B ix ctx dir laws (groupsOfEngine ctx)
+          ((baseRecsR ctx dir laws n).filter (keepRec ctx.κ T laws))).halt with
+        | none => rfl
+        | some x =>
+            cases x
+            · rw [hH] at htr; simp at htr
+            · exact absurd hH hov
+      rw [regroupBounded_exact B ix ctx dir laws _ _ hnone ho]
+      exact viewLe_refl _
+
+end Eval
+
+/-! ## A query -/
+
+/-- `env'` has the binding of `env` and, in each register `env` fills, the
+same view with a demand accepting at least as much. -/
+def EnvLe (env env' : EEnv) : Prop :=
+  env.σ = env'.σ ∧ ∀ r w d, env.views r = some (w, d) →
+    ∃ d', env'.views r = some (w, d') ∧
+      ∀ κ taken, d.acceptsEB κ taken = true → d'.acceptsEB κ taken = true
+
+theorem EnvLe.refl (env : EEnv) : EnvLe env env :=
+  ⟨rfl, fun _ _ d h => ⟨d, h, fun _ _ h => h⟩⟩
+
+theorem EnvLe.withBinding {env env' : EEnv} (h : EnvLe env env') (σ : Binding) :
+    EnvLe (env.withBinding σ) (env'.withBinding σ) :=
+  ⟨rfl, h.2⟩
+
+theorem EnvLe.setView {env env' : EEnv} (h : EnvLe env env') (out : Nat) {w : List (C × Nat)}
+    {d d' : DemandL} (hd : ∀ κ taken, d.acceptsEB κ taken = true → d'.acceptsEB κ taken = true) :
+    EnvLe (env.setView out (w, d)) (env'.setView out (w, d')) := by
+  refine ⟨h.1, fun r w₁ d₁ hr => ?_⟩
+  by_cases hro : r = out
+  · subst hro
+    simp only [EEnv.setView, Function.update_self, Option.some.injEq, Prod.mk.injEq] at hr ⊢
+    obtain ⟨rfl, rfl⟩ := hr
+    exact ⟨d', ⟨rfl, rfl⟩, hd⟩
+  · simp only [EEnv.setView, Function.update_of_ne hro] at hr ⊢
+    exact h.2 r w₁ d₁ hr
+
+/-- The views of one evaluation of `E₁` are views of the same evaluation of
+`E₂`, with a demand accepting at least as much. -/
+def CallLe (E₁ E₂ : Enumerator) (ctx : Ctx) (laws : Laws) (σ : Binding) (items : List Var)
+    (n : Node) : Prop :=
+  ∀ w d, (w, d) ∈ E₁.pruned ctx laws σ items n → ∃ d', (w, d') ∈ E₂.pruned ctx laws σ items n ∧
+    ∀ κ taken, d.acceptsEB κ taken = true → d'.acceptsEB κ taken = true
+
+/-- One step of the plan, with the flatten step's evaluations compared. -/
+theorem runEStepG_le {E₁ E₂ : Enumerator} {c : FCtx} {s : EStep} {env env' : EEnv}
+    (h : EnvLe env env')
+    (hf : ∀ v f κ out items n, s = .flatten v f κ out items → env.σ.nodeOf c.G v = some n →
+      CallLe E₁ E₂ (c.ctx f κ) (c.laws f) env.σ items n)
+    {x : EEnv} (hx : x ∈ runEStepG E₁ c s env) : ∃ x' ∈ runEStepG E₂ c s env', EnvLe x x' := by
+  obtain ⟨hσ, hv⟩ := h
+  cases s with
+  | base st =>
+      simp only [runEStepG, List.mem_map] at hx ⊢
+      obtain ⟨σ'', hσ'', rfl⟩ := hx
+      exact ⟨_, ⟨σ'', hσ ▸ hσ'', rfl⟩, EnvLe.withBinding ⟨hσ, hv⟩ σ''⟩
+  | flatten v f κ out items =>
+      simp only [runEStepG] at hx ⊢
+      rw [← hσ]
+      revert hx
+      cases hn : env.σ.nodeOf c.G v with
+      | none => simp
+      | some n =>
+          intro hx
+          obtain ⟨⟨w, d⟩, hwd, rfl⟩ := List.mem_map.1 hx
+          obtain ⟨d', hd', hacc⟩ := hf v f κ out items n rfl hn w d hwd
+          exact ⟨_, List.mem_map_of_mem hd', EnvLe.setView ⟨hσ, hv⟩ out hacc⟩
+  | decomposeAC _ elems rest r =>
+      simp only [runEStepG] at hx ⊢
+      revert hx
+      cases hr : env.views r with
+      | none => simp
+      | some wd =>
+          obtain ⟨w, d⟩ := wd
+          obtain ⟨d', hr', hacc⟩ := hv r w d hr
+          rw [hr', ← hσ]
+          intro hx
+          obtain ⟨σ'', hσ'', rfl⟩ := List.mem_map.1 hx
+          obtain ⟨hm, hk⟩ := List.mem_filter.1 hσ''
+          exact ⟨_, List.mem_map_of_mem (List.mem_filter.2 ⟨hm, hacc _ _ hk⟩),
+            EnvLe.withBinding ⟨hσ, hv⟩ σ''⟩
+  | decomposeACI _ elems rest r =>
+      simp only [runEStepG] at hx ⊢
+      revert hx
+      cases hr : env.views r with
+      | none => simp
+      | some wd =>
+          obtain ⟨w, d⟩ := wd
+          obtain ⟨d', hr', hacc⟩ := hv r w d hr
+          rw [hr', ← hσ]
+          intro hx
+          obtain ⟨σ'', hσ'', rfl⟩ := List.mem_map.1 hx
+          obtain ⟨hm, hk⟩ := List.mem_filter.1 hσ''
+          exact ⟨_, List.mem_map_of_mem (List.mem_filter.2 ⟨hm, hacc _ _ hk⟩),
+            EnvLe.withBinding ⟨hσ, hv⟩ σ''⟩
+  | expandA _ pre elems suf r =>
+      simp only [runEStepG] at hx ⊢
+      revert hx
+      cases hr : env.views r with
+      | none => simp
+      | some wd =>
+          obtain ⟨w, d⟩ := wd
+          obtain ⟨d', hr', hacc⟩ := hv r w d hr
+          rw [hr', ← hσ]
+          intro hx
+          obtain ⟨σ'', hσ'', rfl⟩ := List.mem_map.1 hx
+          obtain ⟨hm, hk⟩ := List.mem_filter.1 hσ''
+          exact ⟨_, List.mem_map_of_mem (List.mem_filter.2 ⟨hm, hacc _ _ hk⟩),
+            EnvLe.withBinding ⟨hσ, hv⟩ σ''⟩
+
+/-- A plan with every evaluation compared. -/
+theorem runEG_le {E₁ E₂ : Enumerator} {c : FCtx}
+    (hE : ∀ ctx laws σ items n, CallLe E₁ E₂ ctx laws σ items n) :
+    ∀ (ss : List EStep) (env env' : EEnv), EnvLe env env' → ∀ x ∈ runEG E₁ c ss env,
+      ∃ x' ∈ runEG E₂ c ss env', EnvLe x x'
+  | [], env, env', h, x, hx => by
+      simp only [runEG, List.mem_singleton] at hx ⊢
+      subst hx
+      exact ⟨env', rfl, h⟩
+  | s :: ss, env, env', h, x, hx => by
+      simp only [runEG, List.mem_flatMap] at hx ⊢
+      obtain ⟨y, hy, hx⟩ := hx
+      obtain ⟨y', hy', hyy⟩ := runEStepG_le h (fun _ _ _ _ _ _ _ _ => hE _ _ _ _ _) hy
+      obtain ⟨x', hx', hxx⟩ := runEG_le hE ss y y' hyy x hx
+      exact ⟨x', ⟨y', hy', hx'⟩, hxx⟩
+
+/-! ### The counters of a query -/
+
+theorem Counts.zero_def : (0 : Counts) = ⟨0, 0, 0⟩ := rfl
+
+theorem Counts.add_eq_zero {a b : Counts} : a + b = 0 ↔ a = 0 ∧ b = 0 := by
+  obtain ⟨a₁, a₂, a₃⟩ := a
+  obtain ⟨b₁, b₂, b₃⟩ := b
+  show Counts.add _ _ = _ ↔ _
+  simp only [Counts.add, Counts.zero_def, Counts.mk.injEq]
+  omega
+
+theorem Counts.sum_eq_zero :
+    ∀ (l : List Counts), l.foldr (· + ·) 0 = 0 ↔ ∀ x ∈ l, x = 0
+  | [] => by simp
+  | x :: l => by
+      simp only [List.foldr_cons, List.mem_cons, forall_eq_or_imp]
+      rw [Counts.add_eq_zero, Counts.sum_eq_zero l]
+
+/-- The environments of `runB` are those of the plan run with the bounded
+enumeration. -/
+theorem runStepB_fst (B : Bounds) (ix : Ix) (dir : Sym → Dir) (c : FCtx) (s : EStep)
+    (env : EEnv) :
+    (runStepB B ix dir c s env).1 = runEStepG (Enumerator.regroupBounded B ix dir) c s env := by
+  cases s with
+  | flatten v f κ out items =>
+      simp only [runStepB, runEStepG]
+      cases env.σ.nodeOf c.G v <;> rfl
+  | _ => rfl
+
+theorem runB_fst (B : Bounds) (ix : Ix) (dir : Sym → Dir) (c : FCtx) :
+    ∀ (ss : List EStep) (env : EEnv),
+      (runB B ix dir c ss env).1 = runEG (Enumerator.regroupBounded B ix dir) c ss env
+  | [], _ => rfl
+  | s :: ss, env => by
+      simp only [runB, runEG, List.flatMap_map, runStepB_fst]
+      congr 1
+      funext y
+      exact runB_fst B ix dir c ss y
+
+/-- With the counters zero, the plan run with the unbounded enumeration
+emits nothing the bounded one does not. -/
+theorem runB_ge (B : Bounds) (ix : Ix) (dir : Sym → Dir) (c : FCtx) :
+    ∀ (ss : List EStep) (env env' : EEnv), (runB B ix dir c ss env).2 = 0 → EnvLe env' env →
+      ∀ x' ∈ runEG (Enumerator.regroupSkipCap dir) c ss env',
+        ∃ x ∈ (runB B ix dir c ss env).1, EnvLe x' x
+  | [], env, env', _, h, x', hx' => by
+      simp only [runEG, List.mem_singleton] at hx'
+      subst hx'
+      exact ⟨env, List.mem_singleton_self _, h⟩
+  | s :: ss, env, env', hz, h, x', hx' => by
+      simp only [runB] at hz ⊢
+      obtain ⟨hz₁, hz₂⟩ := Counts.add_eq_zero.1 hz
+      rw [Counts.sum_eq_zero] at hz₂
+      simp only [runEG, List.mem_flatMap] at hx'
+      obtain ⟨y', hy', hx'⟩ := hx'
+      have hf : ∀ v f κ out items n, s = .flatten v f κ out items → env'.σ.nodeOf c.G v = some n →
+          CallLe (Enumerator.regroupSkipCap dir) (Enumerator.regroupBounded B ix dir)
+            (c.ctx f κ) (c.laws f) env'.σ items n := by
+        rintro v f κ out items n rfl hn
+        rw [h.1] at hn ⊢
+        have hz₁' := hz₁
+        simp only [runStepB, hn] at hz₁'
+        exact enumerateRDBounded_ge B ix _ (c.ctx f κ) (dir f) (c.laws f) items.length n hz₁'
+      obtain ⟨y, hy, hyy⟩ := runEStepG_le h hf hy'
+      rw [← runStepB_fst] at hy
+      have hzy : (runB B ix dir c ss y).2 = 0 :=
+        hz₂ _ (List.mem_map.2 ⟨_, List.mem_map.2 ⟨y, hy, rfl⟩, rfl⟩)
+      obtain ⟨x, hx, hxx⟩ := runB_ge B ix dir c ss y y' hzy hyy x' hx'
+      exact ⟨x, List.mem_flatMap.2 ⟨_, List.mem_map.2 ⟨y, hy, rfl⟩, hx⟩, hxx⟩
+
+/-! ### The final theorems -/
+
+/-- **Soundness of the bounded plan**: every binding the plan emits with the
+engine's bounds, whatever was truncated, skipped or overflowed, satisfies
+every atom under the engine's enumeration without bounds. -/
+theorem regroupBounded_plan_sound {c : FCtx} {dir : Sym → Dir} {sig : Sym → Kind}
+    {as : List RAtom} (r : Nat) (hw : QueryFWF c sig as) (B : Bounds) (ix : Ix) {env : EEnv}
+    (h : env ∈ (runB B ix dir c (planF as ∅ r) EEnv.empty).1) :
+    (∀ a ∈ as, AtomSatG (Enumerator.regroupSkip dir) c env.σ a) ∧
+      ClsDom env.σ (planBound as ∅) := by
+  rw [runB_fst] at h
+  obtain ⟨env', h', hle⟩ := runEG_le (E₁ := Enumerator.regroupBounded B ix dir)
+    (E₂ := Enumerator.regroupSkipCap dir)
+    (fun ctx laws σ items n => by
+      unfold CallLe Enumerator.regroupBounded Enumerator.regroupSkipCap
+      exact enumerateRDBounded_le B ix (takeableRCap ctx σ items) ctx (dir ctx.f) laws
+        items.length n)
+    _ _ _ (EnvLe.refl _) env h
+  obtain ⟨hsat, hdom⟩ := flatten_plan_sound_of_spec (regroupSkipCap_spec dir) r hw h'
+  rw [hle.1]
+  exact ⟨fun a ha => atomSat_regroupSkipCap_iff.1 (hsat a ha), hdom⟩
+
+/-- **Completeness of the bounded plan when the counters are zero**: if the
+query ends with `flatten_regroup_truncated`, `flatten_skipped` and
+`flatten_overflowed` all zero, every binding satisfying every atom under the
+engine's enumeration is extended by an emitted one. -/
+theorem regroupBounded_plan_complete {c : FCtx} {dir : Sym → Dir} {sig : Sym → Kind}
+    {as : List RAtom} (r : Nat) (hw : QueryFWF c sig as) (B : Bounds) (ix : Ix)
+    (hz : (runB B ix dir c (planF as ∅ r) EEnv.empty).2 = 0) {σ' : Binding}
+    (hsat : ∀ a ∈ as, AtomSatG (Enumerator.regroupSkip dir) c σ' a) :
+    ∃ env ∈ (runB B ix dir c (planF as ∅ r) EEnv.empty).1, Extends env.σ σ' := by
+  obtain ⟨env', h', hext⟩ := flatten_plan_complete_of_spec (regroupSkipCap_spec dir) r hw
+    (fun a ha => atomSat_regroupSkipCap_iff.2 (hsat a ha))
+  obtain ⟨env, h, hle⟩ := runB_ge B ix dir c _ _ _ hz (EnvLe.refl _) env' h'
+  exact ⟨env, h, hle.1 ▸ hext⟩
+
+/-- **The runtime check**: when a query ends with the three counters of its
+`Flatten` steps zero (`flatten_regroup_truncated`, `flatten_skipped`,
+`flatten_overflowed`, `ematch.rs`), the bindings the bounded plan emits are
+exactly those satisfying every atom under the engine's enumeration, which
+`regroupSkip_match_iff` characterizes for laws-free operators. -/
+theorem regroupBounded_query_exact {c : FCtx} {dir : Sym → Dir} {sig : Sym → Kind}
+    {as : List RAtom} (r : Nat) (hw : QueryFWF c sig as) (B : Bounds) (ix : Ix)
+    (hz : (runB B ix dir c (planF as ∅ r) EEnv.empty).2 = 0) :
+    (∀ env ∈ (runB B ix dir c (planF as ∅ r) EEnv.empty).1,
+        ∀ a ∈ as, AtomSatG (Enumerator.regroupSkip dir) c env.σ a) ∧
+      ∀ σ', (∀ a ∈ as, AtomSatG (Enumerator.regroupSkip dir) c σ' a) →
+        ∃ env ∈ (runB B ix dir c (planF as ∅ r) EEnv.empty).1, Extends env.σ σ' :=
+  ⟨fun _ h => (regroupBounded_plan_sound r hw B ix h).1,
+    fun _ hsat => regroupBounded_plan_complete r hw B ix hz hsat⟩
+
+/-- **The runtime check, per atom**: with the counters zero, a binding is
+emitted (up to extension) iff every atom holds, an n-ary atom over a
+laws-free operator exactly when `regroupSkip_match_iff`'s chain exists. -/
+theorem regroupBounded_match_exact {c : FCtx} {dir : Sym → Dir} {sig : Sym → Kind}
+    {as : List RAtom} (r : Nat) (hw : QueryFWF c sig as) (B : Bounds) (ix : Ix)
+    (hz : (runB B ix dir c (planF as ∅ r) EEnv.empty).2 = 0) {σ : Binding} {a : RAtom}
+    (ha : a ∈ as) {κ : FlatKind} (hκ : a.shape.flatKind = some κ)
+    (hlaws : c.laws a.op = Laws.free) {env : EEnv}
+    (henv : env ∈ (runB B ix dir c (planF as ∅ r) EEnv.empty).1) (hσ : env.σ = σ) :
+    ∃ id n, σ.node a.node = some id ∧ (id, n) ∈ c.G.nodes ∧
+      σ.cls a.node = some (c.G.find id) ∧ n.op = a.op ∧
+      ∃ r₀ ∈ baseRecsR (c.ctx a.op κ) (dir a.op) Laws.free n, ∃ r,
+        RegroupChain (c.ctx a.op κ) (dir a.op) r₀ r ∧ r.2.2.length ≤ a.elems.length ∧
+        MatchN c.G a.shallow ⟨a.op, ofView κ r.1⟩ σ ∧
+        ∀ l ∈ r.alt, l.okE κ (takenOf σ a.elems) := by
+  subst hσ
+  exact (regroupSkip_match_iff hκ hlaws).1 ((regroupBounded_query_exact r hw B ix hz).1 env henv a ha)
+
 end Semper.EMatch.Flatten

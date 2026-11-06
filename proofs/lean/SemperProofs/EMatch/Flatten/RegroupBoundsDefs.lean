@@ -277,8 +277,11 @@ structure Counts where
   deriving DecidableEq, Repr
 
 instance : Zero Counts := ⟨⟨0, 0, 0⟩⟩
-instance : Add Counts := ⟨fun a b => ⟨a.truncated + b.truncated, a.skipped + b.skipped,
-  a.overflowed + b.overflowed⟩⟩
+
+def Counts.add (a b : Counts) : Counts :=
+  ⟨a.truncated + b.truncated, a.skipped + b.skipped, a.overflowed + b.overflowed⟩
+
+instance : Add Counts := ⟨Counts.add⟩
 
 /-- The counters one `Flatten` evaluation adds. -/
 def BOut.counts (o : BOut) : Counts :=
