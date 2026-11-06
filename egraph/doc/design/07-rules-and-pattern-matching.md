@@ -1428,6 +1428,39 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   every `f` member of the model, needs and the item limit on the final records included;
   over its 60 seeds, regrouping changes the matches of 352 (graph, pattern) pairs, and 273
   under laws, and the engine equals the reference on each.
+- **Laws** (2026-11-06, `proofs/lean/SemperProofs/EMatch/Flatten/RegroupLaws.lean`).
+  Regrouping reads normal forms and normalizes its result under the operator's laws, so a
+  group whose class is the unit, clamps to zero under `:nilpotent`, or cancels against its
+  inverse leaves a smaller view. Every such view denotes the node in a model of the laws
+  (`regroup_views_sound_{ac,aci,assoc}_laws`,
+  `regroupSkip_views_sound_{ac,aci,assoc}_laws`). The "Guarantee" bullet holds for any laws,
+  with chains whose steps normalize under the laws (`RegroupsToL`, `RegroupStepL`;
+  `regroup_match_iff_laws`, `regroupSkip_match_iff_laws`, `regroupSkip_plan_complete_laws`).
+  The generators already regroup under each case's laws. Relative to the laws, over the
+  classes present, three kinds of match are lost; `(set-option :completion eager)` proves
+  each equality below.
+  1. *A needed class the normalization drops.* The record still needs the group's class,
+     which its view no longer holds, so no item can take it (`needs_absent_rejects`). With
+     `zero ∋ add{A, B}`, `(add x y)` does not bind `x = C, y = D` in `add{A, B, C, D}`
+     (`regroup_unit_need_lost`); `flatten_regroup_laws_need.egg` pins the same loss under
+     `:nilpotent`, under `:inverse`, and for a leaf of the walk that gains the dropped
+     class. This is a defect of the demand, not of the views. Proposed fix, not applied:
+     after `need.push(g)` in `FlattenScratch::regroup`, keep only the needed classes the
+     normalized view holds, and flag a leaf that gains a dropped class as non-inert, in the
+     record and in its signature. A scratch build with both changes finds the four matches
+     of the fixture and leaves the other 52 `:flatten` programs of `tests/egg` unchanged;
+     among the 268 `:flatten` conformance programs it adds matches to four, and one
+     `check-neq` of `conform-flatten/f2_0095.egg`, a candidate the model's demand rejects,
+     then holds. Adopting it means the same change in the model's `regroupRec` and
+     regenerated samples.
+  2. *A normal form reached only by inserting* the unit, a cancel pair, or `k` copies under
+     `:nilpotent k`: with `zero ∋ add{B, D}`, `add{A, C}` equals `add{add{A, B}, add{C, D}}`
+     (`regroup_insert_unit_lost`, `flatten_regroup_laws_insert.egg`). A chain opens and
+     contracts but never inserts, and insertions are unbounded: a limit of the guarantee.
+  3. *A set group kept beside its class.* `S{A, B, C}` equals `S{A, C, sab}` by idempotence,
+     but regrouping replaces the group (`regroup_idem_overlap_lost`,
+     `flatten_regroup_laws_idem.egg`); keeping members would multiply the views by up to
+     `2^|group|`.
 - **Cost** (release build, best of three runs per file, 2026-11-05). The 231 `:flatten`
   programs of `tests/egg` and `tests/egg/conform-flatten` other than
   `ac_lazy_budget_inconclusive.egg` take 0.590 s in total before and 0.604 s after.

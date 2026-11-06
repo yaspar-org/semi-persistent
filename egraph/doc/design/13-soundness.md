@@ -336,6 +336,17 @@ because they opened a fold's nested child off its spine; until commits `d95883f5
 Completeness of the corrected rule is a Lean theorem for a model,
 `demand_engine_complete_{ac,aci,assoc}`; [§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten).)
 
+Regrouped views under the operator's laws are sound in every model of the laws and are
+exactly the views chains of regroupings reach (`RegroupLaws.lean`). Relative to the
+laws they lose matches: a needed class that the normalization drops (the unit, a clamp
+to zero, a cancelled inverse) leaves a record no match satisfies, a defect of the
+demand (`regroup_unit_need_lost`, `flatten_regroup_laws_need.egg`); a normal form
+reached only by inserting the unit, a cancel pair or `k` nilpotent copies, and a set
+group kept beside its class, are not reached by any chain (`regroup_insert_unit_lost`,
+`regroup_idem_overlap_lost`).
+[§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten), "Regrouped
+views", "Laws".
+
 ### 3.4 Conditional completion claims by operator family
 
 C canonicalization is complete on its own relative to the current ground

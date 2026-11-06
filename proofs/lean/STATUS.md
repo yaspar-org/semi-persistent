@@ -292,6 +292,29 @@ its two children classes merge (`NoCollapse`).
   `regroupSkip_match_complete`. The generators stay on `regroupLevels`: on the
   engine's loop they emit the same `check-eq` sets in another order, which
   changes the sampled `check-neq` candidates.
+  Regrouped views under laws (2026-11-06, `RegroupLaws.lean`), which settles
+  "operators with laws ... in the completeness theorems" and "soundness under laws" in
+  the list above. Soundness in models of the laws (`LawsModelAC`, `LawsModelACI`,
+  `LawsModelA`: the unit denotes the identity, `k • x = 0` under `:nilpotent k`, a
+  class and its inverse class sum to zero): `denAC_normalizeList`,
+  `denACI_normalizeList`, `denA_normalizeList`,
+  `regroup_step_sound_{ac,aci,assoc}_laws`, `regroup_views_sound_{ac,aci,assoc}_laws`,
+  `regroupSkip_views_sound_{ac,aci,assoc}_laws`. The exact characterization for any
+  laws: `RegroupsToL` (the laws-free `RegroupsTo` to a canonical view, then the normal
+  form under the laws is a node), `RegroupStepL`, `RegroupChainL`; `regroupStepL_iff`
+  (a step is exactly a regrouping of the model), `regroupStepL_free_iff`,
+  `regroupChainL_iff`, `regroup_views_iff_laws`, `regroup_match_iff_laws`,
+  `regroupSkip_views_iff_laws`, `regroupSkip_match_iff_laws`,
+  `regroupSkip_match_complete_laws`, `regroupSkip_plan_complete_laws`. Relative to the
+  laws, chains lose three kinds of match: a needed class the normalization drops (the
+  unit, a clamp to zero, a cancelled inverse) leaves a record no match satisfies
+  (`needs_absent_rejects`, counter-model `regroup_unit_need_lost`, engine
+  `flatten_regroup_laws_need.egg`, also for a leaf that gains the dropped class; a
+  defect of the demand with a proposed local fix, design 07 §7.5, "Laws"); a normal
+  form reached only by inserting the unit (`regroup_insert_unit_lost`,
+  `flatten_regroup_laws_insert.egg`); a set group kept beside its class
+  (`regroup_idem_overlap_lost`, `flatten_regroup_laws_idem.egg`). Not modelled: a Lean
+  counter-model for the leaf case (the fixture only), and the proposed fix.
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);
