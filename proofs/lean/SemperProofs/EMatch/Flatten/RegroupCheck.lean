@@ -1,7 +1,8 @@
-import SemperProofs.EMatch.Flatten.RegroupChain
+import SemperProofs.EMatch.Flatten.RegroupNested
 
 /-! Axiom audit for regrouped views (`RegroupDefs.lean`, `Regroup.lean`,
-`RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`, `RegroupChain.lean`) and the plan theorems over any
+`RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`, `RegroupChain.lean`,
+`RegroupNested.lean`) and the plan theorems over any
 enumeration (`Plan.lean`). Expected: only `propext`, `Classical.choice`,
 `Quot.sound`. -/
 
@@ -56,6 +57,10 @@ enumeration (`Plan.lean`). Expected: only `propext`, `Classical.choice`,
 #print axioms Semper.EMatch.Flatten.regroupChain_of_mem_levels
 #print axioms Semper.EMatch.Flatten.regroup_views_iff
 #print axioms Semper.EMatch.Flatten.regroup_match_iff
+#print axioms Semper.EMatch.Flatten.regroupStep_ac_of
+#print axioms Semper.EMatch.Flatten.exNestInv_step
+#print axioms Semper.EMatch.Flatten.regroup_nested_limit_counter
+#print axioms Semper.EMatch.Flatten.regroup_fold_nested
 
 namespace Semper.EMatch.Flatten
 open Semper.EMatch
