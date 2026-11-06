@@ -1,5 +1,6 @@
 import SemperProofs.EMatch.Flatten.RegroupNested
 import SemperProofs.EMatch.Flatten.RegroupSkip
+import SemperProofs.EMatch.Flatten.RegroupLaws
 
 /-! Axiom audit for regrouped views (`RegroupDefs.lean`, `Regroup.lean`,
 `RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`, `RegroupChain.lean`,
@@ -130,3 +131,33 @@ six records, the engine's loop five. -/
   (baseRecsR exNestCtx .both Laws.free exNestRoot)).length
 
 end Semper.EMatch.Flatten
+
+/-! Regrouped views under the operator's laws (`RegroupLaws.lean`): soundness in
+models of the laws and the exact chain characterization for any laws. -/
+
+#print axioms Semper.EMatch.Flatten.denAC_normalizeList
+#print axioms Semper.EMatch.Flatten.denACI_normalizeList
+#print axioms Semper.EMatch.Flatten.denA_normalizeList
+#print axioms Semper.EMatch.Flatten.regroup_step_sound_ac_laws
+#print axioms Semper.EMatch.Flatten.regroup_step_sound_aci_laws
+#print axioms Semper.EMatch.Flatten.regroup_step_sound_assoc_laws
+#print axioms Semper.EMatch.Flatten.regroup_views_sound_ac_laws
+#print axioms Semper.EMatch.Flatten.regroup_views_sound_aci_laws
+#print axioms Semper.EMatch.Flatten.regroup_views_sound_assoc_laws
+#print axioms Semper.EMatch.Flatten.regroupSkip_views_sound_ac_laws
+#print axioms Semper.EMatch.Flatten.regroupSkip_views_sound_aci_laws
+#print axioms Semper.EMatch.Flatten.regroupSkip_views_sound_assoc_laws
+#print axioms Semper.EMatch.Flatten.normalize_free_of_node
+#print axioms Semper.EMatch.Flatten.viewOK_normalize
+#print axioms Semper.EMatch.Flatten.regroupStepL_mem
+#print axioms Semper.EMatch.Flatten.regroupStepL_of_mem
+#print axioms Semper.EMatch.Flatten.regroupStepL_iff
+#print axioms Semper.EMatch.Flatten.regroupStepL_free_iff
+#print axioms Semper.EMatch.Flatten.regroupChainL_iff
+#print axioms Semper.EMatch.Flatten.regroup_views_iff_laws
+#print axioms Semper.EMatch.Flatten.regroup_match_iff_laws
+#print axioms Semper.EMatch.Flatten.regroupSkip_views_iff_laws
+#print axioms Semper.EMatch.Flatten.regroupSkip_match_iff_laws
+#print axioms Semper.EMatch.Flatten.regroupSkip_match_complete_laws
+#print axioms Semper.EMatch.Flatten.regroupSkip_plan_complete_laws
+

@@ -17,6 +17,7 @@ import SemperProofs.EMatch.Flatten.RegroupChain
 import SemperProofs.EMatch.Flatten.RegroupNested
 import SemperProofs.EMatch.Flatten.RegroupSkipDefs
 import SemperProofs.EMatch.Flatten.RegroupSkip
+import SemperProofs.EMatch.Flatten.RegroupLaws
 import SemperProofs.EMatch.Steps.Main
 import SemperProofs.EMatch.Env.Main
 import SemperProofs.EMatch.Engine.Rounds.Complete
