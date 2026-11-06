@@ -391,9 +391,7 @@ fn strided_join_keeps_a_dividing_stride() {
     assert_eq!(si(6, 0, 12).join(&si(3, 3, 9)).bounds(), (3, 0, 12));
 }
 
-/// Neither stride divides the other: the tight stride is
-/// `gcd(3, 5, 0) = 1` here anyway, but in general it needs `gcd` from
-/// #112. Join falls back to stride 1 and keeps the bounds.
+/// `gcd(3, 5, 0) = 1`: the least upper bound of these two is stride 1.
 #[test]
 fn strided_join_incompatible_strides_keeps_bounds() {
     let a = si(3, 0, 9);
@@ -430,19 +428,13 @@ fn strided_meet_is_commutative() {
     }
 }
 
-/// When one stride divides the other (or either operand is a singleton),
-/// meet is the exact intersection, `Bot` exactly when it is empty.
+/// Meet is the exact intersection for every pair, `Bot` exactly when it
+/// is empty: the CRT class of the two residues, clipped to the common bounds.
 #[test]
-fn strided_meet_is_exact_when_one_stride_divides_the_other() {
+fn strided_meet_is_exact() {
     let s = strided_samples();
     for a in &s {
         for b in &s {
-            let (sa, _, _) = a.bounds();
-            let (sb, _, _) = b.bounds();
-            let divides = sa == 0 || sb == 0 || sa % sb == 0 || sb % sa == 0;
-            if !divides {
-                continue;
-            }
             let m = a.meet(b);
             for x in 0..=255u8 {
                 assert_eq!(bot_has_si(&m, x), has_si(a, x) && has_si(b, x));
@@ -451,18 +443,18 @@ fn strided_meet_is_exact_when_one_stride_divides_the_other() {
     }
 }
 
-/// Neither of 4 and 6 divides the other, so the exact meet needs CRT
-/// (#112); until then meet keeps the larger-stride operand's grid clipped
-/// to the common bounds. Exact would be `(12, 8, 32)` = {8, 20, 32}.
+/// Neither of 4 and 6 divides the other: CRT merges `0 mod 4` and
+/// `2 mod 6` into `8 mod 12`, and `0 mod 4` with `3 mod 6` has no solution.
 #[test]
-fn strided_meet_non_dividing_strides_clips_to_common_bounds() {
+fn strided_meet_non_dividing_strides_uses_crt() {
     let a = si(4, 0, 40);
-    let b = si(6, 2, 32);
-    assert_eq!(bot_bounds_si(&a.meet(&b)), Some((6, 2, 32)));
-    let c = si(6, 3, 33);
-    // 4 and 6 share the factor 2, and 0 and 3 differ mod 2: disjoint, but
-    // still reported as a value.
-    assert_eq!(bot_bounds_si(&a.meet(&c)), Some((6, 3, 33)));
+    assert_eq!(bot_bounds_si(&a.meet(&si(6, 2, 32))), Some((12, 8, 32)));
+    assert_eq!(bot_bounds_si(&a.meet(&si(6, 3, 33))), None);
+    // a single common point.
+    assert_eq!(
+        bot_bounds_si(&si(4, 0, 12).meet(&si(6, 2, 14))),
+        Some((0, 8, 8))
+    );
 }
 
 /// `i = 0; while i < 200 { i += 4 }`: widening keeps stride 4 by jumping
@@ -535,6 +527,130 @@ fn strided_meet_and_widen_results_are_canonical() {
                 canon(&m);
             }
             canon(&a.widen(b));
+        }
+    }
+}
+
+fn si_points(a: &SI8) -> Vec<u8> {
+    (0..=255u8).filter(|&x| has_si(a, x)).collect()
+}
+
+/// Every concrete sum, difference and negation lands in the abstract
+/// result. Exact (the result is exactly the set of concrete results) when
+/// the operands share a grid (equal strides, or a singleton) and no result
+/// wraps or every result wraps; `neg` is exact whenever 0 is not in the set.
+/// Bounds near 0, the middle and 255 (so sums and differences wrap all
+/// ways), with sets capped at 32 points to keep the pair loop fast; Top is
+/// added back explicitly.
+fn strided_arith_samples() -> Vec<SI8> {
+    let pts = [0u8, 1, 2, 7, 100, 128, 250, 254, 255];
+    let strides = [0u8, 1, 2, 3, 4, 6, 64];
+    let mut out = vec![SI8::top()];
+    for &lo in &pts {
+        for &hi in &pts {
+            for &st in &strides {
+                if lo <= hi {
+                    let v = si(st, lo, hi);
+                    if si_points(&v).len() <= 32 && !out.iter().any(|o| o.bounds() == v.bounds()) {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn strided_unsigned_arith() {
+    let s = strided_arith_samples();
+    for a in &s {
+        let pa = si_points(a);
+        let n = <SI8 as Arith<U>>::neg(a);
+        let negs: Vec<u8> = pa.iter().map(|&x| x.wrapping_neg()).collect();
+        assert!(negs.iter().all(|&v| has_si(&n, v)));
+        if !has_si(a, 0) {
+            assert_eq!(si_points(&n).len(), negs.len());
+        }
+        for b in &s {
+            let pb = si_points(b);
+            let (sa, _, _) = a.bounds();
+            let (sb, _, _) = b.bounds();
+            let same_grid = sa == sb || sa == 0 || sb == 0;
+            for (r, f) in [
+                (
+                    <SI8 as Arith<U>>::add(a, b),
+                    u8::wrapping_add as fn(u8, u8) -> u8,
+                ),
+                (<SI8 as Arith<U>>::sub(a, b), u8::wrapping_sub),
+            ] {
+                let mut results = std::collections::BTreeSet::new();
+                let mut wraps = std::collections::BTreeSet::new();
+                for &x in &pa {
+                    for &y in &pb {
+                        let v = f(x, y);
+                        assert!(has_si(&r, v));
+                        results.insert(v);
+                        let wide = if f(1, 1) == 2 {
+                            x as i32 + y as i32
+                        } else {
+                            x as i32 - y as i32
+                        };
+                        wraps.insert(!(0..=255).contains(&wide));
+                    }
+                }
+                if same_grid && wraps.len() == 1 {
+                    assert_eq!(si_points(&r).len(), results.len());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn strided_unsigned_arith_examples() {
+    let add = <SI8 as Arith<U>>::add;
+    let sub = <SI8 as Arith<U>>::sub;
+    let neg = <SI8 as Arith<U>>::neg;
+    // no wrap: shift both bounds, keep the stride.
+    assert_eq!(add(&si(4, 0, 8), &si(0, 3, 3)).bounds(), (4, 3, 11));
+    // every sum wraps: both bounds come back down by 256.
+    assert_eq!(
+        add(&si(4, 200, 208), &si(0, 100, 100)).bounds(),
+        (4, 44, 52)
+    );
+    // some sums wrap: Top.
+    assert_eq!(add(&si(4, 0, 252), &si(0, 8, 8)).bounds(), (1, 0, 255));
+    // every difference is negative: both bounds go up by 256.
+    assert_eq!(sub(&si(0, 1, 1), &si(2, 3, 7)).bounds(), (2, 250, 254));
+    // neg reverses the grid; {0} stays {0}.
+    assert_eq!(neg(&si(3, 1, 7)).bounds(), (3, 249, 255));
+    assert_eq!(neg(&si(0, 0, 0)).bounds(), (0, 0, 0));
+    // 0 maps to 0, the rest to 256 - x: {0} joined with (4, 248, 252).
+    assert_eq!(neg(&si(4, 0, 8)).bounds(), (4, 0, 252));
+}
+
+/// The B&R join uses `gcd(gcd(s1, s2), |lo1 - lo2|)`: `{0, 6, 12}` and
+/// `{2, 6, 10}` share the grid `2k`.
+#[test]
+fn strided_join_uses_gcd_stride() {
+    assert_eq!(si(6, 0, 12).join(&si(4, 2, 10)).bounds(), (2, 0, 12));
+    assert_eq!(si(6, 0, 12).join(&si(9, 3, 21)).bounds(), (3, 0, 21));
+}
+
+/// Join is the least upper bound: every sample containing both operands
+/// contains the join.
+#[test]
+fn strided_join_is_least() {
+    let s = strided_samples();
+    for a in &s {
+        for b in &s {
+            let j = a.join(b);
+            for c in &s {
+                if a.leq(c) && b.leq(c) {
+                    assert!(j.leq(c));
+                }
+            }
         }
     }
 }
