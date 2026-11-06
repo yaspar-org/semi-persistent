@@ -20,8 +20,10 @@ step, executably, over the records the opening walk produces:
   whole view; a member over its own class (`g ∋ f{g, c}`) is not a group;
 * `regroupRec` is one regrouping of a record: the raw view normalized as
   any view, the source's flagged leaves with `g` added to a leaf holding a
-  class of the group (`addG`), and the regrouped classes the matches must
-  take (`needs`: the source's, less those the group absorbs, and `g`);
+  class of the group (`addG`, which flags the leaf non-inert when the
+  normalization dropped `g`), and the regrouped classes the matches must
+  take (`needs`: the source's, less those the group absorbs, and `g`, of
+  those only the classes the normalized view holds);
 * `regroupLevels` / `regroupAll` iterate it, level by level, from the
   walk's records, as many levels as the largest view has entries
   (`regroupFuel`), with no bound on the needed classes along the way: a
@@ -126,17 +128,21 @@ def groupsOf (ctx : Ctx) : List (C × List (C × Nat)) :=
     (fun p => (ctx.G.find p.1, kids ctx.κ p.2.children))).dedup
 
 /-- A regrouped record's leaf: a leaf holding a class of the group also
-holds `g`, so an item taking `g` takes from the leaf. -/
-def addG (g : C) (grp : List C) (l : LeafF) : LeafF :=
+holds `g`, so an item taking `g` takes from the leaf. When the regrouped view
+`ws` (its classes) does not hold `g`, the laws dropped it (the unit, a count
+clamped to zero, a cancelled inverse): no item can take it, and the leaf is
+flagged non-inert, satisfied without it. -/
+def addG (g : C) (grp : List C) (ws : List C) (l : LeafF) : LeafF :=
   if g ∉ l.1.g ∧ l.1.g.any (fun c => decide (c ∈ grp)) then
-    ({ l.1 with L := l.1.L ++ [(g, 1)] }, l.2)
+    ({ l.1 with L := l.1.L ++ [(g, 1)] }, l.2 || decide (g ∉ ws))
   else l
 
 /-- The regrouped classes a regrouped record needs taken: the source's, less
-those the group absorbs, and `g`. -/
-def needsAfter (g : C) (grp : List C) (needs : List C) : List C :=
+those the group absorbs, and `g`; of those, the classes the regrouped view
+`ws` holds (the laws may drop `g` or an earlier needed class). -/
+def needsAfter (g : C) (grp : List C) (ws : List C) (needs : List C) : List C :=
   let ns := needs.filter (fun c => decide (c ∉ grp))
-  if g ∈ ns then ns else ns ++ [g]
+  (if g ∈ ns then ns else ns ++ [g]).filter (fun c => decide (c ∈ ws))
 
 /-- One regrouping of a record, every candidate group, every fit. -/
 def regroupRec (ctx : Ctx) (dir : Dir) (laws : Laws) (r : RecR) : List RecR :=
@@ -144,8 +150,8 @@ def regroupRec (ctx : Ctx) (dir : Dir) (laws : Laws) (r : RecR) : List RecR :=
     (fitsR ctx.κ dir r.1 gg.1 gg.2).filterMap fun raw =>
       match normalize ctx.κ laws raw with
       | .node w =>
-          some (w, r.2.1.map (addG gg.1 (gg.2.map Prod.fst)),
-            needsAfter gg.1 (gg.2.map Prod.fst) r.2.2)
+          some (w, r.2.1.map (addG gg.1 (gg.2.map Prod.fst) (w.map Prod.fst)),
+            needsAfter gg.1 (gg.2.map Prod.fst) (w.map Prod.fst) r.2.2)
       | _ => none
 
 instance : Hashable LeafL := ⟨fun l => mixHash (hash l.X) (mixHash (hash l.k) (hash l.L))⟩

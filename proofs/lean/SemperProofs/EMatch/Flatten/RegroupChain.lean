@@ -113,14 +113,14 @@ theorem regroupsTo_right_iff {w : List (C × Nat)} {g : C} {grp w' : List (C × 
 whose children `grp` do not hold `g` regroups the record's view
 (`RegroupsTo`); a leaf holding a class of the group also holds `g`
 (`addG`); the classes the record needs taken lose those the group absorbs
-and gain `g` (`needsAfter`). -/
+and gain `g` (`needsAfter`), of those the classes the view holds. -/
 inductive RegroupStep (ctx : Ctx) (dir : Dir) : RecR → RecR → Prop
   | mk {r : RecR} {id : NodeId} {m : Node} {g : C} {w' : List (C × Nat)} :
       ctx.IsMember id m g → g ∉ (kids ctx.κ m.children).map Prod.fst →
       RegroupsTo ctx.κ dir r.1 g (kids ctx.κ m.children) w' →
       RegroupStep ctx dir r
-        (w', r.2.1.map (addG g ((kids ctx.κ m.children).map Prod.fst)),
-          needsAfter g ((kids ctx.κ m.children).map Prod.fst) r.2.2)
+        (w', r.2.1.map (addG g ((kids ctx.κ m.children).map Prod.fst) (w'.map Prod.fst)),
+          needsAfter g ((kids ctx.κ m.children).map Prod.fst) (w'.map Prod.fst) r.2.2)
 
 /-- A finite chain of regroupings, each fitting the view the previous ones
 left. No bound applies to the needed classes along the chain. -/
@@ -264,7 +264,8 @@ theorem viewSize_pos_ge {w : List (C × Nat)} (h : ∀ e ∈ w, 0 < e.2) : w.len
 theorem regroupStep_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {r : RecR}
     {g : C} {grp w' : List (C × Nat)} (hgg : (g, grp) ∈ groupsOf ctx)
     (hg : g ∉ grp.map Prod.fst) (hok : ViewOK .ac r.1) (h : RegroupsTo .ac dir r.1 g grp w') :
-    (w', r.2.1.map (addG g (grp.map Prod.fst)), needsAfter g (grp.map Prod.fst) r.2.2) ∈
+    (w', r.2.1.map (addG g (grp.map Prod.fst) (w'.map Prod.fst)),
+        needsAfter g (grp.map Prod.fst) (w'.map Prod.fst) r.2.2) ∈
         regroupRec ctx dir Laws.free r ∧
       ViewOK .ac w' ∧ viewSize w' < viewSize r.1 := by
   obtain ⟨h2, hsub, hne, rfl⟩ := h
@@ -331,7 +332,8 @@ theorem dedupAci_regrouped {w grp v : List (C × Nat)} {g : C} (hok : dedupAci w
 theorem regroupStep_aci {ctx : Ctx} (hκ : ctx.κ = .aci) {dir : Dir} {r : RecR}
     {g : C} {grp w' : List (C × Nat)} (hgg : (g, grp) ∈ groupsOf ctx)
     (hg : g ∉ grp.map Prod.fst) (hok : ViewOK .aci r.1) (h : RegroupsTo .aci dir r.1 g grp w') :
-    (w', r.2.1.map (addG g (grp.map Prod.fst)), needsAfter g (grp.map Prod.fst) r.2.2) ∈
+    (w', r.2.1.map (addG g (grp.map Prod.fst) (w'.map Prod.fst)),
+        needsAfter g (grp.map Prod.fst) (w'.map Prod.fst) r.2.2) ∈
         regroupRec ctx dir Laws.free r ∧
       ViewOK .aci w' ∧ viewSize w' < viewSize r.1 := by
   obtain ⟨h2, hsub, hne, hF, rfl⟩ := h
@@ -377,7 +379,8 @@ theorem regroupStep_aci {ctx : Ctx} (hκ : ctx.κ = .aci) {dir : Dir} {r : RecR}
 theorem regroupStep_assoc {ctx : Ctx} (hκ : ctx.κ = .assoc) {dir : Dir} {r : RecR}
     {g : C} {grp w' : List (C × Nat)} (hgg : (g, grp) ∈ groupsOf ctx)
     (hg : g ∉ grp.map Prod.fst) (hok : ViewOK .assoc r.1) (h : RegroupsTo .assoc dir r.1 g grp w') :
-    (w', r.2.1.map (addG g (grp.map Prod.fst)), needsAfter g (grp.map Prod.fst) r.2.2) ∈
+    (w', r.2.1.map (addG g (grp.map Prod.fst) (w'.map Prod.fst)),
+        needsAfter g (grp.map Prod.fst) (w'.map Prod.fst) r.2.2) ∈
         regroupRec ctx dir Laws.free r ∧
       ViewOK .assoc w' ∧ viewSize w' < viewSize r.1 := by
   obtain ⟨p, h2, hlt, hp, hsp, hrun, rfl⟩ := h

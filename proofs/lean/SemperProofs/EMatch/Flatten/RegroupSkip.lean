@@ -280,11 +280,12 @@ twice. -/
 def BaseGood (κ : FlatKind) (base : List RecR) : Prop :=
   ∀ r ∈ base, ViewGood κ r.1 ∧ r.2.2.Nodup
 
-theorem needsAfter_nodup (g : C) (grp : List C) {ns : List C} (h : ns.Nodup) :
-    (needsAfter g grp ns).Nodup := by
+theorem needsAfter_nodup (g : C) (grp ws : List C) {ns : List C} (h : ns.Nodup) :
+    (needsAfter g grp ws ns).Nodup := by
   unfold needsAfter
   have hf : (ns.filter (fun c => decide (c ∉ grp))).Nodup := h.filter _
   dsimp only
+  refine List.Nodup.filter _ ?_
   split
   · exact hf
   · rename_i hg
@@ -300,7 +301,7 @@ theorem rstep_good {ctx : Ctx} {dir : Dir} {laws : Laws} {a b : RecR}
   refine ⟨(regroupRec_shrink ha.1 h).1, ?_⟩
   obtain ⟨g, grp, -, -, -, -, -, hn⟩ := mem_regroupRec h
   rw [hn]
-  exact needsAfter_nodup _ _ ha.2
+  exact needsAfter_nodup _ _ _ ha.2
 
 theorem reach_good {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR}
     (hb : BaseGood ctx.κ base) {r : RecR} (h : Reach ctx dir laws base r) :
@@ -428,16 +429,23 @@ theorem Cov.length {c b : RecR} (h : Cov c b) (hc : c.2.2.Nodup) :
     c.2.2.length ≤ b.2.2.length :=
   (hc.subperm h.2.2).length_le
 
-theorem addG_leafEq {g : C} {grp : List C} {l l' : LeafF} (h : LeafEq l l') :
-    LeafEq (addG g grp l) (addG g grp l') := by
+theorem addG_leafEq {g : C} {grp ws : List C} {l l' : LeafF} (h : LeafEq l l') :
+    LeafEq (addG g grp ws l) (addG g grp ws l') := by
   obtain ⟨hX, hf, hg⟩ := h
-  refine ⟨by rw [addG_X, addG_X, hX], by rw [addG_flag, addG_flag, hf], fun x => ?_⟩
   have hc : (g ∉ l.1.g ∧ l.1.g.any (fun c => decide (c ∈ grp)) = true) ↔
       (g ∉ l'.1.g ∧ l'.1.g.any (fun c => decide (c ∈ grp)) = true) := by
     simp only [List.any_eq_true, decide_eq_true_eq]
     constructor
     · rintro ⟨h1, c, hc, hc'⟩; exact ⟨fun h => h1 ((hg g).2 h), c, (hg c).1 hc, hc'⟩
     · rintro ⟨h1, c, hc, hc'⟩; exact ⟨fun h => h1 ((hg g).1 h), c, (hg c).2 hc, hc'⟩
+  refine ⟨by rw [addG_X, addG_X, hX], ?_, fun x => ?_⟩
+  · rw [addG_flag, addG_flag, hf]
+    simp only [List.any_eq_true, decide_eq_true_eq] at hc ⊢
+    by_cases hw : g ∈ ws
+    · simp [hw]
+    · simp only [hw, not_false_eq_true, true_and]
+      congr 1
+      exact decide_eq_decide.2 hc
   unfold addG
   split_ifs with h1 h2 h2
   · simp only [LeafL.g, List.map_append, List.mem_append]
@@ -446,12 +454,12 @@ theorem addG_leafEq {g : C} {grp : List C} {l l' : LeafF} (h : LeafEq l l') :
   · exact absurd (hc.2 h2) h1
   · exact hg x
 
-theorem needsAfter_mono {g : C} {grp ns ns' : List C} (h : ∀ x ∈ ns, x ∈ ns') :
-    ∀ x ∈ needsAfter g grp ns, x ∈ needsAfter g grp ns' := by
-  have mem : ∀ {ms : List C} {x : C}, x ∈ needsAfter g grp ms ↔
+theorem needsAfter_mono {g : C} {grp ws ns ns' : List C} (h : ∀ x ∈ ns, x ∈ ns') :
+    ∀ x ∈ needsAfter g grp ws ns, x ∈ needsAfter g grp ws ns' := by
+  have mem0 : ∀ {ms : List C} {x : C},
+      x ∈ (let ns := ms.filter (fun c => decide (c ∉ grp)); if g ∈ ns then ns else ns ++ [g]) ↔
       (x ∈ ms ∧ x ∉ grp) ∨ x = g := by
     intro ms x
-    unfold needsAfter
     dsimp only
     split
     · rename_i hg
@@ -462,10 +470,16 @@ theorem needsAfter_mono {g : C} {grp ns ns' : List C} (h : ∀ x ∈ ns, x ∈ n
         · exact h
         · simpa using hg
     · simp [List.mem_filter]
+  have mem : ∀ {ms : List C} {x : C}, x ∈ needsAfter g grp ws ms ↔
+      ((x ∈ ms ∧ x ∉ grp) ∨ x = g) ∧ x ∈ ws := by
+    intro ms x
+    unfold needsAfter
+    rw [List.mem_filter, mem0, decide_eq_true_eq]
   intro x hx
-  rcases mem.1 hx with ⟨h1, h2⟩ | rfl
-  · exact mem.2 (Or.inl ⟨h x h1, h2⟩)
-  · exact mem.2 (Or.inr rfl)
+  obtain ⟨hx, hw⟩ := mem.1 hx
+  rcases hx with ⟨h1, h2⟩ | rfl
+  · exact mem.2 ⟨Or.inl ⟨h x h1, h2⟩, hw⟩
+  · exact mem.2 ⟨Or.inr rfl, hw⟩
 
 /-- Regrouping two records the same way preserves the cover. -/
 theorem Cov.derive {c b : RecR} (h : Cov c b) (t : View) (g : C) (grp : List C) :
@@ -473,7 +487,7 @@ theorem Cov.derive {c b : RecR} (h : Cov c b) (t : View) (g : C) (grp : List C) 
   refine ⟨rfl, fun l hl => ?_, needsAfter_mono h.2.2⟩
   obtain ⟨l₀, hl₀, rfl⟩ := List.mem_map.1 hl
   obtain ⟨l', hl', he⟩ := h.2.1 l₀ hl₀
-  exact ⟨addG g grp l', List.mem_map_of_mem hl', addG_leafEq he⟩
+  exact ⟨addG g grp (t.map Prod.fst) l', List.mem_map_of_mem hl', addG_leafEq he⟩
 
 /-- An unconditional record covers every record of its view. -/
 theorem cov_uncond {u b : RecR} (hu : u.uncond = true) (hv : u.1 = b.1) : Cov u b := by

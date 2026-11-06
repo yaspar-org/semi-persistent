@@ -75,7 +75,7 @@ def srcRecs (rs : List RecR) : List RecR :=
 /-- The record a regrouping by the group of class `g` (classes `grp`) to the
 target `t` derives from `r`. -/
 def deriveRec (t : View) (g : C) (grp : List C) (r : RecR) : RecR :=
-  (t, r.2.1.map (addG g grp), needsAfter g grp r.2.2)
+  (t, r.2.1.map (addG g grp (t.map Prod.fst)), needsAfter g grp (t.map Prod.fst) r.2.2)
 
 /-- The candidate groups in the engine's order: the filed `f`-members sorted
 by node id, each with its class and children. -/

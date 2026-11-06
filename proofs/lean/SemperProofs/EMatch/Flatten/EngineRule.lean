@@ -419,15 +419,23 @@ theorem nonInertEng_eq (κ : FlatKind) (laws : Laws) (v₁ L v₂ : List (C × N
 
 /-! ## The walk's pruning -/
 
-/-- `may_be_non_inert` (`flatten.rs:552-569`): the unit test and the
-sequence test read the leaf only; on a multiset under `:nilpotent` or
-`:inverse` every leaf may be non-inert. -/
-def mayNonInert (κ : FlatKind) (laws : Laws) (l : LeafL) : Bool :=
+/-- The tests of `may_be_non_inert` that read the leaf and the laws: the
+opened class is the unit, every element of a sequence leaf is, or a multiset
+operator has `:nilpotent` or `:inverse`. -/
+def mayNonInertLeaf (κ : FlatKind) (laws : Laws) (l : LeafL) : Bool :=
   decide (laws.unit = some l.X) ||
     match κ with
     | .assoc => l.g.all (fun c => decide (laws.unit = some c))
     | .aci => false
     | .ac => laws.nilpotent.isSome || laws.inv.isSome
+
+/-- `may_be_non_inert` (`flatten.rs`): the unit test and the sequence test
+read the leaf only; on a multiset under `:nilpotent` or `:inverse` every leaf
+may be non-inert; under an identity every leaf is kept, since a regrouping
+whose class the normalization drops flags the leaves that gain it
+(`addG`). -/
+def mayNonInert (κ : FlatKind) (laws : Laws) (l : LeafL) : Bool :=
+  laws.unit.isSome || mayNonInertLeaf κ laws l
 
 /-- The walk keeps a leaf when it closes (`flatten.rs:793-801`): a takeable
 direct element (`hits > 0`), a takeable opened class on a multiset, or
@@ -444,14 +452,14 @@ def enumeratePrunedE (T : C → Bool) (ctx : Ctx) (laws : Laws) (n : Node) :
 
 /-- The flag implies `may_be_non_inert`: the walk never prunes a leaf the
 demand would accept through its flag. -/
-theorem nonInertB_imp_mayNonInert {κ : FlatKind} {laws : Laws} {v : List (C × Nat)} {l : LeafL}
-    (h : nonInertB κ laws v l = true) : mayNonInert κ laws l = true := by
+theorem nonInertB_imp_mayNonInertLeaf {κ : FlatKind} {laws : Laws} {v : List (C × Nat)}
+    {l : LeafL} (h : nonInertB κ laws v l = true) : mayNonInertLeaf κ laws l = true := by
   cases κ with
-  | assoc => simpa [nonInertB, mayNonInert] using h
-  | aci => simpa [nonInertB, mayNonInert] using h
+  | assoc => simpa [nonInertB, mayNonInertLeaf] using h
+  | aci => simpa [nonInertB, mayNonInertLeaf] using h
   | ac =>
       simp only [nonInertB, nonInertAC, Bool.or_eq_true, decide_eq_true_eq] at h
-      simp only [mayNonInert, Bool.or_eq_true, decide_eq_true_eq, Option.isSome_iff_ne_none,
+      simp only [mayNonInertLeaf, Bool.or_eq_true, decide_eq_true_eq, Option.isSome_iff_ne_none,
         ne_eq]
       rcases h with (h | h) | h
       · exact Or.inl h
@@ -459,6 +467,11 @@ theorem nonInertB_imp_mayNonInert {κ : FlatKind} {laws : Laws} {v : List (C × 
         intro hn; rw [hn] at h; simp at h
       · right; right
         intro hn; rw [hn] at h; simp at h
+
+theorem nonInertB_imp_mayNonInert {κ : FlatKind} {laws : Laws} {v : List (C × Nat)} {l : LeafL}
+    (h : nonInertB κ laws v l = true) : mayNonInert κ laws l = true := by
+  unfold mayNonInert
+  rw [nonInertB_imp_mayNonInertLeaf h, Bool.or_true]
 
 theorem keepLeaf_of_okE {κ : FlatKind} {T : C → Bool} {laws : Laws} {v : List (C × Nat)}
     {l : LeafL} {taken : List C} (hT : ∀ c ∈ taken, T c = true)

@@ -134,6 +134,7 @@ end Semper.EMatch.Flatten
 
 /-! Regrouped views under the operator's laws (`RegroupLaws.lean`): soundness in
 models of the laws, the exact chain characterization for any laws, and the
+matches the normalization's dropped classes no longer lose, and the
 counter-models of the matches chains miss. -/
 
 #print axioms Semper.EMatch.Flatten.denAC_normalizeList
@@ -161,16 +162,23 @@ counter-models of the matches chains miss. -/
 #print axioms Semper.EMatch.Flatten.regroupSkip_match_iff_laws
 #print axioms Semper.EMatch.Flatten.regroupSkip_match_complete_laws
 #print axioms Semper.EMatch.Flatten.regroupSkip_plan_complete_laws
-#print axioms Semper.EMatch.Flatten.needs_absent_rejects
-#print axioms Semper.EMatch.Flatten.regroup_unit_need_lost
+#print axioms Semper.EMatch.Flatten.canDrop_of_gone
+#print axioms Semper.EMatch.Flatten.mayNonInert_of_canDrop
+#print axioms Semper.EMatch.Flatten.reach_needs_held
+#print axioms Semper.EMatch.Flatten.needs_taken_of_all
+#print axioms Semper.EMatch.Flatten.fit_of_regroupsTo
+#print axioms Semper.EMatch.Flatten.regroup_drop_need_unit
+#print axioms Semper.EMatch.Flatten.regroup_drop_need_nilpotent
+#print axioms Semper.EMatch.Flatten.regroup_drop_need_inverse
+#print axioms Semper.EMatch.Flatten.regroup_drop_need_leaf
 #print axioms Semper.EMatch.Flatten.regroup_insert_unit_lost
 #print axioms Semper.EMatch.Flatten.regroup_idem_overlap_lost
 
 namespace Semper.EMatch.Flatten
 
-/- `regroup_unit_need_lost`: the engine's views of `add{a, b, c, d}` with
-`zero ∋ add{a, b}`: the stored view, unconditional, and `{c, d}`, whose only
-record needs `zero` (class 9), a class `{c, d}` does not hold. -/
+/- `regroup_drop_need_unit`: the engine's views of `add{a, b, c, d}` with
+`zero ∋ add{a, b}`: the stored view and `{c, d}`, both unconditional (the
+regrouped record needs nothing: the unit `zero`, class 9, is dropped). -/
 #eval (enumerateRSkip exUnitCtx .both exUnitLaws 2 exUnitRoot).map
   (fun wd => (wd.1, wd.2.unconditional, wd.2.alts.map (List.map (fun l => l.1.g))))
 
