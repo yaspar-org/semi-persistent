@@ -1285,12 +1285,12 @@ pub(crate) proof fn lemma_splice_uses_w5<T: DenseId, N: DenseId + Tagged>(
 /// Returned by `merge`: the surviving and absorbed canonical ids plus the
 /// absorbed class's data, which the rebuild loop consumes (production's
 /// `MergeInfo`).
-// TODO(abs-class-storage): add `absorbed_abs: Option<<T as DenseId>::Index>` next to `absorbed_min_row`, see containers-verus/doc/design/21-abstract-value-pool.md §2
 pub struct MergeInfo<T: DenseId, L: DenseId> {
     pub survivor: T,
     pub absorbed: T,
     pub absorbed_uses: L,
     pub absorbed_min_row: Option<<T as DenseId>::Index>,
+    pub absorbed_abs: Option<<T as DenseId>::Index>,
     pub absorbed_atomic: bool,
 }
 
@@ -1315,7 +1315,7 @@ where
     A: Copy + core::default::Default,
 {
 
-    // TODO(abs-class-storage): carry `abs` through as `min_row` is carried, and discharge W8 for the merged state, see containers-verus/doc/design/21-abstract-value-pool.md §3
+    // TODO(abs-class-storage): discharge W8 for the merged state, see containers-verus/doc/design/21-abstract-value-pool.md §3
     /// Re-establishes `eg_model_wf` after a merge's three mutations (union,
     /// ring splice with payload clear, repr removal). Extracted for the same
     /// reason as `lemma_splice_disjoint` (list.rs): proved inline, the ring
@@ -1375,8 +1375,8 @@ where
                             k.as_nat())
                         == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
                             k.as_nat()),
-            // the survivor's key stays live with only its size folded:
-            // new size = old survivor size + absorbed size.
+            // The survivor's key stays live with size summed and matchable folded;
+            // use_list, min_row, abs, and atomic are preserved.
             forall|k: <T as DenseId>::Index| #[trigger] o.reprs.contains_spec(k)
                 && k.as_nat() == skey
                 ==> self.reprs.contains_spec(k),
@@ -1384,6 +1384,8 @@ where
                 == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).use_list,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey).min_row
                 == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).min_row,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey).abs
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).abs,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey).atomic
                 == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).atomic,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey)
@@ -1482,7 +1484,7 @@ where
         }
 
         // survivors + dead-stay-dead, in the nat form the clauses use: values
-        // carry field-for-field, fully except the survivor key's folded size.
+        // carry field-for-field, except the survivor key's size and matchable.
         assert forall|kk: nat| #[trigger] ss_contains(osparse, oindices, olive, kk)
             && kk != key_ab
             implies ss_contains(sparse, indices, live, kk)
@@ -1490,6 +1492,8 @@ where
                     == ss_value(odense, osparse, kk).use_list
                 && ss_value(dense, sparse, kk).min_row
                     == ss_value(odense, osparse, kk).min_row
+                && ss_value(dense, sparse, kk).abs
+                    == ss_value(odense, osparse, kk).abs
                 && (kk != skey ==> ss_value(dense, sparse, kk)
                     == ss_value(odense, osparse, kk)) by {
             let kw = oindices[osparse[kk as int].as_nat() as int];
@@ -1780,6 +1784,8 @@ where
             },
         ensures
             final(self).wf(),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
             final(self).n_spec() == old(self).n_spec(),
             final(self).min_width_spec() == old(self).min_width_spec(),
             a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
@@ -1801,9 +1807,14 @@ where
                             == old(self).num_classes_spec() - 1
                         &&& mi.absorbed_uses == old(self).class_data_spec(
                                 old(self).key_of(mi.absorbed.id_nat() as int)).use_list
-                        // TODO(abs-class-storage): ensure `mi.absorbed_abs` is the absorbed class's handle and the pool view is unchanged, see containers-verus/doc/design/21-abstract-value-pool.md §2
                         &&& mi.absorbed_min_row == old(self).class_data_spec(
                                 old(self).key_of(mi.absorbed.id_nat() as int)).min_row
+                        &&& mi.absorbed_abs == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).abs
+                        &&& final(self).class_data_spec(
+                                final(self).key_of(mi.survivor.id_nat() as int)).abs
+                            == old(self).class_data_spec(
+                                old(self).key_of(mi.survivor.id_nat() as int)).abs
                         &&& mi.absorbed_atomic == old(self).class_data_spec(
                                 old(self).key_of(mi.absorbed.id_nat() as int)).atomic
                     })
@@ -1901,7 +1912,7 @@ where
         // Matchable is class-closed (relevant if any member is): fold survivor
         // ||= absorbed, so a class stays shielded only if both sides were. This
         // rides the survivor payload write below; `lemma_merge_wf` constrains the
-        // survivor's use_list/min_row/atomic/size but not matchable, and
+        // survivor's use_list/min_row/abs/atomic/size but not matchable, and
         // `eg_model_wf` reads neither atomic nor matchable, so the fold preserves
         // wf for free (soundness-free: shielding only removes matches).
         sdata.matchable = sdata.matchable || data.matchable;
@@ -1940,7 +1951,7 @@ where
             assert(self.reprs.id_set() =~= o.reprs.id_set().remove(key.as_nat()));
             // set_live changed only skey's dense slot: distinct live class keys sit
             // at distinct dense positions, so every other survivor's value is
-            // o's, and skey's is `sdata` (o's value with the size folded).
+            // o's, and skey's is `sdata` (o's value with size and matchable folded).
             assert forall|k: <T as DenseId>::Index| #[trigger] o.reprs.contains_spec(k)
                 && k.as_nat() != key.as_nat() && k.as_nat() != skey.as_nat()
                 implies self.reprs.contains_spec(k)
@@ -1977,8 +1988,8 @@ where
             survivor: s,
             absorbed: ab,
             absorbed_uses: data.use_list,
-            // TODO(abs-class-storage): return `absorbed_abs: data.abs`, see containers-verus/doc/design/21-abstract-value-pool.md §2
             absorbed_min_row: data.min_row,
+            absorbed_abs: data.abs,
             absorbed_atomic: data.atomic,
         })
     }
@@ -2870,7 +2881,6 @@ where
         &self.uses
     }
 
-    // TODO(abs-class-storage): carry the `absorbed_abs` ensures here and in every public merge form, see containers-verus/doc/design/21-abstract-value-pool.md §2
     /// Union-by-rank merge. Only available when `PROOFS = false`
     /// (production's contract, with its message); `merge_justified` is the
     /// proofs form.
@@ -2878,6 +2888,8 @@ where
         requires old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
             final(self).n_spec() == old(self).n_spec(),
             final(self).min_width_spec() == old(self).min_width_spec(),
             a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
@@ -2894,6 +2906,12 @@ where
                                 mi.absorbed.id_nat())
                         &&& final(self).num_classes_spec()
                             == old(self).num_classes_spec() - 1
+                        &&& mi.absorbed_abs == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).abs
+                        &&& final(self).class_data_spec(
+                                final(self).key_of(mi.survivor.id_nat() as int)).abs
+                            == old(self).class_data_spec(
+                                old(self).key_of(mi.survivor.id_nat() as int)).abs
                     })
             },
     {
@@ -2921,6 +2939,7 @@ where
             final(self).reprs == old(self).reprs,
             final(self).uses == old(self).uses,
             final(self).min_pool == old(self).min_pool,
+            final(self).abs_pool == old(self).abs_pool,
             // Returning at all means the range check passed (it refuses
             // otherwise), so the facts are unconditional.
             a.id_nat() < old(self).n_spec(),
@@ -2959,6 +2978,8 @@ where
         requires old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
             final(self).n_spec() == old(self).n_spec(),
             a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
                 let ra = old(self).roots_view()[a.id_nat() as int] as nat;
@@ -2970,6 +2991,12 @@ where
                         &&& final(self).roots_view() == crate::union_find::merge_roots(
                                 old(self).roots_view(), mi.survivor.id_nat(),
                                 mi.absorbed.id_nat())
+                        &&& mi.absorbed_abs == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).abs
+                        &&& final(self).class_data_spec(
+                                final(self).key_of(mi.survivor.id_nat() as int)).abs
+                            == old(self).class_data_spec(
+                                old(self).key_of(mi.survivor.id_nat() as int)).abs
                     })
             },
     {
@@ -2989,6 +3016,8 @@ where
         requires old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
             final(self).n_spec() == old(self).n_spec(),
             a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
                 let ra = old(self).roots_view()[a.id_nat() as int] as nat;
@@ -3000,6 +3029,12 @@ where
                         &&& final(self).roots_view() == crate::union_find::merge_roots(
                                 old(self).roots_view(), mi.survivor.id_nat(),
                                 mi.absorbed.id_nat())
+                        &&& mi.absorbed_abs == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).abs
+                        &&& final(self).class_data_spec(
+                                final(self).key_of(mi.survivor.id_nat() as int)).abs
+                            == old(self).class_data_spec(
+                                old(self).key_of(mi.survivor.id_nat() as int)).abs
                     })
             },
     {
