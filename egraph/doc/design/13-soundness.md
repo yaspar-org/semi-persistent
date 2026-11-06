@@ -468,7 +468,16 @@ confirm the rule set is reduced at a fixpoint are in the
   reach the final state by `SlotState.OpsStar` from a state satisfying I5 is met with the
   initial state equal to the final one, so the main theorems in effect assume I5 at the final
   state. (M5) The effects of rule actions are fields of `ActRound`
-  (`EMatch/Engine/Saturate/ActRound.lean`), assumed, not modelled from `apply.rs`. Chapters 6
+  (`EMatch/Engine/Saturate/ActRound.lean`), assumed, not modelled from `apply.rs`. (H4) The
+  final theorem equated the fixpoint graph with the graph of the active `f`-multiset nodes and
+  read right-hand sides literally, so it held vacuously for any rule set with a match whose
+  right-hand side builds a node of another operator, a leaf constant or a one-element term.
+  (H4 resolved 2026-11-06.) `saturation_modulo_complete_store_atoms` reads matches on the
+  index and right-hand sides as the normal forms `add` builds, on the store, and takes the
+  graph of the completion state as a part of the index (`SubRep`); `Final/Witness.lean` proves
+  all its hypotheses on two rounds of `(rewrite (+ x y) (g x y))` over leaf constants. The
+  executor refinement `env_refine` now covers every scheduled plan, nested patterns included
+  (`planOK_envWF`, `exec_matches`). Chapters 6
   §9c, 7 §7.5 and 9 §9.2 point here where they cite these theorems.
 - **Tested against the Lean model on generated programs** (added 2026-11-05). Five generators
   in `proofs/lean/Conform` write programs the engine must agree with: `semper-conform`

@@ -26,6 +26,13 @@ cited, and a bare `:N` to the Lean file last cited. A fixture without a path is 
 and that every `#print axioms` in the `*Check.lean` files lists only `propext`,
 `Classical.choice` and `Quot.sound`.
 
+Branch `feat/real-rules` resolves items 1, 2 and 4 of Section 10: commit `f1e8be1a` replaces
+the executor's partition of variables by per-step binding kinds (Section 3.7), and commit
+`8932dc12` states the final theorem over the store with the represented graph as a part of
+the index and proves a run that meets all its hypotheses (Section 7.7). Those sections, and
+the resolution notes in Sections 7.3, 7.5, 9 and 10, describe that branch; the original
+findings are kept as written. `scripts/check-proofs.sh` passes on it.
+
 Several hypotheses are meant to be checked on each run rather than proved of the engine. The
 design note [`runtime-completeness-checks.md`](../../egraph/doc/future/runtime-completeness-checks.md)
 assigns each hypothesis to a check; the hypothesis tables below cite its tiers. The note is a
@@ -419,30 +426,81 @@ are not consumed downstream.
 ### 3.7 The mutable executor
 
 `EMatch/Env/` models the engine's `Match` environment, which writes bindings in place and
-undoes them on backtrack (`egraph/src/ematch.rs:171`). `env_restore` and `env_refine`
-(`EMatch/Env/Main.lean:28`, `:38`) state that the executor returns the environment it was
-given, and that the bindings it emits are, as a set, the bindings `run` emits:
+undoes them on backtrack (`egraph/src/ematch.rs:171`). The engine has one slot per variable;
+a node variable's slot holds a node id, a class variable's slot a class. `abs G κ e`
+(`EMatch/Env/Model.lean`) reads every slot as a class through `find`, and the slots of the
+variables of node kind (`κ v = true`) also as node ids. `env_restore` and `env_refine`
+(`EMatch/Env/Main.lean`) state that the executor returns the environment it was given, and
+that the bindings it emits are, as a set, the bindings `run` emits:
 
 ```lean
-theorem env_refine (G : Graph) (κ : Var → Bool) (hG : G.ChildrenCanon) (hidem : G.FindIdem)
-    {B : List Var} {plan : Plan} (hwf : WF κ B plan) (e : Env) (he : EnvOk e B) (σ : Binding) :
-    σ ∈ (exec G κ plan e).1 ↔ σ ∈ run G plan (abs G κ e)
+theorem env_refine (G : Graph) (hG : G.ChildrenCanon) (hidem : G.FindIdem)
+    {κ : Var → Bool} {B : List Var} {plan : Plan} (hwf : WF κ B plan) (e : Env)
+    (he : EnvOk e B) (hκ : KindOk κ e) (σ : Binding) :
+    σ ∈ (exec G (joinKinds κ plan) plan e).1 ↔ σ ∈ run G plan (abs G κ e)
 ```
 
-**Adequacy.** The theorem holds for plans that satisfy `Env.WF` (`EMatch/Env/Model.lean:612`),
-and that predicate excludes every plan the scheduler emits for a nested pattern. `Env.WF`
-partitions the variables by `κ` into node variables and class variables. Its `join` clause
-requires the join target to be a node variable (`κ t = true`) and every variable a lookup
-reads to be a class variable (`κ x = false`); its `extractChild` clause requires the
-extracted child to be a class variable. `atoms` gives a nested child one variable, which is
-both the parent's child class and the nested atom's node variable (Section 3.2). If the
-parent is lowered first, `extractChild` makes that variable a class variable and the nested
-atom's `join` makes it a node variable. If the nested atom is lowered first, its `join`
-makes it a node variable and the parent's `byChildPos` lookup reads it as a class variable.
-Either order violates `Env.WF`; the re-join `join a.node [byRepr a.node, byOp a.op]` violates
-it a second time, because it reads its own target. No theorem derives `Env.WF` from
-`PlanOK`. The executor refinement is therefore not connected to `plan_matches` for any
-nested pattern, and nothing downstream uses `Env/`.
+The binding kinds are per step (commit `f1e8be1a`). `κ` is the kind of each variable at the
+entry of the plan. A join makes its target a node variable, whatever it was before:
+unbound, or a class variable bound by `ExtractChild`, by a decomposition or by an earlier
+atom, which the join then refines to a node of its class. `joinKinds κ plan` is the kind of
+each variable at the end of the plan, and the emitted environments are read with it. A
+lookup or a check reads a slot through `canon` whatever its kind, so `Env.WF` puts no kind
+condition on join keys, check operands or decomposition elements; it requires only that a
+step reading a node through `nodeOf` reads a node variable. `KindOk κ e` says every node
+variable is bound in `e`, so an element a decomposition binds is a class variable. The
+write-once conditions are unchanged: `ExtractChild`, `CopyBinding` and the rest pushes
+write unbound variables only, `ExpandA`'s two rests are distinct, and no annotation is
+`exact 0`.
+
+`planOK_envWF` (`EMatch/Env/Plans.lean`) proves that every `PlanOK` plan is `WF` from
+`Match::new` (all kinds `false`), under `EnvAtomsWF`, the resolver's variable discipline:
+a class variable is no multiplicity or rest variable, a multiplicity variable is no rest
+variable, rest variables are linear across atoms, an atom's prefix and suffix rests are
+distinct, and no AC annotation is `exact 0`. `exec_matches` composes it with
+`env_refine_empty` and `plan_matches`:
+
+```lean
+theorem exec_matches {G : Graph} {sig : Sym → Kind} {atoms : List QAtom} {plan : Plan}
+    (hG : G.ChildrenCanon) (hidem : G.FindIdem) (hwf : AtomsWF G sig atoms)
+    (hA : EnvAtomsWF atoms) (h : PlanOK atoms plan) (σ : Binding) :
+    σ ∈ (exec G (planKinds plan) plan Env.empty).1 ↔ Matches G atoms σ
+```
+
+`nested_plans_wf` and `nested_exec_matches` work the pattern `(f (g x) y)` both ways round.
+With the parent first, the plan is `join 2 [byOp f]`, `extractChild 2 0 3`,
+`extractChild 2 1 1`, `join 3 [byRepr 3, byOp g]`, `extractChild 3 0 0`: `3` is bound as a
+class and refined by the re-join, which reads its own target. With the nested atom first, it
+is `join 3 [byOp g]`, `extractChild 3 0 0`, `join 2 [byOp f, byChildPos 0 3]`,
+`checkChildEq 2 0 3`, `extractChild 2 1 1`: `3` is bound as a node and read as a class
+(`nestedPlanParent_eq`, `nestedPlanChild_eq`, by `decide`).
+
+**Adequacy.** The executor (`exec`) is unchanged; only its well-formedness and the
+abstraction changed. The engine's join saves and restores a bound target
+(`ematch.rs:3012-3023`, "`target` may already be bound"), as `exec` does, and its lookups
+canonicalize the key slot (`bucket_in`); nothing the new model admits disagrees with the
+engine. `EnvAtomsWF` is a hypothesis, not derived from the resolver. `exec` covers static
+plans of scanning and `Eq` atoms: the adaptive scheduler (`runND`) and the steps of
+Section 3.8 are not connected to it. Nothing downstream uses `Env/`: the saturation theorems
+read the emitted bindings through `run` (`runNaive`), which `exec_matches` now shows the
+executor agrees with.
+
+The finding of the second edition, resolved by commit `f1e8be1a`, read:
+
+> **Adequacy.** The theorem holds for plans that satisfy `Env.WF` (`EMatch/Env/Model.lean:612`),
+> and that predicate excludes every plan the scheduler emits for a nested pattern. `Env.WF`
+> partitions the variables by `κ` into node variables and class variables. Its `join` clause
+> requires the join target to be a node variable (`κ t = true`) and every variable a lookup
+> reads to be a class variable (`κ x = false`); its `extractChild` clause requires the
+> extracted child to be a class variable. `atoms` gives a nested child one variable, which is
+> both the parent's child class and the nested atom's node variable (Section 3.2). If the
+> parent is lowered first, `extractChild` makes that variable a class variable and the nested
+> atom's `join` makes it a node variable. If the nested atom is lowered first, its `join`
+> makes it a node variable and the parent's `byChildPos` lookup reads it as a class variable.
+> Either order violates `Env.WF`; the re-join `join a.node [byRepr a.node, byOp a.op]` violates
+> it a second time, because it reads its own target. No theorem derives `Env.WF` from
+> `PlanOK`. The executor refinement is therefore not connected to `plan_matches` for any
+> nested pattern, and nothing downstream uses `Env/`.
 
 ### 3.8 Guards, literals and sequence collection
 
@@ -1483,7 +1541,7 @@ says every node of `A` is an active node of `st`. Commit `15b5fa2e` restated
 
 ### 7.2 Statement
 
-**`saturation_modulo_complete`** (`Final/Main.lean:157`):
+**`saturation_modulo_complete`** (`Final/Main.lean:225`):
 
 ```lean
 theorem saturation_modulo_complete {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
@@ -1513,7 +1571,7 @@ theory, at the class level.
 `CompleteHyps` (`CC/Bridge/Modulo.lean:36`) packages the hypotheses of
 `completion_complete_at_convergence` as they appear in Section 5.3, including `hcancel`.
 
-**`saturation_modulo_complete_atoms`** (`Final/Main.lean:183`) is the same statement for a
+**`saturation_modulo_complete_atoms`** (`Final/Main.lean:255`) is the same statement for a
 completion state with leaf constants. Its completion hypothesis is `CompleteAtoms L S st X u`
 (Section 5.9), `act` enumerates the stored active nodes, and the graph is `represents st f act`,
 the graph of the stored nodes:
@@ -1535,7 +1593,7 @@ theorem saturation_modulo_complete_atoms ...
 The rounds hypotheses, elided above, are those of `saturation_modulo_complete`. The asserted
 equations and the theory may relate a node to a constant (`a + b = c`); the conclusion is
 about stored nodes `p`, `p'`. The proof instantiates `saturation_modulo_complete_within`
-(`:52`) at the view `st.withAtoms X u`, with `CompleteHyps.ofAtoms` (`CC/Bridge/Modulo.lean:60`)
+(`:119`) at the view `st.withAtoms X u`, with `CompleteHyps.ofAtoms` (`CC/Bridge/Modulo.lean:60`)
 and `Enumerates.within_withAtoms` (`:86`); the graph of the view is the graph of the stored
 state by definition (`represents_withAtoms`, `:77`).
 
@@ -1550,7 +1608,7 @@ state by definition (`represents_withAtoms`, `:77`).
 | `hfix` | round `A` changed nothing | assumed here; `engine_stop_unchanged` derives it from the stop test, but this theorem does not use it |
 | `hcomp` | completion has converged | assumed; includes `hcancel`; `CompleteAtoms` in the leaf-constant form |
 | `henum` | `act` is the set of stored active nodes | definitional |
-| `hG` | the fixpoint snapshot is the represented graph | assumed; the weakest point (Section 7.5) |
+| `hG` | the fixpoint snapshot is the represented graph | assumed; the weakest point (Section 7.5); replaced by `SubRep` on the index in `saturation_modulo_complete_store_atoms` (Section 7.7) |
 | `rule.atoms = ...`, `P.head = some f` | the rule's query is one pattern with head `f` | side conditions; no `Eq` atoms, no globals |
 
 The runtime design note checks `hplan` and `h₀` once per rule at compilation, assigns `hfix`
@@ -1561,18 +1619,24 @@ one naive matching round at the final state, which checks the conclusion of
 
 ### 7.4 Proof
 
-The proof is that of `saturation_modulo_complete_within` (`Final/Main.lean:67-76`), which
-`saturation_modulo_complete` applies with `henum.within`. It has three independent parts.
+Since commit `8932dc12` the proof is that of `saturation_modulo_complete_sub`
+(`Final/Main.lean:89`), which takes `SubRep A.R.after st f act ι` in place of `hG`;
+`saturation_modulo_complete_within` (`:119`) applies it with `represents_subRep`, and
+`saturation_modulo_complete` applies that with `henum.within`. It has three independent
+parts. The text below describes the proof before that commit; the changes are noted.
 
 1. **Fired.** `saturation_complete` gives `Saturate.Inv A.R.after rules`, which applied to the
    match is the first conjunct.
 2. **The root.** After rewriting with `hG`, `matches_at_active` (`Final/Main.lean:36`) applies
    `backOk` to the atoms. It finds an active `q` with `σ.node r = some (nodeId q)` and `MatchN`
-   at `mkNode st f q`. Injectivity of `nodeId` gives `q = p'`.
+   at `mkNode st f q`. Injectivity of `nodeId` gives `q = p'`. (Now `matches_at_sub`, `:67`:
+   `backOk` gives a node of `A.R.after` under the id `ι p'`, and `KeysNodup` identifies it
+   with the represented node `mkNode st f p'`.)
 3. **The theory.** `ac_equal_same_class_graph` (`CC/Bridge/Modulo.lean:101`) gives
    `find (nodeId p') = find (nodeId p)`, by `completion_complete_at_convergence`.
    `matches_closed_under_theory` (`:144`) lifts the node match at `p'` to a class match at `p`'s
-   class through `MatchC.app`.
+   class through `MatchC.app`. (Now `ac_equal_same_class_sub` and
+   `matches_closed_under_theory_sub`, `CC/Bridge/Sub.lean`, the same argument on a part.)
 
 The theory enters only through "theory-equal active nodes share a class". Lifting a node match
 to a class match is one constructor. Neither `NoCollapse` nor `matches_transport` appears in
@@ -1592,6 +1656,11 @@ leaf constants enter `saturation_modulo_complete_atoms` only through the theory 
 rule whose pattern names a constant, such as `(rewrite (+ a b) c)` with `a`, `b`, `c` nullary
 operators, has no match on this graph, because `.plain a []` matches only a stored node of
 operator `a`. The theorem covers such a rule only in the empty sense.
+
+*Resolved by commit `8932dc12`.* `saturation_modulo_complete_store_atoms` replaces `hG` by
+`SubRep A.Sa.index st f act ι`: the represented graph is a part of the index, which may hold
+leaf nodes, other operators, the nodes the right-hand sides build and retired nodes
+(Section 7.7). `saturation_modulo_complete_sub` does the same for the literal form.
 
 **The hypotheses are contradictory for many rules.** `Fired` requires every application in the
 right-hand side to be a stored node of `A.R.after` (through `Den`). Under `hG` the only stored
@@ -1613,6 +1682,13 @@ establishes `CompleteAtoms` for one state, which removes the doubt about the com
 hypotheses alone; it does not construct rounds, so the joint satisfiability of the saturation
 hypotheses with `hG` remains unshown.
 
+*Resolved by commit `8932dc12`.* `saturation_modulo_complete_store_atoms` reads the
+right-hand sides as the normal forms `add` builds (`DenN`, `FiredN`) on the store, and the
+completion state only through the `f`-part of the index. `witness_saturation_modulo_complete`
+(`Final/Witness.lean`) applies it to two concrete rounds of a rule whose right-hand side is a
+node of another operator, with every hypothesis proved (Section 7.7). The old statements are
+kept; their docstrings now state the restriction (limit 3).
+
 **The final theorem uses the least faithful layer.** It uses literal `Den`, no subsumption, the
 graph read as the index, and `Unchanged` assumed. Section 6.5 lists the theorems that remove
 each restriction. None of them is composed with the bridge into a theorem modulo the theory.
@@ -1627,12 +1703,75 @@ that maximum partition loses a two-item match when its two children classes merg
 
 ### 7.6 The matching-side theorem
 
-**`saturation_modulo_sound`** (`Final/Main.lean:216`) states that every binding the naive run
+**`saturation_modulo_sound`** (`Final/Main.lean:288`) states that every binding the naive run
 emits on the represented graph is a match at some active node `p'`, and a class-level match at
 every `p` theory-equal to `p'`. It involves no rounds. `STATUS.md` calls it the converse of the
 completeness theorem; it is the soundness of one matching run on one graph. Its docstring says
 that soundness of the actions is not modelled, because `Fired` asks only that a consequence is
 present, and a hash-cons hit or a completion-minted node can also account for it.
+
+### 7.7 The final theorem over the store
+
+Commit `8932dc12` states the final theorem on the store model of `Fidelity/` (Section 6.5),
+with the completion state entering through the `f`-part of the index only.
+`SubRep G st f act ι` (`CC/Bridge/Sub.lean`) says that each `p ∈ act` is stored in `G` under
+the id `ι p` with the children of `mkNode st f p`, and that `G.find (ι p)` is its class in
+`st`. Nothing is said of `G`'s other nodes. `represents_subRep` gives the old graph as the
+case `ι = nodeId`. `ac_equal_same_class_sub` and `matches_closed_under_theory_sub` are the
+bridge theorems on such a part.
+
+**`saturation_modulo_complete_store_atoms`** (`Final/Store.lean`):
+
+```lean
+theorem saturation_modulo_complete_store_atoms {ops : Sym → OpLaws} {sig : Sym → Kind}
+    {naive : Rule → Bool} {rules : List Rule}
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hplan : PlansOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
+    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
+    {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
+    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n} {X : Set (Fin n)}
+    {u : Option (Fin n)} {act : Finset (Monomial n × Fin n)} (hcomp : CompleteAtoms L S st X u)
+    (hw : Within st act) {f : Sym} {ι : Monomial n × Fin n → NodeId}
+    (hs : SubRep A.Sa.index st f act ι) :
+    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
+      P.head = some f →
+      ∀ p ∈ act, ∀ p' ∈ act, E L S p.1 p'.1 →
+      ∀ σ, Matches A.Sa.index rule.atoms σ → σ.node r = some (ι p') →
+        FiredN A.Sa.graph ops σ rule ∧
+        σ.cls r = some (A.Sa.find (ι p)) ∧
+        MatchC A.Sa.index P (A.Sa.find (ι p)) σ ∧
+        MatchN A.Sa.index P (mkNode st f p') σ
+```
+
+Matches are read on the index, which is the store filtered by the skip predicates
+(Section 6.5); consequences are read on the store as normal forms; `:subsume` is allowed.
+The conclusion adds to the old one that the matched node is the represented node of `p'`.
+`saturation_modulo_complete_store` is the form with `CompleteHyps`,
+`saturation_modulo_complete_store_engine` takes the engine's stop test in place of
+`Unchanged`, and `saturation_modulo_complete_store_cover` adds `FCover` (every `f`-node of
+the index is the node of some `p ∈ act`) and then concludes for every match, whatever its
+root. The proof is that of Section 7.4 with `saturation_complete_N` in place of
+`saturation_complete`; `matches_at_sub` identifies the matched node through `KeysNodup`.
+
+**The witness.** `Final/Witness.lean` takes the completion state of `CC/AtomsWitness.lean`
+(the program `(union (+ a b) c)`, `t = a + b + d`, `u = c + d`) and adds the rule
+`(rewrite (+ x y) (g x y))` with `g` a plain binary operator. The store holds the four leaf
+constants, the three `+`-nodes `{a, b}`, `{a, b, d}`, `{c, d}`, and after round 0 the four
+`g`-nodes `g(a, b)`, `g(b, a)`, `g(c, d)`, `g(d, c)`. Round 0 matches on the initial store and
+builds the `g`-nodes; round 1 matches on the result, builds nothing new and is the fixpoint.
+Every hypothesis is proved by hand and `decide`, no `native_decide`:
+`witness_saturation_modulo_complete` is the final theorem itself, applied to this run, and
+`witness_fires_modulo` reads its conclusion at the match `x ↦ c, y ↦ d` rooted at `{c, d}` for
+the theory-equal node `{a, b, d}`. The rule is routed naive in both rounds, so the semi-naive
+branch of `SChainN` is not exercised; the matches are characterized on the concrete graphs
+(`match_cases`), not by running the plan.
+
+**What remains.** `SubRep`, `CompleteAtoms` and the round facts are still hypotheses: no
+theorem relates the completion state to the rounds or to the engine's rebuild, so the
+theorem says nothing about a run whose index does not hold the active nodes of a converged
+state. `hcancel`, `hcp` and the minimal-monomial hypotheses stay in `CompleteAtoms`
+(Section 10, items 3, 5 and 6), and `StorePersist` assumes recanonicalization is a literal
+map (item 9).
 
 ## 8. Counterexamples and the engine defects they record
 
@@ -1674,7 +1813,8 @@ marked **new** were found for this edition.
 
 1. **Still true.** `hG`: the final theorem is about an index that contains only active
    `f`-multiset nodes (Section 7.5). `saturation_modulo_complete_atoms` keeps the same `hG`;
-   its graph has no node for a leaf constant.
+   its graph has no node for a leaf constant. *Resolved since, by commit `8932dc12`:*
+   `saturation_modulo_complete_store_atoms` takes `SubRep` on the index (Section 7.7).
 2. **Still true, and it extends to the leaf-constant form.** Literal `Den` makes
    `saturation_modulo_complete` hold vacuously for any rule with a match whose right-hand side
    builds a node other than an active `f`-multiset node: under `hG` the only stored nodes are
@@ -1687,7 +1827,10 @@ marked **new** were found for this edition.
    a state and rules satisfying all the hypotheses together. This is the most serious
    finding of the guide: the hypotheses are joint, so one such rule with a match makes the
    theorem vacuous for every rule of the set, and a rule set whose right-hand sides use a
-   second operator or a constant is the common case.
+   second operator or a constant is the common case. *Resolved since, by commit `8932dc12`:*
+   `saturation_modulo_complete_store_atoms` reads right-hand sides as normal forms on the
+   store, and `witness_saturation_modulo_complete` proves all its hypotheses on a run of
+   `(rewrite (+ x y) (g x y))` (Section 7.7).
 3. **Still true.** `hcancel` remains in `CompleteHyps`, in `CompleteAtoms`, and in the
    inverse and combined `_engine` theorems and their `_atoms` versions, although
    `hcancel_not_derivable` shows the engine does not establish it. The lattice variants
@@ -1722,7 +1865,9 @@ marked **new** were found for this edition.
    connected to the scheduler theorems. The first edition located the conflict in the re-join
    `byRepr a.node`; `Env.WF`'s partition of variables into node and class variables already
    excludes every plan of a nested pattern, in either lowering order, because a nested child
-   has one variable that is both a class and a node variable (Section 3.7).
+   has one variable that is both a class and a node variable (Section 3.7). *Resolved since,
+   by commit `f1e8be1a`:* per-step binding kinds, `planOK_envWF` and `exec_matches`
+   (Section 3.7).
 2. **Still true.** `runND` models the adaptive scheduler, and `exec` models static plans only.
 3. **Still true.** Guards, literals and globals have per-step theorems only (Section 3.8).
 4. **Still true.** The executable fold enumerator is not linked to `OTLeft` and `OTRight`
@@ -1817,22 +1962,35 @@ statements was wrong (item 1 above).
 
 Each real finding with a proposed fix, most serious first. None is fixed in this edition:
 the guide records them, and the fixes belong to the Lean sources, `STATUS.md` and the design
-note.
+note. Items 1, 2 and 4 have since been resolved on branch `feat/real-rules`; each carries its
+resolution after the original text.
 
 1. Literal `Den` with `hG` makes both final theorems vacuous for any rule with a match whose
    right-hand side builds a node other than a stored active `f`-multiset node. Fix: state the
    final theorem over `DenN` and the store (`saturation_complete_N` with the bridge), and
    prove a witness with rounds, a state and one rewrite rule meeting every hypothesis.
+   **Resolved** by commit `8932dc12`: `saturation_modulo_complete_store`,
+   `saturation_modulo_complete_store_atoms` (and `_store_engine`, `_store_cover`) over
+   `SActRoundN`, `DenN` and the index; `witness_saturation_modulo_complete` instantiates
+   `saturation_modulo_complete_store_atoms` on two rounds of `(rewrite (+ x y) (g x y))` over
+   leaf constants, and `witness_fires_modulo` reads its conclusion (Section 7.7). The old
+   theorems are kept, with the restriction in their docstrings.
 2. `hG` restricts the final theorems to a graph of active `f`-multiset nodes, with no leaf,
    retired or other-operator nodes. Fix: read the graph as the index filtered by
    `Fidelity/Index.lean`, with `represents` a subgraph of it, and prove the bridge for the
-   subgraph.
+   subgraph. **Resolved** by commit `8932dc12`: `SubRep` and `FCover` (`CC/Bridge/Sub.lean`),
+   `ac_equal_same_class_sub`, `matches_closed_under_theory_sub`; the store theorems take
+   `SubRep A.Sa.index st f act ι`, and `saturation_modulo_complete_sub` restates the literal
+   form with it.
 3. `hcancel` stays in `CompleteHyps` and `CompleteAtoms`, and the engine does not establish
    it. Fix: make the bridge take `LatticeClosed` (`completion_complete_cancellative_engine_atoms`)
    in place of `hcancel`.
 4. `Env.WF` excludes every nested pattern, so `env_refine` does not cover the plans the
    scheduler emits. Fix: replace the `κ` partition by per-variable binding kinds that allow a
    variable to be both a child class and a joined node, and prove `PlanOK → Env.WF`.
+   **Resolved** by commit `f1e8be1a`: `Env.WF κ B plan` with per-step kinds (`joinKinds`,
+   `KindOk`), `env_refine` re-proved, `planOK_envWF` under `EnvAtomsWF`, `exec_matches`, and
+   the worked plans of `(f (g x) y)` (`nested_plans_wf`, `nested_exec_matches`; Section 3.7).
 5. `hcp` is not derived from `RoundFixed`, and the engine skips containment pairs. Fix: prove
    `hcp` from `cp_joinable` plus a model of the normalize pass, or state the containment pairs
    as an explicit hypothesis checked in tier 2.

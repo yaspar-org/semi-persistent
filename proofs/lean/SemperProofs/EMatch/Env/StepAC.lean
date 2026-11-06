@@ -80,15 +80,15 @@ theorem mem_flatMap_iff_of_entries {α β γ : Type} (as : List α) (f : α → 
 /-- `decompose_ac_elem` restores the environment and emits the members of
 the reference `decomposeAC` continued by `F`. Hypotheses: `e` is bounded
 by the continuation's set `Bf`, which contains the variables the step
-binds; the rest span is empty on entry; element variables are class
-variables and no annotation is `exact 0`; the residual's classes are
-canonical and distinct. -/
+binds; the rest span is empty on entry; node variables are bound
+(`KindOk`), so an unbound element is a class variable; no annotation is
+`exact 0`; the residual's classes are canonical and distinct. -/
 theorem execAC_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Var}
     {F : Binding → List Binding} (hk : ContSpec G κ k Bf F)
     (elems : List (Var × Mult)) (rest : Option Var) (res : List (C × Nat)) (e : Env)
-    (he : EnvOk e Bf)
+    (he : EnvOk e Bf) (hkind : KindOk κ e)
     (hrest : ∀ r ∈ rest, e.msetSpan r = none)
-    (helems : ∀ p ∈ elems, κ p.1 = false ∧ p.2 ≠ .exact 0)
+    (helems : ∀ p ∈ elems, p.2 ≠ .exact 0)
     (hBf : ∀ y ∈ acBinds elems rest, y ∈ Bf)
     (hres : ∀ p ∈ res, G.find p.1 = p.1)
     (hnd : (res.map (·.1)).Nodup) :
@@ -102,8 +102,8 @@ theorem execAC_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Var}
           simp only [execAC, decomposeAC]
           rw [all_zero_iff_filter_nil]
           split_ifs with h
-          · refine ⟨hk.restore e he, fun σ => ?_⟩
-            rw [hk.mem e he]
+          · refine ⟨hk.restore e he hkind, fun σ => ?_⟩
+            rw [hk.mem e he hkind]
             simp
           · simp
       | some r =>
@@ -111,17 +111,17 @@ theorem execAC_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Var}
           have he' := he.pushMset hr (res.filter (fun p => p.2 ≠ 0))
           simp only [execAC, decomposeAC]
           refine ⟨?_, fun σ => ?_⟩
-          · rw [hk.restore _ he', Env.popMset_pushMset _ _ _ (hrest r rfl)]
-          · rw [hk.mem _ he', abs_pushMset G κ e r _ he.spans]
+          · rw [hk.restore _ he' (hkind.pushMset r _), Env.popMset_pushMset _ _ _ (hrest r rfl)]
+          · rw [hk.mem _ he' (hkind.pushMset r _), abs_pushMset G κ e r _ he.spans]
             simp
   | cons p es ih =>
       obtain ⟨x, μ⟩ := p
       have hp : (x, μ) ∈ (x, μ) :: es := List.mem_cons_self ..
-      obtain ⟨hκx, hμ0⟩ := helems _ hp
+      have hμ0 := helems _ hp
       have hxB : x ∈ Bf := hBf x (mem_acBinds_fst hp)
       have hμB : ∀ k lo hi, μ = .var k lo hi → k ∈ Bf := by
         intro k lo hi h; subst h; exact hBf k (mem_acBinds_mult hp)
-      have helems' : ∀ q ∈ es, κ q.1 = false ∧ q.2 ≠ .exact 0 :=
+      have helems' : ∀ q ∈ es, q.2 ≠ .exact 0 :=
         fun q hq => helems q (List.mem_cons_of_mem _ hq)
       have hBf' : ∀ y ∈ acBinds es rest, y ∈ Bf :=
         fun y hy => hBf y (acBinds_cons_subset y hy)
@@ -150,14 +150,15 @@ theorem execAC_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Var}
                 have he' : EnvOk (setMultOf e μ q.2) Bf := he.setMultOf hμB q.2
                 have hrest' : ∀ r ∈ rest, (setMultOf e μ q.2).msetSpan r = none := by
                   intro r hr; rw [setMultOf_msetSpan]; exact hrest r hr
-                obtain ⟨ih1, ih2⟩ := ih (zeroEntry (G.find g) res) (setMultOf e μ q.2) he' hrest'
-                  helems' hBf' (hres' _) (hnd' _)
+                obtain ⟨ih1, ih2⟩ := ih (zeroEntry (G.find g) res) (setMultOf e μ q.2) he'
+                  (hkind.setMultOf μ q.2) hrest' helems' hBf' (hres' _) (hnd' _)
                 refine ⟨?_, ih2⟩
                 rw [ih1]
                 exact resetMult_setMultOf e μ q.2 hm
               · simp [hm]
       | none =>
           simp only [execAC, decomposeAC, abs_cls, hx, Option.map_none]
+          have hκx : κ x = false := hkind x hx
           have hbody : ∀ p ∈ res, multMatchesE μ p.2 (boundMult e μ) = true →
               (execAC G k es rest (zeroEntry p.1 res) (setMultOf (e.set x p.1) μ p.2)).2 =
                   setMultOf (e.set x p.1) μ p.2 ∧
@@ -170,7 +171,8 @@ theorem execAC_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Var}
               (he.set hxB p.1).setMultOf hμB p.2
             have hrest' : ∀ r ∈ rest, (setMultOf (e.set x p.1) μ p.2).msetSpan r = none := by
               intro r hr; rw [setMultOf_msetSpan, Env.set_msetSpan]; exact hrest r hr
-            obtain ⟨ih1, ih2⟩ := ih (zeroEntry p.1 res) _ he' hrest' helems' hBf' (hres' _) (hnd' _)
+            obtain ⟨ih1, ih2⟩ := ih (zeroEntry p.1 res) _ he' ((hkind.set x p.1).setMultOf μ p.2)
+              hrest' helems' hBf' (hres' _) (hnd' _)
             refine ⟨ih1, fun σ => ?_⟩
             rw [ih2 σ, abs_setMultOf_set G κ e x p.1 μ p.2 hκx (hres p hp)]
           rw [loop_restore]

@@ -4,24 +4,56 @@ Lean 4 with Mathlib v4.35.0. `lake build` of the whole project passes;
 `grep -rn sorry SemperProofs/` is empty; every `#print axioms` in the
 `Check.lean` files prints only `propext`, `Classical.choice`, `Quot.sound`.
 Written 2026-11-04 after the second extension; regrouped views added 2026-11-05;
-the engine's regrouping skips and leaf constants 2026-11-06.
+the engine's regrouping skips and leaf constants 2026-11-06; the final theorem
+over the store with its non-vacuity witness, and the executor's binding kinds
+for nested patterns, 2026-11-06 (branch `feat/real-rules`).
 
-## Final theorem (`SemperProofs/Final/Main.lean`)
+## Final theorem (`SemperProofs/Final/Store.lean`, `Final/Main.lean`)
 
-`saturation_modulo_complete`: for a chain of saturation rounds (rebuild's
-round facts, merge tracking on, no `:subsume`, well-formed rules and plans,
-every variant or naive match emitted per round) whose last state is the
-represented graph of a completion state satisfying the convergence
-hypotheses, at a round that changed nothing, for every rule with head `f`
-and every pair of theory-equal active nodes, every match at one node is
-fired and its root binds the class of the other. `saturation_modulo_sound`
-is the matching-side converse. `saturation_modulo_complete_atoms` is the
-same theorem for a graph with leaf constants: its completion hypotheses are
-`CompleteAtoms` (below), on the stored state and its completion view. The
-two known limits are in the docstring:
-a theory-equal term that is absent is matched through its class only
-(`per_node_form_fails`), and maximum partition drops a two-item match when
-its two children classes merge (`NoCollapse`).
+`saturation_modulo_complete_store_atoms` (`Final/Store.lean`): for a chain of
+store rounds with normalized right-hand sides (`SActRoundN`: round 0 naive,
+then semi-naive rounds; rebuild's round facts, merge tracking on,
+`StorePersist`, `:subsume` allowed, well-formed rules and plans, every
+variant or naive match emitted per round), at a round that changed nothing,
+and for a completion state with leaf constants satisfying `CompleteAtoms`
+whose active `f`-nodes are stored in the index after the round under ids
+`ι` (`SubRep A.Sa.index st f act ι`, `CC/Bridge/Sub.lean`; the index may hold
+any other node: leaf constants, other operators, the nodes right-hand sides
+build): for every rule whose query is one pattern with head `f`, every pair
+of theory-equal active nodes `p`, `p'` and every match rooted at the node
+of `p'`, the instance is fired in the store as normal forms (`FiredN`), its
+root binds the class of `p`, it matches the pattern at that class, and it
+matches at the represented node of `p'`. `saturation_modulo_complete_store`
+is the form with `CompleteHyps`, `_store_engine` takes the engine's stop
+test, `_store_cover` (with `FCover`) concludes for every match.
+
+Non-vacuity: `Final/Witness.lean` proves every hypothesis of
+`saturation_modulo_complete_store_atoms` for two concrete rounds of
+`(rewrite (+ x y) (g x y))` (`g` a plain binary operator) over the
+leaf-constant state of `AtomsWitness` (`(union (+ a b) c)`, `t = a+b+d`,
+`u = c+d`), by hand and `decide`: `witness_saturation_modulo_complete` is
+the theorem applied to that run, and `witness_fires_modulo` reads it at the
+match rooted at `{c, d}` for the theory-equal node `{a, b, d}`. Both rounds
+route the rule naive.
+
+The former statements remain: `saturation_modulo_complete` and
+`saturation_modulo_complete_atoms` (`Final/Main.lean`) take
+`A.R.after = represents st f act` and literal right-hand sides (`Den`), so
+they hold vacuously for any rule set with a match whose right-hand side
+builds a node other than an active `f`-multiset node (another operator, a
+leaf constant, a one-element `(f x)`): `saturation_complete` derives `Fired`
+for it and the represented graph has no such node. Their docstrings state
+this (limit 3). `saturation_modulo_complete_sub` restates the literal form
+with `SubRep`, and `saturation_modulo_complete_within` is its corollary.
+`saturation_modulo_sound` is the soundness of one matching run on the
+represented graph, not a converse of completeness. The two other known
+limits are in the docstrings: a theory-equal term that is absent is matched
+through its class only (`per_node_form_fails`), and maximum partition drops
+a two-item match when its two children classes merge (`NoCollapse`).
+
+Still assumed: `SubRep`, `CompleteAtoms` (with `hcancel`, `hcp` and the
+minimal-monomial hypotheses) and the round facts; no theorem relates the
+completion state to the rounds or to the engine's rebuild.
 
 ## CC: AC-congruence closure (`SemperProofs/CC/`)
 
@@ -363,7 +395,15 @@ its two children classes merge (`NoCollapse`).
   `xplan_wf_sound`, `core_lifts`.
 - `Env/`: the engine's mutable `Match` with undo; `env_restore`,
   `env_refine` (set equality with the reference interpreter under `WF`),
-  `comm_pair_duplicate`, `ac_nodup`, `RoundSnapshot`.
+  `comm_pair_duplicate`, `ac_nodup`, `RoundSnapshot`. `WF` tracks per-step
+  binding kinds (a join makes its target a node variable, `joinKinds`;
+  `KindOk`: node variables are bound), so a nested child variable may be
+  bound as a class and refined by the nested atom's join, or bound as a node
+  and read as a class. `planOK_envWF`: every `PlanOK` plan is `WF` from
+  `Match::new` under the resolver's variable discipline (`EnvAtomsWF`);
+  `exec_matches`: the executor emits exactly the matches;
+  `nested_plans_wf`, `nested_exec_matches`: the plans of `(f (g x) y)` both
+  ways round.
 
 ## Fidelity: rows closed against the engine (`SemperProofs/Fidelity/`)
 

@@ -15,8 +15,8 @@ emits the members of `bindElems` on the abstraction continued by `F`. -/
 theorem bindFixed_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Var}
     {F : Binding → List Binding} (hk : ContSpec G κ k Bf F)
     (xs : List Var) (cs : List C) (bound : List Var) (e : Env)
-    (he : EnvOk e Bf)
-    (hxs : ∀ x ∈ xs, κ x = false ∧ x ∈ Bf)
+    (he : EnvOk e Bf) (hkind : KindOk κ e)
+    (hxs : ∀ x ∈ xs, x ∈ Bf)
     (hcs : ∀ c ∈ cs, G.find c = c) :
     (bindFixed G k xs cs bound e).2 = unbind bound e ∧
       ∀ σ, σ ∈ (bindFixed G k xs cs bound e).1 ↔
@@ -25,10 +25,10 @@ theorem bindFixed_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Var
   | nil =>
       simp only [bindFixed, List.length_nil, List.take_zero, bindElems, Option.toList_some,
         List.mem_singleton, exists_eq_left]
-      exact ⟨by rw [hk.restore e he], fun σ => hk.mem e he σ⟩
+      exact ⟨by rw [hk.restore e he hkind], fun σ => hk.mem e he hkind σ⟩
   | cons x xs ih =>
       have hx := hxs x (List.mem_cons_self ..)
-      have hxs' : ∀ y ∈ xs, κ y = false ∧ y ∈ Bf := fun y hy => hxs y (List.mem_cons_of_mem x hy)
+      have hxs' : ∀ y ∈ xs, y ∈ Bf := fun y hy => hxs y (List.mem_cons_of_mem x hy)
       cases cs with
       | nil =>
           have hnone : bindElems (x :: xs) (List.take (x :: xs).length []) (abs G κ e) = none := rfl
@@ -43,13 +43,13 @@ theorem bindFixed_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Var
               simp only [bindFixed, hg, Option.map_some]
               by_cases hfind : G.find g = c
               · simp only [hfind, hc, ite_true]
-                exact ih cs bound e he hxs' hcs'
+                exact ih cs bound e he hkind hxs' hcs'
               · rw [hc]
                 simp [hfind]
           | none =>
               simp only [bindFixed, hg, Option.map_none]
-              have h := ih cs (x :: bound) (e.set x c) (he.set hx.2 c) hxs' hcs'
-              rw [unbind_cons, Env.clear_set e x c hg, abs_set_cls G κ e x c hx.1 hc] at h
+              have h := ih cs (x :: bound) (e.set x c) (he.set hx c) (hkind.set x c) hxs' hcs'
+              rw [unbind_cons, Env.clear_set e x c hg, abs_set_cls G κ e x c (hkind x hg) hc] at h
               exact h
 
 /-! ## Optional rest pushes -/
@@ -70,6 +70,9 @@ def popE (r : Option Var) (e : Env) : Env :=
 @[simp] theorem pushE_some (r : Var) (u : List C) (e : Env) :
     pushE (some r) u e = e.pushSeq r u := rfl
 @[simp] theorem popE_none (e : Env) : popE none e = e := rfl
+@[simp] theorem pushE_nodes (r : Option Var) (u : List C) (e : Env) :
+    (pushE r u e).nodes = e.nodes := by
+  cases r <;> rfl
 @[simp] theorem popE_some (r : Var) (e : Env) : popE (some r) e = e.popSeq r := rfl
 
 theorem pushE_seqSpan_ne (r : Option Var) (u : List C) (e : Env) (s : Var)
@@ -116,7 +119,7 @@ theorem bindFixed_split (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Va
     (hpre : ∀ r ∈ pre, e.seqSpan r = none)
     (hsuf : ∀ r ∈ suf, e.seqSpan r = none)
     (hdist : ∀ r ∈ pre, suf ≠ some r)
-    (helems : ∀ x ∈ elems, κ x = false)
+    (hkind : KindOk κ e)
     (hBf : ∀ y ∈ pre.toList ++ elems ++ suf.toList, y ∈ Bf)
     (hcs : ∀ c ∈ cs, G.find c = c) :
     popE pre (popE suf (bindFixed G k elems (cs.drop j) []
@@ -139,7 +142,7 @@ theorem bindFixed_split (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Va
   have he₂ : EnvOk (pushE suf (cs.drop (j + elems.length)) (pushE pre (cs.take j) e)) Bf :=
     he₁.pushE suf hsufB _
   obtain ⟨hr, hm⟩ := bindFixed_spec G κ hk elems (cs.drop j) [] _ he₂
-    (fun x hx => ⟨helems x hx, helemsB x hx⟩) (fun c hc => hcs c (List.mem_of_mem_drop hc))
+    (hkind.of_nodes_eq (by simp)) helemsB (fun c hc => hcs c (List.mem_of_mem_drop hc))
   refine ⟨?_, fun σ => ?_⟩
   · rw [hr, unbind_nil, popE_pushE suf _ _ hsuf', popE_pushE pre _ e hpre]
   · rw [hm σ, abs_pushE G κ suf _ _ he₁.spans, abs_pushE G κ pre _ e he.spans,
@@ -204,8 +207,9 @@ theorem mem_expandA (pre : Option Var) (elems : List Var) (suf : Option Var) (cs
 
 /-- `run_expand_a` with `bind_fixed_and_continue` restores the environment
 and emits the members of the reference `expandA` continued by `F`.
-Hypotheses: the rest spans are empty on entry and distinct; the fixed
-child variables are class variables; the children are canonical. -/
+Hypotheses: the rest spans are empty on entry and distinct; node
+variables are bound (`KindOk`), so an unbound fixed child is a class
+variable; the children are canonical. -/
 theorem execExpandA_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List Var}
     {F : Binding → List Binding} (hk : ContSpec G κ k Bf F)
     (pre : Option Var) (elems : List Var) (suf : Option Var) (cs : List C) (e : Env)
@@ -213,7 +217,7 @@ theorem execExpandA_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List V
     (hpre : ∀ r ∈ pre, e.seqSpan r = none)
     (hsuf : ∀ r ∈ suf, e.seqSpan r = none)
     (hdist : ∀ r ∈ pre, suf ≠ some r)
-    (helems : ∀ x ∈ elems, κ x = false)
+    (hkind : KindOk κ e)
     (hBf : ∀ y ∈ pre.toList ++ elems ++ suf.toList, y ∈ Bf)
     (hcs : ∀ c ∈ cs, G.find c = c) :
     (execExpandA G k pre elems suf cs e).2 = e ∧
@@ -235,7 +239,7 @@ theorem execExpandA_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List V
           simp only [execExpandA]
           by_cases hlen : cs.length = elems.length
           · rw [ite_eq_left hlen]
-            have h := bindFixed_split G κ hk none elems none cs e 0 he hpre hsuf hdist helems
+            have h := bindFixed_split G κ hk none elems none cs e 0 he hpre hsuf hdist hkind
               hBf hcs
             simp only [pushE_none, popE_none, List.drop_zero, Nat.zero_add] at h
             refine ⟨h.1, fun σ => ?_⟩
@@ -269,7 +273,7 @@ theorem execExpandA_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List V
             obtain ⟨j, hj, -⟩ := hσ'
             omega
           · rw [ite_eq_right hlt]
-            have h := bindFixed_split G κ hk none elems (some s) cs e 0 he hpre hsuf hdist helems
+            have h := bindFixed_split G κ hk none elems (some s) cs e 0 he hpre hsuf hdist hkind
               hBf hcs
             simp only [pushE_none, pushE_some, popE_none, popE_some, List.drop_zero,
               Nat.zero_add] at h
@@ -301,7 +305,7 @@ theorem execExpandA_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List V
             omega
           · rw [ite_eq_right hlt]
             have h := bindFixed_split G κ hk (some p) elems none cs e (cs.length - elems.length)
-              he hpre hsuf hdist helems hBf hcs
+              he hpre hsuf hdist hkind hBf hcs
             have hsplit : cs.length - elems.length + elems.length = cs.length := by omega
             simp only [pushE_none, pushE_some, popE_none, popE_some, hsplit] at h
             refine ⟨h.1, fun σ => ?_⟩
@@ -331,7 +335,7 @@ theorem execExpandA_spec (G : Graph) (κ : Var → Bool) {k : Cont} {Bf : List V
             omega
           · rw [ite_eq_right hlt]
             have h := fun off =>
-              bindFixed_split G κ hk (some p) elems (some s) cs e off he hpre hsuf hdist helems
+              bindFixed_split G κ hk (some p) elems (some s) cs e off he hpre hsuf hdist hkind
                 hBf hcs
             have hloop := loop_restore
               (fun off e =>
