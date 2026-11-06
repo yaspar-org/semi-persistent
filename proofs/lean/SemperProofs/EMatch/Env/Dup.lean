@@ -33,11 +33,15 @@ def pairGraph : Graph := ⟨[(0, ⟨0, .spair 1 1⟩)], fun c => c⟩
 /-- `(Eq x y)` with `x = 1`, `y = 2`, node variable `0`. -/
 def pairPlan : Plan := [.join 0 [.byOp 0], .decomposeComm 0 1 2]
 
-/-- Node variables: `0`. -/
+/-- Node variables: `0`, the plan's join target. -/
 def pairκ : Var → Bool := fun v => decide (v = 0)
 
-theorem pairPlan_wf : WF pairκ [] pairPlan := by
-  refine WF.join rfl (by simp [Lookup.reads]) (WF.decomposeComm (List.mem_cons_self ..) rfl rfl rfl WF.nil)
+theorem pairPlan_wf : WF (fun _ => false) [] pairPlan :=
+  WF.join (by simp [Lookup.reads]) (WF.decomposeComm (List.mem_cons_self ..) (by simp) WF.nil)
+
+/-- `pairκ` is the kinds the plan ends with. -/
+theorem pairκ_eq : planKinds pairPlan = pairκ := by
+  funext v; by_cases h : v = 0 <;> simp [pairPlan, joinKinds, pairκ, h, Function.update]
 
 theorem pairGraph_canon : pairGraph.ChildrenCanon := by
   intro p hp
@@ -80,10 +84,13 @@ pair is decomposed (here the pair node is its own "parent": the plan only
 needs `x` bound to class `1`). -/
 def pairPlanBound : Plan := [.join 0 [.byOp 0], .extractChild 0 0 1, .decomposeComm 0 1 2]
 
-theorem pairPlanBound_wf : WF pairκ [] pairPlanBound := by
-  refine WF.join rfl (by simp [Lookup.reads]) ?_
-  refine WF.extractChild (List.mem_cons_self ..) rfl (by simp) rfl ?_
-  exact WF.decomposeComm (List.mem_cons_of_mem _ (List.mem_cons_self ..)) rfl rfl rfl WF.nil
+theorem pairPlanBound_wf : WF (fun _ => false) [] pairPlanBound := by
+  refine WF.join (by simp [Lookup.reads]) ?_
+  refine WF.extractChild (List.mem_cons_self ..) (by simp) (by simp) ?_
+  exact WF.decomposeComm (List.mem_cons_of_mem _ (List.mem_cons_self ..)) (by simp) WF.nil
+
+theorem pairκ_eq_bound : planKinds pairPlanBound = pairκ := by
+  funext v; by_cases h : v = 0 <;> simp [pairPlanBound, joinKinds, pairκ, h, Function.update]
 
 /-- The reference interpreter emits the binding twice. -/
 theorem comm_bound_first_run : (run pairGraph pairPlanBound Binding.empty).length = 2 := rfl

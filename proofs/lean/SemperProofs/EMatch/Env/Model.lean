@@ -28,8 +28,12 @@ class through `find` (`σ.cls`), and the slots of node variables also as
 node ids (`σ.node`): the engine has one namespace for both
 (`ematch.rs:1893-1896`, spec A.0.1) while `Binding` keeps two maps, and
 the reference `joinBind` writes both of a join target while `ExtractChild`
-and the decompositions write only `cls`. The classification `κ`
-(`κ v = true` for a node variable) decides which slots feed `σ.node`.
+and the decompositions write only `cls`. The binding kinds `κ`
+(`κ v = true` for a node variable) decide which slots feed `σ.node`. The
+kinds are per step, not a partition: a variable bound as a class (by
+`ExtractChild` or a decomposition) becomes a node variable when a join
+refines it to a node of its class, which is what the scheduler emits for
+a nested atom lowered after its parent (`WF`, `joinKinds`).
 -/
 
 namespace Semper.EMatch.Env
@@ -587,60 +591,156 @@ theorem nodeOf_canon {G : Graph} (hG : G.ChildrenCanon) {e : Env} {v : Var} {n :
       simp [hv] at h
       exact hG (id, n) (mem_of_lookupNode' h)
 
+/-! ## Binding kinds -/
+
+/-- `KindOk κ e`: a variable of node kind (`κ v = true`) is bound in `e`.
+The abstraction reads such a slot as a node id as well as a class; a slot
+written as a class is of class kind until a join refines it. -/
+def KindOk (κ : Var → Bool) (e : Env) : Prop := ∀ v, e.nodes v = none → κ v = false
+
+namespace KindOk
+
+variable {κ : Var → Bool} {e : Env}
+
+theorem empty : KindOk (fun _ => false) Env.empty := fun _ _ => rfl
+
+theorem set (h : KindOk κ e) (x : Var) (g : NodeId) : KindOk κ (e.set x g) := by
+  intro v hv
+  by_cases hvx : v = x
+  · subst hvx; simp at hv
+  · rw [Env.set_nodes, Function.update_of_ne hvx] at hv; exact h v hv
+
+/-- A join makes its target a node variable. -/
+theorem join (h : KindOk κ e) (t : Var) (g : NodeId) :
+    KindOk (Function.update κ t true) (e.set t g) := by
+  intro v hv
+  by_cases hvt : v = t
+  · subst hvt; simp at hv
+  · rw [Env.set_nodes, Function.update_of_ne hvt] at hv
+    rw [Function.update_of_ne hvt]; exact h v hv
+
+theorem of_nodes_eq {e' : Env} (h : KindOk κ e) (hn : e'.nodes = e.nodes) : KindOk κ e' := by
+  intro v hv; rw [hn] at hv; exact h v hv
+
+theorem setMult (h : KindOk κ e) (k m : Nat) : KindOk κ (e.setMult k m) := h.of_nodes_eq rfl
+theorem pushSeq (h : KindOk κ e) (r : Var) (d : List C) : KindOk κ (e.pushSeq r d) :=
+  h.of_nodes_eq rfl
+theorem pushSet (h : KindOk κ e) (r : Var) (d : List C) : KindOk κ (e.pushSet r d) :=
+  h.of_nodes_eq rfl
+theorem pushMset (h : KindOk κ e) (r : Var) (d : List (C × Nat)) : KindOk κ (e.pushMset r d) :=
+  h.of_nodes_eq rfl
+
+/-- A variable outside the bound set of a bounded environment is of class
+kind. -/
+theorem not_mem {B : List Var} (h : KindOk κ e) (hb : Bounded e B) {x : Var} (hx : x ∉ B) :
+    κ x = false :=
+  h x (hb.nodes x hx)
+
+end KindOk
+
+/-- `abs` reads the kinds only through `σ.node`: two classifications that
+agree on the bound slots give one abstraction. -/
+theorem abs_congr_kinds (G : Graph) {κ κ' : Var → Bool} (e : Env)
+    (h : ∀ v, e.nodes v ≠ none → κ v = κ' v) : abs G κ e = abs G κ' e := by
+  refine Binding.ext' rfl ?_ rfl rfl rfl rfl
+  funext v
+  simp only [abs_node]
+  by_cases hv : e.nodes v = none
+  · simp [hv]
+  · rw [h v hv]
+
+/-- A join on any target, of class kind or unbound before, writes the
+reference `joinBind`, the target becoming a node variable. -/
+theorem abs_set_join (G : Graph) (κ : Var → Bool) (e : Env) (t : Var) (id : NodeId) :
+    abs G (Function.update κ t true) (e.set t id) = joinBind G (abs G κ e) t id := by
+  refine Binding.ext' ?_ ?_ rfl rfl rfl rfl <;> funext x
+  · simp only [joinBind, Binding.setNode, Binding.setCls, abs_cls, Env.set_nodes]
+    by_cases h : x = t
+    · subst h; simp
+    · simp [Function.update_of_ne h]
+  · simp only [joinBind, Binding.setNode, Binding.setCls, abs_node, Env.set_nodes]
+    by_cases h : x = t
+    · subst h; simp
+    · simp [Function.update_of_ne h]
+
 /-! ## Plan well-formedness for the refinement -/
 
-/-- `WF κ B plan`: `PlanWF` (every read variable bound) plus what the
-engine's write/undo discipline needs and `PlanWF` does not state:
+/-- The kinds after a plan: every join target becomes a node variable. -/
+def joinKinds (κ : Var → Bool) : Plan → Var → Bool
+  | [] => κ
+  | .join t _ :: ss => joinKinds (Function.update κ t true) ss
+  | _ :: ss => joinKinds κ ss
 
-* the classification `κ` agrees with the plan (join targets and
-  decomposed nodes are node variables; element, join-key, copied and
-  checked variables are class variables), since the engine's single
-  namespace is split in `Binding` (`σ.node` is only written by `joinBind`);
-* a variable written by `ExtractChild`/`CopyBinding` or a rest pushed by
+/-- The kinds of a plan run from `Match::new`: its join targets are the
+node variables. -/
+abbrev planKinds (plan : Plan) : Var → Bool := joinKinds (fun _ => false) plan
+
+@[simp] theorem joinKinds_nil (κ : Var → Bool) : joinKinds κ [] = κ := rfl
+@[simp] theorem joinKinds_join (κ : Var → Bool) (t : Var) (ls : List Lookup) (ss : Plan) :
+    joinKinds κ (.join t ls :: ss) = joinKinds (Function.update κ t true) ss := rfl
+
+/-- `WF κ B plan`: `PlanWF` (every read variable bound) plus what the
+engine's write/undo discipline needs and `PlanWF` does not state. `κ` is
+the binding kind of each variable at the current step: a node variable
+(`κ v = true`) holds a node id in its slot, a class variable a class. The
+engine has one namespace for both (`ematch.rs:1893-1896`); `Binding` keeps
+two maps, and `σ.node` is written only by a join.
+
+* A join makes its target a node variable, whatever its kind before: an
+  unbound target, or a class variable bound by `ExtractChild`, a
+  decomposition or an earlier atom, which the join refines to a node of its
+  class (the re-join `join n [byRepr n, byOp f]` of a nested atom lowered
+  after its parent). Its lookups may read any bound variable, the target
+  included: a lookup reads a slot through `canon`, whatever its kind.
+* `ExtractChild`, the pair, `ExpandA` and the decompositions read their
+  node through `nodeOf`, so it must be a node variable (`κ v = true`).
+* A variable written by `ExtractChild`/`CopyBinding` or a rest pushed by
   a decomposition is not already bound (`out ∉ B`, `t ∉ B`, `r ∉ B`): the
   engine writes it unconditionally and `clear`/`pop` reset it to
-  *unbound*, not to its previous value (the scheduler never emits these on
-  a bound variable; the reference `runStep` would instead check a bound
-  target);
+  *unbound*, not to its previous value. Such a variable is of class kind
+  (`KindOk`: a node variable is bound).
 * `pre ≠ suf` for `ExpandA` (two pushes on one span would be popped twice,
-  the second `pop` truncating the pool to `0`);
+  the second `pop` truncating the pool to `0`).
 * no `exact 0` multiplicity (`resolve.rs:1999` rejects it; the engine's
   `mult_matches(Exact(0), 0)` would otherwise take a zeroed entry).
 
-Element and multiplicity variables of a decomposition and the pair's
-variables may be bound (the check paths) or shared across steps. -/
-inductive WF (κ : Var → Bool) : List Var → Plan → Prop
-  | nil {B : List Var} : WF κ B []
-  | join {B : List Var} {t : Var} {ls : List Lookup} {ss : Plan} :
-      κ t = true → (∀ l ∈ ls, ∀ x ∈ l.reads, x ∈ B ∧ κ x = false) →
-      WF κ (t :: B) ss → WF κ B (.join t ls :: ss)
-  | extractChild {B : List Var} {v out : Var} {pos : Nat} {ss : Plan} :
-      v ∈ B → κ v = true → out ∉ B → κ out = false →
+Element variables of a decomposition, check operands and join keys may be
+of either kind: a bound element is compared through `canon`, and an
+unbound one is of class kind. -/
+inductive WF : (Var → Bool) → List Var → Plan → Prop
+  | nil {κ : Var → Bool} {B : List Var} : WF κ B []
+  | join {κ : Var → Bool} {B : List Var} {t : Var} {ls : List Lookup} {ss : Plan} :
+      (∀ l ∈ ls, ∀ x ∈ l.reads, x ∈ B) →
+      WF (Function.update κ t true) (t :: B) ss → WF κ B (.join t ls :: ss)
+  | extractChild {κ : Var → Bool} {B : List Var} {v out : Var} {pos : Nat} {ss : Plan} :
+      v ∈ B → κ v = true → out ∉ B →
       WF κ (out :: B) ss → WF κ B (.extractChild v pos out :: ss)
-  | checkChildEq {B : List Var} {v x : Var} {pos : Nat} {ss : Plan} :
-      v ∈ B → κ v = true → x ∈ B → κ x = false →
+  | checkChildEq {κ : Var → Bool} {B : List Var} {v x : Var} {pos : Nat} {ss : Plan} :
+      v ∈ B → κ v = true → x ∈ B →
       WF κ B ss → WF κ B (.checkChildEq v pos x :: ss)
-  | checkEq {B : List Var} {x y : Var} {ss : Plan} :
-      x ∈ B → κ x = false → y ∈ B → κ y = false →
+  | checkEq {κ : Var → Bool} {B : List Var} {x y : Var} {ss : Plan} :
+      x ∈ B → y ∈ B →
       WF κ B ss → WF κ B (.checkEq x y :: ss)
-  | copyBinding {B : List Var} {t o : Var} {ss : Plan} :
-      o ∈ B → t ∉ B → κ t = false →
+  | copyBinding {κ : Var → Bool} {B : List Var} {t o : Var} {ss : Plan} :
+      o ∈ B → t ∉ B →
       WF κ (t :: B) ss → WF κ B (.copyBinding t o :: ss)
-  | decomposeAC {B : List Var} {v : Var} {elems : List (Var × Mult)}
+  | decomposeAC {κ : Var → Bool} {B : List Var} {v : Var} {elems : List (Var × Mult)}
       {rest : Option Var} {ss : Plan} :
-      v ∈ B → κ v = true → (∀ p ∈ elems, κ p.1 = false ∧ p.2 ≠ .exact 0) →
+      v ∈ B → κ v = true → (∀ p ∈ elems, p.2 ≠ .exact 0) →
       (∀ r ∈ rest, r ∉ B) →
       WF κ (acBinds elems rest ++ B) ss → WF κ B (.decomposeAC v elems rest :: ss)
-  | decomposeACI {B : List Var} {v : Var} {elems : List Var} {rest : Option Var} {ss : Plan} :
-      v ∈ B → κ v = true → (∀ x ∈ elems, κ x = false) → (∀ r ∈ rest, r ∉ B) →
+  | decomposeACI {κ : Var → Bool} {B : List Var} {v : Var} {elems : List Var}
+      {rest : Option Var} {ss : Plan} :
+      v ∈ B → κ v = true → (∀ r ∈ rest, r ∉ B) →
       WF κ (elems ++ rest.toList ++ B) ss → WF κ B (.decomposeACI v elems rest :: ss)
-  | expandA {B : List Var} {v : Var} {pre suf : Option Var} {elems : List Var} {ss : Plan} :
-      v ∈ B → κ v = true → (∀ x ∈ elems, κ x = false) →
+  | expandA {κ : Var → Bool} {B : List Var} {v : Var} {pre suf : Option Var} {elems : List Var}
+      {ss : Plan} :
+      v ∈ B → κ v = true →
       (∀ r ∈ pre, r ∉ B) → (∀ r ∈ suf, r ∉ B) → (∀ r ∈ pre, suf ≠ some r) →
       WF κ (pre.toList ++ elems ++ suf.toList ++ B) ss →
       WF κ B (.expandA v pre elems suf :: ss)
-  | decomposeComm {B : List Var} {v x y : Var} {ss : Plan} :
-      v ∈ B → κ v = true → κ x = false → κ y = false →
+  | decomposeComm {κ : Var → Bool} {B : List Var} {v x y : Var} {ss : Plan} :
+      v ∈ B → κ v = true →
       WF κ (x :: y :: B) ss → WF κ B (.decomposeComm v x y :: ss)
 
 /-- `WF` refines `PlanWF`. -/
@@ -648,14 +748,14 @@ theorem WF.toPlanWF {κ : Var → Bool} {B : List Var} {plan : Plan} (h : WF κ 
     PlanWF B plan := by
   induction h with
   | nil => exact .nil
-  | join _ hr _ ih => exact .join (fun l hl x hx => (hr l hl x hx).1) ih
-  | extractChild hv _ _ _ _ ih => exact .extractChild hv ih
-  | checkChildEq hv _ hx _ _ ih => exact .checkChildEq hv hx ih
-  | checkEq hx _ hy _ _ ih => exact .checkEq hx hy ih
-  | copyBinding ho _ _ _ ih => exact .copyBinding ho ih
+  | join hr _ ih => exact .join hr ih
+  | extractChild hv _ _ _ ih => exact .extractChild hv ih
+  | checkChildEq hv _ hx _ ih => exact .checkChildEq hv hx ih
+  | checkEq hx hy _ ih => exact .checkEq hx hy ih
+  | copyBinding ho _ _ ih => exact .copyBinding ho ih
   | decomposeAC hv _ _ _ _ ih => exact .decomposeAC hv ih
-  | decomposeACI hv _ _ _ _ ih => exact .decomposeACI hv ih
-  | expandA hv _ _ _ _ _ _ ih => exact .expandA hv ih
-  | decomposeComm hv _ _ _ _ ih => exact .decomposeComm hv ih
+  | decomposeACI hv _ _ _ ih => exact .decomposeACI hv ih
+  | expandA hv _ _ _ _ _ ih => exact .expandA hv ih
+  | decomposeComm hv _ _ ih => exact .decomposeComm hv ih
 
 end Semper.EMatch.Env
