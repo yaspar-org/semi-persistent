@@ -811,54 +811,89 @@ impl<W:Word> Wrapped<W> {
         }
 
         // FALLBACK: Verified loop for complex wrapping or cross-quadrant intervals
+        let b0 = d.piece(0);
+        let b1 = d.piece(1);
+        let b2 = d.piece(2);
+        let b3 = d.piece(3);
         let mut result = BotOr::<Self>::Bot;
         let mut i = 0usize;
         while i < 4
             invariant signed, i <= 4, self.wf(), d.wf(), result.wf(),
+                forall|x: W| #[trigger] b0.gamma(x) == d.piece_has(0, x),
+                forall|x: W| #[trigger] b1.gamma(x) == d.piece_has(1, x),
+                forall|x: W| #[trigger] b2.gamma(x) == d.piece_has(2, x),
+                forall|x: W| #[trigger] b3.gamma(x) == d.piece_has(3, x),
                 forall|p: int, q: int, x: W, y: W| #![trigger self.piece_has(p, x), d.piece_has(q, y)]
                     0 <= p < i && 0 <= q < 4 && self.piece_has(p, x) && d.piece_has(q, y) && !Unsigned::<W>::is_zero(y)
                     ==> result.gamma(quotrem(signed, rem, x, y)),
             decreases 4 - i,
         {
             let a = self.piece(i);
-            let mut j = 0usize;
-            while j < 4
-                invariant signed, j <= 4, i < 4, self.wf(), d.wf(), result.wf(), a.wf(),
-                    forall|x: W| #[trigger] a.gamma(x) == self.piece_has(i as int, x),
-                    forall|p: int, q: int, x: W, y: W| #![trigger self.piece_has(p, x), d.piece_has(q, y)]
-                        0 <= p <= i && 0 <= q < 4 && (p < i || q < j) && self.piece_has(p, x) && d.piece_has(q, y) && !Unsigned::<W>::is_zero(y)
-                        ==> result.gamma(quotrem(signed, rem, x, y)),
-                decreases 4 - j,
-            {
-                let b = d.piece(j);
-                let next = {
-                    proof {
-                        assert forall|x: W| #[trigger] a.gamma(x) implies (signed_view(x) < 0) == (i % 2 == 1) by { x.lemma_view_bounded(); W::lemma_modulus(); }
-                        assert forall|y: W| #[trigger] b.gamma(y) implies (signed_view(y) < 0) == (j % 2 == 1) by { y.lemma_view_bounded(); W::lemma_modulus(); }
-                    }
-                    match (&a, &b) {
-                        (BotOr::Val(aa), BotOr::Val(bb)) => {
-                            proof {
-                                assert forall|x: W| #[trigger] aa.gamma(x) implies (signed_view(x) < 0) == (i % 2 == 1) by { assert(a.gamma(x)); }
-                                assert forall|y: W| #[trigger] bb.gamma(y) implies (signed_view(y) < 0) == (j % 2 == 1) by { assert(b.gamma(y)); }
-                            }
-                            signed_piece_divrem(aa, bb, i % 2 == 1, j % 2 == 1, rem)
-                        },
-                        _ => BotOr::Bot
-                    }
-                };
-                proof { assert forall|x: W, y: W| a.gamma(x) && b.gamma(y) && y.view() != 0 implies #[trigger] next.gamma(quotrem(signed, rem, x, y)) by {} }
-                let merged = result.join(&next);
+            if let BotOr::Bot = a {
                 proof {
                     assert forall|p: int, q: int, x: W, y: W| #![trigger self.piece_has(p, x), d.piece_has(q, y)]
-                        0 <= p <= i && 0 <= q < 4 && (p < i || q < j + 1) && self.piece_has(p, x) && d.piece_has(q, y) && !Unsigned::<W>::is_zero(y)
-                        implies merged.gamma(quotrem(signed, rem, x, y)) by {
-                        if p == i && q == j { assert(a.gamma(x)); assert(b.gamma(y)); assert(next.gamma(quotrem(signed, rem, x, y))); }
-                        else { assert(result.gamma(quotrem(signed, rem, x, y))); }
+                        0 <= p <= i && 0 <= q < 4 && self.piece_has(p, x) && d.piece_has(q, y) && !Unsigned::<W>::is_zero(y)
+                        implies result.gamma(quotrem(signed, rem, x, y)) by {
+                        if p == i { assert(a.gamma(x)); }
                     }
                 }
-                result = merged;
-                j += 1;
+            } else {
+                let mut j = 0usize;
+                while j < 4
+                    invariant signed, j <= 4, i < 4, self.wf(), d.wf(), result.wf(), a.wf(),
+                        forall|x: W| #[trigger] b0.gamma(x) == d.piece_has(0, x),
+                        forall|x: W| #[trigger] b1.gamma(x) == d.piece_has(1, x),
+                        forall|x: W| #[trigger] b2.gamma(x) == d.piece_has(2, x),
+                        forall|x: W| #[trigger] b3.gamma(x) == d.piece_has(3, x),
+                        forall|x: W| #[trigger] a.gamma(x) == self.piece_has(i as int, x),
+                        a !is Bot,
+                        forall|p: int, q: int, x: W, y: W| #![trigger self.piece_has(p, x), d.piece_has(q, y)]
+                            0 <= p <= i && 0 <= q < 4 && (p < i || q < j) && self.piece_has(p, x) && d.piece_has(q, y) && !Unsigned::<W>::is_zero(y)
+                            ==> result.gamma(quotrem(signed, rem, x, y)),
+                    decreases 4 - j,
+                {
+                    let b = if j == 0 { &b0 } else if j == 1 { &b1 } else if j == 2 { &b2 } else { &b3 };
+                    proof { assert(forall|y: W| #[trigger] b.gamma(y) == d.piece_has(j as int, y)); }
+
+                    if let BotOr::Bot = b {
+                        proof {
+                            assert forall|p: int, q: int, x: W, y: W| #![trigger self.piece_has(p, x), d.piece_has(q, y)]
+                                0 <= p <= i && 0 <= q < 4 && (p < i || q < j + 1) && self.piece_has(p, x) && d.piece_has(q, y) && !Unsigned::<W>::is_zero(y)
+                                implies result.gamma(quotrem(signed, rem, x, y)) by {
+                                if p == i && q == j { assert(b.gamma(y)); }
+                            }
+                        }
+                    } else {
+                        let next = {
+                            proof {
+                                assert forall|x: W| #[trigger] a.gamma(x) implies (signed_view(x) < 0) == (i % 2 == 1) by { x.lemma_view_bounded(); W::lemma_modulus(); }
+                                assert forall|y: W| #[trigger] b.gamma(y) implies (signed_view(y) < 0) == (j % 2 == 1) by { y.lemma_view_bounded(); W::lemma_modulus(); }
+                            }
+                            match (&a, b) {
+                                (BotOr::Val(aa), BotOr::Val(bb)) => {
+                                    proof {
+                                        assert forall|x: W| #[trigger] aa.gamma(x) implies (signed_view(x) < 0) == (i % 2 == 1) by { assert(a.gamma(x)); }
+                                        assert forall|y: W| #[trigger] bb.gamma(y) implies (signed_view(y) < 0) == (j % 2 == 1) by { assert(b.gamma(y)); }
+                                    }
+                                    signed_piece_divrem(aa, bb, i % 2 == 1, j % 2 == 1, rem)
+                                },
+                                _ => BotOr::Bot
+                            }
+                        };
+                        proof { assert forall|x: W, y: W| a.gamma(x) && b.gamma(y) && y.view() != 0 implies #[trigger] next.gamma(quotrem(signed, rem, x, y)) by {} }
+                        let merged = result.join(&next);
+                        proof {
+                            assert forall|p: int, q: int, x: W, y: W| #![trigger self.piece_has(p, x), d.piece_has(q, y)]
+                                0 <= p <= i && 0 <= q < 4 && (p < i || q < j + 1) && self.piece_has(p, x) && d.piece_has(q, y) && !Unsigned::<W>::is_zero(y)
+                                implies merged.gamma(quotrem(signed, rem, x, y)) by {
+                                if p == i && q == j { assert(a.gamma(x)); assert(b.gamma(y)); assert(next.gamma(quotrem(signed, rem, x, y))); }
+                                else { assert(result.gamma(quotrem(signed, rem, x, y))); }
+                            }
+                        }
+                        result = merged;
+                    }
+                    j += 1;
+                }
             }
             i += 1;
         }
