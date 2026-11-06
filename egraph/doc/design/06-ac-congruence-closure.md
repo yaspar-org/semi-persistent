@@ -1887,13 +1887,14 @@ whole list with hypotheses is `proofs/lean/STATUS.md`):
   satisfy I5 initially and every later operation keeps it (`SlotState.I5`,
   `SlotState.OpsStar`, `SlotState.Agrees`; `reachable_I5` in `CC/Slot.lean` and
   `keyed_reachable_I5` in `CC/MinMonoKey.lean` discharge this for the engine's operations);
-  `I0Active` (every class holds an active node, `CC/Assemble.lean`); `hcanon` (every class
+  `I0Active` (every class that holds an active node has one as right-hand side,
+  `CC/Assemble.lean`; before 2026-11-06 it asked this of every class); `hcanon` (every class
   right-hand side is clamped); `RoundFixed` (`CC/Defs.lean`) with `nf_present` (the normal
   form of an active monomial is an active node of the same class) and `cp_joinable` (the
   critical pair of two distinct overlapping rules is joinable); the law facts `hlaw` and
-  `hnf_ax`; `hcp` (critical pairs with the law rules are joinable); `hcc` (two nodes with one
-  monomial are in one class); `hS` (active nodes of one class spell every asserted pair); and
-  `hcancel` (for a cancelative operator, joinability cancels a common summand).
+  `hnf_ax`; `hcp` (critical pairs with the law rules are joinable); `hcc` (two active nodes
+  with one monomial are in one class); `hS` (active nodes of one class spell every asserted
+  pair); and `hcancel` (for a cancelative operator, joinability cancels a common summand).
 - Cancelative operators: `completion_complete_cancellative_engine` (`CC/Lattice.lean`)
   replaces `hcancel` by `LatticeClosed`, which the fixpoint of `lattice_round` gives
   (`latticeClosed_of_engineFixed`); `hcancel` itself does not follow
@@ -1902,6 +1903,12 @@ whole list with hypotheses is `proofs/lean/STATUS.md`):
   (`CC/Laws/`) discharge `hlaw` and `hnf_ax`. `completion_complete_inverse_engine` and
   `completion_complete_combined_engine` (`CC/Laws/InvRulesMain.lean`) replace the four
   `:inverse` hypotheses by the engine's R1-R5 (Chapter 5 §5.2).
+- Leaf constants: `completion_complete_atoms` (`CC/Atoms.lean`) and the `_atoms` forms of the
+  engine theorems (`CC/AtomsEngine.lean`) apply the theorems above to the completion view that
+  adds the one-element monomial `{x}` of each atomic class as a node of `x` and the empty
+  monomial as a node of the unit's class, with the one-element collapse (`RoundFixedA`) in the
+  fixed round; `AtomsWitness.witness_complete` meets every hypothesis on a state with four
+  leaf constants.
 - Order keys: `keyed_reachable_I5` and the counter-model `idOrder_grow_breaks_I5`
   (`CC/MinMonoKey.lean`).
 - `a_round` on folds: the theorems of `CC/ARound/` listed in the rule above.
@@ -1911,8 +1918,9 @@ whole list with hypotheses is `proofs/lean/STATUS.md`):
 - Bridge to matching: `ac_equal_same_class_graph` and `engine_match_modulo_complete`
   (`CC/Bridge/`), used by Chapter 7 §7.5 and Chapter 9.
 
-Scope (2026-11-05): `I0Active` asks every class to hold an active node of the operator, the
-theory does not identify merged child classes, the minimal-monomial history is met with an
+Scope (2026-11-05): `I0Active` asks every class to hold an active node of the operator
+(resolved 2026-11-06: leaf constants are covered, see above), the theory does not identify
+merged child classes, the minimal-monomial history is met with an
 initial state equal to the final one, and `ActRound` assumes the effects of rule actions;
 [Chapter 13 §4](13-soundness.md#4-what-is-proved-argued-and-assumed) states these limits.
 

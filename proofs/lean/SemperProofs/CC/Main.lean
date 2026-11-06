@@ -93,12 +93,41 @@ theorem completion_complete_at_convergence_of_join {L : Laws n}
 engine-level hypotheses only; see `Assemble.lean` for the list. The
 asserted equations enter as pairs of active nodes in one class (`hS`);
 joinability of `=_E`-equal pairs, orientation of the rules and normality
-of the right-hand sides are derived, not assumed. -/
+of the right-hand sides are derived, not assumed. `I0Active` constrains only
+the classes that hold an active node, and `hcc` only the active nodes, so a
+class with no node of the operator (a leaf constant) is allowed; `Atoms.lean`
+gives the form in which such a constant is the one-element monomial `{x}`. -/
 theorem completion_complete_at_convergence {L : Laws n}
     {S : Set (Monomial n × Monomial n)} {st : State n}
     {ss₀ ss : SlotState n}
     (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
     (h0 : I0Active st) (hcanon : ∀ c, L.clamp (st.rhs c) = st.rhs c) (hfix : RoundFixed L st)
+    (hlaw : ∀ P Q, L.lawRel P Q → degLex P Q)
+    (hnf_ax : ∀ M N, ¬ Rw (plain n) L.axRules (L.clamp M) N)
+    (hcp : ∀ r₁ r₂, r₁ ∈ st.rules ∪ L.axRules → r₂ ∈ st.rules ∪ L.axRules → r₁ ≠ r₂ →
+      Overlap r₁.1 r₂.1 →
+      Joinable (Rw (plain n) (st.rules ∪ L.axRules))
+        (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    (hcancel : L.cancellative → ∀ M N X,
+      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) (M + X) (N + X) →
+      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) M N)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
+    (hMN : E L S M N) : st.find c = st.find d :=
+  completion_complete_at_convergence' h5₀ hrun ha h0 hcanon hfix hlaw hnf_ax hcp hcc
+    hS hcancel hM hN hMN
+
+/-- The statement before 2026-11-06, as a corollary: `I0Active` over every
+class of `Fin n` (`I0ActiveAll`) and congruence over every node, retired
+ones included. -/
+theorem completion_complete_at_convergence_of_all {L : Laws n}
+    {S : Set (Monomial n × Monomial n)} {st : State n}
+    {ss₀ ss : SlotState n}
+    (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
+    (h0 : I0ActiveAll st) (hcanon : ∀ c, L.clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixed L st)
     (hlaw : ∀ P Q, L.lawRel P Q → degLex P Q)
     (hnf_ax : ∀ M N, ¬ Rw (plain n) L.axRules (L.clamp M) N)
     (hcp : ∀ r₁ r₂, r₁ ∈ st.rules ∪ L.axRules → r₂ ∈ st.rules ∪ L.axRules → r₁ ≠ r₂ →
@@ -113,7 +142,7 @@ theorem completion_complete_at_convergence {L : Laws n}
       Joinable (Rw (plain n) (st.rules ∪ L.axRules)) M N)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
     (hMN : E L S M N) : st.find c = st.find d :=
-  completion_complete_at_convergence' h5₀ hrun ha h0 hcanon hfix hlaw hnf_ax hcp hcc
-    hS hcancel hM hN hMN
+  completion_complete_at_convergence h5₀ hrun ha (I0Active_of_all h0) hcanon hfix hlaw hnf_ax
+    hcp (fun P c d hc hd => hcc P c d hc.1 hd.1) hS hcancel hM hN hMN
 
 end SemperProofs.CC

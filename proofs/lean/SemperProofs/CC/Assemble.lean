@@ -81,25 +81,41 @@ theorem E_joinable_RwAx {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : 
 theorem rules_oriented (st : State n) : Oriented st.rules :=
   fun _ _ ⟨_, _, _, _, h, _, _⟩ => h
 
-/-- I0 strengthened: every class's right-hand side is an *active* node of
-that class. The engine's slot names an active node: `refresh_min_monomial`
-considers active nodes only and retirement requires a smaller active
-classmate. -/
+/-- I0 strengthened, on the classes that hold an active node: such a
+class's right-hand side is an *active* node of that class. The engine's
+slot names an active node: `refresh_min_monomial` considers active nodes
+only and retirement requires a smaller active classmate. A class with no
+active node of the operator (a leaf constant such as `a` in `a + b`, or a
+class of another operator) is not constrained; `Atoms.lean` reads a leaf
+constant `x` as its one-element monomial `{x}`.
+
+Before 2026-11-06 the quantifier ranged over every class of `Fin n`
+(`I0ActiveAll`), which no state with a leaf constant satisfies. -/
 def I0Active (st : State n) : Prop :=
+  ∀ M c, (M, c) ∈ st.active →
+    ∃ c', (st.rhs (st.find c), c') ∈ st.active ∧ st.find c' = st.find c
+
+/-- The former `I0Active`: every class of `Fin n`, with or without an
+active node, has an active node as right-hand side. -/
+def I0ActiveAll (st : State n) : Prop :=
   ∀ c, ∃ c', (st.rhs (st.find c), c') ∈ st.active ∧ st.find c' = st.find c
 
-theorem I0_of_active {st : State n} (h : I0Active st) : I0 st :=
-  fun c => let ⟨c', h₁, h₂⟩ := h c; ⟨c', h₁.1, h₂⟩
+theorem I0Active_of_all {st : State n} (h : I0ActiveAll st) : I0Active st :=
+  fun _ c _ => h c
 
-/-- Right-hand sides are normal forms of the rules, derived: a step from
-`rhs c` lands strictly below it in degree-lex, its normal form is an active
-classmate by `nf_present`, and I5 puts no active classmate strictly below
-`rhs c`. -/
+theorem I0On_of_active {st : State n} (h : I0Active st) : I0On st :=
+  fun M c hM => let ⟨c', h₁, h₂⟩ := h M c hM; ⟨c', h₁.1, h₂⟩
+
+/-- Right-hand sides of classes holding an active node are normal forms of
+the rules, derived: a step from `rhs c` lands strictly below it in
+degree-lex, its normal form is an active classmate by `nf_present`, and I5
+puts no active classmate strictly below `rhs c`. -/
 theorem rhs_normal {L : Laws n} {st : State n} (h0 : I0Active st) (h5 : I5 st)
-    (hfix : RoundFixed L st) (c : Fin n) (P : Monomial n) :
+    (hfix : RoundFixed L st) {M : Monomial n} {c : Fin n} (hM : (M, c) ∈ st.active)
+    (P : Monomial n) :
     ¬ Rw L st.rules (st.rhs (st.find c)) P := by
   intro hP
-  obtain ⟨c', hc', hcc'⟩ := h0 c
+  obtain ⟨c', hc', hcc'⟩ := h0 M c hM
   obtain ⟨N, hPN, hN⟩ := exists_nf (Rw_wf (L := L) (rules_oriented st)) P
   have hrN : ReflTransGen (Rw L st.rules) (st.rhs (st.find c)) N := ReflTransGen.head hP hPN
   have hlt : degLex (st.rhs (st.find c)) N := by
@@ -132,7 +148,8 @@ hypotheses only. Two `=_E`-equal active nodes are in one class, provided:
 * `h5₀`, `hrun`, `ha`: the run maintained the min-monomial slots with the
   refresh, from a state whose slots were least, and the completion state
   agrees with the slot state (discharges I5 through `reachable_I5`);
-* `h0`: every class's right-hand side is one of its own active nodes;
+* `h0`: every class holding an active node has one of its own active nodes
+  as right-hand side;
 * `hcanon`: right-hand sides are `clamp`-canonical (`nary_canon` output);
 * `hfix`: the last round changed nothing;
 * `hlaw`: every law instance removes children, so shrinks in degree-lex;
@@ -141,7 +158,7 @@ hypotheses only. Two `=_E`-equal active nodes are in one class, provided:
 * `hcp`: every critical pair of two distinct overlapping rules of
   `R ∪ Ax` is joinable (the (B) close plus the axiom pairs, Kapur
   Lemmas 5-9);
-* `hcc`: congruent nodes are in one class (plain congruence closure);
+* `hcc`: congruent active nodes are in one class (plain congruence closure);
 * `hS`: every asserted equation is a pair of active nodes in one class
   (what `merge` establishes);
 * `hcancel`: for a cancellative operator, joinability cancels a common
@@ -158,7 +175,7 @@ theorem completion_complete_at_convergence' {L : Laws n}
       Overlap r₁.1 r₂.1 →
       Joinable (Rw (plain n) (st.rules ∪ L.axRules))
         (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : L.cancellative → ∀ M N X,
@@ -168,28 +185,28 @@ theorem completion_complete_at_convergence' {L : Laws n}
     (hMN : E L S M N) : st.find c = st.find d := by
   have h5 : I5 st := SlotState.state_I5_of_slot (SlotState.reachable_I5 h5₀ hrun) ha
   have hor : Oriented st.rules := rules_oriented st
-  have hnf : ∀ c P, ¬ Rw L st.rules (st.rhs (st.find c)) P := rhs_normal h0 h5 hfix
-  have hconv : Converged L st := roundFixed_converged (I0_of_active h0) h5 hcanon hfix
+  have hconv : Converged L st := roundFixed_converged (I0On_of_active h0) h5 hcanon hfix
   have hconf : Confluent (RwAx L st.rules) := RwAx_confluent L st.rules hor hlaw hcp
   obtain ⟨P, hMP, hNP⟩ := E_joinable_RwAx hconv hconf hS hcancel hMN
-  -- the right-hand sides are normal for `RwAx`
-  have pn : ∀ e, ∀ Q, ¬ RwAx L st.rules (st.rhs (st.find e)) Q := fun e =>
-    plain_normal_of_normal hnf_ax ⟨st.rhs (st.find e), (hcanon (st.find e)).symm⟩ (hnf e)
+  -- the right-hand sides of the two classes are normal for `RwAx`
+  have pn : ∀ {K e}, (K, e) ∈ st.active → ∀ Q, ¬ RwAx L st.rules (st.rhs (st.find e)) Q :=
+    fun {_ e} hK => plain_normal_of_normal hnf_ax ⟨st.rhs (st.find e), (hcanon (st.find e)).symm⟩
+      (rhs_normal h0 h5 hfix hK)
   have hMr : ReflTransGen (RwAx L st.rules) M (st.rhs (st.find c)) :=
     Rw_rtg_embed (hconv.nodes_reduce M c hM)
   have hNr : ReflTransGen (RwAx L st.rules) N (st.rhs (st.find d)) :=
     Rw_rtg_embed (hconv.nodes_reduce N d hN)
   obtain ⟨Q, hrQ, hPQ⟩ := hconf _ _ _ hMr hMP
-  have e₁ := rtg_of_normal (pn c) hrQ
+  have e₁ := rtg_of_normal (pn hM) hrQ
   obtain ⟨T, hrT, hPT⟩ := hconf _ _ _ hNr hNP
-  have e₂ := rtg_of_normal (pn d) hrT
+  have e₂ := rtg_of_normal (pn hN) hrT
   obtain ⟨U, hQU, hTU⟩ := hconf _ _ _ hPQ hPT
   rw [← e₁] at hQU
   rw [← e₂] at hTU
-  have f₁ := rtg_of_normal (pn c) hQU
-  have f₂ := rtg_of_normal (pn d) hTU
-  obtain ⟨c', hc', hcc'⟩ := I0_of_active h0 c
-  obtain ⟨d', hd', hdd'⟩ := I0_of_active h0 d
+  have f₁ := rtg_of_normal (pn hM) hQU
+  have f₂ := rtg_of_normal (pn hN) hTU
+  obtain ⟨c', hc', hcc'⟩ := h0 M c hM
+  obtain ⟨d', hd', hdd'⟩ := h0 N d hN
   have := hcc _ c' d' hc' (by rw [f₁, ← f₂]; exact hd')
   rw [hcc', hdd'] at this
   exact this

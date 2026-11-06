@@ -6,6 +6,7 @@ expected are `propext`, `Classical.choice` and `Quot.sound`. -/
 #print axioms SemperProofs.CC.completion_sound
 #print axioms SemperProofs.CC.completion_complete_at_convergence
 #print axioms SemperProofs.CC.completion_complete_at_convergence_of_join
+#print axioms SemperProofs.CC.completion_complete_at_convergence_of_all
 #print axioms SemperProofs.CC.E_joinable_RwAx
 #print axioms SemperProofs.CC.rhs_normal
 #print axioms SemperProofs.CC.rules_oriented

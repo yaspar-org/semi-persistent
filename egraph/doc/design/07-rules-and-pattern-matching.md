@@ -944,7 +944,8 @@ exception stands.
   lists by membership, not `Nodup` (`proofs/lean/STATUS.md`, "Not modelled"). The theorems
   modulo the theory, and `saturation_modulo_complete` below, have the scope limits stated in
   [Chapter 13 §4](13-soundness.md#4-what-is-proved-argued-and-assumed) (2026-11-05): every
-  class holds an active node of the operator (`I0Active`), the theory does not identify merged
+  class holds an active node of the operator (`I0Active`; resolved 2026-11-06 by
+  `saturation_modulo_complete_atoms`, which covers leaf constants), the theory does not identify merged
   child classes, so the statements are about monomials as stored, I5 is in effect assumed at
   the final state, and `ActRound` assumes the effects of rule actions.
 - Tested against the model on generated programs: `lake exe semper-conform`

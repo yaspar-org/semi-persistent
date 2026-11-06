@@ -448,6 +448,20 @@ confirm the rule set is reduced at a fixpoint are in the
   ways. (H1) The hypothesis `I0Active` (`CC/Assemble.lean`) quantifies over every class of
   `Fin n`, so the theorems cover graphs where every class holds an active node of the
   operator; a graph with a leaf constant, whose class holds no such node, is outside them.
+  (H1 resolved 2026-11-06.) `I0Active` now constrains only the classes that hold an active
+  node, and `hcc` only the active nodes; the former statement is
+  `completion_complete_at_convergence_of_all`. `CC/Atoms.lean` reads a leaf constant `x` as
+  its one-element monomial `{x}` and the unit's class as the empty monomial, as the engine
+  does (`Normal::Single`, `Normal::Unit`, `degeneracy_pair`, `class_rhs_into`):
+  `completion_complete_atoms`, `completion_complete_{cancellative,inverse,combined}_engine_atoms`
+  and `saturation_modulo_complete_atoms` cover graphs with leaf constants, under a fixed round
+  that includes the one-element collapse (`RoundFixedA`: a node whose normal form is `{x}` is
+  in `x`'s class) and congruence on the stored nodes; that a stored one-element node is in its
+  child's class is derived (`RoundFixedA.materialized`). The set of atomic classes is a
+  parameter of these theorems, not derived from the engine's `atomic` bit. A concrete
+  converged state with four leaf constants meets every hypothesis
+  (`AtomsWitness.witness_complete`, by hand and `decide`), so the theorems are not vacuous
+  on it (M6).
   (H2) The theory `E` relates monomials over class ids and does not identify two child
   classes that a merge joined, so the statements of the `CC/Bridge/` theorems are about the
   monomials as the state stores them. (H3) The hypothesis that the stored minimal monomials
