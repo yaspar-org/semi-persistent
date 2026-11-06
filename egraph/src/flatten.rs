@@ -695,7 +695,11 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     /// and the normalization only drops entries), so views are taken largest first, and
     /// each view's records are all known when it is regrouped. Past [`MAX_REGROUP_VIEWS`]
     /// records or [`MAX_REGROUP_WORK`] candidates examined, regrouping stops, the views
-    /// found so far are kept, and [`FlattenScratch::regroup_truncated`] is set.
+    /// found so far are kept, and [`FlattenScratch::regroup_truncated`] is set. The three
+    /// skips below (a target with an unconditional record, a source with one, a derived
+    /// record whose signature the target has) drop only records a kept record of the same
+    /// view covers: the matches are those of the full enumeration (`proofs/lean`,
+    /// `RegroupSkip.lean`, `regroupSkipG_iff`).
     #[allow(clippy::too_many_arguments)]
     fn regroup<O, Src>(
         &mut self,
