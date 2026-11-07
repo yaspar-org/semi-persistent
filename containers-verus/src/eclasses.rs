@@ -306,12 +306,13 @@ pub open(crate) spec fn ss_value<V, Idx: IndexLike>(
 /// `UnionFind`'s ghost root map; the three `reprs_*` sequences are the
 /// `SparseSet` columns (`live` its element count); `uses_model`/`uses_nodes`
 /// are the `ListArena`'s ghost lists and node cells; `pool_len`/`min_width`
-/// the pool geometry.
+/// the pool geometry; `abs_pool` the abstract-value pool W8 reads.
 pub open(crate) spec fn eg_model_wf<
     T: DenseId,
     K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged,
+    A,
 >(
     ring_model: Seq<Seq<usize>>,
     payloads: Seq<Opt<K>>,
@@ -321,9 +322,9 @@ pub open(crate) spec fn eg_model_wf<
     reprs_indices: Seq<<T as DenseId>::Index>,
     uses_model: Seq<Seq<usize>>,
     uses_nodes: Seq<ListNode<T, N>>,
-    // TODO(abs-class-storage): add the abstract-value pool view as a parameter here and at every call site, see containers-verus/doc/design/21-abstract-value-pool.md §3
     pool: Seq<Opt<T>>,
     min_width: nat,
+    abs_pool: Seq<A>,
 ) -> bool {
     let n = payloads.len();
     let live = reprs_dense.len();
@@ -432,6 +433,7 @@ pub open(crate) spec fn eg_archive_agrees<
     K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged,
+    A,
 >(
     ring_models: Seq<Seq<Seq<usize>>>,
     ring_cells: Seq<Seq<CircularListNode<Opt<K>, T>>>,
@@ -441,9 +443,9 @@ pub open(crate) spec fn eg_archive_agrees<
     indices_snaps: Seq<Seq<<T as DenseId>::Index>>,
     uses_models: Seq<Seq<Seq<usize>>>,
     uses_nodes_snaps: Seq<Seq<ListNode<T, N>>>,
-    // TODO(abs-class-storage): add the archived abstract-value pool snapshots: one per frame, W8 per frame, monotone lengths, see containers-verus/doc/design/21-abstract-value-pool.md §4
     pool_snaps: Seq<Seq<Opt<T>>>,
     min_width: nat,
+    abs_snaps: Seq<Seq<A>>,
 ) -> bool {
     let f = ring_models.len();
     &&& ring_cells.len() == f
@@ -454,14 +456,17 @@ pub open(crate) spec fn eg_archive_agrees<
     &&& uses_models.len() == f
     &&& uses_nodes_snaps.len() == f
     &&& pool_snaps.len() == f
-    &&& (forall|k: int| 0 <= k < f ==> eg_model_wf::<T, K, L, N>(
+    &&& abs_snaps.len() == f
+    &&& (forall|k: int| 0 <= k < f ==> eg_model_wf::<T, K, L, N, A>(
             ring_models[k], ring_payloads(#[trigger] ring_cells[k]), roots_arch[k],
             dense_snaps[k], sparse_snaps[k], indices_snaps[k],
-            uses_models[k], uses_nodes_snaps[k], pool_snaps[k], min_width))
+            uses_models[k], uses_nodes_snaps[k], pool_snaps[k], min_width, abs_snaps[k]))
     &&& (forall|k: int| 0 <= k < f ==> crate::sparse_set::sparse_set_snap_wf(
             #[trigger] dense_snaps[k], sparse_snaps[k], indices_snaps[k]))
     &&& (forall|k1: int, k2: int| 0 <= k1 <= k2 < f
             ==> (#[trigger] pool_snaps[k1]).len() <= (#[trigger] pool_snaps[k2]).len())
+    &&& (forall|k1: int, k2: int| 0 <= k1 <= k2 < f
+            ==> (#[trigger] abs_snaps[k1]).len() <= (#[trigger] abs_snaps[k2]).len())
 }
 
 // ---------------------------------------------------------------------------
@@ -712,6 +717,15 @@ where
         self.abs_pool.snapshots_view()
     }
 
+    /// The value of live class `id`: None without a handle, else the pool
+    /// entry its handle names.
+    pub open(crate) spec fn abs_value_spec(&self, id: nat) -> Option<A> {
+        match self.class_data_spec(id).abs {
+            Some(h) => Some(self.abs_pool.view()[h.as_nat() as int]),
+            None => None,
+        }
+    }
+
     /// Mark depth (spec): the number of live frames.
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.min_pool.snapshots_view().len()
@@ -729,7 +743,7 @@ where
         &&& self.min_pool.wf()
         &&& self.abs_pool.wf()
         &&& self.uf.n_spec() == self.n_spec()
-        &&& eg_model_wf::<T, K, L, N>(
+        &&& eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(),
                 self.entries.payload_seq(),
                 self.uf.roots_view(),
@@ -739,9 +753,9 @@ where
                 self.uses.model_view(),
                 self.uses.nodes_view(),
                 self.min_pool.view(),
-                self.min_width as nat)
+                self.min_width as nat, self.abs_pool.view())
         // Joint archive over the component snapshot stacks.
-        &&& eg_archive_agrees::<T, K, L, N>(
+        &&& eg_archive_agrees::<T, K, L, N, A>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
                 self.uf.roots_snapshots_view(),
@@ -751,22 +765,15 @@ where
                 self.uses.model_snapshots_view(),
                 self.uses.nodes_snapshots_view(),
                 self.min_pool.snapshots_view(),
-                self.min_width as nat)
-        // TODO(abs-class-storage): pass the abs pool to both predicates (W8 per archived frame), see containers-verus/doc/design/21-abstract-value-pool.md §4
+                self.min_width as nat, self.abs_pool.snapshots_view())
         // archived pool lengths never exceed the live pool (outside the
         // opaque predicate: the live length changes on row allocation, and
         // an opaque argument change would not transfer by congruence).
         &&& (forall|k: int| 0 <= k < self.min_pool.snapshots_view().len()
                 ==> (#[trigger] self.min_pool.snapshots_view()[k]).len()
                     <= self.min_pool.view().len())
-        // The abstract-value pool keeps one snapshot per frame, its archived
-        // lengths are monotone, and none exceeds the live pool (outside the
-        // opaque predicate, as for min_pool: a first-use allocation grows
-        // the live length).
-        &&& self.abs_pool.snapshots_view().len() == self.min_pool.snapshots_view().len()
-        &&& (forall|k1: int, k2: int| 0 <= k1 <= k2 < self.abs_pool.snapshots_view().len()
-                ==> (#[trigger] self.abs_pool.snapshots_view()[k1]).len()
-                    <= (#[trigger] self.abs_pool.snapshots_view()[k2]).len())
+        // the same bound for the abstract-value pool, whose first-use
+        // allocation grows the live length.
         &&& (forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
                 ==> (#[trigger] self.abs_pool.snapshots_view()[k]).len()
                     <= self.abs_pool.view().len())
@@ -1195,11 +1202,11 @@ where
                 assert(ss_value(dense, sparse, k1) == ss_value(odense, osparse, k1));
                 assert(ss_value(dense, sparse, k2) == ss_value(odense, osparse, k2));
             }
-            assert(eg_model_wf::<T, K, L, N>(rm, pay, roots, dense, sparse, indices,
-                um, un, self.min_pool.view(), self.min_width as nat));
+            assert(eg_model_wf::<T, K, L, N, A>(rm, pay, roots, dense, sparse, indices,
+                um, un, self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             // the archive transfers by congruence: every snapshot stack is
             // framed by the component contracts.
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
                 self.uf.roots_snapshots_view(),
@@ -1209,7 +1216,7 @@ where
                 self.uses.model_snapshots_view(),
                 self.uses.nodes_snapshots_view(),
                 self.min_pool.snapshots_view(),
-                self.min_width as nat))
+                self.min_width as nat, self.abs_pool.snapshots_view()))
             by {
                 assert(self.entries.model_snapshots_view()
                     == o.entries.model_snapshots_view());
@@ -1399,12 +1406,12 @@ where
             self.min_pool.view() == o.min_pool.view(),
             self.min_width == o.min_width,
         ensures
-            eg_model_wf::<T, K, L, N>(
+            eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat),
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()),
             self.reprs.cap_spec() <= self.n_spec(),
     {
         let n = o.n_spec();
@@ -1751,8 +1758,8 @@ where
                 assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
             }
         }
-        assert(eg_model_wf::<T, K, L, N>(rm, pay, roots, dense, sparse, indices,
-            um, un, self.min_pool.view(), self.min_width as nat));
+        assert(eg_model_wf::<T, K, L, N, A>(rm, pay, roots, dense, sparse, indices,
+            um, un, self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
     }
 
     /// Merge the classes of `a` and `b`: union-find link, ring splice with
@@ -2102,10 +2109,10 @@ where
                     assert(un[um[l][p] as int].payload == oun[oum[l][p] as int].payload);
                 }
             }
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices, um, un,
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
         }
     }
 
@@ -2140,21 +2147,21 @@ where
                 let si = absorbed_list.id_nat() as int;
                 assert(um == oum.update(di, oum[di] + oum[si]).update(si, Seq::<usize>::empty()));
                 lemma_splice_uses_w5::<T, N>(oum, um, oun, un, di, si, n);
-                assert(eg_model_wf::<T, K, L, N>(
+                assert(eg_model_wf::<T, K, L, N, A>(
                     self.entries.model_view(), self.entries.payload_seq(),
                     self.uf.roots_view(), self.reprs.dense_view(),
                     self.reprs.sparse_view(), self.reprs.indices_view(),
-                    um, un, self.min_pool.view(), self.min_width as nat));
+                    um, un, self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             } else {
                 // the arena refused (equal or out-of-range handles diverge
                 // before mutation) or the ensures' conditional guards fired;
                 // in every returning case the views are unchanged.
                 assert(um == oum && un == oun);
-                assert(eg_model_wf::<T, K, L, N>(
+                assert(eg_model_wf::<T, K, L, N, A>(
                     self.entries.model_view(), self.entries.payload_seq(),
                     self.uf.roots_view(), self.reprs.dense_view(),
                     self.reprs.sparse_view(), self.reprs.indices_view(),
-                    um, un, self.min_pool.view(), self.min_width as nat));
+                    um, un, self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             }
         }
     }
@@ -2207,17 +2214,17 @@ where
                     assert((0 as nat) % (width as nat) == 0);
                 }
             }
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices,
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), width as nat));
+                self.min_pool.view(), width as nat, self.abs_pool.view()));
             // the archive under the NEW width: the live pool is empty and
             // archived pool lengths are bounded by it, so every archived
             // frame's pool is empty, W6 is vacuous at any width, and no
             // other clause reads the width.
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -2227,9 +2234,9 @@ where
                 o.uses.model_snapshots_view(),
                 o.uses.nodes_snapshots_view(),
                 o.min_pool.snapshots_view(),
-                o.min_width as nat));
+                o.min_width as nat, o.abs_pool.snapshots_view()));
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, K, L, N>(
+                implies eg_model_wf::<T, K, L, N, A>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -2239,7 +2246,7 @@ where
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
                     self.min_pool.snapshots_view()[k],
-                    width as nat) by {
+                    width as nat, self.abs_pool.snapshots_view()[k]) by {
                 let pool_k = self.min_pool.snapshots_view()[k];
                 assert(pool_k.len() <= self.min_pool.view().len());
                 assert(pool_k.len() == 0);
@@ -2247,14 +2254,14 @@ where
                 let ix_k = self.reprs.indices_snapshots_view()[k];
                 let de_k = self.reprs.dense_snapshots_view()[k];
                 // old-width frame invariant
-                assert(eg_model_wf::<T, K, L, N>(
+                assert(eg_model_wf::<T, K, L, N, A>(
                     self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
                     de_k, sp_k, ix_k,
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
-                    pool_k, o.min_width as nat));
+                    pool_k, o.min_width as nat, self.abs_pool.snapshots_view()[k]));
                 // no archived live class key can hold a row: the old-width W6
                 // bound reads (r+1)*old_w <= 0 with old_w > 0, or forces
                 // old_w > 0 when a row exists.
@@ -2271,7 +2278,7 @@ where
                     assert((pool_k.len() as nat) % (width as nat) == 0);
                 }
             }
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
                 self.uf.roots_snapshots_view(),
@@ -2281,7 +2288,7 @@ where
                 self.uses.model_snapshots_view(),
                 self.uses.nodes_snapshots_view(),
                 self.min_pool.snapshots_view(),
-                width as nat));
+                width as nat, self.abs_pool.snapshots_view()));
         }
     }
 
@@ -2496,12 +2503,12 @@ where
         self.min_pool.set_index(base + col, cell);
         proof {
             assert(self.min_pool.view().len() == mid.min_pool.view().len());
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             // the pool only grew, so the archived-length bound carries.
             assert(self.min_pool.snapshots_view() == o.min_pool.snapshots_view());
             assert(o.min_pool.view().len() <= self.min_pool.view().len());
@@ -2572,12 +2579,12 @@ where
                         .min_row->Some_0.as_nat() + 1) * (o.min_width as nat)
                         <= self.min_pool.view().len(),
         ensures
-            eg_model_wf::<T, K, L, N>(
+            eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat),
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()),
     {
         let dense = self.reprs.dense_view();
         let sparse = self.reprs.sparse_view();
@@ -2600,11 +2607,11 @@ where
         assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
             && kk != key.as_nat()
             implies ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk) by {}
-        assert(eg_model_wf::<T, K, L, N>(
+        assert(eg_model_wf::<T, K, L, N, A>(
             self.entries.model_view(), self.entries.payload_seq(),
             self.uf.roots_view(), dense, sparse, indices,
             self.uses.model_view(), self.uses.nodes_view(),
-            self.min_pool.view(), self.min_width as nat));
+            self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
     }
 
     /// Whether class `key` is atomic (referenced as a child). Refuses a
@@ -2693,11 +2700,11 @@ where
                     assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
                 }
             }
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices,
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
         }
     }
 
@@ -2753,11 +2760,11 @@ where
                     assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
                 }
             }
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices,
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
         }
     }
 
@@ -3155,7 +3162,7 @@ where
         self.abs_pool.push_frame(shrink);
         proof {
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -3165,14 +3172,14 @@ where
                 o.uses.model_snapshots_view(),
                 o.uses.nodes_snapshots_view(),
                 o.min_pool.snapshots_view(),
-                o.min_width as nat));
+                o.min_width as nat, o.abs_pool.snapshots_view()));
             let k_new = self.entries.model_snapshots_view().len() - 1;
             // the pushed frame archives the live views; the live joint
             // invariant IS eg_model_wf over them. The payload projection of
             // the pushed cell snapshot is the live payload_seq.
             assert(ring_payloads(self.entries.entries_snapshots_view()[k_new])
                 =~= o.entries.payload_seq());
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_snapshots_view()[k_new],
                 ring_payloads(self.entries.entries_snapshots_view()[k_new]),
                 self.uf.roots_snapshots_view()[k_new],
@@ -3182,13 +3189,13 @@ where
                 self.uses.model_snapshots_view()[k_new],
                 self.uses.nodes_snapshots_view()[k_new],
                 self.min_pool.snapshots_view()[k_new],
-                self.min_width as nat));
+                self.min_width as nat, self.abs_pool.snapshots_view()[k_new]));
             assert(crate::sparse_set::sparse_set_snap_wf(
                 self.reprs.dense_snapshots_view()[k_new],
                 self.reprs.sparse_snapshots_view()[k_new],
                 self.reprs.indices_snapshots_view()[k_new]));
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, K, L, N>(
+                implies eg_model_wf::<T, K, L, N, A>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -3198,7 +3205,7 @@ where
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
                     self.min_pool.snapshots_view()[k],
-                    self.min_width as nat)
+                    self.min_width as nat, self.abs_pool.snapshots_view()[k])
                 && crate::sparse_set::sparse_set_snap_wf(
                     self.reprs.dense_snapshots_view()[k],
                     self.reprs.sparse_snapshots_view()[k],
@@ -3340,7 +3347,7 @@ where
         let ghost f = target as int;
         proof {
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -3350,7 +3357,7 @@ where
                 o.uses.model_snapshots_view(),
                 o.uses.nodes_snapshots_view(),
                 o.min_pool.snapshots_view(),
-                o.min_width as nat));
+                o.min_width as nat, o.abs_pool.snapshots_view()));
             // the archived frame f is a jointly-valid state; in particular
             // the repr triple is sparse-set well-formed, which is
             // SparseSet::restore's precondition.
@@ -3372,15 +3379,15 @@ where
             assert(self.entries.payload_seq()
                 =~= ring_payloads(o.entries.entries_snapshots_view()[f]));
             assert(self.uf.roots_view() == o.uf.roots_snapshots_view()[f]);
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             // truncated stacks agree per frame below f.
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, K, L, N>(
+                implies eg_model_wf::<T, K, L, N, A>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -3390,7 +3397,7 @@ where
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
                     self.min_pool.snapshots_view()[k],
-                    self.min_width as nat)
+                    self.min_width as nat, self.abs_pool.snapshots_view()[k])
                 && crate::sparse_set::sparse_set_snap_wf(
                     self.reprs.dense_snapshots_view()[k],
                     self.reprs.sparse_snapshots_view()[k],
@@ -3520,7 +3527,7 @@ where
         let ghost f = target as int;
         proof {
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -3530,7 +3537,7 @@ where
                 o.uses.model_snapshots_view(),
                 o.uses.nodes_snapshots_view(),
                 o.min_pool.snapshots_view(),
-                o.min_width as nat));
+                o.min_width as nat, o.abs_pool.snapshots_view()));
             // the archived frame f is a jointly-valid state; in particular
             // the repr triple is sparse-set well-formed, which is
             // SparseSet::restore's precondition.
@@ -3552,15 +3559,15 @@ where
             assert(self.entries.payload_seq()
                 =~= ring_payloads(o.entries.entries_snapshots_view()[f]));
             assert(self.uf.roots_view() == o.uf.roots_snapshots_view()[f]);
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             // truncated stacks agree per frame below f.
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, K, L, N>(
+                implies eg_model_wf::<T, K, L, N, A>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -3570,7 +3577,7 @@ where
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
                     self.min_pool.snapshots_view()[k],
-                    self.min_width as nat)
+                    self.min_width as nat, self.abs_pool.snapshots_view()[k])
                 && crate::sparse_set::sparse_set_snap_wf(
                     self.reprs.dense_snapshots_view()[k],
                     self.reprs.sparse_snapshots_view()[k],
