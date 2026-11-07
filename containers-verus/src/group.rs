@@ -1604,6 +1604,7 @@ where
         + crate::store_policy::TaggedFamily<crate::list::ListNode<T, N>, <N as crate::opt::DenseId>::Index, TRACK>
         + crate::store_policy::PlainFamily<crate::opt::Opt<T>, usize, TRACK>,
 {
+    // TODO(abs-class-storage): add the abstract-value pool view to Model and archive, and its depth to the lockstep checks, see containers-verus/doc/design/21-abstract-value-pool.md §4
     /// Roots, ring partition, ring cells, class data, the repr set's sparse
     /// and index columns, the use lists' partition, and the pool.
     type Model = (Seq<usize>, Seq<Seq<usize>>, Seq<crate::circular_list::CircularListNode<crate::opt::Opt<K>, T>>, Seq<crate::eclasses::ClassData<L, T>>, Seq<<T as crate::opt::DenseId>::Index>, Seq<<T as crate::opt::DenseId>::Index>, Seq<Seq<usize>>, Seq<crate::opt::Opt<T>>);
