@@ -158,8 +158,7 @@ end Semper.EMatch.Flatten
 #print axioms Semper.EMatch.Flatten.regroupBounded_plan_complete
 #print axioms Semper.EMatch.Flatten.regroupBounded_query_exact
 #print axioms Semper.EMatch.Flatten.regroupBounded_match_exact
-#print axioms Semper.EMatch.Flatten.planF_flatten_items
-#print axioms Semper.EMatch.Flatten.planF_items_ne_nil
+#print axioms Semper.EMatch.Flatten.mem_base_of_reach
 
 namespace Semper.EMatch.Flatten
 
@@ -178,6 +177,9 @@ five records: stopped, views counter, work counter, records. -/
 and keeps the walk's record and the first regrouped one. -/
 #eval let b := exNestBounded ⟨some 1, Option.none, Option.none⟩
   (repr b.halt, b.views, b.st.records.length)
+
+end Semper.EMatch.Flatten
+
 /-! Regrouped views under the operator's laws (`RegroupLaws.lean`): soundness in
 models of the laws, the exact chain characterization for any laws, and the
 matches the normalization's dropped classes no longer lose, and the
@@ -227,5 +229,35 @@ namespace Semper.EMatch.Flatten
 regrouped record needs nothing: the unit `zero`, class 9, is dropped). -/
 #eval (enumerateRSkip exUnitCtx .both exUnitLaws 2 exUnitRoot).map
   (fun wd => (wd.1, wd.2.unconditional, wd.2.alts.map (List.map (fun l => l.1.g))))
+
+end Semper.EMatch.Flatten
+
+namespace Semper.EMatch.Flatten
+
+/-! The item-less match of `flatten_regroup_laws_no_item.egg`: `add` (op 7) AC
+with identity `zero`, classes `A = 1, B = 2, C = 3, D = 4, zero = 5`,
+`zero ∋ add{A, B}` (node 10), `t = add{A, B, C, D}` (node 11, class 6). The
+pattern `(add ..r)` has no item; the laws can drop a class, so the engine
+regroups, and `{zero, C, D}` normalizes to `{C, D}`, a view needing no class. -/
+def exNoItemG : Graph :=
+  ⟨[(10, ⟨7, .mset {1, 2}⟩), (11, ⟨7, .mset {1, 2, 3, 4}⟩)],
+    fun id => if id = 10 then 5 else if id = 11 then 6 else id⟩
+
+def exNoItemCtx : Ctx := ⟨exNoItemG, 7, .ac, fun _ => true⟩
+
+def exNoItemLaws : Laws := ⟨some 5, none, none⟩
+
+/-- The engine's enumeration of `t` for a decomposition with no item. -/
+def exNoItem (laws : Laws) : BOut :=
+  enumerateRDBounded Bounds.engine (Ix.nat (fun _ => 1)) (takeableRCap exNoItemCtx Binding.empty [])
+    exNoItemCtx .both laws 0 ⟨7, .mset {1, 2, 3, 4}⟩
+
+/- With the identity: the stored view and `{C, D}`, both unconditional; not
+truncated, not skipped, no overflow. -/
+#eval let o := exNoItem exNoItemLaws
+  (o.views.map (fun wd => (wd.1, wd.2.unconditional)), o.truncated, o.skipped, o.ovf)
+
+/- Laws-free, the stored view only: no regrouping can drop a class. -/
+#eval (exNoItem Laws.free).views.map Prod.fst
 
 end Semper.EMatch.Flatten

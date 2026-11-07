@@ -1,4 +1,5 @@
 import SemperProofs.EMatch.Flatten.RegroupSkipDefs
+import SemperProofs.EMatch.Flatten.Regroup
 
 /-!
 # `:flatten`: the engine's regrouping with its bounds
@@ -45,9 +46,9 @@ condition can be compared with the totals of the run that does not stop
 
 `enumerateRDBounded` is `Step::Flatten` (`ematch.rs`) with these bounds: the
 takeable set with the engine's cap on the closure (`takeableRCap`), the
-walk's records pruned by it, regrouped only when the decomposition has
-items (`regroup > 0` in `enumerate`), within the item limit, the distinct
-views. `runB` runs a flattened plan with it and sums the three per-query
+walk's records pruned by it, regrouped when the decomposition has items or
+the laws can drop a class (`canDrop`, `laws_drop` in `enumerate`), within the
+item limit, the distinct views. `runB` runs a flattened plan with it and sums the three per-query
 counters of `MatchPool` (`flatten_regroup_truncated`, `flatten_skipped`,
 `flatten_overflowed`) over its `Flatten` steps.
 -/
@@ -242,12 +243,13 @@ structure BOut where
   ovf : Nat
 
 /-- `enumerate` with regrouping and its bounds: the walk's records pruned by
-`T`, regrouped when `limit > 0`, the records within the limit, the
-distinct views; no view when the node is skipped. -/
+`T`, regrouped when `limit > 0` or the laws can drop a class (`canDrop`,
+`laws_drop` in `flatten.rs`), the records
+within the limit, the distinct views; no view when the node is skipped. -/
 def enumerateRDBounded (B : Bounds) (ix : Ix) (T : C → Bool) (ctx : Ctx) (dir : Dir)
     (laws : Laws) (limit : Nat) (n : Node) : BOut :=
   let base := (baseRecsR ctx dir laws n).filter (keepRec ctx.κ T laws)
-  if limit = 0 then ⟨enumerateFromR base, false, false, 0⟩ else
+  if limit = 0 ∧ canDrop ctx.κ laws = false then ⟨enumerateFromR base, false, false, 0⟩ else
   let b := regroupBoundedG B ix ctx dir laws (groupsOfEngine ctx) base
   match b.halt with
   | some .overBound => ⟨[], false, true, 0⟩

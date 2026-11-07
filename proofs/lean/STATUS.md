@@ -373,17 +373,17 @@ completion state to the rounds or to the engine's rebuild.
   records are records of the run without bounds, and reachable.
   `takeableRCap` is the takeable set with the engine's cap of 4,096 classes
   on the closure (`regroupSkipCap_spec`). `runB` runs a flattened plan with
-  the bounded enumeration (`enumerateRDBounded`, which does not regroup when
-  the decomposition has no item) and sums `flatten_regroup_truncated`,
-  `flatten_skipped` and `flatten_overflowed` over its `Flatten`
-  evaluations: `regroupBounded_plan_sound` for any counters, and with the
-  three zero and an item in every n-ary atom `regroupBounded_query_exact` /
+  the bounded enumeration (`enumerateRDBounded`, which regroups when the
+  decomposition has items or the laws can drop a class, `canDrop`) and sums
+  `flatten_regroup_truncated`, `flatten_skipped` and `flatten_overflowed`
+  over its `Flatten` evaluations: `regroupBounded_plan_sound` for any
+  counters, and with the three zero `regroupBounded_query_exact` /
   `regroupBounded_match_exact`: exactly the bindings of
   `Enumerator.regroupSkip`, which `regroupSkip_match_iff` characterizes.
-  The item condition is needed since the fix for needed classes the laws
-  drop: a regrouped record may need no class, and the engine does not
-  regroup for a pattern with no item, so `(f ..r)` misses such a view
-  (`flatten_regroup_laws_no_item.egg`, an open gap). Every regrouping the engine runs on
+  With no item, a regrouped record within the limit needs no class, which
+  only laws that drop a class allow (`mem_base_of_reach`); the engine
+  regroups exactly then (`laws_drop` in `flatten.rs`), so `(f ..r)` finds
+  such a view (`flatten_regroup_laws_no_item.egg`, `exNoItem`). Every regrouping the engine runs on
   the `conform` and `conform-flatten` samples has the counters of the
   model's run on a node of the case (an instrumented engine against an
   executable mirror of `BSt.run`, not committed); on `c1_0052.egg` both stop

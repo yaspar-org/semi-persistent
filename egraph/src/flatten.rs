@@ -704,8 +704,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     /// (`RegroupBounds.lean`): regrouping stops iff the run without bounds ends past a
     /// bound, wherever it is crossed (`regroupBounded_halt_iff`), and a query whose
     /// `flatten_regroup_truncated`, `flatten_skipped` and `flatten_overflowed` are zero
-    /// has the matches of the run without bounds when every n-ary atom has an item
-    /// (`regroupBounded_query_exact`; `flatten_regroup_laws_no_item.egg` for the gap).
+    /// has the matches of the run without bounds (`regroupBounded_query_exact`).
     #[allow(clippy::too_many_arguments)]
     fn regroup<O, Src>(
         &mut self,
@@ -1236,6 +1235,16 @@ pub fn read_children<Cfg, L, const TRACK: bool, const PROOFS: bool>(
     }
 }
 
+/// Whether the normalization under `laws` can drop a class from a view
+/// ([`crate::nary_canon::normalize`]): an `:identity` drops the unit, and under AC a
+/// `:nilpotent` clamp or an `:inverse` cancellation drops a class whose count goes to
+/// zero. Otherwise every class of a view stays in its normal form.
+fn laws_drop<G, O>(laws: &crate::nary_canon::NaryLaws<G, O>) -> bool {
+    use crate::nary_canon::NaryKind;
+    laws.unit.is_some()
+        || matches!(laws.kind, NaryKind::Ac { nilpotent } if nilpotent.is_some() || laws.inverse.is_some())
+}
+
 /// `k · j`, or [`MULT_OVERFLOW`] when the product does not fit the multiplicity width.
 fn times<M: MultiplicityLike>(k: M, j: M) -> Result<M, &'static str> {
     k.checked_mul(j).ok_or(MULT_OVERFLOW)
@@ -1253,9 +1262,11 @@ fn times<M: MultiplicityLike>(k: M, j: M) -> Result<M, &'static str> {
 /// abandoned there. Counters per instance make the check constant-time, which keeps a
 /// chain of 10^5 levels linear when one level's element is the only takeable one.
 ///
-/// `regroup` is the number of items of the decomposition: when positive, the regrouped
-/// views are added ([`FlattenScratch::regroup`]), and only the records needing at most
-/// `regroup` regrouped classes are kept.
+/// `regroup` is the number of items of the decomposition: when positive, or when the
+/// laws can drop a class (`laws_drop`), the regrouped views are added
+/// ([`FlattenScratch::regroup`]), and only the records needing at most `regroup`
+/// regrouped classes are kept. With no item, only a regrouped record whose classes the
+/// laws all drop needs none (`flatten_regroup_laws_no_item.egg`).
 pub fn enumerate<G, O, M, Src>(
     src: &Src,
     node: G,
@@ -1337,7 +1348,11 @@ where
             }
         }
     }
-    if regroup > 0 {
+    // A regrouped record needs its group's class unless the laws drop that class from
+    // the regrouped view (the unit, a count clamped to zero, a cancelled inverse), so with
+    // no item only such a record can match: regroup when the decomposition has items or
+    // the laws can drop a class.
+    if regroup > 0 || laws_drop(&laws) {
         s.regroup(src, op, kind, dir, &laws)?;
         // A match takes each needed class by a distinct item, so a record needing more
         // classes than `regroup`, the number of items, never matches. Regrouping keeps

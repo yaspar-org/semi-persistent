@@ -1431,13 +1431,14 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   (`regroupBounded_sub`). `takeableRCap` adds the cap on the takeable closure. At the
   level of a query, `runB` sums `flatten_regroup_truncated`, `flatten_skipped` and
   `flatten_overflowed` over the plan's `Flatten` evaluations: every binding emitted is a
-  match (`regroupBounded_plan_sound`), and with the three counters zero and an item in
-  every n-ary atom the bindings are exactly those of `Enumerator.regroupSkip`
-  (`regroupBounded_query_exact`), the matches `regroupSkip_match_iff` characterizes
-  (`regroupBounded_match_exact`). The item condition is an open gap: `enumerate`
-  regroups only when the decomposition has items, and a regrouped record whose needed
-  classes the laws all drop needs none, so `(f ..r)` misses its view
-  (`flatten_regroup_laws_no_item.egg`). A runtime check
+  match (`regroupBounded_plan_sound`), and with the three counters zero the bindings are
+  exactly those of `Enumerator.regroupSkip` (`regroupBounded_query_exact`), the matches
+  `regroupSkip_match_iff` characterizes (`regroupBounded_match_exact`). `enumerate`
+  regroups when the decomposition has items or the laws can drop a class (`laws_drop`):
+  with no item only a regrouped record needing no class can match, and only laws that drop
+  a class make one, so `(f ..r)` finds the view `{C, D}` of `add{A, B, C, D}` when
+  `zero ∋ add{A, B}` (`flatten_regroup_laws_no_item.egg`), and laws-free operators do not
+  regroup for it (`mem_base_of_reach`). A runtime check
   therefore reads all three counters: `MAX_ELEMS` reports through `flatten_skipped`. The
   model's counters match the engine's on every regrouping of the two conformance samples
   (`c1_0052.egg` stops at 16,385 records in both).

@@ -1,15 +1,15 @@
 ;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ;; SPDX-License-Identifier: Apache-2.0
-;; EXPECT: check-failed
-;; A known gap (design 07 §7.5, "Regrouped views"; Lean `enumerateRDBounded_ge`,
-;; `RegroupBounds.lean`). `enumerate` regroups only when the decomposition has items
-;; (`regroup > 0`). Since a regrouped record keeps only the needed classes its normalized
-;; view holds (`flatten_regroup_laws_drop_need.egg`), a regrouping whose class the laws drop
-;; needs no class, and a pattern with no item may match its view. Here zero ∋ add{A, B}, so
-;; {A, B, C, D} regroups to {zero, C, D}, normalized {C, D}: `(add x ..r)` finds x = C,
-;; r = {D} (the first check), but `(add ..r)` does not find r = {C, D} (the last check),
-;; which the model's enumeration without bounds holds. When the engine regroups for a
-;; pattern with no item, the last check passes and this file's EXPECT becomes ok.
+;; EXPECT: ok
+;; A pattern with no item matches a regrouped view (design 07 §7.5, "Regrouped views"; Lean
+;; `enumerateRDBounded_ge`, `exNoItem` in `RegroupCheck.lean`). A regrouped record keeps
+;; only the needed classes its normalized view holds (`flatten_regroup_laws_drop_need.egg`),
+;; so a regrouping whose class the laws drop needs no class, and a pattern with no item may
+;; match its view. `enumerate` therefore regroups when the decomposition has items or the
+;; laws can drop a class (`laws_drop`). Here zero ∋ add{A, B}, so {A, B, C, D} regroups to
+;; {zero, C, D}, normalized {C, D}: `(add x ..r)` finds x = C, r = {D}, and `(add ..r)`
+;; finds both r = {A, B, C, D} and r = {C, D}. Before the gate counted the laws, the last
+;; check failed.
 (sort E)
 (function zero () E)
 (function A () E) (function B () E) (function C () E) (function D () E)

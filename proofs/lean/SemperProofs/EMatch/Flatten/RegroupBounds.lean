@@ -21,14 +21,13 @@ The bounded loop (`RegroupBoundsDefs.lean`) against the loop without bounds
   overflow of `regroupSkipG` (`regroupBounded_sub_skip`); every record of
   any run, overflow included, is reachable (`regroupBounded_reach`);
 * at the level of a query (`runB`): every binding the bounded plan emits
-  satisfies every atom (`regroupBounded_plan_sound`), and when every n-ary
-  atom has an item and the query's three counters are zero the plan emits
-  exactly the bindings of
+  satisfies every atom (`regroupBounded_plan_sound`), and when the query's
+  three counters are zero the plan emits exactly the bindings of
   `Enumerator.regroupSkipCap` (`runB_ge`, `regroupBounded_query_exact`), so
   the matches are those of `regroupSkip_match_iff`
-  (`regroupBounded_match_exact`). An atom with no item is excluded: the
-  engine does not regroup its node, and under an identity a regrouped view
-  may need no class (`flatten_regroup_laws_no_item.egg`).
+  (`regroupBounded_match_exact`). An atom with no item regroups when the
+  laws can drop a class (`canDrop`): only then may a regrouped record need
+  no class (`mem_base_of_reach`).
 -/
 
 namespace Semper.EMatch.Flatten
@@ -944,6 +943,30 @@ theorem viewLe_nil (recs : List RecR) : ViewLe [] recs := by
 
 /-! ## One `Flatten` evaluation -/
 
+/-- Under laws that drop no class, a reachable record needing no class is a
+walk record: a regrouping needs its group's class, which its view keeps. -/
+theorem mem_base_of_reach {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR} {r : RecR}
+    (hd : canDrop ctx.κ laws = false) (h : Reach ctx dir laws base r) (hn : r.2.2 = []) :
+    r ∈ base := by
+  obtain ⟨r₀, h₀, hch⟩ := h
+  cases hch with
+  | refl => exact h₀
+  | @tail a _ _ hs =>
+      obtain ⟨g, grp, raw, -, hraw, hnorm, -, he⟩ := mem_regroupRec hs
+      have hg : g ∈ r.1.map Prod.fst := by
+        by_contra hg
+        rw [canDrop_of_gone hraw hnorm hg] at hd
+        cases hd
+      rw [hn] at he
+      have : g ∈ needsAfter g (grp.map Prod.fst) (r.1.map Prod.fst) a.2.2 := by
+        unfold needsAfter
+        refine List.mem_filter.2 ⟨?_, decide_eq_true hg⟩
+        split
+        · assumption
+        · simp
+      rw [← he] at this
+      simp at this
+
 /-- The walk's records within any limit are covered by the engine's
 regrouping within the limit. -/
 theorem cov_skip {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR}
@@ -980,23 +1003,30 @@ theorem enumerateRDBounded_le :
       obtain ⟨hr, hl⟩ := mem_withinLimit.1 hr
       exact cov_skip hb (regroupBounded_reach B ix (groupsOfEngine_sub ctx) hr) hl
 
-/-- **Exactness of one evaluation**: with items, and no truncation, no skip
-and no overflow, the engine's enumeration without bounds has no view the
-bounded one lacks, nor a demand accepting more. Without items the engine does
-not regroup, and a regrouped record whose needed classes the laws all drop
-needs none: the enumeration without bounds may then hold a view the engine
-does not (`flatten_regroup_laws_no_item.egg`). -/
-theorem enumerateRDBounded_ge (hl : 0 < limit)
-    (h : (enumerateRDBounded B ix T ctx dir laws limit n).counts = 0) :
+/-- **Exactness of one evaluation**: with no truncation, no skip and no
+overflow, the engine's enumeration without bounds has no view the bounded
+one lacks, nor a demand accepting more. Without items the engine regroups
+only when the laws can drop a class; otherwise a regrouped record needs its
+group's class, so no record it skips is within the limit. -/
+theorem enumerateRDBounded_ge (h : (enumerateRDBounded B ix T ctx dir laws limit n).counts = 0) :
     ∀ w d, (w, d) ∈ enumerateRDSkip T ctx dir laws limit n →
       ∃ d', (w, d') ∈ (enumerateRDBounded B ix T ctx dir laws limit n).views ∧
         ∀ κ taken, d.acceptsEB κ taken = true → d'.acceptsEB κ taken = true := by
+  have hb := baseGood_filter (baseGood_baseRecsR ctx dir laws n) (keepRec ctx.κ T laws)
   revert h
   unfold enumerateRDBounded enumerateRDSkip regroupAllSkip
   dsimp only
   split
-  · rename_i h0
-    omega
+  · rename_i hl
+    obtain ⟨hl, hd⟩ := hl
+    intro _
+    subst hl
+    refine viewLe_of_cov (fun r hr => ?_)
+    obtain ⟨hr, hl⟩ := mem_withinLimit.1 hr
+    have hreach := (regroupSkipG_spec (dir := dir) (laws := laws) hb (groupsOfEngine_sub ctx)
+      (groupsOfEngine_sup ctx)).1 r hr
+    exact ⟨r, mem_base_of_reach hd hreach (List.eq_nil_of_length_eq_zero (Nat.le_zero.1 hl)),
+      Cov.refl r⟩
   · split
     · intro h; simp [BOut.counts] at h; cases h
     · rename_i hov
@@ -1178,15 +1208,14 @@ theorem runB_fst (B : Bounds) (ix : Ix) (dir : Sym → Dir) (c : FCtx) :
 /-- With the counters zero, the plan run with the unbounded enumeration
 emits nothing the bounded one does not. -/
 theorem runB_ge (B : Bounds) (ix : Ix) (dir : Sym → Dir) (c : FCtx) :
-    ∀ (ss : List EStep), (∀ s ∈ ss, ∀ v f κ out items, s = .flatten v f κ out items → items ≠ []) →
-      ∀ (env env' : EEnv), (runB B ix dir c ss env).2 = 0 → EnvLe env' env →
+    ∀ (ss : List EStep) (env env' : EEnv), (runB B ix dir c ss env).2 = 0 → EnvLe env' env →
       ∀ x' ∈ runEG (Enumerator.regroupSkipCap dir) c ss env',
         ∃ x ∈ (runB B ix dir c ss env).1, EnvLe x' x
-  | [], _, env, env', _, h, x', hx' => by
+  | [], env, env', _, h, x', hx' => by
       simp only [runEG, List.mem_singleton] at hx'
       subst hx'
       exact ⟨env, List.mem_singleton_self _, h⟩
-  | s :: ss, hit, env, env', hz, h, x', hx' => by
+  | s :: ss, env, env', hz, h, x', hx' => by
       simp only [runB] at hz ⊢
       obtain ⟨hz₁, hz₂⟩ := Counts.add_eq_zero.1 hz
       rw [Counts.sum_eq_zero] at hz₂
@@ -1199,54 +1228,13 @@ theorem runB_ge (B : Bounds) (ix : Ix) (dir : Sym → Dir) (c : FCtx) :
         rw [h.1] at hn ⊢
         have hz₁' := hz₁
         simp only [runStepB, hn] at hz₁'
-        have hne := hit _ (List.mem_cons_self ..) v f κ out items rfl
-        exact enumerateRDBounded_ge B ix _ (c.ctx f κ) (dir f) (c.laws f) items.length n
-          (List.length_pos_of_ne_nil hne) hz₁'
+        exact enumerateRDBounded_ge B ix _ (c.ctx f κ) (dir f) (c.laws f) items.length n hz₁'
       obtain ⟨y, hy, hyy⟩ := runEStepG_le h hf hy'
       rw [← runStepB_fst] at hy
       have hzy : (runB B ix dir c ss y).2 = 0 :=
         hz₂ _ (List.mem_map.2 ⟨_, List.mem_map.2 ⟨y, hy, rfl⟩, rfl⟩)
-      obtain ⟨x, hx, hxx⟩ := runB_ge B ix dir c ss (fun s' hs' => hit s' (List.mem_cons_of_mem _ hs'))
-        y y' hzy hyy x' hx'
+      obtain ⟨x, hx, hxx⟩ := runB_ge B ix dir c ss y y' hzy hyy x' hx'
       exact ⟨x, List.mem_flatMap.2 ⟨_, List.mem_map.2 ⟨y, hy, rfl⟩, hx⟩, hxx⟩
-
-/-- The items of a flattened plan's `Flatten` steps are the elements of an
-n-ary atom. -/
-theorem planF_flatten_items :
-    ∀ (as : List RAtom) (B : Finset Var) (r : Nat) (s : EStep), s ∈ planF as B r →
-      ∀ v f κ out items, s = .flatten v f κ out items →
-        ∃ a ∈ as, a.shape.flatKind.isSome = true ∧ items = a.elems
-  | [], _, _, s, hs, _, _, _, _, _, _ => by simp [planF] at hs
-  | a :: as, B, r, s, hs, v, f, κ, out, items, he => by
-      simp only [planF, List.mem_append] at hs
-      rcases hs with hs | hs
-      · subst he
-        unfold lowerF at hs
-        refine ⟨a, List.mem_cons_self .., ?_⟩
-        split at hs <;> rename_i hsh
-        · simp only [List.mem_cons, reduceCtorEq, EStep.flatten.injEq, List.not_mem_nil,
-            or_false, false_or] at hs
-          obtain ⟨-, -, -, -, rfl⟩ := hs
-          simp [Shape.flatKind, RAtom.elems, hsh]
-        · simp only [List.mem_cons, reduceCtorEq, EStep.flatten.injEq, List.not_mem_nil,
-            or_false, false_or] at hs
-          obtain ⟨-, -, -, -, rfl⟩ := hs
-          simp [Shape.flatKind, RAtom.elems, hsh]
-        · simp only [List.mem_cons, reduceCtorEq, EStep.flatten.injEq, List.not_mem_nil,
-            or_false, false_or] at hs
-          obtain ⟨-, -, -, -, rfl⟩ := hs
-          simp [Shape.flatKind, RAtom.elems, hsh]
-        · obtain ⟨st, -, hst⟩ := List.mem_map.1 hs
-          cases hst
-      · obtain ⟨a', ha', h⟩ := planF_flatten_items as _ _ s hs v f κ out items he
-        exact ⟨a', List.mem_cons_of_mem _ ha', h⟩
-
-theorem planF_items_ne_nil {as : List RAtom} {r : Nat}
-    (hitems : ∀ a ∈ as, a.shape.flatKind.isSome = true → a.elems ≠ []) :
-    ∀ s ∈ planF as ∅ r, ∀ v f κ out items, s = .flatten v f κ out items → items ≠ [] := by
-  intro s hs v f κ out items he
-  obtain ⟨a, ha, hk, rfl⟩ := planF_flatten_items as ∅ r s hs v f κ out items he
-  exact hitems a ha hk
 
 /-! ### The final theorems -/
 
@@ -1270,46 +1258,40 @@ theorem regroupBounded_plan_sound {c : FCtx} {dir : Sym → Dir} {sig : Sym → 
   rw [hle.1]
   exact ⟨fun a ha => atomSat_regroupSkipCap_iff.1 (hsat a ha), hdom⟩
 
-/-- **Completeness of the bounded plan when the counters are zero**: if every
-n-ary atom has an item and the query ends with `flatten_regroup_truncated`,
-`flatten_skipped` and `flatten_overflowed` all zero, every binding satisfying
-every atom under the engine's enumeration is extended by an emitted one. An
-atom with no item (`(f ..r)`) is excluded: the engine does not regroup its
-node (`enumerateRDBounded_ge`). -/
+/-- **Completeness of the bounded plan when the counters are zero**: if the
+query ends with `flatten_regroup_truncated`, `flatten_skipped` and
+`flatten_overflowed` all zero, every binding satisfying every atom under the
+engine's enumeration is extended by an emitted one. -/
 theorem regroupBounded_plan_complete {c : FCtx} {dir : Sym → Dir} {sig : Sym → Kind}
     {as : List RAtom} (r : Nat) (hw : QueryFWF c sig as) (B : Bounds) (ix : Ix)
-    (hitems : ∀ a ∈ as, a.shape.flatKind.isSome = true → a.elems ≠ [])
     (hz : (runB B ix dir c (planF as ∅ r) EEnv.empty).2 = 0) {σ' : Binding}
     (hsat : ∀ a ∈ as, AtomSatG (Enumerator.regroupSkip dir) c σ' a) :
     ∃ env ∈ (runB B ix dir c (planF as ∅ r) EEnv.empty).1, Extends env.σ σ' := by
   obtain ⟨env', h', hext⟩ := flatten_plan_complete_of_spec (regroupSkipCap_spec dir) r hw
     (fun a ha => atomSat_regroupSkipCap_iff.2 (hsat a ha))
-  obtain ⟨env, h, hle⟩ := runB_ge B ix dir c _ (planF_items_ne_nil hitems) _ _ hz
-    (EnvLe.refl _) env' h'
+  obtain ⟨env, h, hle⟩ := runB_ge B ix dir c _ _ _ hz (EnvLe.refl _) env' h'
   exact ⟨env, h, hle.1 ▸ hext⟩
 
-/-- **The runtime check**: when every n-ary atom of a query has an item and
-the query ends with the three counters of its `Flatten` steps zero (`flatten_regroup_truncated`, `flatten_skipped`,
+/-- **The runtime check**: when a query ends with the three counters of its
+`Flatten` steps zero (`flatten_regroup_truncated`, `flatten_skipped`,
 `flatten_overflowed`, `ematch.rs`), the bindings the bounded plan emits are
 exactly those satisfying every atom under the engine's enumeration, which
 `regroupSkip_match_iff` characterizes for laws-free operators. -/
 theorem regroupBounded_query_exact {c : FCtx} {dir : Sym → Dir} {sig : Sym → Kind}
     {as : List RAtom} (r : Nat) (hw : QueryFWF c sig as) (B : Bounds) (ix : Ix)
-    (hitems : ∀ a ∈ as, a.shape.flatKind.isSome = true → a.elems ≠ [])
     (hz : (runB B ix dir c (planF as ∅ r) EEnv.empty).2 = 0) :
     (∀ env ∈ (runB B ix dir c (planF as ∅ r) EEnv.empty).1,
         ∀ a ∈ as, AtomSatG (Enumerator.regroupSkip dir) c env.σ a) ∧
       ∀ σ', (∀ a ∈ as, AtomSatG (Enumerator.regroupSkip dir) c σ' a) →
         ∃ env ∈ (runB B ix dir c (planF as ∅ r) EEnv.empty).1, Extends env.σ σ' :=
   ⟨fun _ h => (regroupBounded_plan_sound r hw B ix h).1,
-    fun _ hsat => regroupBounded_plan_complete r hw B ix hitems hz hsat⟩
+    fun _ hsat => regroupBounded_plan_complete r hw B ix hz hsat⟩
 
-/-- **The runtime check, per atom**: with items and the counters zero, a binding is
+/-- **The runtime check, per atom**: with the counters zero, a binding is
 emitted (up to extension) iff every atom holds, an n-ary atom over a
 laws-free operator exactly when `regroupSkip_match_iff`'s chain exists. -/
 theorem regroupBounded_match_exact {c : FCtx} {dir : Sym → Dir} {sig : Sym → Kind}
     {as : List RAtom} (r : Nat) (hw : QueryFWF c sig as) (B : Bounds) (ix : Ix)
-    (hitems : ∀ a ∈ as, a.shape.flatKind.isSome = true → a.elems ≠ [])
     (hz : (runB B ix dir c (planF as ∅ r) EEnv.empty).2 = 0) {σ : Binding} {a : RAtom}
     (ha : a ∈ as) {κ : FlatKind} (hκ : a.shape.flatKind = some κ)
     (hlaws : c.laws a.op = Laws.free) {env : EEnv}
@@ -1321,6 +1303,6 @@ theorem regroupBounded_match_exact {c : FCtx} {dir : Sym → Dir} {sig : Sym →
         MatchN c.G a.shallow ⟨a.op, ofView κ r.1⟩ σ ∧
         ∀ l ∈ r.alt, l.okE κ (takenOf σ a.elems) := by
   subst hσ
-  exact (regroupSkip_match_iff hκ hlaws).1 ((regroupBounded_query_exact r hw B ix hitems hz).1 env henv a ha)
+  exact (regroupSkip_match_iff hκ hlaws).1 ((regroupBounded_query_exact r hw B ix hz).1 env henv a ha)
 
 end Semper.EMatch.Flatten
