@@ -377,9 +377,13 @@ completion state to the rounds or to the engine's rebuild.
   the decomposition has no item) and sums `flatten_regroup_truncated`,
   `flatten_skipped` and `flatten_overflowed` over its `Flatten`
   evaluations: `regroupBounded_plan_sound` for any counters, and with the
-  three zero `regroupBounded_query_exact` / `regroupBounded_match_exact`:
-  exactly the bindings of `Enumerator.regroupSkip`, which
-  `regroupSkip_match_iff` characterizes. Every regrouping the engine runs on
+  three zero and an item in every n-ary atom `regroupBounded_query_exact` /
+  `regroupBounded_match_exact`: exactly the bindings of
+  `Enumerator.regroupSkip`, which `regroupSkip_match_iff` characterizes.
+  The item condition is needed since the fix for needed classes the laws
+  drop: a regrouped record may need no class, and the engine does not
+  regroup for a pattern with no item, so `(f ..r)` misses such a view
+  (`flatten_regroup_laws_no_item.egg`, an open gap). Every regrouping the engine runs on
   the `conform` and `conform-flatten` samples has the counters of the
   model's run on a node of the case (an instrumented engine against an
   executable mirror of `BSt.run`, not committed); on `c1_0052.egg` both stop

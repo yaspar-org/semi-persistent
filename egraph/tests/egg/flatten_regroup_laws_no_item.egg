@@ -1,0 +1,28 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; A known gap (design 07 §7.5, "Regrouped views"; Lean `enumerateRDBounded_ge`,
+;; `RegroupBounds.lean`). `enumerate` regroups only when the decomposition has items
+;; (`regroup > 0`). Since a regrouped record keeps only the needed classes its normalized
+;; view holds (`flatten_regroup_laws_drop_need.egg`), a regrouping whose class the laws drop
+;; needs no class, and a pattern with no item may match its view. Here zero ∋ add{A, B}, so
+;; {A, B, C, D} regroups to {zero, C, D}, normalized {C, D}: `(add x ..r)` finds x = C,
+;; r = {D} (the first check), but `(add ..r)` does not find r = {C, D} (the last check),
+;; which the model's enumeration without bounds holds. When the engine regroups for a
+;; pattern with no item, the last check passes and this file's EXPECT becomes ok.
+(sort E)
+(function zero () E)
+(function A () E) (function B () E) (function C () E) (function D () E)
+(function add (E) E :assoc :comm :identity (zero))
+(function R (E) E :assoc :comm)
+(function End () E)
+(function T1 (E) E)
+(function T2 (E E) E)
+(union (add (A) (B)) (zero))
+(let t (add (A) (B) (C) (D)))
+(rewrite (add x ..r) (T2 x (R (End) ..r)) :flatten)
+(rewrite (add ..r) (T1 (R (End) ..r)) :flatten)
+(run 2)
+(check-eq t (T2 (C) (R (End) (D))))
+(check-eq t (T1 (R (End) (A) (B) (C) (D))))
+(check-eq t (T1 (R (End) (C) (D))))

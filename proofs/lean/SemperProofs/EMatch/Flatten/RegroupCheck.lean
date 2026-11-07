@@ -158,6 +158,8 @@ end Semper.EMatch.Flatten
 #print axioms Semper.EMatch.Flatten.regroupBounded_plan_complete
 #print axioms Semper.EMatch.Flatten.regroupBounded_query_exact
 #print axioms Semper.EMatch.Flatten.regroupBounded_match_exact
+#print axioms Semper.EMatch.Flatten.planF_flatten_items
+#print axioms Semper.EMatch.Flatten.planF_items_ne_nil
 
 namespace Semper.EMatch.Flatten
 

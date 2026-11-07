@@ -704,7 +704,8 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     /// (`RegroupBounds.lean`): regrouping stops iff the run without bounds ends past a
     /// bound, wherever it is crossed (`regroupBounded_halt_iff`), and a query whose
     /// `flatten_regroup_truncated`, `flatten_skipped` and `flatten_overflowed` are zero
-    /// has the matches of the run without bounds (`regroupBounded_query_exact`).
+    /// has the matches of the run without bounds when every n-ary atom has an item
+    /// (`regroupBounded_query_exact`; `flatten_regroup_laws_no_item.egg` for the gap).
     #[allow(clippy::too_many_arguments)]
     fn regroup<O, Src>(
         &mut self,
