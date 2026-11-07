@@ -1,11 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Verified equivalence-class aggregate: the e-graph's class layer with
-//! W1-W7 as its machine-checked `wf()`.
+//! W1-W8 as its machine-checked `wf()`.
 //!
-//! The module composes five verified structures: `CircularList` ring,
+//! The module composes six verified structures: `CircularList` ring,
 //! `SparseSet` class-key set, `UnionFind`, `ListArena` use-lists, `Vec`
-//! min-monomial pool. Their agreement is `eg_model_wf`, a predicate over the
+//! min-monomial and abstract-value pools. Their agreement is `eg_model_wf`, a predicate over the
 //! components' specification views. This table is the authoritative
 //! W-invariant numbering; every other document cites it.
 //!
@@ -28,6 +28,8 @@
 //!     stated at the ring member that is the class's root. The archive
 //!     invariant (`eg_archive_agrees`) asserts `eg_model_wf` per frame, so
 //!     W7 holds in every archived mark and `restore` preserves it.
+//!   - W8: the abstract-value pool is whole entries; live handles are
+//!     allocated and pairwise distinct.
 //!
 //! Terminology: a "class key" is the `SparseSet` id a root's ring payload
 //! carries; "live" is the key's state while its class exists. The prose
@@ -39,7 +41,6 @@
 //! compile-time asserts. This kernel is the production e-graph class layer:
 //! `egraph::EClasses` and `egraph::UnionFind` are type aliases of it.
 
-// TODO(abs-class-storage): add W8 (abstract-value handles) to the W-invariant table above, see containers-verus/doc/design/21-abstract-value-pool.md §3
 use vstd::prelude::*;
 
 use crate::circular_list::{CircularList, CircularListNode};
@@ -313,7 +314,7 @@ pub open(crate) spec fn abs_value_of<L: DenseId, T: DenseId, A>(
     }
 }
 
-/// W2-W7 over the components' views (the module header holds the invariant
+/// W2-W8 over the components' views (the module header holds the invariant
 /// table). `ring_model`/`payloads` are the
 /// `CircularList`'s ghost rings and payload cells; `roots` is the
 /// `UnionFind`'s ghost root map; the three `reprs_*` sequences are the
@@ -407,7 +408,6 @@ pub open(crate) spec fn eg_model_wf<
     // pool cells decode (Opt well-formedness; the cells are data, W6 is
     // geometry, but a read must round-trip)
     &&& (forall|i: int| 0 <= i < pool.len() ==> (#[trigger] pool[i]).wf())
-    // TODO(abs-class-storage): state W8 after the W6 clauses below: entries whole, live handles allocated and pairwise distinct, see containers-verus/doc/design/21-abstract-value-pool.md §3
     // W6: whole rows; live row numbers allocated and pairwise distinct
     &&& (min_width > 0 ==> pool_len % min_width == 0)
     &&& (forall|id: nat| #[trigger] ss_contains(reprs_sparse, reprs_indices, live, id)
@@ -422,6 +422,21 @@ pub open(crate) spec fn eg_model_wf<
                 && #[trigger] ss_value(reprs_dense, reprs_sparse, id2).min_row is Some
                 ==> ss_value(reprs_dense, reprs_sparse, id1).min_row->Some_0.as_nat()
                     != ss_value(reprs_dense, reprs_sparse, id2).min_row->Some_0.as_nat())
+    // W8a: whole entries. One cell holds one entry of type A, so the pool
+    // length counts entries and no write splits an entry.
+    // W8b: live handles are allocated
+    &&& (forall|id: nat| #[trigger] ss_contains(reprs_sparse, reprs_indices, live, id)
+            && ss_value(reprs_dense, reprs_sparse, id).abs is Some
+            ==> ss_value(reprs_dense, reprs_sparse, id).abs->Some_0.as_nat()
+                < abs_pool.len())
+    // W8c: live handles are pairwise distinct
+    &&& (forall|id1: nat, id2: nat|
+            ss_contains(reprs_sparse, reprs_indices, live, id1)
+                && ss_contains(reprs_sparse, reprs_indices, live, id2) && id1 != id2
+                && #[trigger] ss_value(reprs_dense, reprs_sparse, id1).abs is Some
+                && #[trigger] ss_value(reprs_dense, reprs_sparse, id2).abs is Some
+                ==> ss_value(reprs_dense, reprs_sparse, id1).abs->Some_0.as_nat()
+                    != ss_value(reprs_dense, reprs_sparse, id2).abs->Some_0.as_nat())
 }
 
 
@@ -1332,7 +1347,6 @@ where
     A: Copy + core::default::Default,
 {
 
-    // TODO(abs-class-storage): discharge W8 for the merged state, see containers-verus/doc/design/21-abstract-value-pool.md §3
     /// Re-establishes `eg_model_wf` after a merge's three mutations (union,
     /// ring splice with payload clear, repr removal). Extracted for the same
     /// reason as `lemma_splice_disjoint` (list.rs): proved inline, the ring
@@ -1414,6 +1428,7 @@ where
             self.uses.model_view() == o.uses.model_view(),
             self.uses.nodes_view() == o.uses.nodes_view(),
             self.min_pool.view() == o.min_pool.view(),
+            self.abs_pool.view() == o.abs_pool.view(),
             self.min_width == o.min_width,
         ensures
             eg_model_wf::<T, K, L, N, A>(
@@ -1719,6 +1734,29 @@ where
                 == ss_value(odense, osparse, k1).min_row);
             assert(ss_value(dense, sparse, k2).min_row
                 == ss_value(odense, osparse, k2).min_row);
+        }
+        // --- W8: surviving handles and the abstract-value pool are unchanged.
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            && ss_value(dense, sparse, kk).abs is Some
+            implies ss_value(dense, sparse, kk).abs->Some_0.as_nat()
+                < self.abs_pool.view().len() by {
+            assert(ss_contains(osparse, oindices, olive, kk) && kk != key_ab);
+            assert(ss_value(dense, sparse, kk).abs
+                == ss_value(odense, osparse, kk).abs);
+        }
+        assert forall|k1: nat, k2: nat|
+            ss_contains(sparse, indices, live, k1)
+                && ss_contains(sparse, indices, live, k2) && k1 != k2
+                && #[trigger] ss_value(dense, sparse, k1).abs is Some
+                && #[trigger] ss_value(dense, sparse, k2).abs is Some
+            implies ss_value(dense, sparse, k1).abs->Some_0.as_nat()
+                != ss_value(dense, sparse, k2).abs->Some_0.as_nat() by {
+            assert(ss_contains(osparse, oindices, olive, k1) && k1 != key_ab);
+            assert(ss_contains(osparse, oindices, olive, k2) && k2 != key_ab);
+            assert(ss_value(dense, sparse, k1).abs
+                == ss_value(odense, osparse, k1).abs);
+            assert(ss_value(dense, sparse, k2).abs
+                == ss_value(odense, osparse, k2).abs);
         }
         // --- W7: the stored class size is the ring length.
         // s sits on the merged ring: rotate(orm[cs], ps+1)[lcs-1] == orm[cs][ps].
@@ -2542,6 +2580,7 @@ where
             self.entries == o.entries,
             self.uf == o.uf,
             self.uses == o.uses,
+            self.abs_pool.view() == o.abs_pool.view(),
             self.min_width == o.min_width,
             (o.min_width as nat) > 0,
             self.reprs.wf(),
@@ -2562,6 +2601,10 @@ where
                 .size
                 == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), key.as_nat())
                     .size,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
+                .abs
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), key.as_nat())
+                    .abs,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
                 .min_row is Some,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
@@ -2609,7 +2652,9 @@ where
             implies ss_value(dense, sparse, kk).use_list
                     == ss_value(odense, osparse, kk).use_list
                 && ss_value(dense, sparse, kk).size
-                    == ss_value(odense, osparse, kk).size by {
+                    == ss_value(odense, osparse, kk).size
+                && ss_value(dense, sparse, kk).abs
+                    == ss_value(odense, osparse, kk).abs by {
             if kk != key.as_nat() {
                 assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
             }
@@ -2617,6 +2662,29 @@ where
         assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
             && kk != key.as_nat()
             implies ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk) by {}
+        // --- W8: live membership, handles, and the abstract-value pool are unchanged.
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            && ss_value(dense, sparse, kk).abs is Some
+            implies ss_value(dense, sparse, kk).abs->Some_0.as_nat()
+                < self.abs_pool.view().len() by {
+            assert(ss_contains(osparse, oindices, o.reprs.n_spec(), kk));
+            assert(ss_value(dense, sparse, kk).abs
+                == ss_value(odense, osparse, kk).abs);
+        }
+        assert forall|k1: nat, k2: nat|
+            ss_contains(sparse, indices, live, k1)
+                && ss_contains(sparse, indices, live, k2) && k1 != k2
+                && #[trigger] ss_value(dense, sparse, k1).abs is Some
+                && #[trigger] ss_value(dense, sparse, k2).abs is Some
+            implies ss_value(dense, sparse, k1).abs->Some_0.as_nat()
+                != ss_value(dense, sparse, k2).abs->Some_0.as_nat() by {
+            assert(ss_contains(osparse, oindices, o.reprs.n_spec(), k1));
+            assert(ss_contains(osparse, oindices, o.reprs.n_spec(), k2));
+            assert(ss_value(dense, sparse, k1).abs
+                == ss_value(odense, osparse, k1).abs);
+            assert(ss_value(dense, sparse, k2).abs
+                == ss_value(odense, osparse, k2).abs);
+        }
         assert(eg_model_wf::<T, K, L, N, A>(
             self.entries.model_view(), self.entries.payload_seq(),
             self.uf.roots_view(), dense, sparse, indices,
