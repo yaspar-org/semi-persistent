@@ -2387,7 +2387,192 @@ where
         }
     }
 
-    // TODO(abs-class-storage): `set_abs_value` follows this function: allocate on first use, tracked write otherwise, see containers-verus/doc/design/21-abstract-value-pool.md §7
+    /// Write a live class's abstract value, allocating one pool entry on first
+    /// use. Refuses a dead key, an unrepresentable handle, or pool exhaustion.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(120)]
+    pub fn set_abs_value(&mut self, key: K, v: A)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).abs_value_spec(key.as_nat()) == Some(v),
+            final(self).contains_key_spec(key),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).roots_view() == old(self).roots_view(),
+            final(self).num_classes_spec() == old(self).num_classes_spec(),
+            final(self).min_width_spec() == old(self).min_width_spec(),
+            final(self).depth_spec() == old(self).depth_spec(),
+            // Unchanged components frame both their live views and archives.
+            final(self).entries_ref() == old(self).entries_ref(),
+            final(self).uses_ref() == old(self).uses_ref(),
+            final(self).roots_archive_view() == old(self).roots_archive_view(),
+            final(self).pool_view() == old(self).pool_view(),
+            final(self).pool_archive() == old(self).pool_archive(),
+            final(self).reprs_sparse_view() == old(self).reprs_sparse_view(),
+            final(self).reprs_indices_view() == old(self).reprs_indices_view(),
+            forall|k: K| final(self).contains_key_spec(k) == old(self).contains_key_spec(k),
+            final(self).reprs_dense_archive() == old(self).reprs_dense_archive(),
+            final(self).reprs_sparse_archive() == old(self).reprs_sparse_archive(),
+            final(self).reprs_indices_archive() == old(self).reprs_indices_archive(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
+            ({
+                let before = old(self).class_data_spec(key.as_nat());
+                let after = final(self).class_data_spec(key.as_nat());
+                &&& after == ClassData::<L, T> {
+                    use_list: before.use_list, min_row: before.min_row, abs: after.abs,
+                    atomic: before.atomic, matchable: before.matchable, size: before.size,
+                }
+                &&& match before.abs {
+                    None => {
+                        &&& after.abs is Some
+                        &&& after.abs->Some_0.as_nat() == old(self).abs_pool_view().len()
+                        &&& final(self).abs_pool_view() == old(self).abs_pool_view().push(v)
+                    },
+                    Some(h) => {
+                        &&& after.abs == Some(h)
+                        &&& final(self).abs_pool_view()
+                            == old(self).abs_pool_view().update(h.as_nat() as int, v)
+                    },
+                }
+            }),
+            forall|id: nat| #[trigger] ss_contains(old(self).reprs_sparse_view(),
+                    old(self).reprs_indices_view(), old(self).num_classes_spec(), id)
+                && id != key.as_nat()
+                ==> final(self).class_data_spec(id) == old(self).class_data_spec(id)
+                    && final(self).abs_value_spec(id) == old(self).abs_value_spec(id),
+    {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
+            crate::guard::refuse("EClasses::set_abs_value: class key is not live");
+        }
+        let ghost o = *old(self);
+        let mut data = self.reprs.get_live(raw_key);
+        proof {
+            assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
+                o.reprs.n_spec(), key.as_nat()));
+            assert(data == o.class_data_spec(key.as_nat()));
+        }
+        let handle = match data.abs {
+            None => {
+                let len = self.abs_pool.len();
+                let h = match <T::Index as IndexLike>::try_from_usize(len) {
+                    Some(h) => h,
+                    None => crate::guard::refuse(
+                        "EClasses::set_abs_value: handle exceeds the id index range"),
+                };
+                match self.abs_pool.try_push(v) {
+                    Ok(()) => (),
+                    Err(_) => crate::guard::refuse(
+                        "EClasses::set_abs_value: abstract-value pool exhausted"),
+                }
+                data.abs = Some(h);
+                self.reprs.set_live(raw_key, data);
+                h
+            },
+            Some(h) => {
+                proof {
+                    // W8b bounds the existing handle before the tracked write.
+                    assert(h.as_nat() < o.abs_pool.view().len());
+                    <T::Index as IndexLike>::lemma_max_nat_fits_usize();
+                }
+                self.abs_pool.set_index(h.as_usize(), v);
+                h
+            },
+        };
+        proof {
+            let dense = self.reprs.dense_view();
+            let sparse = self.reprs.sparse_view();
+            let indices = self.reprs.indices_view();
+            let live = self.reprs.n_spec();
+            let odense = o.reprs.dense_view();
+            let osparse = o.reprs.sparse_view();
+            let oindices = o.reprs.indices_view();
+            assert(sparse == osparse && indices == oindices && live == o.reprs.n_spec());
+            assert(self.class_data_spec(key.as_nat()).abs == Some(handle));
+            assert(handle.as_nat() < self.abs_pool.view().len());
+            // Distinct live keys occupy distinct dense positions. The payload
+            // write therefore changes only the target's abstract-value handle.
+            assert forall|id: nat| #[trigger] ss_contains(sparse, indices, live, id)
+                && id != key.as_nat()
+                implies ss_value(dense, sparse, id) == ss_value(odense, osparse, id) by {
+                assert(osparse[id as int].as_nat()
+                    != osparse[key.as_nat() as int].as_nat()) by {
+                    if osparse[id as int].as_nat() == osparse[key.as_nat() as int].as_nat() {
+                        assert(oindices[osparse[id as int].as_nat() as int].as_nat() == id);
+                    }
+                }
+            }
+            // These are exactly the payload projections read by W1-W7.
+            assert forall|id: nat| #[trigger] ss_contains(sparse, indices, live, id)
+                implies ss_value(dense, sparse, id).use_list == ss_value(odense, osparse, id).use_list
+                    && ss_value(dense, sparse, id).min_row == ss_value(odense, osparse, id).min_row
+                    && ss_value(dense, sparse, id).size == ss_value(odense, osparse, id).size by {}
+            // W8b: the target is allocated; every other handle keeps its old
+            // bound, and neither path shrinks the pool.
+            assert forall|id: nat| #[trigger] ss_contains(sparse, indices, live, id)
+                && ss_value(dense, sparse, id).abs is Some
+                implies ss_value(dense, sparse, id).abs->Some_0.as_nat()
+                    < self.abs_pool.view().len() by {
+                if id != key.as_nat() {
+                    assert(ss_value(dense, sparse, id) == ss_value(odense, osparse, id));
+                    assert(ss_value(odense, osparse, id).abs->Some_0.as_nat()
+                        < o.abs_pool.view().len());
+                }
+            }
+            // An old handle is below the fresh tail index on allocation;
+            // on overwrite, old W8c separates it from the target's handle.
+            assert forall|id: nat| #[trigger] ss_contains(sparse, indices, live, id)
+                && id != key.as_nat() && ss_value(dense, sparse, id).abs is Some
+                implies ss_value(dense, sparse, id).abs->Some_0.as_nat() != handle.as_nat() by {
+                assert(ss_value(dense, sparse, id) == ss_value(odense, osparse, id));
+                assert(ss_value(odense, osparse, id).abs->Some_0.as_nat()
+                    < o.abs_pool.view().len());
+            }
+            // W8c, split into target/other, other/target, and two old handles.
+            assert forall|id1: nat, id2: nat|
+                ss_contains(sparse, indices, live, id1)
+                    && ss_contains(sparse, indices, live, id2) && id1 != id2
+                    && #[trigger] ss_value(dense, sparse, id1).abs is Some
+                    && #[trigger] ss_value(dense, sparse, id2).abs is Some
+                implies ss_value(dense, sparse, id1).abs->Some_0.as_nat()
+                    != ss_value(dense, sparse, id2).abs->Some_0.as_nat() by {
+                if id1 == key.as_nat() {
+                    assert(ss_value(dense, sparse, id2).abs->Some_0.as_nat() != handle.as_nat());
+                } else if id2 == key.as_nat() {
+                    assert(ss_value(dense, sparse, id1).abs->Some_0.as_nat() != handle.as_nat());
+                } else {
+                    assert(ss_value(dense, sparse, id1) == ss_value(odense, osparse, id1));
+                    assert(ss_value(dense, sparse, id2) == ss_value(odense, osparse, id2));
+                }
+            }
+            assert(eg_model_wf::<T, K, L, N, A>(
+                self.entries.model_view(), self.entries.payload_seq(),
+                self.uf.roots_view(), dense, sparse, indices,
+                self.uses.model_view(), self.uses.nodes_view(),
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
+            // Append preserves the old prefix; update preserves every cell
+            // other than handle. W8c turns that cell frame into a class frame.
+            assert forall|id: nat| #[trigger] ss_contains(osparse, oindices, o.reprs.n_spec(), id)
+                && id != key.as_nat()
+                implies self.class_data_spec(id) == o.class_data_spec(id)
+                    && self.abs_value_spec(id) == o.abs_value_spec(id) by {
+                if let Some(h) = o.class_data_spec(id).abs {
+                    assert(h.as_nat() < o.abs_pool.view().len());
+                    assert(h.as_nat() != handle.as_nat());
+                    assert(self.abs_pool.view()[h.as_nat() as int]
+                        == o.abs_pool.view()[h.as_nat() as int]);
+                }
+            }
+            // All snapshot arguments of the opaque archive predicate are
+            // unchanged. Only its external live-length bound needs transport.
+            assert forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len() by {
+                assert(self.abs_pool.snapshots_view()[k].len() <= o.abs_pool.view().len());
+            }
+        }
+    }
+
     /// Write class `key`'s min-monomial for column `col`, allocating the
     /// class's pool row on first use (production's `ensure_min_row` +
     /// `set_min_monomial`). Refuses a dead key, an out-of-range column, a
@@ -2921,7 +3106,50 @@ where
         self.reprs.get_live(raw_key).size.as_usize()
     }
 
-    // TODO(abs-class-storage): `abs_value_at` follows this function: read the entry a MergeInfo handle names, see containers-verus/doc/design/21-abstract-value-pool.md §2
+    /// Read the optional abstract-value handle of live class `key`.
+    /// Refuses a dead key.
+    pub fn abs_handle(&self, key: K) -> (h: Option<<T as DenseId>::Index>)
+        requires self.wf(),
+        ensures h == self.class_data_spec(key.as_nat()).abs,
+    {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
+            crate::guard::refuse("EClasses::abs_handle: class key is not live");
+        }
+        self.reprs.get_live(raw_key).abs
+    }
+
+    /// Read an abstract-value entry through a handle, including one carried
+    /// by an absorbed class's MergeInfo. Refuses an unallocated handle.
+    pub fn abs_value_at(&self, h: Option<<T as DenseId>::Index>) -> (r: Option<A>)
+        requires self.wf(),
+        ensures
+            h matches Some(i) ==> r == Some(self.abs_pool_view()[i.as_nat() as int]),
+            h is None ==> r is None,
+    {
+        let handle = match h {
+            None => return None,
+            Some(handle) => handle,
+        };
+        proof { <T::Index as IndexLike>::lemma_max_nat_fits_usize(); }
+        let index = handle.as_usize();
+        let len = self.abs_pool.len();
+        if !(index < len) {
+            crate::guard::refuse("EClasses::abs_value_at: handle is not allocated");
+        }
+        Some(self.abs_pool.get_index(index))
+    }
+
+    /// Read live class `key`'s abstract value, or None without a handle.
+    /// Refuses a dead key.
+    pub fn abs_value(&self, key: K) -> (r: Option<A>)
+        requires self.wf(),
+        ensures r == self.abs_value_spec(key.as_nat()),
+    {
+        let h = self.abs_handle(key);
+        self.abs_value_at(h)
+    }
+
     /// Read completion column `col` of a pool row number carried in
     /// `MergeInfo` (production's `min_monomial_at_row`): `None` when the row
     /// is absent or the cell is empty. Refuses an out-of-range column or an

@@ -1,110 +1,317 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Acceptance tests for the `abs-class-storage` branch: per-class handles into
-//! the semi-persistent abstract-value pool of `EClasses`. The specification is
-//! `containers-verus/doc/design/21-abstract-value-pool.md`.
-//!
-//! Every test is ignored until the API exists. Each body states the target
-//! sequence in comments and calls no new API, so the file compiles today. The
-//! implementer writes the body with the `EC` type and helpers of
-//! `eclasses_behavior.rs`, with a small `Copy + Default` entry type such as
-//! `u64`, and removes the `#[ignore]`.
+//! Acceptance tests for the abstract-value pool and frozen W8 contract in
+//! `doc/design/21-abstract-value-pool.md`. Entries are opaque `u64` values.
+
+use semi_persistent_containers_verus::HotFirst;
+use semi_persistent_containers_verus::dense_id::{DenseId31, DenseId63};
+use semi_persistent_containers_verus::eclasses::EClasses;
+use semi_persistent_containers_verus::group::{ForkHistory, Member};
+use semi_persistent_containers_verus::index_like::IndexLike;
+use semi_persistent_containers_verus::opt::DenseId;
+use semi_persistent_containers_verus::union_find::NoJust;
+use semi_persistent_containers_verus::vec::ShrinkPolicy;
+
+semi_persistent_containers_verus::define_id31! {
+    pub struct EClassKey31 / StoredEClassKey31, "ec";
+}
+semi_persistent_containers_verus::define_id63! {
+    pub struct EClassKey63 / StoredEClassKey63, "ec64";
+}
+
+type EC =
+    EClasses<DenseId31, EClassKey31, DenseId31, DenseId31, NoJust, true, false, HotFirst, u64>;
+type EC64 =
+    EClasses<DenseId63, EClassKey63, DenseId63, DenseId63, NoJust, true, false, HotFirst, u64>;
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
 fn set_value_reads_back() {
-    // ec = EC::new(); (a, ka) = ec.try_add_singleton();
-    // ec.abs_handle(ka) == None and ec.abs_value(ka) == None.
-    // ec.set_abs_value(ka, 7): ec.abs_value(ka) == Some(7), ec.abs_handle(ka) is Some.
-    // ec.set_abs_value(ka, 9): ec.abs_value(ka) == Some(9), the handle is unchanged
-    // (an overwrite allocates no new entry).
+    let mut ec = EC::new();
+    let (_, key) = ec.try_add_singleton();
+    assert_eq!(ec.abs_handle(key), None);
+    assert_eq!(ec.abs_value(key), None);
+    assert_eq!(ec.abs_value_at(None), None);
+    ec.set_abs_value(key, 7);
+    let handle = ec.abs_handle(key).expect("first write allocates");
+    assert_eq!(handle.as_usize(), 0);
+    assert_eq!(ec.abs_value(key), Some(7));
+    assert_eq!(ec.abs_value_at(Some(handle)), Some(7));
+    ec.set_abs_value(key, 9);
+    assert_eq!(ec.abs_handle(key), Some(handle));
+    assert_eq!(ec.abs_value(key), Some(9));
+    assert_eq!(ec.abs_value_at(Some(handle)), Some(9));
+    let (_, next) = ec.try_add_singleton();
+    ec.set_abs_value(next, 11);
+    assert_eq!(ec.abs_handle(next).unwrap().as_usize(), 1);
 }
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
 fn live_handles_are_distinct() {
-    // Three singletons ka, kb, kc; set values 1, 2, 3.
-    // The three handles are Some and pairwise distinct (W8c).
-    // ec.set_abs_value(kb, 20) leaves ka at 1 and kc at 3 (the W8c frame condition).
-    // A fourth singleton kd has no handle until its first write; after
-    // ec.set_abs_value(kd, 4) its handle differs from the other three.
+    let mut ec = EC::new();
+    let (_, ka) = ec.try_add_singleton();
+    let (_, kb) = ec.try_add_singleton();
+    let (_, kc) = ec.try_add_singleton();
+    ec.set_abs_value(ka, 1);
+    ec.set_abs_value(kb, 2);
+    ec.set_abs_value(kc, 3);
+    let handles = [ka, kb, kc].map(|k| ec.abs_handle(k).unwrap());
+    assert_ne!(handles[0], handles[1]);
+    assert_ne!(handles[0], handles[2]);
+    assert_ne!(handles[1], handles[2]);
+    ec.set_abs_value(kb, 20);
+    assert_eq!(
+        [ka, kb, kc].map(|k| ec.abs_value(k)),
+        [Some(1), Some(20), Some(3)]
+    );
+    assert_eq!([ka, kb, kc].map(|k| ec.abs_handle(k).unwrap()), handles);
+    let (_, kd) = ec.try_add_singleton();
+    assert_eq!(ec.abs_handle(kd), None);
+    ec.set_abs_value(kd, 4);
+    assert!(!handles.contains(&ec.abs_handle(kd).unwrap()));
+    assert_eq!(
+        [ka, kb, kc].map(|k| ec.abs_value(k)),
+        [Some(1), Some(20), Some(3)]
+    );
 }
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
 fn merge_returns_absorbed_handle() {
-    // (a, ka), (b, kb); set_abs_value(ka, 10), set_abs_value(kb, 20).
-    // Record ha = abs_handle(ka), hb = abs_handle(kb).
-    // mi = ec.merge(a, b).unwrap().
-    // mi.absorbed_abs is the handle of the class of mi.absorbed (ha or hb).
-    // ec.abs_value_at(mi.absorbed_abs) is that class's pre-merge value (10 or 20).
-    // The survivor key's value is unchanged by the merge: the merge writes no
-    // pool entry and leaves the survivor's handle as it was.
-    // The caller writes the combined value: set_abs_value(survivor_key, 30);
-    // abs_value(survivor_key) == Some(30).
+    let mut ec = EC::new();
+    let (a, ka) = ec.try_add_singleton();
+    let (b, kb) = ec.try_add_singleton();
+    ec.set_abs_value(ka, 10);
+    ec.set_abs_value(kb, 20);
+    let ha = ec.abs_handle(ka);
+    let hb = ec.abs_handle(kb);
+    let mi = ec.merge(a, b).expect("distinct classes merge");
+    let (survivor_handle, absorbed_handle, survivor_value, absorbed_value) =
+        if mi.survivor.to_usize() == a.to_usize() {
+            (ha, hb, 10, 20)
+        } else {
+            (hb, ha, 20, 10)
+        };
+    let key = ec.repr_id(mi.survivor).unwrap();
+    assert_eq!(ec.abs_handle(key), survivor_handle);
+    assert_eq!(ec.abs_value(key), Some(survivor_value));
+    assert_eq!(mi.absorbed_abs, absorbed_handle);
+    assert_eq!(ec.abs_value_at(mi.absorbed_abs), Some(absorbed_value));
+    ec.set_abs_value(key, 30);
+    assert_eq!(ec.abs_handle(key), survivor_handle);
+    assert_eq!(ec.abs_value(key), Some(30));
+    assert_eq!(ec.abs_value_at(mi.absorbed_abs), Some(absorbed_value));
 }
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
 fn merge_without_values_returns_none() {
-    // Two singletons without values; mi = ec.merge(a, b).unwrap().
-    // mi.absorbed_abs == None and ec.abs_value_at(None) == None.
-    // The survivor still has no value.
+    let mut ec = EC::new();
+    let (a, _) = ec.try_add_singleton();
+    let (b, _) = ec.try_add_singleton();
+    let mi = ec.merge(a, b).unwrap();
+    assert_eq!(mi.absorbed_abs, None);
+    assert_eq!(ec.abs_value_at(mi.absorbed_abs), None);
+    let key = ec.repr_id(mi.survivor).unwrap();
+    assert_eq!(ec.abs_handle(key), None);
+    assert_eq!(ec.abs_value(key), None);
 }
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
 fn restore_rolls_back_value_write() {
-    // ec = ForkHistory::new(EC::new()); (a, ka); set_abs_value(ka, 1).
-    // token = ec.mark(ShrinkPolicy::Never).
-    // set_abs_value(ka, 2); abs_value(ka) == Some(2).
-    // ec.restore(token): abs_value(ka) == Some(1), and the handle equals its
-    // value at the mark.
+    let mut ec = ForkHistory::new(EC::new());
+    let (_, key) = ec.try_add_singleton();
+    ec.set_abs_value(key, 1);
+    let handle = ec.abs_handle(key);
+    let token = ec.mark(ShrinkPolicy::Never).expect("bounded mark depth");
+    ec.set_abs_value(key, 2);
+    assert_eq!(ec.abs_value(key), Some(2));
+    assert!(ec.restore(token));
+    assert_eq!(ec.abs_handle(key), handle);
+    assert_eq!(ec.abs_value(key), Some(1));
+    assert_eq!(ec.abs_value_at(handle), Some(1));
 }
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
 fn restore_rolls_back_merge_and_combined_value() {
-    // ec = ForkHistory::new(EC::new()); (a, ka), (b, kb); values 10 and 20.
-    // token = ec.mark(ShrinkPolicy::Never).
-    // mi = ec.merge(a, b); set_abs_value(survivor_key, 30).
-    // ec.restore(token): num_classes == 2, both keys live again,
-    // abs_value(ka) == Some(10), abs_value(kb) == Some(20), and both handles
-    // equal their values at the mark (the semi-persistence theorem of §4).
+    let mut ec = ForkHistory::new(EC::new());
+    let (a, ka) = ec.try_add_singleton();
+    let (b, kb) = ec.try_add_singleton();
+    ec.set_abs_value(ka, 10);
+    ec.set_abs_value(kb, 20);
+    let handles = [ec.abs_handle(ka), ec.abs_handle(kb)];
+    let token = ec.mark(ShrinkPolicy::Never).expect("bounded mark depth");
+    let mi = ec.merge(a, b).unwrap();
+    let key = ec.repr_id(mi.survivor).unwrap();
+    ec.set_abs_value(key, 30);
+    assert_eq!(ec.abs_value(key), Some(30));
+    assert!(ec.restore(token));
+    assert_eq!(ec.num_classes().as_usize(), 2);
+    assert_eq!(ec.repr_id(a), Some(ka));
+    assert_eq!(ec.repr_id(b), Some(kb));
+    assert_eq!([ec.abs_handle(ka), ec.abs_handle(kb)], handles);
+    assert_eq!([ec.abs_value(ka), ec.abs_value(kb)], [Some(10), Some(20)]);
 }
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
 fn restore_drops_entries_allocated_after_mark() {
-    // ec = ForkHistory::new(EC::new()); (a, ka) without a value.
-    // token = ec.mark(ShrinkPolicy::Never).
-    // set_abs_value(ka, 5); (b, kb) = try_add_singleton(); set_abs_value(kb, 6).
-    // ec.restore(token): abs_handle(ka) == None, b does not exist, and the
-    // pool length equals its length at the mark (0).
-    // set_abs_value(ka, 7) after the restore allocates a fresh handle and
-    // reads back 7.
+    let mut ec = ForkHistory::new(EC::new());
+    let (_, ka) = ec.try_add_singleton();
+    let token = ec.mark(ShrinkPolicy::Never).expect("bounded mark depth");
+    ec.set_abs_value(ka, 5);
+    let handle = ec.abs_handle(ka);
+    let (_, kb) = ec.try_add_singleton();
+    ec.set_abs_value(kb, 6);
+    let second = ec.abs_handle(kb);
+    assert!(ec.restore(token));
+    assert_eq!(ec.len().as_usize(), 1);
+    assert_eq!(ec.num_classes().as_usize(), 1);
+    assert_eq!(ec.abs_handle(ka), None);
+    assert_eq!(ec.abs_value(ka), None);
+    // Both tail entries are unallocated now, before any index can be reused.
+    for h in [handle, second] {
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { ec.abs_value_at(h) }))
+                .is_err()
+        );
+    }
+    ec.set_abs_value(ka, 7);
+    assert_eq!(
+        ec.abs_handle(ka),
+        handle,
+        "the truncated tail index is reused"
+    );
+    assert_eq!(ec.abs_value(ka), Some(7));
+    assert_eq!(ec.abs_value_at(handle), Some(7));
 }
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
 fn nested_marks_restore_values_in_order() {
-    // (a, ka); set 1; t1 = mark; set 2; t2 = mark; set 3.
-    // restore(t2): abs_value(ka) == Some(2).
-    // restore(t1): abs_value(ka) == Some(1).
-    // Semantics B: restore(t1) again gives Some(1); pop_scope drops t1.
+    let mut ec = ForkHistory::new(EC::new());
+    let (_, key) = ec.try_add_singleton();
+    ec.set_abs_value(key, 1);
+    let handle = ec.abs_handle(key);
+    let t1 = ec.mark(ShrinkPolicy::Never).expect("bounded mark depth");
+    ec.set_abs_value(key, 2);
+    let t2 = ec.mark(ShrinkPolicy::Never).expect("bounded mark depth");
+    ec.set_abs_value(key, 3);
+    assert!(ec.restore(t2));
+    assert_eq!(ec.abs_value(key), Some(2));
+    assert_eq!(ec.abs_handle(key), handle);
+    assert!(ec.restore(t1));
+    assert_eq!(ec.abs_value(key), Some(1));
+    assert_eq!(ec.abs_handle(key), handle);
+    assert!(!ec.restore(t2), "outer restore invalidates the inner token");
+    ec.set_abs_value(key, 4);
+    assert!(ec.restore(t1), "ForkHistory restore retains the checkpoint");
+    assert_eq!(ec.abs_value(key), Some(1));
+    assert_eq!(ec.abs_handle(key), handle);
+    assert!(ec.pop_scope());
+    assert!(!ec.restore(t1), "pop consumes the checkpoint");
 }
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
+fn reset_retains_frame_restore_consumes_frame() {
+    let mut ec = EC::new();
+    let (_, ka) = ec.try_add_singleton();
+    let (_, kb) = ec.try_add_singleton();
+    ec.set_abs_value(ka, 1);
+    let ha = ec.abs_handle(ka);
+    ec.push_frame(ShrinkPolicy::Never); // frame 0: a=1, b absent
+    ec.set_abs_value(ka, 2);
+    ec.set_abs_value(kb, 20);
+    let hb = ec.abs_handle(kb);
+    ec.push_frame(ShrinkPolicy::Never); // frame 1: a=2, b=20
+    ec.set_abs_value(ka, 3);
+    ec.set_abs_value(kb, 30);
+    // Public Member methods delegate to the C6 frame operations.
+    ec.reset_frame(1);
+    assert_eq!(ec.depth_exec(), 2);
+    assert_eq!([ec.abs_value(ka), ec.abs_value(kb)], [Some(2), Some(20)]);
+    assert_eq!([ec.abs_handle(ka), ec.abs_handle(kb)], [ha, hb]);
+    ec.set_abs_value(ka, 4);
+    ec.restore_frame(1);
+    assert_eq!(ec.depth_exec(), 1);
+    assert_eq!([ec.abs_value(ka), ec.abs_value(kb)], [Some(2), Some(20)]);
+    assert_eq!([ec.abs_handle(ka), ec.abs_handle(kb)], [ha, hb]);
+    ec.reset_frame(0);
+    assert_eq!(ec.depth_exec(), 1);
+    assert_eq!([ec.abs_value(ka), ec.abs_value(kb)], [Some(1), None]);
+    assert_eq!([ec.abs_handle(ka), ec.abs_handle(kb)], [ha, None]);
+    ec.set_abs_value(ka, 5);
+    ec.set_abs_value(kb, 50);
+    ec.restore_frame(0);
+    assert_eq!(ec.depth_exec(), 0);
+    assert_eq!([ec.abs_value(ka), ec.abs_value(kb)], [Some(1), None]);
+    assert_eq!([ec.abs_handle(ka), ec.abs_handle(kb)], [ha, None]);
+}
+
+fn merged_with_dead_key() -> (EC, EClassKey31) {
+    let mut ec = EC::new();
+    let (a, ka) = ec.try_add_singleton();
+    let (b, kb) = ec.try_add_singleton();
+    ec.set_abs_value(ka, 10);
+    ec.set_abs_value(kb, 20);
+    let mi = ec.merge_directed_with(a, b, true).unwrap();
+    assert_eq!(mi.absorbed.to_usize(), b.to_usize());
+    (ec, kb)
+}
+
+#[test]
+#[should_panic(expected = "class key is not live")]
 fn dead_key_write_refuses() {
-    // Final form: #[should_panic(expected = "class key is not live")].
-    // (a, ka), (b, kb); mi = merge(a, b); the absorbed key is dead.
-    // set_abs_value(absorbed_key, 1) refuses; abs_value(absorbed_key) refuses.
+    let (mut ec, key) = merged_with_dead_key();
+    ec.set_abs_value(key, 99);
 }
 
 #[test]
-#[ignore = "abs-class-storage: not implemented yet"]
+#[should_panic(expected = "class key is not live")]
+fn dead_key_value_read_refuses() {
+    let (ec, key) = merged_with_dead_key();
+    ec.abs_value(key);
+}
+
+#[test]
+#[should_panic(expected = "class key is not live")]
+fn dead_key_handle_read_refuses() {
+    let (ec, key) = merged_with_dead_key();
+    ec.abs_handle(key);
+}
+
+#[test]
+#[should_panic(expected = "handle is not allocated")]
+fn unallocated_handle_refuses() {
+    let mut ec = EC::new();
+    let (_, key) = ec.try_add_singleton();
+    ec.set_abs_value(key, 7);
+    let next = <DenseId31 as DenseId>::Index::try_from_usize(1).unwrap();
+    ec.abs_value_at(Some(next));
+}
+
+#[test]
 fn bits63_value_round_trip() {
-    // The same set, mark, merge, restore sequence as
-    // restore_rolls_back_merge_and_combined_value, with EC64 (63-bit ids).
+    let mut ec = ForkHistory::new(EC64::new());
+    let (a, ka) = ec.try_add_singleton();
+    let (b, kb) = ec.try_add_singleton();
+    assert_eq!(ec.abs_value(ka), None);
+    ec.set_abs_value(ka, u64::MAX);
+    ec.set_abs_value(kb, 20);
+    let ha = ec.abs_handle(ka);
+    let hb = ec.abs_handle(kb);
+    assert_ne!(ha, hb);
+    let token = ec.mark(ShrinkPolicy::Never).expect("bounded mark depth");
+    let mi = ec.merge_directed_with(a, b, true).unwrap();
+    assert_eq!(mi.absorbed_abs, hb);
+    assert_eq!(ec.abs_value_at(hb), Some(20));
+    assert_eq!(ec.abs_handle(ka), ha);
+    ec.set_abs_value(ka, 30);
+    assert_eq!(ec.abs_handle(ka), ha);
+    assert_eq!(ec.abs_value(ka), Some(30));
+    assert_eq!(ec.abs_value_at(hb), Some(20));
+    assert!(ec.restore(token));
+    assert_eq!(ec.num_classes().as_usize(), 2);
+    assert_eq!(ec.repr_id(a), Some(ka));
+    assert_eq!(ec.repr_id(b), Some(kb));
+    assert_eq!([ec.abs_handle(ka), ec.abs_handle(kb)], [ha, hb]);
+    assert_eq!(
+        [ec.abs_value(ka), ec.abs_value(kb)],
+        [Some(u64::MAX), Some(20)]
+    );
 }
