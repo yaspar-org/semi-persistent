@@ -300,6 +300,19 @@ pub open(crate) spec fn ss_value<V, Idx: IndexLike>(
     dense[sparse[id as int].as_nat() as int]
 }
 
+/// The abstract value of class key `id` in one state of the repr set and the
+/// abstract-value pool: None without a handle, else the entry its handle
+/// names. `abs_value_spec` is this over the live views; the restore theorem
+/// states it over an archived frame.
+pub open(crate) spec fn abs_value_of<L: DenseId, T: DenseId, A>(
+    dense: Seq<ClassData<L, T>>, sparse: Seq<<T as DenseId>::Index>, abs_pool: Seq<A>, id: nat,
+) -> Option<A> {
+    match ss_value(dense, sparse, id).abs {
+        Some(h) => Some(abs_pool[h.as_nat() as int]),
+        None => None,
+    }
+}
+
 /// W2-W7 over the components' views (the module header holds the invariant
 /// table). `ring_model`/`payloads` are the
 /// `CircularList`'s ghost rings and payload cells; `roots` is the
@@ -720,10 +733,7 @@ where
     /// The value of live class `id`: None without a handle, else the pool
     /// entry its handle names.
     pub open(crate) spec fn abs_value_spec(&self, id: nat) -> Option<A> {
-        match self.class_data_spec(id).abs {
-            Some(h) => Some(self.abs_pool.view()[h.as_nat() as int]),
-            None => None,
-        }
+        abs_value_of(self.reprs.dense_view(), self.reprs.sparse_view(), self.abs_pool.view(), id)
     }
 
     /// Mark depth (spec): the number of live frames.
@@ -3315,6 +3325,10 @@ where
                 &&& final(self).pool_archive() == old(self).pool_archive().subrange(0, f + 1)
                 &&& final(self).abs_pool_view() == old(self).abs_pool_archive()[f]
                 &&& final(self).abs_pool_archive() == old(self).abs_pool_archive().subrange(0, f + 1)
+                // every class's abstract value is its value at mark `target`.
+                &&& forall|id: nat| #[trigger] final(self).abs_value_spec(id) == abs_value_of(
+                        old(self).reprs_dense_archive()[f], old(self).reprs_sparse_archive()[f],
+                        old(self).abs_pool_archive()[f], id)
             }),
     {
         let d = self.min_pool.depth_exec();
@@ -3495,6 +3509,11 @@ where
                 &&& final(self).pool_archive() == old(self).pool_archive().subrange(0, f)
                 &&& final(self).abs_pool_view() == old(self).abs_pool_archive()[f]
                 &&& final(self).abs_pool_archive() == old(self).abs_pool_archive().subrange(0, f)
+                // the semi-persistence theorem for abstract values: every
+                // class's handle and pool entry are those at mark `target`.
+                &&& forall|id: nat| #[trigger] final(self).abs_value_spec(id) == abs_value_of(
+                        old(self).reprs_dense_archive()[f], old(self).reprs_sparse_archive()[f],
+                        old(self).abs_pool_archive()[f], id)
             }),
     {
         let d = self.min_pool.depth_exec();
