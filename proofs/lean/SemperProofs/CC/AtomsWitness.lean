@@ -1,4 +1,4 @@
-import SemperProofs.CC.Atoms
+import SemperProofs.CC.AtomicOf
 
 /-!
 # A state with leaf constants that meets every hypothesis
@@ -291,6 +291,35 @@ theorem witness_complete : CompleteAtoms (Laws.plainAC 5) wS wst wA none := by
     obtain ⟨rfl, rfl⟩ := h
     exact ⟨2, 2, State.active_withAtoms (stored_active (Or.inl ⟨rfl, rfl⟩)),
       atom_mem (by decide), rfl⟩
+
+/-- A stored node of `wst`. -/
+theorem nodes_mem {p : Monomial 5 × Fin 5} (h : p ∈ wst.nodes) :
+    p = ({0, 1}, 2) ∨ p = ({0, 1, 3}, 4) ∨ p = ({2, 3}, 4) := by
+  simpa only [wst, Set.mem_insert_iff, Set.mem_singleton_iff] using h
+
+/-- **The atomic set of the witness is the one the `atomic` bit defines.**
+The leaf constants `a, b, c, d` are children of stored nodes (`a, b` of
+`{a, b}`, `c, d` of `{c, d}`); class 4 is no child and holds a node. -/
+theorem witness_atomicOf : atomicOf wst = wA := by
+  ext c
+  rw [mem_atomicOf]
+  fin_cases c
+  · exact ⟨fun _ => by decide, fun _ => Or.inl ⟨({0, 1}, 2), by simp [wst], 0, by decide, rfl⟩⟩
+  · exact ⟨fun _ => by decide, fun _ => Or.inl ⟨({0, 1}, 2), by simp [wst], 1, by decide, rfl⟩⟩
+  · exact ⟨fun _ => by decide, fun _ => Or.inl ⟨({2, 3}, 4), by simp [wst], 2, by decide, rfl⟩⟩
+  · exact ⟨fun _ => by decide, fun _ => Or.inl ⟨({2, 3}, 4), by simp [wst], 3, by decide, rfl⟩⟩
+  · refine ⟨fun h => ?_, fun h => absurd h (by decide)⟩
+    rcases h with ⟨p, hp, x, hx, hxc⟩ | h
+    · change x = 4 at hxc
+      subst hxc
+      rcases nodes_mem hp with rfl | rfl | rfl <;> exact absurd hx (by decide)
+    · exact (h ⟨({0, 1, 3}, 4), by simp [wst], rfl⟩).elim
+
+/-- `witness_complete` with the atomic set derived from the bit. -/
+theorem witness_complete_atomic : CompleteAtomic (Laws.plainAC 5) wS wst none := by
+  unfold CompleteAtomic
+  rw [witness_atomicOf]
+  exact witness_complete
 
 /-- The former hypothesis `I0ActiveAll` fails on the stored state: the leaf
 constant `a` holds no node. -/

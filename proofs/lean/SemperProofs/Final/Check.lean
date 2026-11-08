@@ -12,8 +12,10 @@ import SemperProofs.Final.Witness
 #print axioms SemperProofs.Final.saturation_modulo_complete_sub
 #print axioms SemperProofs.Final.saturation_modulo_complete_store
 #print axioms SemperProofs.Final.saturation_modulo_complete_store_atoms
+#print axioms SemperProofs.Final.saturation_modulo_complete_store_atomic
 #print axioms SemperProofs.Final.saturation_modulo_complete_store_engine
 #print axioms SemperProofs.Final.saturation_modulo_complete_store_cover
 #print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete
+#print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete_atomic
 #print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete_cover
 #print axioms SemperProofs.Final.Witness.witness_fires_modulo
