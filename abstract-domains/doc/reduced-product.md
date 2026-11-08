@@ -209,6 +209,9 @@ every operand pair whose comparison equals `t` and never grows an operand.
 The integration design is
 [egraph/doc/future/eclass-analysis.md](../../egraph/doc/future/eclass-analysis.md).
 Nothing in it is implemented yet; this section says what it asks of your code.
+[eclass-analysis-walkthrough.md](../../egraph/doc/future/eclass-analysis-walkthrough.md)
+follows one program through the analysis and shows the `Facts<u8>` record
+stored for each class after every command.
 
 **Four events change a value.** *Make*: a node `f(c1, …, cn)` enters a class
 and its forward transfer evaluates `f` on the children's values. *Merge*: two
