@@ -13,7 +13,9 @@ state, the state is complete":
 - `completion_complete_at_convergence` (`proofs/lean/SemperProofs/CC/Assemble.lean`) and
   its law variants take the hypotheses bundled in `CompleteHyps`
   (`CC/Bridge/Modulo.lean`): `I0Active`, `hcanon`, `RoundFixed` (`nf_present`,
-  `cp_joinable`), `hlaw`, `hnf_ax`, `hcp`, and a minimal-monomial history (`slots`).
+  `cp_joinable`), `hlaw`, `hnf_ax`, `hcp`, a minimal-monomial history (`slots`), and for
+  a cancellative operator lattice closure (`hlat`: active nodes whose count vectors differ
+  by a member of the lattice the equations span are in one class).
 - `saturation_modulo_complete` (`Final/Main.lean`) adds the matching hypotheses:
   `PlansOK`, `RulesWF`, `RoundOK`, `EmitsAll`, `AChain`, and the fixpoint `A.R.Unchanged`.
 
@@ -35,6 +37,7 @@ costs.
 | `hlaw`, `hnf_ax` | the declared laws of an operator | once per signature | constant per operator |
 | `PlansOK`, `RulesWF` | the compiled rules | once per rule, at compilation | linear in the rule |
 | `I0Active` (weakened to classes holding an `f`-node, see `feat/leaf-constants`), `I5`, `hcanon`, `FlatSound` at node level, congruence closure | the final state, node by node | every run | one pass over the nodes |
+| `hlat` (lattice closure, cancellative operators) | the final state, class by class | every run | one echelon form over the rows, the cost of one `lattice_round` |
 | `Converged` outcome, truncation and overflow counters | the run's outcome | every run | constant |
 | `nf_present`, `cp_joinable`, `hcp`, `A.R.Unchanged` | the final state, across pairs of rules or every match | CI only | one completion round, one naive matching round |
 | `slots`, `RoundOK`, `EmitsAll`, `AChain` | the history of the run | replaced by final-state checks | none |
@@ -59,6 +62,7 @@ this kind (stale minimal monomial, stale collapsed flag, stale splice).
 | The stored minimal monomial is clamped by the operator's laws | `hcanon` | an unclamped idempotent or nilpotent count |
 | Every class holding an `f`-node has an active node spelling its minimal monomial; a class with none is a leaf whose normal form is `{c}` | `I0Active` (weakened) | a class whose rule has no node, invisible to matching |
 | No two congruent nodes lie in different classes | the Bridge's congruence premise | a missed congruence after a merge; existing `debug_check_congruent_dup_invariant` |
+| For a cancellative operator, no two classes reduce to the same coset representative modulo the lattice of the final rows, recomputed by an independent echelon form | `hlat` (`LatticeClosed`) | a lattice merge the step missed; `cancel_lattice.egg` before `lattice_round` existed |
 | Outcome is `Converged`; not `AbortedGrowthLimit` or `AbortedWorkLimit` | `Converged` | a budget stop reported as a fixpoint |
 | `flatten_regroup_truncated == 0`, `flatten_skipped == 0` and `flatten_overflowed == 0` for every query of the last round | the bounded enumeration equals the unbounded one (`regroupBounded_query_exact`) | a match lost to a regroup bound; hitting `MAX_ELEMS` skips the whole node and is counted in `flatten_skipped`, not in `flatten_regroup_truncated` |
 

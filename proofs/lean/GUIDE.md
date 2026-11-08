@@ -1041,7 +1041,7 @@ dump of the final state):
 | `hcp` | every critical pair of the rules and law instances is joinable under plain rewriting | reduced per law in `CC/Laws/`; the rule-rule part is assumed | tier 2 |
 | `hcc` | two active nodes with the same monomial share a class | assumed of the engine (hash-consing) | tier 1 |
 | `hS` | every asserted pair is two active nodes of one class | assumed of the input | none |
-| `hcancel` | joinability cancels a common summand | assumed; not an engine fact (Section 5.7) | none |
+| `hcancel` | joinability cancels a common summand | not an engine fact (Section 5.7); `CompleteHyps` replaces it by `hlat` (lattice closure), which the engine establishes | tier 1, as lattice closure |
 
 *Proof* (`CC/Assemble.lean:184-212`):
 
@@ -1292,7 +1292,7 @@ the cases: `nodes` (two stored nodes), `atom_class` (`:317`, a node theory-equal
 | `hcp` | the view's rules, which include `M → {x}` | assumed; not derived from `RoundFixedA` | tier 2 |
 | `hcc` | the stored active nodes | assumed of the engine (hash-consing) | tier 1 |
 | `hS` | the view: an asserted pair may relate a node to a constant | assumed of the input | none |
-| `hcancel` | the view's rules | assumed; not an engine fact (Section 5.7) | none |
+| `hcancel` | the view's rules | not an engine fact (Section 5.7); `CompleteAtoms` takes `hlat : L.cancellative → LatticeClosed L (st.withAtoms A u)` in its place since commit `1be51963` | tier 1, as lattice closure |
 | `A` | a parameter | not derived from the engine's `atomic` bit | none |
 
 `CC/AtomsEngine.lean` restates the engine-level theorems on the view:
@@ -1569,7 +1569,9 @@ that is one pattern `P` with head `f`, two theory-equal active nodes `p` and `p'
 theory, at the class level.
 
 `CompleteHyps` (`CC/Bridge/Modulo.lean:36`) packages the hypotheses of
-`completion_complete_at_convergence` as they appear in Section 5.3, including `hcancel`.
+`completion_complete_at_convergence` as they appear in Section 5.3, with `hcancel` replaced by
+`hlat : L.cancellative → LatticeClosed L st` since commit `1be51963`: `ac_equal_same_class`
+goes through `completion_complete_cancellative_engine` (Section 5.7).
 
 **`saturation_modulo_complete_atoms`** (`Final/Main.lean:255`) is the same statement for a
 completion state with leaf constants. Its completion hypothesis is `CompleteAtoms L S st X u`
@@ -1606,7 +1608,7 @@ state by definition (`represents_withAtoms`, `:77`).
 | `h₀`, `hok` | rule atoms well formed; per round: `WF`, tracking, `Persist`, no subsumption | assumed; `Persist` fails when rebuild drops a unit or collapses a node |
 | `hemit₀`, `hchain` | every naive or variant binding was applied | assumed of the engine's matcher |
 | `hfix` | round `A` changed nothing | assumed here; `engine_stop_unchanged` derives it from the stop test, but this theorem does not use it |
-| `hcomp` | completion has converged | assumed; includes `hcancel`; `CompleteAtoms` in the leaf-constant form |
+| `hcomp` | completion has converged | assumed; includes `hlat` (lattice closure, in place of `hcancel`); `CompleteAtoms` in the leaf-constant form |
 | `henum` | `act` is the set of stored active nodes | definitional |
 | `hG` | the fixpoint snapshot is the represented graph | assumed; the weakest point (Section 7.5); replaced by `SubRep` on the index in `saturation_modulo_complete_store_atoms` (Section 7.7) |
 | `rule.atoms = ...`, `P.head = some f` | the rule's query is one pattern with head `f` | side conditions; no `Eq` atoms, no globals |
@@ -1769,8 +1771,8 @@ branch of `SChainN` is not exercised; the matches are characterized on the concr
 **What remains.** `SubRep`, `CompleteAtoms` and the round facts are still hypotheses: no
 theorem relates the completion state to the rounds or to the engine's rebuild, so the
 theorem says nothing about a run whose index does not hold the active nodes of a converged
-state. `hcancel`, `hcp` and the minimal-monomial hypotheses stay in `CompleteAtoms`
-(Section 10, items 3, 5 and 6), and `StorePersist` assumes recanonicalization is a literal
+state. `hcp` and the minimal-monomial hypotheses stay in `CompleteAtoms`
+(Section 10, items 5 and 6), and `hcancel` is replaced by lattice closure (item 3, resolved), and `StorePersist` assumes recanonicalization is a literal
 map (item 9).
 
 ## 8. Counterexamples and the engine defects they record
@@ -1831,11 +1833,13 @@ marked **new** were found for this edition.
    `saturation_modulo_complete_store_atoms` reads right-hand sides as normal forms on the
    store, and `witness_saturation_modulo_complete` proves all its hypotheses on a run of
    `(rewrite (+ x y) (g x y))` (Section 7.7).
-3. **Still true.** `hcancel` remains in `CompleteHyps`, in `CompleteAtoms`, and in the
-   inverse and combined `_engine` theorems and their `_atoms` versions, although
-   `hcancel_not_derivable` shows the engine does not establish it. The lattice variants
-   `completion_complete_cancellative_engine` and `..._engine_atoms` are not what the bridge
-   uses: `CompleteHyps.ofAtoms` passes `hcancel` through.
+3. **Resolved, by commit `1be51963`.** `CompleteHyps` and `CompleteAtoms` take
+   `hlat : L.cancellative → LatticeClosed` in place of `hcancel`; `CompleteAtoms.same_class`
+   and `ac_equal_same_class` go through `complete_of_latticeClosed` for a cancellative
+   operator and through the rewriting argument, where `hcancel` is vacuous, otherwise. The
+   final theorems are unchanged in statement. `hcancel` remains only in
+   `completion_complete_at_convergence`, `completion_complete_atoms` and the inverse and
+   combined `_engine` theorems, which the bundles no longer use for a cancellative operator.
 4. **Still true, changed in detail.** `hcp` is not derived from `RoundFixed`. The engine
    skips disjoint and containment pairs (`egraph/src/egraph.rs:3881`) and states that the
    normalize pass handles containment; no theorem connects that pass to `hcp`. In the
@@ -1982,9 +1986,9 @@ resolution after the original text.
    `ac_equal_same_class_sub`, `matches_closed_under_theory_sub`; the store theorems take
    `SubRep A.Sa.index st f act ι`, and `saturation_modulo_complete_sub` restates the literal
    form with it.
-3. `hcancel` stays in `CompleteHyps` and `CompleteAtoms`, and the engine does not establish
-   it. Fix: make the bridge take `LatticeClosed` (`completion_complete_cancellative_engine_atoms`)
-   in place of `hcancel`.
+3. *Resolved, commit `1be51963`.* `hcancel` stayed in `CompleteHyps` and `CompleteAtoms`, and
+   the engine does not establish it. Fix applied: the bundles take `LatticeClosed` in place of
+   `hcancel`.
 4. `Env.WF` excludes every nested pattern, so `env_refine` does not cover the plans the
    scheduler emits. Fix: replace the `κ` partition by per-variable binding kinds that allow a
    variable to be both a child class and a joined node, and prove `PlanOK → Env.WF`.

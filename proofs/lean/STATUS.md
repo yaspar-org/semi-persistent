@@ -51,7 +51,7 @@ limits are in the docstrings: a theory-equal term that is absent is matched
 through its class only (`per_node_form_fails`), and maximum partition drops
 a two-item match when its two children classes merge (`NoCollapse`).
 
-Still assumed: `SubRep`, `CompleteAtoms` (with `hcancel`, `hcp` and the
+Still assumed: `SubRep`, `CompleteAtoms` (with `hlat`, `hcp` and the
 minimal-monomial hypotheses) and the round facts; no theorem relates the
 completion state to the rounds or to the engine's rebuild.
 
@@ -63,7 +63,10 @@ completion state to the rounds or to the engine's rebuild.
   nodes are in one class. Hypotheses: minimal-monomial maintenance with the
   refresh (`SlotState.OpsStar`, `I5` initially, `Agrees`), `I0Active`,
   `hcanon`, `RoundFixed`, law facts `hlaw`/`hnf_ax`/`hcp`, `hcc`, `hS`,
-  `hcancel`. Since 2026-11-06 `I0Active` constrains only the classes that
+  `hcancel`. Since 2026-11-08 the bundles `CompleteHyps` and `CompleteAtoms`
+  take `hlat : L.cancellative → LatticeClosed` in its place (commit
+  `1be51963`), so the final theorems rest on what `lattice_round`
+  establishes. Since 2026-11-06 `I0Active` constrains only the classes that
   hold an active node and `hcc` only the active nodes; the former statement
   (`I0ActiveAll`, every class of `Fin n`, which no state with a leaf constant
   meets) is the corollary `completion_complete_at_convergence_of_all`.
