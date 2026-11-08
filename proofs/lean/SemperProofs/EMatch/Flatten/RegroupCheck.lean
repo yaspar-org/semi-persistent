@@ -2,7 +2,7 @@ import SemperProofs.EMatch.Flatten.RegroupNested
 import SemperProofs.EMatch.Flatten.RegroupSkip
 import SemperProofs.EMatch.Flatten.RegroupBounds
 import SemperProofs.EMatch.Flatten.RegroupLaws
-import SemperProofs.EMatch.Flatten.FoldEnum
+import SemperProofs.EMatch.Flatten.FoldRegroup
 
 /-! Axiom audit for regrouped views (`RegroupDefs.lean`, `Regroup.lean`,
 `RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`, `RegroupChain.lean`,
@@ -263,7 +263,8 @@ truncated, not skipped, no overflow. -/
 
 end Semper.EMatch.Flatten
 
-/-! The executable fold enumerator against the spine trees (`FoldEnum.lean`). -/
+/-! The executable fold enumerator against the spine trees (`FoldEnum.lean`) and
+regrouped views of folds (`FoldRegroup.lean`). -/
 
 #print axioms Semper.EMatch.Flatten.rawNodeD_sub_both
 #print axioms Semper.EMatch.Flatten.baseRecsR_sub_both
@@ -279,6 +280,26 @@ end Semper.EMatch.Flatten
 #print axioms Semper.EMatch.Flatten.enumerateLD_right_iff
 #print axioms Semper.EMatch.Flatten.enumerateLD_left_sound
 #print axioms Semper.EMatch.Flatten.enumerateLD_right_sound
+#print axioms Semper.EMatch.Flatten.regroupsTo_left_sound
+#print axioms Semper.EMatch.Flatten.regroupsTo_right_sound
+#print axioms Semper.EMatch.Flatten.regroupStep_left_sound
+#print axioms Semper.EMatch.Flatten.regroupStep_right_sound
+#print axioms Semper.EMatch.Flatten.regroupChain_left_sound
+#print axioms Semper.EMatch.Flatten.regroupChain_right_sound
+#print axioms Semper.EMatch.Flatten.baseRecsR_views_iff
+#print axioms Semper.EMatch.Flatten.baseRecsR_left_views_iff
+#print axioms Semper.EMatch.Flatten.baseRecsR_right_views_iff
+#print axioms Semper.EMatch.Flatten.reach_lfold_left
+#print axioms Semper.EMatch.Flatten.reach_rfold_right
+#print axioms Semper.EMatch.Flatten.regroup_views_sound_left
+#print axioms Semper.EMatch.Flatten.regroupSkip_views_sound_left
+#print axioms Semper.EMatch.Flatten.regroup_views_sound_right
+#print axioms Semper.EMatch.Flatten.regroupSkip_views_sound_right
+#print axioms Semper.EMatch.Flatten.regroup_chain_left_sound
+#print axioms Semper.EMatch.Flatten.regroup_chain_right_sound
+#print axioms Semper.EMatch.Flatten.reach_den_assoc_dir
+#print axioms Semper.EMatch.Flatten.regroup_views_sound_assoc_laws_dir
+#print axioms Semper.EMatch.Flatten.regroupSkip_views_sound_assoc_laws_dir
 
 namespace Semper.EMatch.Flatten
 

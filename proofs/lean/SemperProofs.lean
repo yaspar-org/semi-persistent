@@ -22,6 +22,7 @@ import SemperProofs.EMatch.Flatten.RegroupSkipDefs
 import SemperProofs.EMatch.Flatten.RegroupSkip
 import SemperProofs.EMatch.Flatten.RegroupLaws
 import SemperProofs.EMatch.Flatten.FoldEnum
+import SemperProofs.EMatch.Flatten.FoldRegroup
 import SemperProofs.EMatch.Steps.Main
 import SemperProofs.EMatch.Env.Main
 import SemperProofs.EMatch.Env.Plans
