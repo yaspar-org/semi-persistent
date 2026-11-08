@@ -172,6 +172,19 @@ def BSt.fitStep (B : Bounds) (ix : Ix) (ctx : Ctx) (laws : Laws) (w : View)
 def isCand (w : View) (gg : C × List (C × Nat)) : Bool :=
   gg.2.any (fun e => decide (e.1 ∈ w.map Prod.fst))
 
+/-- The candidates of the view `w` as the engine gathers them: the filed
+`f`-members on the use list `by_contains[c]` of a class `c` of the view,
+that is, holding a class of the view, sorted by node id. -/
+def groupsOfEngineAt (ctx : Ctx) (w : View) : List (C × List (C × Nat)) :=
+  (groupsOfEngine ctx).filter (isCand w)
+
+/-- The engine's regrouping with the candidates of each view read from the
+use lists of its classes (`regroupAllSkip` reads every filed `f`-member for
+every view; `regroupAllSkipAt_eq`, `RegroupBounds.lean`, equates them). -/
+def regroupAllSkipAt (ctx : Ctx) (dir : Dir) (laws : Laws) (base : List RecR) : List RecR :=
+  (SkipSt.runAt ctx dir laws (groupsOfEngineAt ctx) (skipFuel ctx dir laws base)
+    (SkipSt.init base)).records
+
 /-- One candidate group (`SkipSt.groupStep`): its children counted and
 checked against the work bound, then every fit. A group that is not a
 candidate is not examined. -/

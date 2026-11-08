@@ -15,6 +15,7 @@ rule, flag and pruning (`EngineRule.lean`), its completeness
 #print axioms Semper.EMatch.Flatten.nonInertB_imp_mayNonInert
 #print axioms Semper.EMatch.Flatten.prune_engine
 #print axioms Semper.EMatch.Flatten.demand_engine_complete_ac
+#print axioms Semper.EMatch.Flatten.twoClassesL_of_members
 #print axioms Semper.EMatch.Flatten.demand_engine_complete_aci
 #print axioms Semper.EMatch.Flatten.demand_engine_complete_assoc
 #print axioms Semper.EMatch.Flatten.takenOf_takeable

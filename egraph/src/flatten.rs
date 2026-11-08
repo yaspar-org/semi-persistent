@@ -225,6 +225,22 @@ pub enum OverflowCause<G, M> {
     Sum { class: G, counts: Vec<M> },
 }
 
+/// The total count of a view, the order in which views are regrouped
+/// ([`FlattenScratch::regroup`]): the sum, as a `u128`, of its counts read as `u64`, and
+/// how many did not fit a `u64` and were read as `u64::MAX`. Two views with such a count
+/// can have equal sizes, and the order would then pop a target after its source: the
+/// caller counts such a view in `flatten_overflowed`, which the exactness theorem
+/// requires zero (`regroupBounded_query_exact`, `proofs/lean`, `RegroupBounds.lean`), and
+/// skips the fit that produced it (`Ix.wide`).
+fn saturated_size(counts: impl IntoIterator<Item = Option<u64>>) -> (u128, usize) {
+    counts
+        .into_iter()
+        .fold((0u128, 0usize), |(sum, wide), c| match c {
+            Some(c) => (sum + u128::from(c), wide),
+            None => (sum + u128::from(u64::MAX), wide + 1),
+        })
+}
+
 /// The enumerator's state, reused across nodes. The views of the last
 /// [`enumerate`] are [`FlattenScratch::views`].
 #[derive(Debug)]
@@ -255,8 +271,9 @@ pub struct FlattenScratch<G, M> {
     needs: Vec<G>,
     /// Regrouping stopped at a bound ([`MAX_REGROUP_VIEWS`], [`MAX_REGROUP_WORK`]).
     regroup_truncated: bool,
-    /// Views and openings of the last enumeration skipped for [`MULT_OVERFLOW`], and the
-    /// first of them.
+    /// Views and openings of the last enumeration skipped for [`MULT_OVERFLOW`], views
+    /// whose count past `u64::MAX` saturates the regrouping order ([`saturated_size`]),
+    /// and the first of the former.
     overflows: usize,
     first_overflow: Option<FlattenOverflow<G, M>>,
     /// The node being enumerated, for [`FlattenOverflow::node`].
@@ -395,7 +412,8 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     }
 
     /// Views and openings of the last enumeration skipped because a count did not fit
-    /// the multiplicity width ([`MULT_OVERFLOW`]).
+    /// the multiplicity width ([`MULT_OVERFLOW`]), and views whose count did not fit a
+    /// `u64` in the regrouping order ([`saturated_size`]).
     pub fn overflows(&self) -> usize {
         self.overflows
     }
@@ -720,12 +738,9 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     {
         use crate::nary_canon::Normal;
         use std::collections::{BinaryHeap, HashMap};
-        // The total count of a view, the order in which views are regrouped.
-        let size = |v: &[(G, M)]| -> u128 {
-            v.iter()
-                .map(|e| u128::from(e.1.to_u64().unwrap_or(u64::MAX)))
-                .sum()
-        };
+        // The total count of a view, the order in which views are regrouped, and how many
+        // of its counts were read as `u64::MAX` for not fitting a `u64`.
+        let size = |v: &[(G, M)]| saturated_size(v.iter().map(|e| e.1.to_u64()));
         // Per distinct view: its span in `elems`, its records, and whether it is done.
         let mut entries: Vec<(usize, usize, Vec<usize>, bool)> = Vec::new();
         let mut by_content: HashMap<Vec<(G, M)>, usize> = HashMap::new();
@@ -733,11 +748,22 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
         for r in 0..self.recs.len() {
             let Rec { start, len, .. } = self.recs[r];
             let content = self.elems[start..start + len].to_vec();
-            let e = *by_content.entry(content).or_insert_with(|| {
-                entries.push((start, len, Vec::new(), false));
-                heap.push((size(&self.elems[start..start + len]), entries.len() - 1));
-                entries.len() - 1
-            });
+            let e = match by_content.get(&content) {
+                Some(&e) => e,
+                None => {
+                    // A count past `u64::MAX` saturates the order: counted in
+                    // `flatten_overflowed`, which the exactness theorem requires zero
+                    // (`regroupBounded_query_exact`).
+                    let (s, wide) = size(&content);
+                    if wide > 0 {
+                        self.overflows = self.overflows.saturating_add(1);
+                    }
+                    entries.push((start, len, Vec::new(), false));
+                    heap.push((s, entries.len() - 1));
+                    by_content.insert(content, entries.len() - 1);
+                    entries.len() - 1
+                }
+            };
             entries[e].2.push(r);
         }
         let (mut views, mut work) = (0usize, 0usize);
@@ -804,9 +830,18 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                         }
                         Normal::Unit | Normal::Single(_) | Normal::Empty => continue,
                     }
+                    // A count past `u64::MAX` saturates the order: the fit is skipped and
+                    // counted, as one whose normalization overflows the width (`Ix.wide`,
+                    // `RegroupBoundsDefs.lean`).
+                    let (fresh_size, wide) = size(&fresh);
+                    if wide > 0 {
+                        self.overflows = self.overflows.saturating_add(1);
+                        continue;
+                    }
                     let target = match by_content.get(fresh.as_slice()) {
-                        // Not smaller than a view already regrouped: only a count past
-                        // u64 saturates the order.
+                        // A view already regrouped. Every count of every view read exactly
+                        // (above), a regrouped view is strictly smaller than its source
+                        // (`regroupRec_shrink`, `RegroupSkip.lean`), so this does not fire.
                         Some(&t) if entries[t].3 => continue,
                         Some(&t) => t,
                         None => {
@@ -818,7 +853,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                             entries.push((s, fresh.len(), Vec::new(), false));
                             let t = entries.len() - 1;
                             by_content.insert(fresh.clone(), t);
-                            heap.push((size(&fresh), t));
+                            heap.push((fresh_size, t));
                             t
                         }
                     };
@@ -1539,4 +1574,38 @@ where
             Ok((view, d))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::saturated_size;
+    use num_bigint::BigUint;
+
+    /// A count past `u64::MAX`, from a `u128` or an unbounded integer, reads as
+    /// `u64::MAX` and counts as one overflow; counts that fit are summed exactly.
+    #[test]
+    fn saturated_size_counts_a_count_past_u64() {
+        let read = |c: u128| u64::try_from(c).ok();
+        assert_eq!(saturated_size([1u128, 2, 3].map(read)), (6, 0));
+        assert_eq!(
+            saturated_size([u128::from(u64::MAX)].map(read)),
+            (u128::from(u64::MAX), 0)
+        );
+        let past = u128::from(u64::MAX) + 1;
+        assert_eq!(
+            saturated_size([past, 1].map(read)),
+            (u128::from(u64::MAX) + 1, 1)
+        );
+        assert_eq!(
+            saturated_size([past, past].map(read)),
+            (2 * u128::from(u64::MAX), 2)
+        );
+        let read_big = |c: &BigUint| u64::try_from(c).ok();
+        let big = BigUint::from(u64::MAX) + BigUint::from(1u32);
+        assert_eq!(
+            saturated_size([read_big(&big), read_big(&BigUint::from(7u32))]),
+            (u128::from(u64::MAX) + 7, 1)
+        );
+        assert_eq!(saturated_size(std::iter::empty()), (0, 0));
+    }
 }

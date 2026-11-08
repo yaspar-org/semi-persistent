@@ -83,6 +83,22 @@ def groupsOfEngine (ctx : Ctx) : List (C × List (C × Nat)) :=
   (((ctx.G.nodes.filter (fun p => ctx.filed p.1 && decide (p.2.op = ctx.f))).mergeSort
     (fun a b => decide (a.1 ≤ b.1))).map (fun p => (ctx.G.find p.1, kids ctx.κ p.2.children)))
 
+/-- `gs` holds every filed `f`-member with a fit in the view `w`. The engine
+reads the candidates of `w` from the use lists `by_contains[c]` of its
+classes, so a member holding no class of `w` is not a candidate; such a
+member has no fit (`fitsR_nil_of_not_cand`, `RegroupBounds.lean`), and the
+loop needs only the members with one. -/
+def CandSupAt (ctx : Ctx) (dir : Dir) (w : View) (gs : List (C × List (C × Nat))) : Prop :=
+  ∀ gg ∈ groupsOf ctx, ∀ raw, raw ∈ fitsR ctx.κ dir w gg.1 gg.2 → gg ∈ gs
+
+/-- `CandSupAt` for every view. -/
+def CandSup (ctx : Ctx) (dir : Dir) (gs : List (C × List (C × Nat))) : Prop :=
+  ∀ w, CandSupAt ctx dir w gs
+
+theorem candSup_of_sup {ctx : Ctx} (dir : Dir) {gs : List (C × List (C × Nat))}
+    (h : ∀ gg ∈ groupsOf ctx, gg ∈ gs) : CandSup ctx dir gs :=
+  fun _ gg hgg _ _ => h gg hgg
+
 /-- The state of the engine's loop: the entries (distinct views) in order,
 each view's records in insertion order, whether it was regrouped, and the
 signatures of the records regrouping added to it. -/
@@ -151,6 +167,17 @@ def SkipSt.run (ctx : Ctx) (dir : Dir) (laws : Laws) (gs : List (C × List (C ×
       match st.next with
       | none => st
       | some w => SkipSt.run ctx dir laws gs n (SkipSt.regroupView ctx dir laws gs w (st.mark w))
+
+/-- The loop with the candidates chosen per view: `SkipSt.run` with `gs w`
+for the view `w` (the engine reads them from the use lists of `w`'s
+classes, `groupsOfEngineAt`, `RegroupBoundsDefs.lean`). -/
+def SkipSt.runAt (ctx : Ctx) (dir : Dir) (laws : Laws)
+    (gs : View → List (C × List (C × Nat))) : Nat → SkipSt → SkipSt
+  | 0, st => st
+  | n + 1, st =>
+      match st.next with
+      | none => st
+      | some w => SkipSt.runAt ctx dir laws gs n (SkipSt.regroupView ctx dir laws (gs w) w (st.mark w))
 
 /-- Enter one walk record. -/
 def SkipSt.enter (st : SkipSt) (r : RecR) : SkipSt :=

@@ -485,6 +485,72 @@ theorem fitsR_nil_of_not_cand {κ : FlatKind} {dir : Dir} {w : View} {gg : C × 
       have := isCand_of_fitsR (hf ▸ List.mem_cons_self .. : raw ∈ fitsR κ dir w gg.1 gg.2)
       rw [h] at this; simp at this
 
+/-! ## The engine's candidates -/
+
+/-- A member holding no class of the view adds nothing. -/
+theorem groupStep_not_cand {ctx : Ctx} {dir : Dir} {laws : Laws} {w : View} {st : SkipSt}
+    {gg : C × List (C × Nat)} (h : isCand w gg = false) :
+    SkipSt.groupStep ctx dir laws w st gg = st := by
+  unfold SkipSt.groupStep
+  rw [fitsR_nil_of_not_cand h]
+  rfl
+
+/-- Regrouping a view with the candidates holding a class of it, or with every
+member, gives the same state. -/
+theorem regroupView_filter_cand (ctx : Ctx) (dir : Dir) (laws : Laws)
+    (gs : List (C × List (C × Nat))) (w : View) (st : SkipSt) :
+    SkipSt.regroupView ctx dir laws (gs.filter (isCand w)) w st =
+      SkipSt.regroupView ctx dir laws gs w st := by
+  unfold SkipSt.regroupView
+  induction gs generalizing st with
+  | nil => rfl
+  | cons gg gs ih =>
+      by_cases hc : isCand w gg = true
+      · rw [List.filter_cons_of_pos hc, List.foldl_cons, List.foldl_cons]
+        exact ih _
+      · rw [List.filter_cons_of_neg hc, List.foldl_cons,
+          groupStep_not_cand (Bool.of_not_eq_true hc)]
+        exact ih _
+
+/-- The loop with candidates chosen per view is the loop with one list when
+each view's candidates regroup it the same way. -/
+theorem runAt_eq_run (ctx : Ctx) (dir : Dir) (laws : Laws)
+    (gs : View → List (C × List (C × Nat))) (gsAll : List (C × List (C × Nat)))
+    (h : ∀ w st, SkipSt.regroupView ctx dir laws (gs w) w st =
+      SkipSt.regroupView ctx dir laws gsAll w st) :
+    ∀ n st, SkipSt.runAt ctx dir laws gs n st = SkipSt.run ctx dir laws gsAll n st := by
+  intro n
+  induction n with
+  | zero => intro st; rfl
+  | succ n ih =>
+      intro st
+      unfold SkipSt.runAt SkipSt.run
+      cases st.next with
+      | none => rfl
+      | some w => simp only [h, ih]
+
+/-- **The engine's candidates give the model's records**: the loop reading
+each view's candidates from the use lists of its classes
+(`groupsOfEngineAt`) ends with the records of the loop over every filed
+`f`-member. -/
+theorem regroupAllSkipAt_eq (ctx : Ctx) (dir : Dir) (laws : Laws) (base : List RecR) :
+    regroupAllSkipAt ctx dir laws base = regroupAllSkip ctx dir laws base := by
+  unfold regroupAllSkipAt regroupAllSkip regroupSkipG regroupSkipN
+  rw [runAt_eq_run ctx dir laws (groupsOfEngineAt ctx) (groupsOfEngine ctx)
+    (fun w st => regroupView_filter_cand ctx dir laws (groupsOfEngine ctx) w st)]
+
+/-- The engine's candidates of a view are filed `f`-members. -/
+theorem groupsOfEngineAt_sub (ctx : Ctx) (w : View) :
+    ∀ gg ∈ groupsOfEngineAt ctx w, gg ∈ groupsOf ctx :=
+  fun gg h => groupsOfEngine_sub ctx gg (List.mem_filter.1 h).1
+
+/-- The engine's candidates of a view hold every member with a fit in it:
+the restated `hgs'` of `regroupView_spec`, `RegroupSkip.lean`. -/
+theorem groupsOfEngineAt_candSupAt (ctx : Ctx) (dir : Dir) (w : View) :
+    CandSupAt ctx dir w (groupsOfEngineAt ctx w) := by
+  intro gg hgg raw hraw
+  exact List.mem_filter.2 ⟨groupsOfEngine_sup ctx gg hgg, isCand_of_fitsR hraw⟩
+
 theorem addTarget_projR (t : View) (ds : List RecR) :
     ProjR (fun b => b.addTarget Bounds.none t ds) (fun s => s.addTarget t ds) := by
   intro b hb ho
@@ -974,7 +1040,7 @@ theorem cov_skip {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR}
     (hl : r.2.2.length ≤ limit) :
     ∃ c ∈ withinLimit limit (regroupSkipG ctx dir laws (groupsOfEngine ctx) base), Cov c r := by
   obtain ⟨hs, hc⟩ := regroupSkipG_spec (dir := dir) (laws := laws) hb (groupsOfEngine_sub ctx)
-    (groupsOfEngine_sup ctx)
+    (candSup_of_sup dir (groupsOfEngine_sup ctx))
   obtain ⟨c, hc', hcov⟩ := hc r hr
   exact ⟨c, mem_withinLimit.2 ⟨hc', le_trans (hcov.length (reach_good hb (hs c hc')).2) hl⟩, hcov⟩
 
@@ -1024,7 +1090,7 @@ theorem enumerateRDBounded_ge (h : (enumerateRDBounded B ix T ctx dir laws limit
     refine viewLe_of_cov (fun r hr => ?_)
     obtain ⟨hr, hl⟩ := mem_withinLimit.1 hr
     have hreach := (regroupSkipG_spec (dir := dir) (laws := laws) hb (groupsOfEngine_sub ctx)
-      (groupsOfEngine_sup ctx)).1 r hr
+      (candSup_of_sup dir (groupsOfEngine_sup ctx))).1 r hr
     exact ⟨r, mem_base_of_reach hd hreach (List.eq_nil_of_length_eq_zero (Nat.le_zero.1 hl)),
       Cov.refl r⟩
   · split

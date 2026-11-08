@@ -435,7 +435,7 @@ theorem reach_of_mem_enumerateRSkip {ctx : Ctx} {dir : Dir} {laws : Laws} {limit
   unfold enumerateRSkip at h
   obtain ⟨r, hr, rfl⟩ := mem_enumerateFromR h
   exact ⟨r, (regroupSkipG_spec (baseGood_baseRecsR ctx dir laws n) (groupsOfEngine_sub ctx)
-    (groupsOfEngine_sup ctx)).1 r (mem_withinLimit.1 hr).1, rfl⟩
+    (candSup_of_sup dir (groupsOfEngine_sup ctx))).1 r (mem_withinLimit.1 hr).1, rfl⟩
 
 section ACViews
 
