@@ -427,7 +427,9 @@ where
     /// appropriate cache with the correct canonization strategy.
     /// `g_buf` — scratch for PlainN/A/ACI (child type G).
     /// `mset_buf` — scratch for MSet children (child type `C` = `(G, mult)`).
-    /// `collisions` — destination for collision pairs to push onto worklist.
+    /// `collisions`: destination for collision pairs to push onto worklist. Returns the
+    /// canonization's result and whether a law changed the children beyond `find`
+    /// (`VarCanon::law_applied`).
     /// `unit_of` resolves an op to its identity (unit) **class** as of this rebuild
     /// (the caller composes the per-op unit node with `find`), or `None` for ops without
     /// a declared identity. It feeds the class-relative unit-drop law into MSet/Set
@@ -443,33 +445,33 @@ where
         collisions: &mut Vec<(G, G)>,
         touched: &mut Vec<G>,
         ops: &OpRegistry<O, S, TRACK>,
-    ) -> crate::nary_canon::Normal<G>
+    ) -> (crate::nary_canon::Normal<G>, bool)
     where
         MSetCanon: VarCanon<G, C>,
     {
         use crate::canon::CanonMode;
         use crate::nary_canon::Normal;
         match self.routing.get(id) {
-            NodeRef::Plain0(_) => Normal::Node,
+            NodeRef::Plain0(_) => (Normal::Node, false),
             NodeRef::Plain1(l) => {
                 self.plain1
                     .recanonize_node::<PlainCanon>(l, &find, collisions, touched);
-                Normal::Node
+                (Normal::Node, false)
             }
             NodeRef::Plain2(l) => {
                 self.plain2
                     .recanonize_node::<PlainCanon>(l, &find, collisions, touched);
-                Normal::Node
+                (Normal::Node, false)
             }
             NodeRef::Plain3(l) => {
                 self.plain3
                     .recanonize_node::<PlainCanon>(l, &find, collisions, touched);
-                Normal::Node
+                (Normal::Node, false)
             }
             NodeRef::SPair(l) => {
                 self.spair
                     .recanonize_node::<CCanon>(l, &find, collisions, touched);
-                Normal::Node
+                (Normal::Node, false)
             }
             NodeRef::PlainN(l) => self.plain_n.recanonize_node::<OrderedCanon>(
                 l,
@@ -509,7 +511,7 @@ where
                 self.set
                     .recanonize_node::<SetCanon>(l, &find, g_buf, collisions, touched, mode)
             }
-            NodeRef::Lit(_) => Normal::Node,
+            NodeRef::Lit(_) => (Normal::Node, false),
         }
     }
 

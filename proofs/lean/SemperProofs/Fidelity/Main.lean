@@ -2,6 +2,7 @@ import SemperProofs.Fidelity.Index
 import SemperProofs.Fidelity.Subsume
 import SemperProofs.Fidelity.ByOpPolicy
 import SemperProofs.Fidelity.Normalize
+import SemperProofs.Fidelity.Recanon
 import SemperProofs.Fidelity.NormalizeSat
 import SemperProofs.Fidelity.Sound
 
@@ -21,6 +22,11 @@ model assumed more than the engine does:
 * `Normalize`, `NormalizeSat`: right-hand sides present as `add`'s normal
   forms (`DenN`, `fired_after_actions_N`, `saturation_complete_N`,
   `den_misses_single`).
+* `Recanon`: recanonicalization as the laws apply it (`StorePersistN`: a
+  unit drop, a count clamp or a degenerate arity at rebuild), under which
+  n-ary right-hand sides need not persist (`denN_persist_fails`); the
+  saturation theorems route the rules that build them naive after such a
+  round.
 * `Sound`: what the actions build denotes the right-hand side in every model
   (`denN_sound`, `firedN_sound`, `union_recorded_sound`).
 -/

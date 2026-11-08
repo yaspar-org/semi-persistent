@@ -8,6 +8,10 @@ import SemperProofs.Fidelity.StopTest
 #print axioms Semper.EMatch.Fidelity.Phase.stamp_counts
 #print axioms Semper.EMatch.Fidelity.Phase.stamp_ne
 #print axioms Semper.EMatch.Fidelity.engine_stop_idle
+#print axioms Semper.EMatch.Fidelity.Completion.Steps.eq_of_none
+#print axioms Semper.EMatch.Fidelity.CompletionRun.idle
+#print axioms Semper.EMatch.Fidelity.CompletionRun.converged_fixed
+#print axioms Semper.EMatch.Fidelity.EnginePhase.rebuild_idle
 #print axioms Semper.EMatch.Fidelity.EnginePhase.after_eq
 #print axioms Semper.EMatch.Fidelity.engine_stop_unchanged
 #print axioms Semper.EMatch.Fidelity.engine_stop_unchanged_N

@@ -71,13 +71,13 @@ def transport (R : Round) (σ : Binding) : Binding where
     (R.transport σ).finRest r = (σ.finRest r).map (Finset.image R.after.find) := rfl
 
 /-- The new `find` of an old representative is the new `find` of the class. -/
-theorem find_before {R : Round} (hwf : R.WF) (hp : R.Persist) (c : C) :
+theorem find_before {R : Round} (hwf : R.WF) (hb : R.before.FindIdem) (c : C) :
     R.after.find (R.before.find c) = R.after.find c :=
-  hwf.no_split _ _ (hp.before_find_idem c)
+  hwf.no_split _ _ (hb c)
 
-theorem find_comp_before {R : Round} (hwf : R.WF) (hp : R.Persist) :
+theorem find_comp_before {R : Round} (hwf : R.WF) (hb : R.before.FindIdem) :
     R.after.find ∘ R.before.find = R.after.find :=
-  funext (find_before hwf hp)
+  funext (find_before hwf hb)
 
 theorem find_comp_self {R : Round} (hwf : R.WF) :
     R.after.find ∘ R.after.find = R.after.find :=
@@ -100,8 +100,8 @@ round is built after it, at the same nodes, with the new value. -/
 theorem den_transport {R : Round} (hwf : R.WF) (hp : R.Persist) (hsub : R.subsumed = ∅)
     {σ : Binding} {t : Pat} {c : C} (h : Den R.before σ t c) :
     Den R.after (R.transport σ) t (R.after.find c) := by
-  have hfb := Round.find_before hwf hp
-  have hfc := Round.find_comp_before hwf hp
+  have hfb := Round.find_before hwf hp.before_find_idem
+  have hfc := Round.find_comp_before hwf hp.before_find_idem
   have hff := Round.find_comp_self hwf
   have hfi : ∀ c, R.after.find (R.after.find c) = R.after.find c := hwf.find_idem
   have hpers : ∀ id n, (id, n) ∈ R.before.nodes →
@@ -373,7 +373,7 @@ theorem atomSat_transport {R : Round} (hwf : R.WF) (hp : R.Persist) {σ : Bindin
   subst hop'
   have hnc' := hnc id n hid hmem
   refine ⟨id, ⟨n.op, ch⟩, hid, hmem', ?_, hop, ?_⟩
-  · simp [hcls, Round.find_before hwf hp]
+  · simp [hcls, Round.find_before hwf hp.before_find_idem]
   rcases a with ⟨nv, aop, shape⟩
   simp only at hop
   cases shape with
@@ -529,5 +529,131 @@ theorem matches_transport {R : Round} (hwf : R.WF) (hp : R.Persist) {atoms : Lis
   rest r := by rw [← h.rest r]; simp
   seqRest r := by rw [← h.seqRest r]; simp
   finRest r := by rw [← h.finRest r]; simp
+
+end Semper.EMatch
+
+/-! ## Persistence of the fixed-arity nodes only
+
+`recanonize_node` maps the children of a tuple, pair or sequence node
+through `find` and nothing else (`canon.rs`, `PlainCanon`, `CCanon`,
+`OrderedCanon`). For a multiset or set node it also drops the unit's class
+and clamps the counts (`MSetCanon`, `SetCanon`), and a degenerate result
+merges the node's class with a leaf (`degeneracy_pair`). `Round.PersistFixed`
+states only the first: it is what every rebuild establishes, and it
+carries the instances of the rules whose right-hand sides build no n-ary
+term (`fired_transport_fixed'`). The rules that do are re-matched in full
+after a round whose rebuild was not literal (`Saturate/Invariant.lean`,
+`route`). -/
+
+namespace Semper.EMatch
+
+/-- `CanonCh` of canonical children by the identity. -/
+theorem canonCh_self {G : Graph} {ch : Children} (hc : Children.Canon G ch) :
+    CanonCh G.find ch ch := by
+  cases ch with
+  | tuple cs =>
+      show cs = cs.map G.find
+      have hc' : ∀ c ∈ cs, G.find c = _root_.id c := hc
+      rw [List.map_congr_left hc', List.map_id]
+  | spair a b => exact Or.inl ⟨hc.1.symm, hc.2.symm⟩
+  | seq cs =>
+      show cs = cs.map G.find
+      have hc' : ∀ c ∈ cs, G.find c = _root_.id c := hc
+      rw [List.map_congr_left hc', List.map_id]
+  | mset m =>
+      show m = m.map G.find
+      have hc' : ∀ c ∈ m, G.find c = _root_.id c := hc
+      rw [Multiset.map_congr rfl hc', Multiset.map_id]
+  | set s =>
+      show s = s.image G.find
+      have hc' : Set.EqOn G.find _root_.id s := fun x hx => hc x hx
+      rw [Finset.image_congr hc', Finset.image_id]
+
+namespace Round
+
+/-- The fixed-arity and sequence nodes persist literally: what
+`recanonize_node` does to a tuple, pair or sequence node. -/
+structure PersistFixed (R : Round) : Prop where
+  before_find_idem : R.before.FindIdem
+  persist : ∀ id n, (id, n) ∈ R.before.nodes → id ∉ R.subsumed →
+    n.children.isVariadic = false →
+    ∃ n', (id, n') ∈ R.after.nodes ∧ n'.op = n.op ∧ CanonCh R.after.find n.children n'.children
+
+theorem Persist.toFixed {R : Round} (hp : R.Persist) : R.PersistFixed where
+  before_find_idem := hp.before_find_idem
+  persist := fun id n hmem hsub _ => hp.persist id n hmem hsub
+
+end Round
+
+/-- `den_transport` for a term without n-ary application: only the
+fixed-arity nodes need to persist. -/
+theorem den_transport_fixed {R : Round} (hwf : R.WF) (hp : R.PersistFixed)
+    (hsub : R.subsumed = ∅) {σ : Binding} {t : Pat} (ht : t.hasNary = false) {c : C}
+    (h : Den R.before σ t c) : Den R.after (R.transport σ) t (R.after.find c) := by
+  have hfb := Round.find_before hwf hp.before_find_idem
+  have hpers : ∀ id n, (id, n) ∈ R.before.nodes → n.children.isVariadic = false →
+      ∃ n', (id, n') ∈ R.after.nodes ∧ n'.op = n.op ∧
+        CanonCh R.after.find n.children n'.children :=
+    fun id n hmem hv => hp.persist id n hmem (by simp [hsub]) hv
+  induction h with
+  | var hx =>
+      rw [hfb, ← hwf.find_idem]
+      exact Den.var (by simp [hx])
+  | plain hl hall hmem ih =>
+      rename_i f args cs id
+      have hargs : ∀ p ∈ args, p.hasNary = false :=
+        Pat.hasNaryList_eq_false.1 (by simpa [Pat.hasNary] using ht)
+      obtain ⟨⟨op, ch⟩, hmem', hop, hch⟩ := hpers _ _ hmem rfl
+      cases ch <;> simp [CanonCh] at hch
+      simp only at hop
+      subst hop hch
+      rw [hfb]
+      refine Den.plain (by simp [hl]) ?_ hmem'
+      intro pc hpc
+      rw [List.zip_map_right, List.mem_map] at hpc
+      obtain ⟨pc', hpc', rfl⟩ := hpc
+      exact ih pc' hpc' (hargs _ (List.of_mem_zip hpc').1)
+  | comm ha hb hmem iha ihb =>
+      rename_i f p q a b id
+      have hpq : p.hasNary = false ∧ q.hasNary = false := by simpa [Pat.hasNary] using ht
+      rw [hfb]
+      rcases hmem with hmem | hmem
+      · obtain ⟨⟨op, ch⟩, hmem', hop, hch⟩ := hpers _ _ hmem rfl
+        cases ch <;> simp [CanonCh] at hch
+        simp only at hop
+        subst hop
+        rcases hch with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+        · exact Den.comm (iha hpq.1) (ihb hpq.2) (Or.inl hmem')
+        · exact Den.comm (iha hpq.1) (ihb hpq.2) (Or.inr hmem')
+      · obtain ⟨⟨op, ch⟩, hmem', hop, hch⟩ := hpers _ _ hmem rfl
+        cases ch <;> simp [CanonCh] at hch
+        simp only at hop
+        subst hop
+        rcases hch with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+        · exact Den.comm (iha hpq.1) (ihb hpq.2) (Or.inr hmem')
+        · exact Den.comm (iha hpq.1) (ihb hpq.2) (Or.inl hmem')
+  | assoc => simp [Pat.hasNary] at ht
+  | ac => simp [Pat.hasNary] at ht
+  | aci => simp [Pat.hasNary] at ht
+
+/-- `fired_transport'` for a rule that builds no n-ary term. -/
+theorem fired_transport_fixed' {R : Round} (hwf : R.WF) (hp : R.PersistFixed)
+    (hsub : R.subsumed = ∅) {σ : Binding} {rule : Rule} (hr : rule.buildsNary = false)
+    (h : Fired R.before σ rule) : Fired R.after σ rule := by
+  have hr' : ∀ act ∈ rule.actions, act.hasNary = false := by
+    simpa [Rule.buildsNary, List.any_eq_false] using hr
+  rw [← fired_transport_iff hwf]
+  intro act hact
+  have hn := hr' act hact
+  have := h act hact
+  cases act with
+  | insert t =>
+      obtain ⟨c, hc⟩ := this
+      exact ⟨_, den_transport_fixed hwf hp hsub (by simpa [Action.hasNary] using hn) hc⟩
+  | union a b =>
+      obtain ⟨c, ha, hb⟩ := this
+      have hab : a.hasNary = false ∧ b.hasNary = false := by simpa [Action.hasNary] using hn
+      exact ⟨_, den_transport_fixed hwf hp hsub hab.1 ha, den_transport_fixed hwf hp hsub hab.2 hb⟩
+  | subsume _ => trivial
 
 end Semper.EMatch

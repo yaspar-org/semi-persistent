@@ -13,8 +13,12 @@ for nested patterns, 2026-11-06 (branch `feat/real-rules`).
 `saturation_modulo_complete_store_atoms` (`Final/Store.lean`): for a chain of
 store rounds with normalized right-hand sides (`SActRoundN`: round 0 naive,
 then semi-naive rounds; rebuild's round facts, merge tracking on,
-`StorePersist`, `:subsume` allowed, well-formed rules and plans, every
-variant or naive match emitted per round), at a round that changed nothing,
+`StorePersistN` (the fixed-arity nodes persist literally, the AC and ACI
+nodes as the normal forms recanonicalization gives or as the leaf they
+collapse to), `:subsume` allowed, well-formed rules and plans, every variant
+or naive match emitted per round under the round's routing, which matches
+the rules that build an n-ary term in full after a round whose rebuild was
+not literal), at a round that changed nothing,
 and for a completion state with leaf constants satisfying `CompleteAtoms`
 whose active `f`-nodes are stored in the index after the round under ids
 `ι` (`SubRep A.Sa.index st f act ι`, `CC/Bridge/Sub.lean`; the index may hold
@@ -504,10 +508,22 @@ collapsed `f`-node (`Final/Witness.lean`, `not_cover`).
   `policy_candidates_eq` (same candidates for every policy).
 - `Normalize.lean`, `NormalizeSat.lean`: right-hand sides present as the
   normal forms `add` builds (`DenN`: splice, unit drop, nilpotent clamp,
-  inverse cancellation, degenerate arity); `DenN.persist`,
-  `fired_after_actions_N`, `saturation_complete_N` (store, `:subsume`, normal
-  forms); `den_misses_single`, the literal `Den` has no value for a
-  one-element AC right-hand side.
+  inverse cancellation, degenerate arity); `DenN.persist` (under literal
+  persistence), `fired_after_actions_N`, `saturation_complete_N` (store,
+  `:subsume`, normal forms); `den_misses_single`, the literal `Den` has no
+  value for a one-element AC right-hand side.
+- `Recanon.lean` (2026-11-08): recanonicalization as the laws apply it.
+  `StorePersistN`: the fixed-arity nodes persist literally (`LiteralFixed`),
+  an AC or ACI node persists as the normal form of its mapped children under
+  the recanonicalization steps (`RStep`, `RSetStep`) or collapses to a leaf.
+  `DenN.persist_fixed` carries right-hand sides without n-ary application;
+  `denN_persist_fails` shows `DenN.persist` does not extend to n-ary ones,
+  so the round chains (`AChain`, `SChain`, `SChainN`) route the rules that
+  build them naive after a round whose rebuild was not literal (`route`), as
+  the engine's `respelled` re-match does since it counts a law applied at
+  recanonicalization in `spelling_epoch`. The invariants are guarded
+  accordingly (`InvLagL`, `InvLagS`, `InvLagN`); the fixpoint theorems keep
+  their statements.
 - `Sound.lean`: `denN_sound`, `firedN_sound`, `union_recorded_sound`: what
   the actions build denotes the right-hand side in every model of the graph
   and the operator laws. The round-level converse of `Saturate.Inv` (with
@@ -521,13 +537,18 @@ collapsed `f`-node (`Final/Witness.lean`, `not_cover`).
   `saturation_complete_store_engine`, `saturation_complete_N_engine` take the
   engine's stop condition. The engine stop test before the fix
   (`changes == 0` alone, a union that minted nodes counting 0) is not
-  covered: fixed in the engine by `EGraph::size_stamp`.
+  covered: fixed in the engine by `EGraph::size_stamp`. Since 2026-11-08 the
+  rebuild is modelled (`CompletionRun` over a step function of the store,
+  `CompletionOutcome` as the engine reports it) and `rebuild_idle` is a
+  theorem: a round matches on a completion fixpoint (`before_fixed`, from a
+  converged previous rebuild), so a rebuild after an idle action phase goes
+  nowhere. A rebuild after an aborted one is not idle in general.
 - Known divergences, not modelled: none of the stop test (closed by
   `StopTest.lean` and the engine's size stamp) or of the minimal monomial
   under node growth (closed by `CC/MinMonoKey.lean` and the engine's order
-  keys). `Round.Persist`/`StorePersist` assume recanonicalization
-  is a literal map, which a unit drop or degenerate collapse on rebuild
-  breaks.
+  keys). Whether the completion modes, which do not re-match after a
+  spelling change, join the instances the routing re-fires in plain mode is
+  not proved.
 
 ## Not modelled
 
