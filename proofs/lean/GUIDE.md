@@ -1456,7 +1456,21 @@ the round's actions fire it (`fired_after_actions`, `ActRound.lean:51`).
 `fired_transport` needs `Round.Persist` (`Transport.lean:45`): every non-subsumed node of
 `before` survives in `after` with the same operator and its children mapped through the new
 `find`. It also needs no subsumption, because a `:subsume` can remove from the index a node a
-consequence is built of (`tests/egg/subsume.egg`).
+consequence is built of (`tests/egg/subsume.egg`). Since commit `329b25bc` `Persist` is no
+longer a per-round hypothesis. `recanonize_node` maps the children of a tuple, pair or
+sequence node through `find` and nothing else, which `Round.PersistFixed` states and every
+round assumes; for a multiset or set node it also drops the unit's class and clamps the
+counts, and a result of one element or none merges the node's class with a leaf
+(`degeneracy_pair`). The invariant is therefore guarded (`InvLagL`): a rule whose actions
+build an n-ary term (`Rule.buildsNary`) is fired at a round only if that round's rebuild
+persisted every node literally (`Round.Persist`), and a rule that builds none is transported
+through the fixed-arity nodes alone (`fired_transport_fixed'`). The guard is discharged at
+the fixpoint, where a round that changed nothing is literal (`Round.persist_of_unchanged`),
+and across the chain by the routing: `AChain` requires that a round whose rebuild was not
+literal route the rules that build n-ary terms to the naive matcher
+(`route naive resp`, `resp = true`), which re-emits every old match. This is the engine's
+`respelled` re-match (`saturate.rs`), which since commit `8a84644b` fires after a rebuild
+applied a law to a stored node (`VarCanon::law_applied`, counted in `spelling_epoch`).
 
 **`saturation_complete`** (`Saturate/Invariant.lean:231`):
 
@@ -1470,10 +1484,12 @@ theorem saturation_complete {sig : Sym → Kind} {naive : Rule → Bool} {rules 
 ```
 
 Along a run (round 0 naive, then rounds each routing every rule naive or tracked), at a round
-that changed nothing, every match of every rule is fired. `RoundOK` (`:125`) packs, per round,
-`Round.WF`, tracking on, `Persist`, no subsumption, and well-formed rule atoms. `EmitsAll` and
-`AChain` say the round applied every binding of every naive run or every variant run. The
-routing `naive` is a free parameter, so every routing the engine uses is covered.
+that changed nothing, every match of every rule is fired. `RoundOK` packs, per round,
+`Round.WF`, tracking on, `PersistFixed`, no subsumption, and well-formed rule atoms.
+`EmitsAll` and `AChain` say the round applied every binding of every naive run or every
+variant run, under the round's routing `route naive resp`: the static routing `naive`
+widened to the rules that build an n-ary term when the previous round's rebuild was not
+literal. The static routing is a free parameter, so every routing the engine uses is covered.
 `Round.Unchanged` (`:177`) means the same node set and the same `find` before and after.
 
 *Proof.* `invLag_chain` (`:153`) by induction with `inv_step`. At an unchanged round, `Den`,
@@ -1484,8 +1500,9 @@ one-round lag closes (`inv_of_unchanged`, `:219`).
 model's naive and variant sets on the frozen index and applies every one. The plan theorems
 of Section 3 characterise the model's runs, not the Rust join. The engine skips an action
 whose right-hand side has no value (`apply.rs:1346`). Budget exits stop the loop without a
-fixpoint, and the theorem says nothing about them. `Persist` assumes recanonicalization is a
-literal map; a unit drop or degenerate collapse at rebuild breaks it. The statement of
+fixpoint, and the theorem says nothing about them. Literal persistence is not assumed of a
+round; a unit drop or degenerate collapse at rebuild is covered by the routing hypothesis of
+`AChain`, which the engine meets by counting such a rebuild in `spelling_epoch`. The statement of
 `WF.dedup` is derived for a modelled sequence store (`dedup_of_inv`,
 `Rounds/SeqSplice.lean:234`), but no theorem builds a `Round.WF` from it.
 
@@ -1500,14 +1517,32 @@ literal map; a unit drop or degenerate collapse at rebuild breaks it. The statem
   are read on the index and consequences on the store.
 - `Fidelity/Normalize.lean`, `NormalizeSat.lean`: `saturation_complete_N` (`:186`) reads
   right-hand sides as the normal forms `add` builds (`DenN`).
+- `Fidelity/Recanon.lean`: `StorePersistN` states recanonicalization as the laws apply it:
+  the fixed-arity nodes persist literally (`LiteralFixed`), an AC or ACI node persists as the
+  normal form of its mapped children under the recanonicalization steps (`RStep`: unit drop,
+  nilpotent clamp; `RSetStep`: unit drop) or collapses to a leaf (`NFMset`, `NFSet`). It is
+  the per-round store hypothesis of `saturation_complete_N` and the final theorems
+  (`RoundOKN.store`). `DenN.persist_fixed` carries the right-hand sides without n-ary
+  application across it; `denN_persist_fails` shows that `DenN.persist` does not extend to
+  n-ary ones: a right-hand side `f{x}` built through two splices has one value before a
+  round in which a nested class merges into the unit and only another value after it, with
+  the node holding the match untouched. Hence the routing of `SChainN` (Section 6.4).
 - `Fidelity/Sound.lean`: `denN_sound` (`:123`) states that what the actions build denotes the
   right-hand side in every model of the graph and the operator laws. Round-level soundness
   with rebuild's merges is open.
-- `Fidelity/StopTest.lean`: `engine_stop_unchanged` (`:234`) derives `Unchanged` from the
+- `Fidelity/StopTest.lean`: `engine_stop_unchanged` derives `Unchanged` from the
   engine's stop test, which requires no reported change and an unmoved size stamp
-  (node count, class count). It assumes `rebuild_idle`: a rebuild after an action phase that
-  minted and merged nothing changes nothing. `saturation_complete_engine` (`:253`) and its
-  variants take the stop test in place of `Unchanged`.
+  (node count, class count). Since commit `5d4fc78a` the rebuild is modelled: congruence
+  closure, idle without merges or mints (`cong_idle`), then a completion run
+  (`CompletionRun`) over a step function of the store that converges at a store with no
+  inference or stops with another outcome (`CompletionOutcome`: `disabled`, `converged`,
+  `abortedGrowthLimit`, `abortedWorkLimit`, `abortedOverflow`, `goalMet`, as the engine
+  reports them). A round matches on a completion fixpoint (`before_fixed`: the previous
+  rebuild converged, `CompletionRun.converged_fixed`), so `rebuild_idle` is a theorem
+  (`CompletionRun.idle`): a rebuild after an action phase that minted and merged nothing
+  changes nothing. A rebuild after an aborted one is not idle in general, which is why the
+  runtime check asks for `Converged`. `saturation_complete_engine` and its variants take
+  the stop test in place of `Unchanged`.
 
 ## 7. The final theorem
 
@@ -1605,7 +1640,7 @@ state by definition (`represents_withAtoms`, `:77`).
 |---|---|---|
 | `A₀`, `As` | the rounds, with their applied bindings and action facts | assumed; `Den` is literal (Section 6.3) |
 | `hplan` | each rule's plan is in the scheduler grammar | assumed; no theorem proves the Rust scheduler emits `SchedA` plans |
-| `h₀`, `hok` | rule atoms well formed; per round: `WF`, tracking, `Persist`, no subsumption | assumed; `Persist` fails when rebuild drops a unit or collapses a node |
+| `h₀`, `hok` | rule atoms well formed; per round: `WF`, tracking, `PersistFixed`, no subsumption | assumed; the fixed-arity nodes persist literally in every rebuild; n-ary nodes are not constrained here, the routing of `AChain` covers a non-literal rebuild |
 | `hemit₀`, `hchain` | every naive or variant binding was applied | assumed of the engine's matcher |
 | `hfix` | round `A` changed nothing | assumed here; `engine_stop_unchanged` derives it from the stop test, but this theorem does not use it |
 | `hcomp` | completion has converged | assumed; includes `hlat` (lattice closure, in place of `hcancel`); `CompleteAtoms` in the leaf-constant form |
@@ -1772,8 +1807,11 @@ branch of `SChainN` is not exercised; the matches are characterized on the concr
 theorem relates the completion state to the rounds or to the engine's rebuild, so the
 theorem says nothing about a run whose index does not hold the active nodes of a converged
 state. `hcp` and the minimal-monomial hypotheses stay in `CompleteAtoms`
-(Section 10, items 5 and 6), and `hcancel` is replaced by lattice closure (item 3, resolved), and `StorePersist` assumes recanonicalization is a literal
-map (item 9).
+(Section 10, items 5 and 6), and `hcancel` is replaced by lattice closure (item 3, resolved).
+`StorePersistN` states recanonicalization as the laws apply it, and `SChainN` routes the
+rules that build n-ary terms naive after a round whose rebuild was not literal (item 9,
+resolved); whether the engine's completion modes, which do not re-match, reach the same
+instances is not proved.
 
 ## 8. Counterexamples and the engine defects they record
 
@@ -1795,6 +1833,7 @@ outputs appear only in comments; nothing asserts them.
 | `delta_incomplete_global` | `Rounds/Counter.lean:98` | a rule with a global misses a match under tracking; fixed by naive routing | `semi_eq_global_local.egg` |
 | `raw_breaks_dedup` | `Rounds/SeqSplice.lean:292` | `add` spliced a same-operator child with stale children: two equal nodes in two classes | `seq_hashcons_miss_min.egg`, `rounds_r1_0581.egg` |
 | `den_misses_single` | `Fidelity/NormalizeSat.lean:210` | literal `Den` has no value for a one-element AC right-hand side | |
+| `denN_persist_fails` | `Fidelity/Recanon.lean` | a fired instance of a rule that builds an n-ary term need not survive a rebuild that applied a law to a node its right-hand side was built through; the engine counts such a rebuild in `spelling_epoch` since `8a84644b` | `semi_recanon_unit_drop.egg`, `semi_recanon_idem_collapse.egg`, `semi_recanon_inverse_cancel.egg`, `semi_recanon_pending_collapse.egg` |
 | `per_node_form_fails` | `CC/Bridge/Modulo.lean:251` | matching modulo the theory holds at the class level only | |
 | `fold_open_off_spine_unsound` | `Flatten/Fold.lean:138` | the flatten walk opened every position of a fold; fixed by `flatten::spine` | `flatten_fold_spine.egg` |
 | `regroup_off_spine_unsound` | `Flatten/RegroupSound.lean:525` | regrouping off a fold's spine is unsound | |
@@ -1848,13 +1887,17 @@ marked **new** were found for this edition.
    `witness_complete` discharges them with `ss₀ = ss` and the reflexive run.
 6. **Still true.** `TwoClassesL`, which ACI demand completeness needs, is assumed. The probe
    `aci1.egg` that `EMatch/Flatten/EngineComplete.lean:24` cites is not in the repository.
-7. **Still true.** `Round.Persist` and `StorePersist` assume recanonicalization is a literal
-   map. Rebuild's inverse-pair cancellation (`canon_repair_round`) and the nilpotent clamp
-   are not.
-8. **Still true.** `EnginePhase.rebuild_idle` is assumed. A completion that aborted on its
-   budget could resume work in a later rebuild; the model does not represent
-   `CompletionOutcome`. The runtime design note proposes a per-run check that the outcome is
-   `Converged`.
+7. **Resolved** by `329b25bc`. `Round.Persist` and `StorePersist` are no longer per-round
+   hypotheses: `Round.PersistFixed`, `LiteralFixed` and `StorePersistN`
+   (`Fidelity/Recanon.lean`) state what `recanonize_node` does, including the unit drop,
+   the nilpotent clamp and the degenerate arity; inverse-pair cancellation
+   (`canon_repair_round`) is a merge the round records. `denN_persist_fails` shows the
+   weakened hypothesis does not transport n-ary right-hand sides, so the chains route the
+   rules that build them naive after a non-literal rebuild, as the engine does since
+   `8a84644b`.
+8. **Resolved** by `5d4fc78a`. `EnginePhase.rebuild_idle` is a theorem of a model of the
+   rebuild with `CompletionOutcome`; the round matches on a completion fixpoint
+   (`before_fixed`), which a converged previous rebuild gives and an aborted one does not.
 9. **Resolved** by `7838c767` (`I0Active`, `CC/Assemble.lean:94`;
    `completion_complete_at_convergence_of_all`, `CC/Main.lean:125`). The first edition
    recorded that `I0Active` quantified over every class id of `Fin n`. It now constrains only
@@ -2004,8 +2047,12 @@ resolution after the original text.
    of `add` returning `x`'s class, and `A` from a model of the `atomic` bit.
 8. `TwoClassesL` is assumed, and the cited `aci1.egg` is missing. Fix: derive it from
    rebuild's merge of a one-class member, or commit the probe and cite it from `proofs/repro`.
-9. `Round.Persist`, `StorePersist` and `rebuild_idle` are assumed. Fix: weaken `Persist` to
-   normal-form recanonicalization (`DenN.persist`) and model `CompletionOutcome`.
+9. **Resolved** by `329b25bc` (persistence) and `5d4fc78a` (`CompletionOutcome`), with the
+   engine change `8a84644b`. Remainder: `DenN.persist` under normal-form recanonicalization
+   is false (`denN_persist_fails`), so the theorems rely on the routing hypothesis of the
+   chains instead; the engine meets it in plain mode (`respelled`), and in the completion
+   modes, which do not re-match, the instances are expected to be joined by completion, which
+   is not proved.
 10. The re-activation of collapsed nodes may break I5. Fix: add an un-retire step to `Infer`
     and prove I5 is preserved, or change the engine to refresh after clearing the flag.
 11. The engine's regrouping loop saturates view sizes at `u64::MAX`, where the skip of a

@@ -38,9 +38,9 @@ costs.
 | `PlansOK`, `RulesWF` | the compiled rules | once per rule, at compilation | linear in the rule |
 | `I0Active` (weakened to classes holding an `f`-node, see `feat/leaf-constants`), `I5`, `hcanon`, `FlatSound` at node level, congruence closure | the final state, node by node | every run | one pass over the nodes |
 | `hlat` (lattice closure, cancellative operators) | the final state, class by class | every run | one echelon form over the rows, the cost of one `lattice_round` |
-| `Converged` outcome, truncation and overflow counters | the run's outcome | every run | constant |
+| `Converged` outcome, truncation and overflow counters | the run's outcome; `Converged` also gives `EnginePhase.before_fixed`, from which `Fidelity/StopTest.lean` derives `rebuild_idle` | every run | constant |
 | `nf_present`, `cp_joinable`, `hcp`, `A.R.Unchanged` | the final state, across pairs of rules or every match | CI only | one completion round, one naive matching round |
-| `slots`, `RoundOK`, `EmitsAll`, `AChain` | the history of the run | replaced by final-state checks | none |
+| `slots`, `RoundOK`, `EmitsAll`, `AChain` (with its routing after a non-literal rebuild, which `spelling_epoch` implements) | the history of the run | replaced by final-state checks | none |
 
 The history hypotheses need no check. The audit (`13-soundness.md` §4, item H3) found that
 `slots` is met by an initial state equal to the final one, so it reduces to `I5` at the
