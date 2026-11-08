@@ -1,0 +1,29 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; Atomic bit, transition (e): a class used as a child before and after it holds an
+;; f-node. `C` is a child of `p = {C, D}` (atomic by `add_use`), then gains the f-node
+;; `{A, B}` by a union, then is a child again in `q = {C, F}`. `D = Zero` drops the unit
+;; from `p`, which becomes the one-element form `{C}` and merges into `C`'s class.
+(sort E)
+(constructor A () E)
+(constructor B () E)
+(constructor C () E)
+(constructor D () E)
+(constructor F () E)
+(constructor Zero () E)
+(constructor Add (E) E :assoc :comm :identity (Zero))
+(set-option :completion eager)
+(let p (Add (C) (D)))
+(union (C) (Add (A) (B)))
+(let q (Add (C) (F)))
+;; A + B = C gives A + B + F = C + F.
+(check-eq q (Add (A) (B) (F)))
+(union (D) (Zero))
+(check-eq p (C))
+(check-eq p (Add (A) (B)))
+(check-eq (Add p (F)) q)
+(check-eq (Add (A) (B) (D) (F)) q)
+(check-neq p q)

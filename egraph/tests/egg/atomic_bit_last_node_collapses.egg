@@ -1,0 +1,27 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; Atomic bit, transition (b): the last f-node of a non-atomic class collapses. `s = {A, B}`
+;; is spliced into `t`, never a child, so its class is not atomic. `B = Zero` drops the
+;; unit from both nodes: `s` becomes `{A}`, a one-element form, and the degeneracy pair
+;; merges it into `A`'s class, which is atomic (a leaf). `t` becomes `{A, D}`.
+(sort E)
+(constructor A () E)
+(constructor B () E)
+(constructor C () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor Add (E) E :assoc :comm :identity (Zero))
+(set-option :completion eager)
+(let s (Add (A) (B)))
+(let t (Add s (D)))
+(union (B) (Zero))
+(check-eq s (A))
+(check-eq t (Add (A) (D)))
+;; The merged class is atomic: a sum over `s` keeps it as the summand `A`.
+(let w (Add s (C)))
+(check-eq w (Add (A) (C)))
+(check-eq (Add s s) (Add (A) (A)))
+(check-neq w t)
