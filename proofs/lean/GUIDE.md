@@ -682,14 +682,48 @@ counterexample to opening off the spine. `otLeft_sound` and `otRight_sound` (`:1
 prove that spine-only opening trees preserve the fold's value. Regrouping a fold replaces a
 prefix (left fold) or a suffix (right fold); Section 4.6 covers it.
 
-**Adequacy.** These soundness theorems concern the inductive relations `OTLeft` and
-`OTRight`. The executable spine enumerator (`rawOptD` with a direction, `FoldPlan.lean`) is
-never proved to produce exactly those views: `OTLeft` appears in `FoldPlan.lean` only in a
-docstring. `runED_both` (`FoldPlan.lean:135`) shows only that with no fold the fold-aware
-interpreter is the proved one. Demand completeness for folds is argued in a docstring
-(`Fold.lean:27-30`). Regrouping soundness for folds is proved for a single step only
-(`regroup_step_sound_left`, `regroup_step_sound_right`, `RegroupSound.lean:467`, `:490`);
-regrouping completeness for folds is proved for every chain (Section 4.6).
+**The executable enumerator is the spine trees** (`EMatch/Flatten/FoldEnum.lean`, commit
+`19452248`). `rawOptD ctx dir` with `Dir.left` or `Dir.right` is the walk of
+`flatten::enumerate` with `spine(dir, i, len)`. `rawNodeD_left_iff` and `rawNodeD_right_iff`
+prove that its raw views of a fold node are exactly the views of `OTLeft`, resp. `OTRight`:
+
+```lean
+theorem rawNodeD_left_iff {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx) {n : Node}
+    {cs : List C} (hn : n.children = .seq cs) {w : List (C × Nat)} :
+    (∃ ls, (w, ls) ∈ rawNodeD ctx .left (fuelOf ctx.G) n 1 ∅) ↔
+      ∃ v, w = withK 1 v ∧ OTLeft ctx ∅ cs v
+```
+
+`SeqShaped ctx` says every `f`-member is a sequence node, which the engine's operator
+declaration fixes; `withK 1 v` is the class list `v` with count one. The soundness direction
+(`rawNodeD_left_sound`) is by induction on the fuel, the completeness direction
+(`rawNodeD_left_complete`) by induction on the tree, with the fuel of the graph as in
+`rawOptL_complete`. At the level of distinct views, `enumerateLD_left_iff` and
+`enumerateLD_right_iff` read the fold enumerator's views as the normal forms of the spine
+views, and `enumerateLD_left_sound`, `enumerateLD_right_sound` carry `otLeft_sound` and
+`otRight_sound` to the executable mirror: every view the fold enumerator records for a
+laws-free fold denotes the node's fold. `rawNodeD_sub_both` places the views of any direction
+among the views of `.both`, so every monoid-level theorem over `.both` applies to a fold.
+
+**The fold mirror against the engine.** The conformance oracle runs `runER` with the fold
+directions of the case (`Conform/Flatten/Oracle.lean`, `FCase.dirOf`), so every
+`conform-flatten` sample with a fold is a comparison of this enumerator, regrouped, with the
+engine's. On 2026-11-08 the comparison was run over 800 samples (the 400 committed
+`conform` and `conform-flatten` samples, and 400 more of seed 3 of the `:flatten`
+generator, not committed), 230 of them with a fold in the pattern: every `check-eq` and
+`check-neq` holds in the engine, and the number of distinct `Tag` nodes the engine builds,
+one per binding, equals the number of distinct `Tag` terms the model checks, so the binding
+sets agree. On 15 samples without a fold the node count is not comparable (several roots
+share a `Tag` term, so the roots merge and the engine omits the congruent duplicates); their
+checks hold. No disagreement; no engine bug found.
+
+**Adequacy.** Regrouping soundness for fold chains is Section 4.6 (`regroup_views_sound_left`,
+`regroup_views_sound_right`). Demand completeness for folds is argued in a docstring
+(`Fold.lean:27-30`). The fold theorems are laws-free: the engine declares no law on a fold
+(laws need `:comm`, `sortcheck.rs`), and the model's only `:assoc` law, an identity, has no
+reading in the free magma `BTm`; under an identity the monoid theorems for any direction
+(`regroup_views_sound_assoc_laws_dir`) apply, in which a fold reads as an associative
+product.
 
 ### 4.6 Regrouped views
 
@@ -803,8 +837,25 @@ the levels the model computes (`regroupChain_mem_levels`, `:437`). The converse 
 
 **Adequacy.**
 
-- Completeness is laws-free (`hlaws`). Soundness is laws-free and, for folds, single-step.
-  No theorem covers a match that needs both a leaf refold (Section 4.3) and a regrouping.
+- Completeness is laws-free in `regroup_match_iff` (`hlaws`); `regroup_match_iff_laws`
+  (`RegroupLaws.lean`, commit `ed7d52ea`) lifts it to any laws, for every kind and fold
+  direction, with the chains `RegroupChainL`. Soundness under laws is
+  `regroup_views_sound_{ac,aci,assoc}_laws` (`RegroupLaws.lean`), and for folds
+  `EMatch/Flatten/FoldRegroup.lean` (commit `0d0f051d`): `regroup_views_sound_left`,
+  `regroup_views_sound_right` and the engine-loop versions `regroupSkip_views_sound_left`,
+  `regroupSkip_views_sound_right` prove that every view of `enumerateR` and `enumerateRSkip`
+  for a laws-free fold denotes the node's fold in the free magma, through
+  `reach_lfold_left`/`reach_rfold_right` (the walk's records by `rawNodeD_left_sound` and
+  `otLeft_sound`, each regrouping by `regroup_step_sound_left`). The declarative chains keep
+  the fold too (`regroupsTo_left_sound`, `regroupStep_left_sound`, `regroupChain_left_sound`,
+  `regroup_chain_left_sound`, and the right versions), so the view `regroup_match_iff`
+  matches on is the node's fold. `regroup_views_sound_assoc_laws_dir` and
+  `regroupSkip_views_sound_assoc_laws_dir` extend the monoid soundness under an identity from
+  `.both` to every direction. For a fold, the chains of `regroup_match_iff_laws` start from
+  the normal forms of the spine views (`baseRecsR_left_views_iff`,
+  `baseRecsR_right_views_iff`) and step by prefix or suffix (`regroupsTo_left_iff`,
+  `regroupsTo_right_iff`); no fold match is excluded. No theorem covers a match that needs
+  both a leaf refold (Section 4.3) and a regrouping.
 - The leaf and needs bookkeeping of `RegroupStep` reuses the model's `addG` and `needsAfter`.
   Completeness is therefore with respect to a declarative view transformation plus the
   engine's own demand bookkeeping.
@@ -2013,11 +2064,18 @@ resolution after the original text.
     the engine that no regrouped target is reached.
 12. The engine's regrouping candidates are a subset of the model's. Fix: prove that a member
     with no class in the view has no fit, and restate `hgs'` over members with a fit.
-13. Soundness of regrouping under laws and for fold chains, and completeness under laws, are
-    unproved. Fix: extend `regroup_views_sound_*` to `regroupLevels` with laws and to
-    `OTLeft`/`OTRight` chains.
-14. The executable fold enumerator is not linked to `OTLeft` and `OTRight`. Fix: prove
-    `rawOptD` with a direction enumerates exactly their views.
+13. *Resolved, commits `ed7d52ea` (laws) and `0d0f051d` (folds).* Soundness of regrouping
+    under laws and for fold chains, and completeness under laws, were unproved. Fix applied:
+    `regroup_views_sound_{ac,aci,assoc}_laws` and `regroup_match_iff_laws`
+    (`RegroupLaws.lean`), `regroup_views_sound_left/right`,
+    `regroupSkip_views_sound_left/right`, `regroup_chain_left/right_sound` and
+    `regroup_views_sound_assoc_laws_dir` (`FoldRegroup.lean`); `regroup_match_iff_laws`
+    covers the fold kinds as stated, with `baseRecsR_left/right_views_iff` for its base.
+    Remainder: the fold soundness is laws-free, as the engine's folds are (Section 4.5).
+14. *Resolved, commit `19452248`.* The executable fold enumerator was not linked to
+    `OTLeft` and `OTRight`. Fix applied: `rawNodeD_left_iff`, `rawNodeD_right_iff`,
+    `enumerateLD_left/right_iff`, `enumerateLD_left/right_sound` (`FoldEnum.lean`), under
+    `SeqShaped`; the fold mirror agrees with the engine on 230 fold samples (Section 4.5).
 15. Stale docstrings: tracking in `Rounds/Round.lean:65-67` and `Rounds/Counter.lean:21-22`;
     `egraph.rs:3068` in `CC/Laws/CriticalPairs.lean:146-149` and `CC/Laws/Main.lean:96-101`;
     `changes == 0` in `Final/Main.lean:131-132`; AC only in `Flatten/RegroupFits.lean:17-19`;

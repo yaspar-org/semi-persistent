@@ -421,6 +421,24 @@ completion state to the rounds or to the engine's rebuild.
   normal form reached only by inserting the unit (`regroup_insert_unit_lost`,
   `flatten_regroup_laws_insert.egg`) and a set group kept beside its class
   (`regroup_idem_overlap_lost`, `flatten_regroup_laws_idem.egg`).
+  Folds (2026-11-08, `FoldEnum.lean`, `FoldRegroup.lean`): the executable spine
+  enumerator is the spine trees, `rawNodeD_left_iff`/`rawNodeD_right_iff`
+  (`rawOptD` with a direction produces exactly the views of `OTLeft`/`OTRight`,
+  under `SeqShaped`: every `f`-member a sequence node), `enumerateLD_left/right_iff`,
+  `enumerateLD_left/right_sound` (`otLeft_sound`/`otRight_sound` on the executable
+  mirror), `rawNodeD_sub_both`. Regrouped views of a laws-free fold denote the
+  node's fold in the free magma: `reach_lfold_left`/`reach_rfold_right`,
+  `regroup_views_sound_left/right`, `regroupSkip_views_sound_left/right`, and for
+  the declarative chains `regroupsTo_left/right_sound`,
+  `regroupStep_left/right_sound`, `regroupChain_left/right_sound`,
+  `regroup_chain_left/right_sound`; the monoid soundness under an identity for
+  every direction, `reach_den_assoc_dir`, `regroup_views_sound_assoc_laws_dir`,
+  `regroupSkip_views_sound_assoc_laws_dir`; `baseRecsR_left/right_views_iff` read
+  the walk records the chains of `regroup_match_iff_laws` start from, for a fold,
+  as the normal forms of the spine views. The fold mirror (the oracle's `runER`
+  with the case's directions against the engine, bindings compared as the distinct
+  `Tag` nodes) agrees on the 400 committed samples and 400 more of seed 3, 230 of
+  them with a fold; the comparison test is not committed.
 - `Steps/`: globals, literals, `CheckNeq`, `CheckPred` with faults,
   `CopyBinding`/`BindGlobal`, `Collect` (sequence patterns: A and AC/ACI
   relations, filters, `:except`, dedup, the bound as a hypothesis);
