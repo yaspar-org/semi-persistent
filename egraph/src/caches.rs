@@ -944,7 +944,8 @@ impl<
     /// When `PROOFS=true`, saves the original node+children to history on first recanonize.
     /// Returns the canonization's result: whether the children form a node or name a
     /// class (`crate::nary_canon::Normal`), on every path, so the caller records the
-    /// degenerate-arity equality.
+    /// degenerate-arity equality; and whether a law changed the children beyond `find`
+    /// (`VarCanon::law_applied`), so the caller counts the spelling change.
     pub fn recanonize_node<V: VarCanon<G, C>>(
         &mut self,
         local_id: L,
@@ -953,7 +954,7 @@ impl<
         collisions: &mut Vec<(G, G)>,
         touched: &mut Vec<G>,
         mode: crate::canon::CanonMode<G>,
-    ) -> crate::nary_canon::Normal<G> {
+    ) -> (crate::nary_canon::Normal<G>, bool) {
         let node = self.nodes.get(local_id);
         let (start, end) = node.span();
 
@@ -962,8 +963,11 @@ impl<
         // A canonical form past the configured width is not representable: the node keeps
         // its stored children, and `rebuild` reports the overflow.
         if normal == crate::nary_canon::Normal::Overflow {
-            return normal;
+            return (normal, false);
         }
+        // Read before the children are overwritten below: whether a law, not only `find`,
+        // changed the node (`VarCanon::law_applied`).
+        let law = V::law_applied(start, end, |i| self.children.get(i), &find, mode, buf);
 
         let new_len = buf.len();
 
@@ -976,7 +980,7 @@ impl<
                 }
             }
             if same {
-                return normal;
+                return (normal, law);
             }
         }
 
@@ -1045,7 +1049,7 @@ impl<
         if !flagged {
             self.push_hint(new_fp, local_id);
         }
-        normal
+        (normal, law)
     }
 
     /// Retrieve the original (pre-recanonize) children for a node by global id.

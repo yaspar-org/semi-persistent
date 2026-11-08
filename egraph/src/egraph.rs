@@ -210,9 +210,13 @@ pub struct EGraph<
     /// read can record it and the e-graph stays `Sync`.
     monomial_overflow: std::sync::atomic::AtomicBool,
     /// Counts the events that change how a build spells an AC term: a class holding a
-    /// completion monomial turns `atomic` (the build stops splicing it), or a merge changes
-    /// a class's minimal monomial for an op (the build splices a different monomial).
-    /// Neither event changes a node, so neither enters the semi-naive delta; the semi-naive
+    /// completion monomial turns `atomic` (the build stops splicing it), a merge changes
+    /// a class's minimal monomial for an op (the build splices a different monomial), or
+    /// a rebuild applies a law to a stored n-ary node beyond `find` (a unit drop, a count
+    /// clamp, a degenerate arity: `VarCanon::law_applied`), after which a right-hand side
+    /// built through that node's class has another value while the node that holds the
+    /// match is untouched (`proofs/lean/SemperProofs/Fidelity/Recanon.lean`,
+    /// `denN_persist_fails`). None of these events enters the semi-naive delta; the semi-naive
     /// loop reads this counter instead and, in plain mode, re-matches in full the rules
     /// whose right-hand side builds an AC term (design §9.2, "A build-time choice the delta
     /// cannot see"). Monotone, and not rolled back by `restore`: a spurious increase only
@@ -2832,7 +2836,7 @@ where
                 .map(|u| classes.find_const(u))
         };
         let touched_before = self.touched.len();
-        let normal = self.nodes.recanonize_node(
+        let (normal, law) = self.nodes.recanonize_node(
             parent,
             find,
             unit_of,
@@ -2842,6 +2846,12 @@ where
             &mut self.touched,
             &self.ops,
         );
+        // A law changed the node beyond `find`: a right-hand side built from its class may
+        // now spell differently, and nothing in the delta names it (see the
+        // `spelling_epoch` field).
+        if law {
+            self.spelling_epoch += 1;
+        }
         // The span changed (recanonize pushes to `touched` only then) and still forms a
         // node: keep the class's min-monomial slot least (I5).
         if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before {
@@ -2922,7 +2932,7 @@ where
                         .map(|u| classes.find_const(u))
                 };
                 let touched_before = self.touched.len();
-                let normal = self.nodes.recanonize_node(
+                let (normal, law) = self.nodes.recanonize_node(
                     parent,
                     find,
                     unit_of,
@@ -2932,6 +2942,11 @@ where
                     &mut self.touched,
                     &self.ops,
                 );
+                // As in `recanonize_parent`: a law applied beyond `find` is a spelling
+                // change the delta does not name.
+                if law {
+                    self.spelling_epoch += 1;
+                }
                 // As in `recanonize_parent`: a changed span that is still a node refreshes
                 // the class's min-monomial slot (I5). Deferred past the loop, which holds
                 // the use-list borrow.
