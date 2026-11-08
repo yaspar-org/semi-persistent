@@ -558,6 +558,10 @@ egg_test!(
     "ac_lazy_budget_inconclusive.egg"
 );
 egg_test!(semi_recanon_parent_delta, "semi_recanon_parent_delta.egg");
+egg_test!(semi_recanon_unit_drop, "semi_recanon_unit_drop.egg");
+egg_test!(semi_recanon_idem_collapse, "semi_recanon_idem_collapse.egg");
+egg_test!(semi_recanon_inverse_cancel, "semi_recanon_inverse_cancel.egg");
+egg_test!(semi_recanon_pending_collapse, "semi_recanon_pending_collapse.egg");
 egg_test!(semi_eq_global_local, "semi_eq_global_local.egg");
 egg_test!(
     semi_merge_membership_delta,
