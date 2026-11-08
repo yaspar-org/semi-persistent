@@ -99,6 +99,11 @@ completion state to the rounds or to the engine's rebuild.
   theorems hold for every `A` that meets their hypotheses).
 - `reachable_I5`, `fix_sufficient`, `shrinkNoRefresh_breaks_I5`: the
   min-monomial refresh keeps I5; the unrefreshed shrink is the repro state.
+  `Infer.unretire` (a retired node no current rule reduces is active again)
+  with `State.refreshRhs`: `unretire_I0`, `refreshRhs_I0`,
+  `unretire_refresh_I5`, `unretire_refresh_reachable`; in `Slot.lean`
+  `SlotState.unretire` is an `Op`, `unretire_I5`, and
+  `unretireNoRefresh_breaks_I5` is the repro `ac_reactivate_min_monomial.egg`.
 - `MinMonoKey.lean` (row EG1): completion orders monomials by per-class order
   keys (`keyDegLex`; a merged class takes the lesser key, `key_merge`), not by
   representative id. `rename_key_le`, `survivor_key_le`: at a merge every

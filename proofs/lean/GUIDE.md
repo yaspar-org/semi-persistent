@@ -942,9 +942,13 @@ definition, so a stale `rhs` drops rules rather than producing unoriented ones.
 `Infer` (`CC/Defs.lean:191`) lists the inference steps. **mint** adds a reduct of a node in a
 fresh class. **joinMerge** merges two nodes joined by a chain of rule steps, law steps, or
 same-class steps. **cancelMerge** merges `M` and `N` when `M + X` and `N + X` share a class
-and the operator is cancellative. **retire** retires a node, and **setRhs** overwrites the
-stored right-hand sides. The relation is deliberately permissive (`retire` and `setRhs` have
-no precondition): soundness then covers any engine step that is one of these cases.
+and the operator is cancellative. **retire** retires a node, **unretire** re-activates a
+retired node that no current rule reduces (the engine's `materialize` and recanonization
+paths clearing `FLAG_AC_COLLAPSED`), and **setRhs** overwrites the stored right-hand sides.
+The relation is deliberately permissive (`retire` and `setRhs` have no precondition):
+soundness then covers any engine step that is one of these cases. The engine's re-activation
+is `unretire` followed by `setRhs (st.refreshRhs M c)` (`unretire_refresh_reachable`), and
+`unretire_refresh_I5` shows the pair keeps I5.
 
 The invariants (`CC/Defs.lean:214-236`, `CC/Assemble.lean:94`):
 
@@ -1103,7 +1107,8 @@ that a mint needs a fresh class, so it does not bound the engine's rounds.
 
 The engine stores each class's minimal monomial and refreshes it when a member shrinks.
 `CC/Slot.lean` models the operations that maintain it (`SlotState`): mint, merge (fold the two
-minima), shrink with refresh, and retire when a smaller classmate exists.
+minima), shrink with refresh, retire when a smaller classmate exists, and un-retire with
+refresh (`unretire`; without the refresh I5 fails, `unretireNoRefresh_breaks_I5`).
 
 ```lean
 theorem reachable_I5 {st₀ st : SlotState n} (h₀ : I5 st₀) (hrun : OpsStar st₀ st) : I5 st
@@ -1893,11 +1898,12 @@ marked **new** were found for this edition.
 
 **Engine behaviour not modelled.**
 
-1. **Still true.** The engine re-activates collapsed nodes after a recanonicalization
-   (`egraph/src/egraph.rs:2847-2857`). No `Infer` step un-retires a node.
-   `refresh_min_monomial` returns early on collapsed nodes (`egraph.rs:1824`) and is called
-   before the flag is cleared, so the re-activated node may not be folded into the minimal
-   monomial. Whether this can break I5 is undecided.
+1. **Resolved** (Section 10 item 10). The engine re-activates collapsed nodes after a
+   recanonicalization and when completion materializes their monomial again. `Infer.unretire`
+   models the step, `refresh_min_monomial` now runs after the flag is cleared in both places,
+   and `unretire_refresh_I5` and `SlotState.unretire_I5` show the refresh keeps I5. The
+   unrefreshed re-activation did break I5 (`ac_reactivate_min_monomial.egg`,
+   `unretireNoRefresh_breaks_I5`).
 2. **Still true.** The engine's `Comm` atom joins through `by_contains`, as AC does
    (`egraph/src/schedule.rs:749`). The model's `byContains` ignores pairs and adds a
    `decomposeComm` step with no Rust counterpart.
@@ -2006,8 +2012,21 @@ resolution after the original text.
    rebuild's merge of a one-class member, or commit the probe and cite it from `proofs/repro`.
 9. `Round.Persist`, `StorePersist` and `rebuild_idle` are assumed. Fix: weaken `Persist` to
    normal-form recanonicalization (`DenN.persist`) and model `CompletionOutcome`.
-10. The re-activation of collapsed nodes may break I5. Fix: add an un-retire step to `Infer`
-    and prove I5 is preserved, or change the engine to refresh after clearing the flag.
+10. *Resolved, commit `2da55f68`.* The re-activation of collapsed nodes may break I5. Fix: add an
+    un-retire step to `Infer` and prove I5 is preserved, or change the engine to refresh
+    after clearing the flag. Both applied. A debug check of I5 after every congruence
+    rebuild of the completion loop (`check_min_monomial_invariant`, recomputing the least
+    active monomial of every class and operator) found one case in the 400 committed
+    conformance files, `conform-cc-cert/cs1_0129.egg`, reduced to
+    `ac_reactivate_min_monomial.egg`: `materialize` returned a collapsed node that was the
+    normal form of the class's own minimal monomial, cleared its flag and left the stored
+    minimal monomial on the node the round then collapsed. The engine now refreshes the
+    class's minimal monomial when the flag is cleared, in `materialize` and in the
+    recanonization path (where the refresh ran before the flag was cleared). Lean:
+    `Infer.unretire` with the side condition that no current rule reduces the node,
+    `State.refreshRhs`, `unretire_I0`, `refreshRhs_I0`, `unretire_refresh_I5`,
+    `unretire_refresh_reachable` (`CC/Lemmas.lean`); `SlotState.unretire` as an `Op`,
+    `unretire_I5`, and the repro `unretireNoRefresh_breaks_I5` (`CC/Slot.lean`).
 11. The engine's regrouping loop saturates view sizes at `u64::MAX`, where the skip of a
     regrouped target can fire. Fix: prove the skip harmless under saturation, or assert in
     the engine that no regrouped target is reached.

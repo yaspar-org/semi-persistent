@@ -1786,7 +1786,12 @@ node, and `C5 = C5·C5` was not derived after `C2 = C3`. Commit `e06360e5` clear
 when `cc_round` materializes a node and when `recanonize_parent` shrinks one. A reactivation
 counts as a change of the round, so the next round runs, and that round collapses the node
 again if a rule still reduces it. Kapur's Algorithm 1 step 4(i) returns a reduced rule to the
-equation set for the same reason. Lean: the model keys retired nodes by monomial, and
+equation set for the same reason. A node active again takes part in its class's minimal
+monomial, so both places refresh it after clearing the flag (`refresh_min_monomial`, which
+skips collapsed nodes). Without the refresh the stored minimal monomial stayed on a node the
+round then collapsed when the re-activated node was the normal form of the class's own minimal
+monomial (`tests/egg/ac_reactivate_min_monomial.egg`, reduced from `semper-conform-cc-cert`
+seed 1, case 129; Lean `unretireNoRefresh_breaks_I5`, `CC/Slot.lean`). Lean: the model keys retired nodes by monomial, and
 `RoundFixed.nf_present` (`CC/Defs.lean`) requires the normal form of every active monomial to
 be an active node of the same class. Chapter 13 §5 item 24 states the invariant.
 

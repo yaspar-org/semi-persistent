@@ -58,7 +58,7 @@ this kind (stale minimal monomial, stale collapsed flag, stale splice).
 | Check | Hypothesis | Defect it would have caught |
 |---|---|---|
 | No `f`-node has a non-`atomic` `f`-child | `FlatSound` (node part) | a nested spelling hiding summands from superposition |
-| For each class and operator, the stored minimal monomial is the degree-lex least monomial among the class's active `f`-nodes, under the per-class keys | `I5` | `ac_min_slot_refresh.egg`, `ac_minmono_grow_wa.egg` |
+| For each class and operator, the stored minimal monomial is the degree-lex least monomial among the class's active `f`-nodes, under the per-class keys; implemented by `check_min_monomial_invariant` (`egraph.rs`), run after every congruence rebuild of the completion loop in debug builds (`debug_check_min_monomial_invariant`) | `I5` | `ac_min_slot_refresh.egg`, `ac_minmono_grow_wa.egg`, `ac_reactivate_min_monomial.egg` (found by this check) |
 | The stored minimal monomial is clamped by the operator's laws | `hcanon` | an unclamped idempotent or nilpotent count |
 | Every class holding an `f`-node has an active node spelling its minimal monomial; a class with none is a leaf whose normal form is `{c}` | `I0Active` (weakened) | a class whose rule has no node, invisible to matching |
 | No two congruent nodes lie in different classes | the Bridge's congruence premise | a missed congruence after a merge; existing `debug_check_congruent_dup_invariant` |
