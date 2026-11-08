@@ -6,6 +6,9 @@ abstract values to e-classes and states which one I propose and why. It is
 not a specification of the abstract domains themselves: those live in
 `abstract-domains/doc/` and the reduced-product protocol in
 `abstract-domains/doc/reduced-product.md`.
+[eclass-analysis-walkthrough.md](eclass-analysis-walkthrough.md) follows
+one program through the analysis and shows the record stored for each class
+after every command.
 
 ## 1. Goal
 
