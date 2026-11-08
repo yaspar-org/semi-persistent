@@ -2,6 +2,7 @@ import SemperProofs.EMatch.Flatten.RegroupNested
 import SemperProofs.EMatch.Flatten.RegroupSkip
 import SemperProofs.EMatch.Flatten.RegroupBounds
 import SemperProofs.EMatch.Flatten.RegroupLaws
+import SemperProofs.EMatch.Flatten.FoldEnum
 
 /-! Axiom audit for regrouped views (`RegroupDefs.lean`, `Regroup.lean`,
 `RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`, `RegroupChain.lean`,
@@ -259,5 +260,37 @@ truncated, not skipped, no overflow. -/
 
 /- Laws-free, the stored view only: no regrouping can drop a class. -/
 #eval (exNoItem Laws.free).views.map Prod.fst
+
+end Semper.EMatch.Flatten
+
+/-! The executable fold enumerator against the spine trees (`FoldEnum.lean`). -/
+
+#print axioms Semper.EMatch.Flatten.rawNodeD_sub_both
+#print axioms Semper.EMatch.Flatten.baseRecsR_sub_both
+#print axioms Semper.EMatch.Flatten.rawNodeD_left_sound
+#print axioms Semper.EMatch.Flatten.rawNodeD_left_complete
+#print axioms Semper.EMatch.Flatten.rawNodeD_left_iff
+#print axioms Semper.EMatch.Flatten.rawViews_left_iff
+#print axioms Semper.EMatch.Flatten.rawNodeD_right_sound
+#print axioms Semper.EMatch.Flatten.rawNodeD_right_complete
+#print axioms Semper.EMatch.Flatten.rawNodeD_right_iff
+#print axioms Semper.EMatch.Flatten.rawViews_right_iff
+#print axioms Semper.EMatch.Flatten.enumerateLD_left_iff
+#print axioms Semper.EMatch.Flatten.enumerateLD_right_iff
+#print axioms Semper.EMatch.Flatten.enumerateLD_left_sound
+#print axioms Semper.EMatch.Flatten.enumerateLD_right_sound
+
+namespace Semper.EMatch.Flatten
+
+/- The reproducer of `Fold.lean` (`Sub[a, K]`, `K ∋ Sub[b, c]`, a left fold):
+the left-fold enumerator keeps `K` (the second position is off the spine),
+the unrestricted one also opens it into `[a, b, c]`. -/
+#eval (rawNodeD exFold .left (fuelOf exFold.G) exFoldRoot 1 ∅).map Prod.fst
+#eval (rawNodeD exFold .both (fuelOf exFold.G) exFoldRoot 1 ∅).map Prod.fst
+
+/- The mirror image `Sub[K, c]` as a right fold keeps `K` too; as a left fold
+it opens it into `[b, c, c]`. -/
+#eval (rawNodeD exFold .right (fuelOf exFold.G) ⟨7, .seq [4, 3]⟩ 1 ∅).map Prod.fst
+#eval (rawNodeD exFold .left (fuelOf exFold.G) ⟨7, .seq [4, 3]⟩ 1 ∅).map Prod.fst
 
 end Semper.EMatch.Flatten
