@@ -14,15 +14,19 @@ proves the engine's rule `DemandL.acceptsE` complete as the engine has it:
   with the engine's leaf test (`eng_assoc_aux`): the opened-class clause is
   never used for sequences, so the hypotheses are those of
   `demand_laws_complete_assoc`;
-* sets: `demand_engine_complete_aci`, under `TwoClassesL` (every raw view
-  of the node keeps two classes after the unit drop): closing a leaf whose
-  opened class is taken can collapse the set to that one class, a view the
-  engine drops (`FixKind.lean`, `TwoClasses`, gives the laws-free witness
-  `n = And{X, Z}`, `Z ∋ And{X}`). The engine's rebuild re-normalizes a
-  member whose children collapse to one class and merges it into that
-  class, which is what makes the hypothesis hold on a rebuilt graph (probe
-  `aci1.egg` in the fidelity status: `Z ∋ And{X, s}`, `s ∪ Tru` merges `Z`
-  with `X`). `elems ≠ []` is not needed.
+* sets: `demand_engine_complete_aci`, under the collapse invariant
+  `MembersTwoClassesL` (every filed `f`-member holds two classes less the
+  unit) and `NodeTwoClassesL` for the node: closing a leaf whose opened
+  class is taken can collapse the set to that one class, a view the engine
+  drops (`FixKind.lean`, `TwoClasses`, gives the laws-free witness
+  `n = And{X, Z}`, `Z ∋ And{X}`). `twoClassesL_of_members` derives
+  `TwoClassesL` (every raw view of the node keeps two classes after the
+  unit drop) from the invariant, which the engine's `add` establishes: a
+  set node whose normal form is one class is not stored, its class is
+  returned (`egraph.rs`, `Normal::Single(g) => find(g)`), and rebuild
+  re-normalizes a member whose children merged and merges it into that
+  class (`egraph/tests/egg/aci1.egg`: `Z ∋ And{X, s}`, `s ∪ Tru` merges `Z`
+  with `X`, then `n = And{X, Z}` with `X`). `elems ≠ []` is not needed.
 -/
 
 namespace Semper.EMatch.Flatten
@@ -245,9 +249,76 @@ theorem demand_engine_complete_assoc {ctx : Ctx} (hκ : ctx.κ = .assoc) {laws :
 
 /-! ## Sets -/
 
+/-- The classes of a view less the unit. -/
+def classesU (laws : Laws) (v : List (C × Nat)) : Finset C :=
+  ((dropU laws v).map Prod.fst).toFinset
+
+theorem classesU_cons (laws : Laws) (X : C) (k : Nat) (v : List (C × Nat)) :
+    classesU laws ((X, k) :: v) =
+      if laws.unit ≠ some X then insert X (classesU laws v) else classesU laws v := by
+  unfold classesU dropU
+  rw [List.filter_cons]
+  split <;> simp_all
+
+theorem classesU_append (laws : Laws) (a b : List (C × Nat)) :
+    classesU laws (a ++ b) = classesU laws a ∪ classesU laws b := by
+  simp [classesU, dropU_append]
+
 /-- Every raw view of `n` keeps two classes after the unit drop. -/
 def TwoClassesL (laws : Laws) (ctx : Ctx) (n : Node) : Prop :=
   ∀ v ls o, RawViewL ctx n v ls o → 2 ≤ ((dropU laws v).map Prod.fst).toFinset.card
+
+/-- The node `m` holds two classes less the unit. The engine's `add`
+normalizes the children of a set node under the laws and stores no node
+whose normal form is one class or the unit (`egraph.rs`, `add`:
+`Normal::Single(g) => find(g)`, `Normal::Unit => unit_node`), and rebuild
+re-normalizes a stored node whose children merged and merges it into that
+class (`aci1.egg`: `Z ∋ And{X, s}`, `s ∪ Tru` merges `Z` with `X`). -/
+def NodeTwoClassesL (laws : Laws) (ctx : Ctx) (m : Node) : Prop :=
+  2 ≤ (classesU laws (kids ctx.κ m.children)).card
+
+/-- The collapse invariant of the stored graph: every filed `f`-member holds
+two classes less the unit. -/
+def MembersTwoClassesL (laws : Laws) (ctx : Ctx) : Prop :=
+  ∀ id m X, ctx.IsMember id m X → NodeTwoClassesL laws ctx m
+
+/-- An opening tree keeps the classes of its positions or holds the classes
+of an opened member's view, which has two by the collapse invariant. -/
+theorem OTL.twoClasses {laws : Laws} {ctx : Ctx} (hm : MembersTwoClassesL laws ctx)
+    {k : Nat} {P : Finset C} {ks v : List (C × Nat)} {ls : List LeafL} {o : Nat}
+    (h : OTL ctx k P ks v ls o) :
+    classesU laws v = classesU laws ks ∨ 2 ≤ (classesU laws v).card := by
+  induction h with
+  | nil => exact Or.inl rfl
+  | keep _ ih =>
+      rcases ih with ih | ih
+      · left
+        rw [classesU_cons, classesU_cons, ih]
+      · right
+        refine le_trans ih (Finset.card_le_card ?_)
+        rw [classesU_cons]
+        split
+        · exact Finset.subset_insert _ _
+        · exact le_rfl
+  | opn _ hmem _ _ ih₁ _ =>
+      right
+      have h1 : 2 ≤ (classesU laws _).card :=
+        ih₁.elim (fun e => e ▸ hm _ _ _ hmem) id
+      refine le_trans h1 (Finset.card_le_card ?_)
+      rw [classesU_append]
+      exact Finset.subset_union_left
+
+/-- **`TwoClassesL` from the collapse invariant**: when every filed
+`f`-member and the node itself hold two classes less the unit, so does
+every raw view of the node. -/
+theorem twoClassesL_of_members {laws : Laws} {ctx : Ctx} {n : Node}
+    (hm : MembersTwoClassesL laws ctx) (hn : NodeTwoClassesL laws ctx n) :
+    TwoClassesL laws ctx n := by
+  intro v ls o hv
+  change 2 ≤ (classesU laws v).card
+  rcases OTL.twoClasses hm hv with h | h
+  · rw [h]; exact hn
+  · exact h
 
 /-- The ACI refold induction with the engine's leaf test (no opened-class
 clause), under `TwoClassesL`. -/
@@ -328,9 +399,10 @@ theorem eng_aci_aux {ctx : Ctx} {laws : Laws} {n : Node} {f : Sym} {elems : List
     rw [Binding.setSetRest_setSetRest] at hm''
     exact hm''
 
-/-- **Completeness of the engine's rule, ACI, any laws**, under `TwoClassesL`. -/
+/-- **Completeness of the engine's rule, ACI, any laws**, under the collapse
+invariant (`MembersTwoClassesL`, and the node itself). -/
 theorem demand_engine_complete_aci {ctx : Ctx} (hκ : ctx.κ = .aci) {laws : Laws} {n : Node}
-    (htwo : TwoClassesL laws ctx n)
+    (hinv : MembersTwoClassesL laws ctx) (hroot : NodeTwoClassesL laws ctx n)
     {v w : List (C × Nat)} {ls : List LeafL} {o : Nat} {f : Sym} {elems : List Pat}
     {r : Var} {σ : Binding} {taken : List C}
     (hv : RawViewL ctx n v ls o) (hn : normalize .aci laws v = .node w)
@@ -341,7 +413,7 @@ theorem demand_engine_complete_aci {ctx : Ctx} (hκ : ctx.κ = .aci) {laws : Law
       MatchV ctx.G (.aci f elems (some r)) (ofView .aci w') (σ.setSetRest r rest') taken ∧
       σ.finRest r = some rest₀ ∧ RefoldsACIT ctx taken rest₀ rest' := by
   obtain ⟨v', ls', o', w', rest', hv', -, hok, hn', hm', hR⟩ :=
-    eng_aci_aux htwo helems o v ls w σ hv hn hm
+    eng_aci_aux (twoClassesL_of_members hinv hroot) helems o v ls w σ hv hn hm
   have hok' : ∀ l ∈ flagLeaves ctx.κ laws v' ls', l.okE ctx.κ taken := by rw [hκ]; exact hok
   obtain ⟨d, hd, hacc⟩ := acceptsE_of_tree hv' (by rw [hκ]; exact hn') hok'
   rw [hκ] at hacc
