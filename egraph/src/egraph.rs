@@ -2494,6 +2494,10 @@ where
                 self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
                 return;
             }
+            // Debug builds check I5 on every congruence-closed state of the loop: the
+            // stored minimal monomials are what the round orients its rules toward.
+            #[cfg(debug_assertions)]
+            self.debug_check_min_monomial_invariant();
             // Goal-directed early stop (the lazy-check transaction): the pair
             // joined, so the question is answered — stop mid-closure. The
             // graph is plain-congruence-closed at this point, a valid state.
@@ -2845,16 +2849,18 @@ where
         // The span changed (recanonize pushes to `touched` only then) and still forms a
         // node: keep the class's min-monomial slot least (I5).
         if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before {
-            self.refresh_min_monomial(parent);
             // A collapse retired the node because another rule's left-hand side was
             // contained in its old monomial; the new monomial may contain none, and then
             // the node is a rule completion must superpose. Reactivate it: the next round
             // re-tests reducibility and collapses it again if a rule still reduces it.
             // Left set, `Add{c2,c3,c5}` collapsed by `c2c4 → c2c3` became `Add{c2²,c5}` at
             // `C2 = C3`, and `C5 = C5·C5` was never derived (`ac_collapsed_recanon.egg`).
+            // The flag is cleared before the refresh, which skips collapsed nodes: a node
+            // active again takes part in the class's minimal monomial.
             if self.node_flags(parent) & crate::node_types::FLAG_AC_COLLAPSED != 0 {
                 self.clear_node_flag(parent, crate::node_types::FLAG_AC_COLLAPSED);
             }
+            self.refresh_min_monomial(parent);
         }
         // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
         // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
@@ -3637,7 +3643,11 @@ where
         // its superpositions are never generated. `ac_collapsed_recanon.egg`: the normal
         // form `c2²c5` of `c2c4c5` was such a node, and `C5 = C5·C5` was never derived.
         // Reactivation counts as a change, so the round loop does not report a fixpoint
-        // before the node is processed.
+        // before the node is processed. The node is active again, so it takes part in
+        // its class's minimal monomial (I5): the refresh folds it in. Without it the
+        // stored minimal monomial can stay on a node this round collapses, when the
+        // reactivated node is the normal form of the class's own minimal monomial under a
+        // rule a merge reoriented (`ac_reactivate_min_monomial.egg`).
         let reactivated = std::cell::Cell::new(false);
         let materialize =
             |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::C>| {
@@ -3646,6 +3656,7 @@ where
                     && eg.node_flags(id) & crate::node_types::FLAG_AC_COLLAPSED != 0
                 {
                     eg.clear_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
+                    eg.refresh_min_monomial(id);
                     reactivated.set(true);
                 }
                 Some(id)
@@ -4999,6 +5010,119 @@ where
                 "class {repr:?}: all {n} members carry FLAG_CONGRUENT_DUP, so the class has \
                  no visible member"
             );
+        }
+    }
+
+    /// Check invariant I5: for every class and completion operator with at least one
+    /// active node (neither `FLAG_SUBSUMED` nor `FLAG_AC_COLLAPSED`), the stored minimal
+    /// monomial is a node of that class and operator, is not collapsed, and its monomial
+    /// is the `monomial_cmp_key`-least among the class's active nodes of the operator. A
+    /// stored node that is subsumed is accepted when its monomial is at most the least
+    /// active one: it is still the class's least, and orients the same rules. The least
+    /// monomial is recomputed here by a scan over all nodes, independently of the
+    /// incremental maintenance (`register_if_fresh`, `fold_min_monomial`,
+    /// `refresh_min_monomial`), so a maintenance gap shows as a mismatch. Unit and atomic
+    /// classes are skipped: their right-hand side is `{}` or `{class}`, not the stored
+    /// node. `Err` names the class, the operator, the stored node and monomial, and the
+    /// recomputed ones.
+    pub fn check_min_monomial_invariant(&self) -> Result<(), String> {
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        use std::collections::BTreeMap;
+        let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
+        // Per (class representative, op): the least active monomial and a node holding it.
+        let mut least: BTreeMap<(Cfg::G, Cfg::O), (Cfg::G, Vec<(Cfg::G, Cfg::M)>)> =
+            BTreeMap::new();
+        let mut buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        for id in self.node_ids() {
+            if !matches!(self.node_ref(id), NodeRef::MSet(_) | NodeRef::Set(_))
+                || self.node_flags(id) & inactive != 0
+            {
+                continue;
+            }
+            self.node_monomial_into(id, &mut buf);
+            let key = (self.class_repr(id), self.node_op(id));
+            match least.get_mut(&key) {
+                None => {
+                    least.insert(key, (id, buf.clone()));
+                }
+                Some(cur) => {
+                    if self.monomial_cmp_key(&buf, &cur.1) == std::cmp::Ordering::Less {
+                        *cur = (id, buf.clone());
+                    }
+                }
+            }
+        }
+        let show = |m: &[(Cfg::G, Cfg::M)]| -> String {
+            let parts: Vec<String> = m
+                .iter()
+                .map(|&(g, k)| format!("{:?}^{}", g, k.to_usize()))
+                .collect();
+            format!("{{{}}}", parts.join(", "))
+        };
+        for (&(cls, op), (node, m)) in &least {
+            // The right-hand side of a unit class is the empty monomial and that of an
+            // atomic class is `{class}` (`class_rhs_into`): neither reads the stored
+            // minimal monomial, and a size-1 node `f(x)` merged with `x` by degeneracy
+            // sits below every stored one. Both are outside I5.
+            if self
+                .unit_node(op)
+                .is_some_and(|u| self.class_repr(u) == cls)
+                || self.class_atomic(cls) == Some(true)
+            {
+                continue;
+            }
+            let op_name = &self.ops.info(op).name;
+            let Some(stored) = self.class_min_monomial_of_op(cls, op) else {
+                return Err(format!(
+                    "I5: class {cls:?}, op {op_name}: no stored minimal monomial, least \
+                     active node {node:?} = {}",
+                    show(m)
+                ));
+            };
+            let flags = self.node_flags(stored);
+            if self.class_repr(stored) != cls
+                || self.node_op(stored) != op
+                || flags & FLAG_AC_COLLAPSED != 0
+            {
+                self.node_monomial_into(stored, &mut buf);
+                return Err(format!(
+                    "I5: class {cls:?}, op {op_name}: stored minimal monomial {stored:?} = {} \
+                     is {}; least active node {node:?} = {}",
+                    show(&buf),
+                    if self.class_repr(stored) != cls {
+                        "in another class"
+                    } else if self.node_op(stored) != op {
+                        "a node of another op"
+                    } else {
+                        "collapsed"
+                    },
+                    show(m)
+                ));
+            }
+            self.node_monomial_into(stored, &mut buf);
+            let cmp = self.monomial_cmp_key(&buf, m);
+            let ok = if flags & FLAG_SUBSUMED != 0 {
+                cmp != std::cmp::Ordering::Greater
+            } else {
+                cmp == std::cmp::Ordering::Equal
+            };
+            if !ok {
+                return Err(format!(
+                    "I5: class {cls:?}, op {op_name}: stored minimal monomial {stored:?} = {} \
+                     is not the least active monomial; least active node {node:?} = {} ({cmp:?})",
+                    show(&buf),
+                    show(m)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Debug: panic when `check_min_monomial_invariant` fails. Run after each
+    /// congruence rebuild of the completion loop in debug builds.
+    pub fn debug_check_min_monomial_invariant(&self) {
+        if let Err(e) = self.check_min_monomial_invariant() {
+            panic!("{e}");
         }
     }
 

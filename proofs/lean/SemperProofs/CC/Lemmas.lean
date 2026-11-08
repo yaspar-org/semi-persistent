@@ -210,6 +210,7 @@ theorem Infer_I2 {L : Laws n} {S : Set (Monomial n × Monomial n)} {st st' : Sta
   | cancelMerge hc hMX hNX hcd hM hN =>
     exact merge_I2 h hM hN (E.cancel hc (h _ _ _ _ hMX hNX hcd))
   | retire _ => exact h
+  | unretire _ _ => exact h
   | setRhs _ => exact h
 
 /-! ## L7: soundness -/
@@ -484,7 +485,76 @@ theorem Infer_I4 {L : Laws n} {st st' : State n} {pool : Finset (Fin n)}
   | joinMerge _ _ _ => exact h
   | cancelMerge _ _ _ _ _ _ => exact h
   | retire _ => exact h
+  | unretire _ _ => exact h
   | setRhs _ => exact h
+
+/-! ## Un-retirement
+
+The engine clears `FLAG_AC_COLLAPSED` on a node that completion materializes
+again or that recanonization changes, and refreshes the class's stored
+minimal monomial with it (`materialize`, `recanonize_node`:
+`refresh_min_monomial`). Modelled as `Infer.unretire` followed by
+`Infer.setRhs (st.refreshRhs M c)`. Nodes and partition do not change, so I2
+and I4 pass through (`Infer_I2`, `Infer_I4`); I0 and I5 need the refresh. -/
+
+/-- Un-retiring keeps I0: nodes, partition and right-hand sides are unchanged. -/
+theorem unretire_I0 {st : State n} (h : I0 st) (M : Monomial n) (c : Fin n) :
+    I0 (st.unretire M c) := h
+
+/-- The refresh keeps I0 when the node active again is a node: the class of
+`c` stores `M`, a node of that class, or keeps its own right-hand side. -/
+theorem refreshRhs_I0 {st : State n} (h : I0 st) {M : Monomial n} {c : Fin n}
+    (hM : (M, c) ∈ st.nodes) : I0 { st with rhs := st.refreshRhs M c } := by
+  intro d
+  simp only [State.refreshRhs]
+  by_cases hd : st.find d = st.find c ∧ degLex (st.rhs (st.find c)) M
+  · rw [if_pos hd]
+    exact ⟨c, hM, hd.1.symm⟩
+  · rw [if_neg hd]
+    exact h d
+
+/-- Un-retiring without the refresh can break I5: the node active again may be
+below the stored right-hand side. With the refresh I5 holds again. The
+right-hand side of the class of `c` is `M` when `M` is below the old one, and
+every active node of that class was at or above the old one. -/
+theorem unretire_refresh_I5 {st : State n} (h5 : I5 st) (M : Monomial n) (c : Fin n) :
+    I5 { st.unretire M c with rhs := st.refreshRhs M c } := by
+  intro N d hN
+  have hnodes : (N, d) ∈ st.nodes := hN.1
+  have hcase : (N, d) ∈ st.retired → N = M ∧ d = c := by
+    intro hret
+    have hnot : (N, d) ∉ st.retired \ {(M, c)} := hN.2
+    by_contra hne
+    exact hnot ⟨hret, fun hmem => hne (Prod.mk.inj (Set.mem_singleton_iff.mp hmem))⟩
+  show st.refreshRhs M c (st.find d) = N ∨ degLex N (st.refreshRhs M c (st.find d))
+  unfold State.refreshRhs
+  by_cases hdc : st.find d = st.find c
+  · by_cases hlt : degLex (st.rhs (st.find c)) M
+    · rw [if_pos ⟨hdc, hlt⟩]
+      by_cases hret : (N, d) ∈ st.retired
+      · exact Or.inl (hcase hret).1.symm
+      · rcases h5 N d ⟨hnodes, hret⟩ with h | h
+        · rw [hdc] at h; rw [← h]; exact Or.inr hlt
+        · rw [hdc] at h; exact Or.inr (degLex_trans h hlt)
+    · rw [if_neg (fun hh => hlt hh.2)]
+      by_cases hret : (N, d) ∈ st.retired
+      · obtain ⟨rfl, rfl⟩ := hcase hret
+        rcases degLex_trichotomous N (st.rhs (st.find d)) with h | h | h
+        · exact Or.inr h
+        · exact Or.inl h.symm
+        · exact absurd h hlt
+      · exact h5 N d ⟨hnodes, hret⟩
+  · rw [if_neg (fun hh => hdc hh.1)]
+    by_cases hret : (N, d) ∈ st.retired
+    · exact absurd (congrArg st.find (hcase hret).2) hdc
+    · exact h5 N d ⟨hnodes, hret⟩
+
+/-- The engine's un-retire is two inference steps. -/
+theorem unretire_refresh_reachable {L : Laws n} {st : State n} {M : Monomial n} {c : Fin n}
+    (hret : (M, c) ∈ st.retired) (hnf : ∀ P, ¬ Rw L st.rules M P) :
+    Reachable L st { st.unretire M c with rhs := st.refreshRhs M c } :=
+  Relation.ReflTransGen.tail (Relation.ReflTransGen.single (Infer.unretire hret hnf))
+    (Infer.setRhs (st.refreshRhs M c))
 
 /-! L16 (round termination) is proved in `Proofs/RunStabilizes.lean`
 (`run_stabilizes'`) and re-exported from `Main.lean`. -/

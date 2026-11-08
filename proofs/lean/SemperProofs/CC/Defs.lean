@@ -171,6 +171,19 @@ def addNode (M : Monomial n) (c : Fin n) : State n :=
 def retire (M : Monomial n) (c : Fin n) : State n :=
   { st with retired := insert (M, c) st.retired }
 
+/-- Un-retire a node (clear `FLAG_AC_COLLAPSED`): the engine does this when
+completion materializes a normal form that hash-conses to a collapsed node
+(`materialize`), or when recanonization changes a collapsed node's monomial. -/
+def unretire (M : Monomial n) (c : Fin n) : State n :=
+  { st with retired := st.retired \ {(M, c)} }
+
+/-- The stored right-hand sides after `(M, c)` is active again
+(`refresh_min_monomial`): the class of `c` takes `M` when `M` is below its
+stored right-hand side; every other class keeps its own. Read on
+representatives, as `rhs` is. -/
+def refreshRhs (M : Monomial n) (c : Fin n) : Fin n → Monomial n :=
+  fun x => if x = st.find c ∧ degLex (st.rhs (st.find c)) M then M else st.rhs x
+
 /-- A class is fresh when no node is in it. -/
 def Fresh (d : Fin n) : Prop := ∀ M c, (M, c) ∈ st.nodes → st.find c ≠ st.find d
 
@@ -186,8 +199,10 @@ end State
 /-- The inference steps of one completion round (sketch (a), "State"; (c)).
 Minting materializes a normal form in a fresh class; `joinMerge` covers the
 (A′) merge, the (B) close of a critical pair, the axiom pairs and plain
-congruence; `cancelMerge` is cancel-close; `retire` sets the flag;
-`setRhs` refreshes the stored minima. -/
+congruence; `cancelMerge` is cancel-close; `retire` sets the flag; `unretire` clears it
+on a node no current rule reduces (a normal form materialized again, or a
+recanonized node whose new monomial contains no left-hand side); `setRhs`
+refreshes the stored minima. -/
 inductive Infer (L : Laws n) : State n → State n → Prop
   | mint {st : State n} {M : Monomial n} {c : Fin n} {N : Monomial n} {d : Fin n} :
       (M, c) ∈ st.nodes → Relation.ReflTransGen (Rw L st.rules) M N → st.Fresh d →
@@ -201,6 +216,8 @@ inductive Infer (L : Laws n) : State n → State n → Prop
       Infer L st (st.merge c' d')
   | retire {st : State n} {M : Monomial n} {c : Fin n} :
       (M, c) ∈ st.nodes → Infer L st (st.retire M c)
+  | unretire {st : State n} {M : Monomial n} {c : Fin n} :
+      (M, c) ∈ st.retired → (∀ P, ¬ Rw L st.rules M P) → Infer L st (st.unretire M c)
   | setRhs {st : State n} (rhs' : Fin n → Monomial n) :
       Infer L st { st with rhs := rhs' }
 

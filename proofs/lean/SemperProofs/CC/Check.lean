@@ -17,6 +17,12 @@ expected are `propext`, `Classical.choice` and `Quot.sound`. -/
 #print axioms SemperProofs.CC.SlotState.fix_sufficient
 #print axioms SemperProofs.CC.SlotState.reachable_I5
 #print axioms SemperProofs.CC.SlotState.shrinkNoRefresh_breaks_I5
+#print axioms SemperProofs.CC.SlotState.unretire_I5
+#print axioms SemperProofs.CC.SlotState.unretireNoRefresh_breaks_I5
+#print axioms SemperProofs.CC.unretire_I0
+#print axioms SemperProofs.CC.refreshRhs_I0
+#print axioms SemperProofs.CC.unretire_refresh_I5
+#print axioms SemperProofs.CC.unretire_refresh_reachable
 #print axioms SemperProofs.CC.newman
 #print axioms SemperProofs.CC.kapur_termination
 #print axioms SemperProofs.CC.run_stabilizes
