@@ -182,10 +182,10 @@ the earlier `ReducedProduct`, which combined exactly Tnum, Anum, Interval and
 Unum with a reduction written by hand for those four. Tnum, Anum and Unum join
 `Product` once they implement `Domain` with a `BotOr` bottom and `Refine`.
 
-The exact contracts implemented by the interval component are listed in
-[`interval-soundness.md`](interval-soundness.md). General division and alarms,
-abstract comparisons and narrowing, wrapped intervals, and strided intervals
-are maintained as future designs in
+The exact contracts implemented by the machine-word interval component are listed in
+[`interval-soundness.md`](interval-soundness.md). Unbounded integer intervals
+and their narrowing are in [`interval-z.md`](interval-z.md). Further machine-word
+interval extensions are in
 [`future/interval-extensions.md`](future/interval-extensions.md).
 
 

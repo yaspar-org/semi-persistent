@@ -93,6 +93,7 @@ cargo test -p semi-persistent-abstract-domains --test reduced_product
 | L4 | Shared GCD/CRT helpers | shared mathematical proofs, deterministic GCD, modular inverse, exact finite CRT and machine-modulus GCD verified |
 | L4 | `Congruence<W>` | generic canonical `Domain`; exact refinement/meet, LUB join, join-based widen, and sound unsigned add/sub/neg |
 | L4 | `StridedInterval<W>` (`strided.rs`), ported onto the shared `Domain`/`Word` traits from `doc/domain-traits.md` | `wf` is canonical (`lemma_canonical` proved); `leq`/`join`/`meet`/`widen` implemented; not yet in a `Product` |
+| L4 | `IntervalZ` | bottomless unbounded interval; Cousot `widen`, exact `meet`, sound arithmetic, `Mul`, both `DivRem`, `narrow`, `refine_budget`, `sign_possibilities` |
 
 All enabled L4 results are proved well formed where their contracts say so.
 The current **universal containment** contracts are:
@@ -105,6 +106,7 @@ The current **universal containment** contracts are:
 | `Interval` | `add`, `meet`, `join`, `div_const` |
 | `Congruence<W>` | exact `refines`/`leq`/`meet`, LUB `join`, `widen`, unsigned `add`/`sub`/`neg` |
 | `StridedInterval<W>` | `new`, `constant`, `leq` (sound and complete), `join`, `meet`, `widen`; precision caveats below |
+| `IntervalZ` | `add`, `neg`, `sub`, `mul`, `meet`, `join`, Cousot `widen`, `narrow`, `refine_budget`, `Refine::refine`, `sign_possibilities`, `DivRem<Euclid>`, `DivRem<Trunc>` |
 
 The `ExecUnum` proofs use native/spec bridge lemmas, the L3 `ChoppedUnum`
 soundness theorems, explicit overflow-to-top cases, and interval-to-Unum range
@@ -412,3 +414,27 @@ divisors. The Sign runtime suite checks all 7-by-7 abstract category
 pairs against concrete values from `[-12, 12]`, including exact quotient and
 remainder sign categories, lattice exactness, flags, and FactsZ refinement
 no-growth.
+
+## IntervalZ
+
+`IntervalZ` is the bottomless unbounded interval from `doc/domain-traits.md`:
+`Lo` is `NegInf | Fin(IBig)`, `Hi` is `Fin(IBig) | PosInf`, fields are private,
+and `lo <= hi` when both are finite. Emptiness is `BotOr::Bot`. `IBig` is the
+trusted `num-bigint` wrapper in the ledger; it is not a verified type.
+`sign_possibilities` reports whether a negative, zero, or a positive integer
+is still possible; Sign's `Refine` reads it from the `FactsZ` interval.
+
+`widen` is Cousot widening: an unstable bound jumps to infinity. Division is
+`DivRem<Euclid>` and `DivRem<Trunc>`. A divisor that contains 0 is split at
+zero. The Euclidean quotient of a finite negative by `+∞` is `-1`; the
+truncated quotient is `0`. `DivZero` is exact in both directions (`Never`
+excludes 0, `Always` is `{0}`). Remainder is the corner hull `x - q * y` when
+the quotient is one integer, and otherwise `0 <= r < |y|`, cut by `|r| <= |x|`
+where that bound holds (truncation keeps the dividend's sign). `Mul` is the
+endpoint product, with `0 * ±∞ = 0`. `narrow` returns `BotOr`.
+`refine_budget` returns that result with the remaining fuel. `Refine::refine`
+meets the interval with the `itv` field of `FactsZ`. `meet_chain_sound` states
+that a concrete value in the start interval and in every fact survives the
+chain. `cargo test -p semi-persistent-abstract-domains --test interval_z`
+checks Euclidean `-7/2 = -4`, truncated `-7/2 = -3`, a negative divided by
+`+∞`, singleton remainders, and `narrow`.
