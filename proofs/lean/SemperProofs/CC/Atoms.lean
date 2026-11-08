@@ -149,8 +149,9 @@ def AtomCollapse (L : Laws n) (st : State n) (A : Set (Fin n)) (u : Option (Fin 
 /-- A round that changes nothing, with leaf constants. `nf_present`: the
 normal form of an active node (stored or implicit) is a stored active node
 of its class unless it is the monomial of an implicit node; `collapse`:
-in that case the node is in the implicit node's class. `cp_joinable` is
-the (B) condition of `RoundFixed` over the rules of the completion view. -/
+in that case the node is in the implicit node's class. `lhs_reduced` and
+`cp_joinable` are the reducibility and (B) conditions of `RoundFixed` over
+the rules of the completion view. -/
 structure RoundFixedA (L : Laws n) (st : State n) (A : Set (Fin n)) (u : Option (Fin n)) :
     Prop where
   nf_present : ∀ M c N, (M, c) ∈ (st.withAtoms A u).active →
@@ -158,8 +159,10 @@ structure RoundFixedA (L : Laws n) (st : State n) (A : Set (Fin n)) (u : Option 
     (∀ P, ¬ Rw L (st.withAtoms A u).rules N P) → (∀ x, (N, x) ∉ atomNodes A u) →
     ∃ c', (N, c') ∈ st.active ∧ st.find c' = st.find c
   collapse : AtomCollapse L st A u
+  lhs_reduced : ∀ r₁ r₂, r₁ ∈ (st.withAtoms A u).rules → r₂ ∈ (st.withAtoms A u).rules →
+    r₁ ≠ r₂ → ¬ r₂.1 ≤ r₁.1
   cp_joinable : ∀ r₁ r₂, r₁ ∈ (st.withAtoms A u).rules → r₂ ∈ (st.withAtoms A u).rules →
-    r₁ ≠ r₂ → Overlap r₁.1 r₂.1 →
+    r₁ ≠ r₂ → Overlap r₁.1 r₂.1 → ¬ r₁.1 ≤ r₂.1 → ¬ r₂.1 ≤ r₁.1 →
     Joinable (Rw L (st.withAtoms A u).rules) (criticalPair L r₁ r₂).1 (criticalPair L r₁ r₂).2
 
 /-- `RoundFixedA` is `RoundFixed` of the completion view plus the
@@ -171,7 +174,7 @@ theorem roundFixedA_iff {L : Laws n} {st : State n} {A : Set (Fin n)} {u : Optio
     RoundFixedA L st A u ↔ RoundFixed L (st.withAtoms A u) ∧ AtomCollapse L st A u := by
   constructor
   · intro h
-    refine ⟨⟨fun M c N hM hMN hN => ?_, h.cp_joinable⟩, h.collapse⟩
+    refine ⟨⟨fun M c N hM hMN hN => ?_, h.lhs_reduced, h.cp_joinable⟩, h.collapse⟩
     by_cases hx : ∃ x, (N, x) ∈ atomNodes A u
     · obtain ⟨x, hx⟩ := hx
       exact ⟨x, State.implicit_active hx, h.collapse M c N x hM hx hMN hN⟩
@@ -179,7 +182,7 @@ theorem roundFixedA_iff {L : Laws n} {st : State n} {A : Set (Fin n)} {u : Optio
       obtain ⟨c', h₁, h₂⟩ := h.nf_present M c N hM hMN hN hx
       exact ⟨c', State.active_withAtoms h₁, h₂⟩
   · rintro ⟨h, hcol⟩
-    refine ⟨fun M c N hM hMN hN hx => ?_, hcol, h.cp_joinable⟩
+    refine ⟨fun M c N hM hMN hN hx => ?_, hcol, h.lhs_reduced, h.cp_joinable⟩
     obtain ⟨c', h₁, h₂⟩ := h.nf_present M c N hM hMN hN
     rcases State.mem_active_withAtoms.1 h₁ with h₁ | h₁
     · exact ⟨c', h₁, h₂⟩
@@ -274,11 +277,13 @@ theorem completion_complete_atoms {L : Laws n} {S : Set (Monomial n × Monomial 
   completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix.roundFixed hlaw hnf_ax hcp
     (hfix.congr hcc) hS hcancel hM hN hMN
 
-/-- The hypotheses of `completion_complete_atoms`, packaged, with `hcancel`
-replaced by lattice closure for a cancellative operator: the engine's
-`lattice_round` establishes `LatticeClosed` at its fixpoint
-(`Lattice.latticeClosed_of_engineFixed`) and does not establish `hcancel`
-(`Lattice.hcancel_not_derivable`). -/
+/-- The hypotheses of `completion_complete_atoms`, packaged, with two
+replacements. `hcancel` is replaced by lattice closure for a cancellative
+operator: the engine's `lattice_round` establishes `LatticeClosed` at its
+fixpoint (`Lattice.latticeClosed_of_engineFixed`) and does not establish
+`hcancel` (`Lattice.hcancel_not_derivable`). `hcp` is replaced by its
+part involving a law instance (`AxiomCP`): the rule-rule part follows from
+the fixed round (`ruleRuleCP_of_fixed`, through `hcp_of_fixed`). -/
 structure CompleteAtoms (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : State n)
     (A : Set (Fin n)) (u : Option (Fin n)) : Prop where
   slots : ∃ ss₀ ss : SlotState n,
@@ -288,10 +293,7 @@ structure CompleteAtoms (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : 
   hfix : RoundFixedA L st A u
   hlaw : ∀ P Q, L.lawRel P Q → degLex P Q
   hnf_ax : ∀ M N, ¬ Rw (plain n) L.axRules (L.clamp M) N
-  hcp : ∀ r₁ r₂, r₁ ∈ (st.withAtoms A u).rules ∪ L.axRules →
-    r₂ ∈ (st.withAtoms A u).rules ∪ L.axRules → r₁ ≠ r₂ → Overlap r₁.1 r₂.1 →
-    Joinable (Rw (plain n) ((st.withAtoms A u).rules ∪ L.axRules))
-      (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2
+  hcp_ax : AxiomCP L (st.withAtoms A u).rules
   hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d
   hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A u).active ∧
     (N, d) ∈ (st.withAtoms A u).active ∧ st.find c = st.find d
@@ -313,8 +315,8 @@ theorem same_class (h : CompleteAtoms L S st A u) {M N : Monomial n} {c d : Fin 
   by_cases hc : L.cancellative
   · exact Lattice.complete_of_latticeClosed (h.hlat hc) h.hS hM hN (Lattice.E_union_left hMN)
   · obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
-    exact completion_complete_atoms h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw h.hnf_ax h.hcp h.hcc
-      h.hS (fun h => absurd h hc) hM hN hMN
+    exact completion_complete_atoms h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw h.hnf_ax
+      (hcp_of_fixed h.hfix.roundFixed h.hcp_ax) h.hcc h.hS (fun h => absurd h hc) hM hN hMN
 
 /-- Two stored active nodes. -/
 theorem nodes (h : CompleteAtoms L S st A u) {M N : Monomial n} {c d : Fin n}

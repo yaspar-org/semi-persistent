@@ -51,9 +51,12 @@ limits are in the docstrings: a theory-equal term that is absent is matched
 through its class only (`per_node_form_fails`), and maximum partition drops
 a two-item match when its two children classes merge (`NoCollapse`).
 
-Still assumed: `SubRep`, `CompleteAtoms` (with `hlat`, `hcp` and the
-minimal-monomial hypotheses) and the round facts; no theorem relates the
-completion state to the rounds or to the engine's rebuild.
+Still assumed: `SubRep`, `CompleteAtoms` (with `hlat`, `hcp_ax` for the
+critical pairs involving a law instance, and the minimal-monomial
+hypotheses) and the round facts; no theorem relates the completion state
+to the rounds or to the engine's rebuild. The covering form
+`saturation_modulo_complete_store_cover` has no witness on a store with a
+collapsed `f`-node (`Final/Witness.lean`, `not_cover`).
 
 ## CC: AC-congruence closure (`SemperProofs/CC/`)
 
@@ -66,7 +69,13 @@ completion state to the rounds or to the engine's rebuild.
   `hcancel`. Since 2026-11-08 the bundles `CompleteHyps` and `CompleteAtoms`
   take `hlat : L.cancellative → LatticeClosed` in its place (commit
   `1be51963`), so the final theorems rest on what `lattice_round`
-  establishes. Since 2026-11-06 `I0Active` constrains only the classes that
+  establishes. Since commit `2e40098d` `RoundFixed` states the engine's
+  three checks (`nf_present`, `lhs_reduced`: no rule's left-hand side
+  reducible by another rule, `cp_joinable` over non-containing pairs),
+  `hcp_of_fixed` derives the rule-rule critical pairs from it
+  (`ruleRuleCP_of_fixed`), and the bundles take `hcp_ax : AxiomCP`, the
+  pairs involving a law instance, in place of `hcp`. The atoms witness
+  retires `{a, b, d}` as the engine does (`witness_I3`). Since 2026-11-06 `I0Active` constrains only the classes that
   hold an active node and `hcc` only the active nodes; the former statement
   (`I0ActiveAll`, every class of `Fin n`, which no state with a leaf constant
   meets) is the corollary `completion_complete_at_convergence_of_all`.
@@ -179,7 +188,8 @@ completion state to the rounds or to the engine's rebuild.
   `inverse` (the engine's one-directional walk `invWalk`, proved normalizing
   by `invNormal_invWalk`), `combined`; `hlaw` and `hnf_ax` discharged;
   `completion_complete_{identity,nilpotent,idempotent,inverse,combined}` with
-  `hcp` reduced to rule-side conditions: `RuleRuleCP`, and for `:inverse`
+  `hcp` reduced to rule-side conditions: `RuleRuleCP` (derived from the
+  fixed round since `2e40098d`, so no longer a hypothesis), and for `:inverse`
   `InvMatching`, `InvUnitFree`, `InverseAxiomCP`, `NilpotentInverseCP`,
   which the engine did not establish (four confirmed gaps, `proofs/repro`).
 - `Laws/InvRules*.lean`: the five rules R1-R5 the engine now applies

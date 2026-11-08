@@ -12,7 +12,8 @@ graph `represents st f A`.
 * `CompleteHyps L S st` packages the hypotheses of
   `completion_complete_cancellative_engine`: those of
   `completion_complete_at_convergence` with `hcancel` replaced by
-  `LatticeClosed`.
+  `LatticeClosed` and `hcp` by its part involving a law instance
+  (`AxiomCP`; the rule-rule part follows from `RoundFixed`).
 * `ac_equal_same_class`: two `=_E`-equal active nodes are in one class;
   `ac_equal_same_class_graph` restates it on the graph.
 * `Term` / `ETerm`: the binary ground terms of the operator over the class
@@ -36,7 +37,9 @@ variable {n : ℕ}
 (`CC/Lattice.lean`) on the converged state `st` for the laws `L` and the
 asserted equations `S`: those of `completion_complete_at_convergence` with
 `hcancel` replaced by lattice closure for a cancellative operator, which is
-what the engine's `lattice_round` establishes at its fixpoint. See
+what the engine's `lattice_round` establishes at its fixpoint, and `hcp`
+replaced by `AxiomCP`, the critical pairs involving a law instance; the
+rule-rule pairs follow from the fixed round (`hcp_of_fixed`). See
 `CC/Main.lean` and `CC/Assemble.lean` for their reading. -/
 structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : State n) :
     Prop where
@@ -47,10 +50,7 @@ structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : S
   hfix : RoundFixed L st
   hlaw : ∀ P Q, L.lawRel P Q → degLex P Q
   hnf_ax : ∀ M N, ¬ Rw (plain n) L.axRules (L.clamp M) N
-  hcp : ∀ r₁ r₂, r₁ ∈ st.rules ∪ L.axRules → r₂ ∈ st.rules ∪ L.axRules → r₁ ≠ r₂ →
-    Overlap r₁.1 r₂.1 →
-    Joinable (Rw (plain n) (st.rules ∪ L.axRules))
-      (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2
+  hcp_ax : AxiomCP L st.rules
   hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d
   hS : ∀ M N, (M, N) ∈ S →
     ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d
@@ -69,7 +69,7 @@ theorem CompleteHyps.ofAtoms {L : Laws n} {S : Set (Monomial n × Monomial n)} {
   hfix := h.hfix.roundFixed
   hlaw := h.hlaw
   hnf_ax := h.hnf_ax
-  hcp := h.hcp
+  hcp_ax := h.hcp_ax
   hcc := h.hfix.congr h.hcc
   hS := h.hS
   hlat := h.hlat
@@ -97,7 +97,7 @@ theorem ac_equal_same_class {L : Laws n} {S : Set (Monomial n × Monomial n)} {s
     st.find c = st.find d := by
   obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
   exact Lattice.completion_complete_cancellative_engine h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw
-    h.hnf_ax h.hcp h.hcc h.hS h.hlat hM hN hMN
+    h.hnf_ax (hcp_of_fixed h.hfix h.hcp_ax) h.hcc h.hS h.hlat hM hN hMN
 
 /-- On the graph: two `mset` nodes whose monomials are `=_E`-equal are in
 one class. -/

@@ -76,6 +76,61 @@ theorem E_joinable_RwAx {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : 
   | law h => exact ⟨_, ReflTransGen.single (RwAx_of_law h), ReflTransGen.refl⟩
   | cancel hc _ ih => exact hcancel hc _ _ _ ih
 
+/-- Every monomial rewrites to its `clamp` in at most one law step. -/
+theorem clamp_rtg_RwAx (L : Laws n) (R : Rules n) (M : Monomial n) :
+    ReflTransGen (RwAx L R) M (L.clamp M) := by
+  rcases L.clamp_law M with h | h
+  · rw [h]
+  · exact ReflTransGen.single (RwAx_of_law h)
+
+/-- **The rule-rule critical pairs of a fixed round are joinable under plain
+rewriting by the rules and law instances.** `RoundFixed.cp_joinable_all`
+joins the clamped reducts under clamped rewriting; each plain reduct
+reaches its clamp in at most one law step (`clamp_rtg_RwAx`), and a clamped
+step embeds into plain steps (`Rw_rtg_embed`). This is the rule-rule part
+of `hcp`, derived from the fixpoint; the pairs that involve a law instance
+are `AxiomCP`. -/
+theorem ruleRuleCP_of_fixed {L : Laws n} {st : State n} (hfix : RoundFixed L st) :
+    ∀ r₁ r₂, r₁ ∈ st.rules → r₂ ∈ st.rules → r₁ ≠ r₂ → Overlap r₁.1 r₂.1 →
+      Joinable (RwAx L st.rules)
+        (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2 := by
+  intro r₁ r₂ h₁ h₂ hne hov
+  obtain ⟨P, hP₁, hP₂⟩ := hfix.cp_joinable_all r₁ r₂ h₁ h₂ hne hov
+  exact ⟨P, (clamp_rtg_RwAx L _ _).trans (Rw_rtg_embed hP₁),
+    (clamp_rtg_RwAx L _ _).trans (Rw_rtg_embed hP₂)⟩
+
+/-- The critical pairs of `R ∪ Ax` that involve a law instance: a rule
+against a law instance, or two law instances. These are the pairs the
+engine's per-rule axiom critical pairs and the inverse rules R1 to R5
+address; `CC/Laws/` discharges them law by law from conditions on the
+left-hand sides. For a law set with no law instance (plain AC) the
+hypothesis is empty (`AxiomCP.of_no_ax`). -/
+def AxiomCP (L : Laws n) (R : Rules n) : Prop :=
+  ∀ r₁ r₂, r₁ ∈ R ∪ L.axRules → r₂ ∈ R ∪ L.axRules → (r₁ ∈ L.axRules ∨ r₂ ∈ L.axRules) →
+    r₁ ≠ r₂ → Overlap r₁.1 r₂.1 →
+    Joinable (Rw (plain n) (R ∪ L.axRules))
+      (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2
+
+theorem AxiomCP.of_no_ax {L : Laws n} {R : Rules n} (h : ∀ p, p ∉ L.axRules) : AxiomCP L R :=
+  fun r₁ r₂ _ _ hax _ _ => (hax.elim (h r₁) (h r₂)).elim
+
+/-- **`hcp` from the fixpoint.** The critical-pair hypothesis of
+`completion_complete_at_convergence` over `R ∪ Ax` splits into the
+rule-rule pairs, which `RoundFixed` gives (`ruleRuleCP_of_fixed`), and the
+pairs involving a law instance (`AxiomCP`). -/
+theorem hcp_of_fixed {L : Laws n} {st : State n} (hfix : RoundFixed L st)
+    (hax : AxiomCP L st.rules) :
+    ∀ r₁ r₂, r₁ ∈ st.rules ∪ L.axRules → r₂ ∈ st.rules ∪ L.axRules → r₁ ≠ r₂ →
+      Overlap r₁.1 r₂.1 →
+      Joinable (Rw (plain n) (st.rules ∪ L.axRules))
+        (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2 := by
+  intro r₁ r₂ h₁ h₂ hne hov
+  rcases h₁ with h₁ | h₁ <;> rcases h₂ with h₂ | h₂
+  · exact ruleRuleCP_of_fixed hfix r₁ r₂ h₁ h₂ hne hov
+  · exact hax r₁ r₂ (Or.inl h₁) (Or.inr h₂) (Or.inr h₂) hne hov
+  · exact hax r₁ r₂ (Or.inr h₁) (Or.inl h₂) (Or.inl h₁) hne hov
+  · exact hax r₁ r₂ (Or.inr h₁) (Or.inr h₂) (Or.inl h₁) hne hov
+
 /-- The rule set of a state is oriented by definition (`State.rules` folds
 `degLex` in; the engine's read-time guard). -/
 theorem rules_oriented (st : State n) : Oriented st.rules :=

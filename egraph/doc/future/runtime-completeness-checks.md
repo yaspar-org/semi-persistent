@@ -13,7 +13,9 @@ state, the state is complete":
 - `completion_complete_at_convergence` (`proofs/lean/SemperProofs/CC/Assemble.lean`) and
   its law variants take the hypotheses bundled in `CompleteHyps`
   (`CC/Bridge/Modulo.lean`): `I0Active`, `hcanon`, `RoundFixed` (`nf_present`,
-  `cp_joinable`), `hlaw`, `hnf_ax`, `hcp`, a minimal-monomial history (`slots`), and for
+  `lhs_reduced`, `cp_joinable`), `hlaw`, `hnf_ax`, `hcp_ax` (the critical pairs involving a
+  law instance, `AxiomCP`; the rule-rule pairs follow from `RoundFixed` by `hcp_of_fixed`), a
+  minimal-monomial history (`slots`), and for
   a cancellative operator lattice closure (`hlat`: active nodes whose count vectors differ
   by a member of the lattice the equations span are in one class).
 - `saturation_modulo_complete` (`Final/Main.lean`) adds the matching hypotheses:
@@ -39,7 +41,8 @@ costs.
 | `I0Active` (weakened to classes holding an `f`-node, see `feat/leaf-constants`), `I5`, `hcanon`, `FlatSound` at node level, congruence closure | the final state, node by node | every run | one pass over the nodes |
 | `hlat` (lattice closure, cancellative operators) | the final state, class by class | every run | one echelon form over the rows, the cost of one `lattice_round` |
 | `Converged` outcome, truncation and overflow counters | the run's outcome | every run | constant |
-| `nf_present`, `cp_joinable`, `hcp`, `A.R.Unchanged` | the final state, across pairs of rules or every match | CI only | one completion round, one naive matching round |
+| `nf_present`, `lhs_reduced`, `cp_joinable`, `A.R.Unchanged` | the final state, across pairs of rules or every match | CI only | one completion round, one naive matching round |
+| `hcp_ax` (`AxiomCP`) | the stored left-hand sides against the law instances | per law, as the conditions `CC/Laws/` reduces it to (`hu`, `hlhs`, `hax`, `hmatch`); for `:inverse`, the fixpoints of R1 to R5 | one pass over the rules |
 | `slots`, `RoundOK`, `EmitsAll`, `AChain` | the history of the run | replaced by final-state checks | none |
 
 The history hypotheses need no check. The audit (`13-soundness.md` §4, item H3) found that
@@ -77,14 +80,25 @@ modulo the theory.
 Two hypotheses quantify over pairs of rules or over every match, and checking them costs
 a full round. The engine already performs both before it reports a fixpoint:
 
-- `cp_joinable` and `hcp` are what the confirmation round checks: completion reports
+- `lhs_reduced` and `cp_joinable` are what the confirmation round checks: completion reports
   `Converged` only after a full round over every overlapping pair merges nothing
-  (`06-ac-congruence-closure.md` §10). Pairs are found through the use lists, so the cost
-  is proportional to the number of overlapping pairs, not to the square of the rule count;
-  it is still one completion round. The round skips disjoint pairs and pairs where one
-  left-hand side contains the other (`egraph.rs`, `cc_round`), relying on the normalize pass
-  for containment; no theorem connects that pass to `hcp`, so the containment pairs are
-  checked in tier 2 only, and the confirmation round does not discharge `hcp` for them.
+  (`06-ac-congruence-closure.md` §10); the reducibility pass of that round retires every node
+  whose monomial another rule reduces (retirement alone does not count as a change), so the
+  final state has no rule reducible by another. Pairs are found
+  through the use lists, so the cost is proportional to the number of overlapping pairs,
+  not to the square of the rule count; it is still one completion round. The round skips
+  disjoint pairs and pairs where one left-hand side contains the other (`egraph.rs`,
+  `cc_round`). Since commit `2e40098d` the model states the fixpoint the same way
+  (`RoundFixed`: `nf_present`, `lhs_reduced`, `cp_joinable` over non-containing pairs) and
+  `hcp_of_fixed` derives the rule-rule critical pairs from it: a disjoint pair is handled
+  inside the critical-pair lemma, and a containing pair does not exist once the reducibility
+  pass has retired the containing node. The tier 2 checker therefore decides `lhs_reduced`
+  (a containment test over pairs of rules, the engine's `reducible` scan) and `cp_joinable`
+  (normalize both reducts of each non-containing overlapping pair); nothing is left to check
+  for the containing pairs. What `hcp` still needs beyond the fixpoint is `AxiomCP`, the
+  pairs involving a law instance; `CC/Laws/` reduces it to conditions on the stored
+  left-hand sides that one pass over the rules decides (no unit, counts below the order, no
+  inverse pair), and for `:inverse` to the fixpoints of R1 to R5.
 - `A.R.Unchanged` is what the stop test checks: saturation stops only after a round
   leaves the graph's size stamp unchanged.
 - `nf_present` needs one normalization per active node.

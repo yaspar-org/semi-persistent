@@ -244,17 +244,44 @@ structure Converged (L : Laws n) (st : State n) : Prop where
   nodes_reduce : ∀ M c, (M, c) ∈ st.active →
     Relation.ReflTransGen (Rw L st.rules) M (st.rhs (st.find c))
 
-/-- A round that changes nothing (sketch (e), "changes nothing"): (A′) the
-normal form of every active node is an active node of its class (the
-engine materializes each node's normal form and merges it in before
-retiring the node; a normal form is irreducible, so it is never retired),
-and (B) both reducts of every critical pair of overlapping rules are
-joinable. -/
+/-- A round that changes nothing (sketch (e), "changes nothing"), as the
+engine's `cc_round` checks it:
+
+* `nf_present` (the (A′) normalize pass): the normal form of every active
+  node is an active node of its class. The engine materializes each
+  node's normal form and merges it in before retiring the node; a normal
+  form is irreducible, so it is never retired.
+* `lhs_reduced` (the reducibility pass, "Kapur-reduced"): no rule's
+  left-hand side is reducible by another rule. A node whose monomial
+  contains another rule's left-hand side, strictly or as an equal copy,
+  is rewritten to its normal form, merged and retired
+  (`FLAG_AC_COLLAPSED`), so it is no rule of the fixed state. Hence no two
+  distinct rules have containing left-hand sides.
+* `cp_joinable` (the (B) superposition loop): both reducts of every
+  critical pair of two overlapping rules, neither left-hand side
+  containing the other, are joinable. The loop skips disjoint pairs
+  (their critical pair is trivially joinable, `critical_pair_lemma`) and
+  containing pairs (none exists, by `lhs_reduced`).
+
+`RoundFixed.cp_joinable_all` recovers joinability for every overlapping
+pair of distinct rules, which is what the critical-pair lemma needs. -/
 structure RoundFixed (L : Laws n) (st : State n) : Prop where
   nf_present : ∀ M c N, (M, c) ∈ st.active →
     Relation.ReflTransGen (Rw L st.rules) M N → (∀ P, ¬ Rw L st.rules N P) →
     ∃ c', (N, c') ∈ st.active ∧ st.find c' = st.find c
+  lhs_reduced : ∀ r₁ r₂, r₁ ∈ st.rules → r₂ ∈ st.rules → r₁ ≠ r₂ → ¬ r₂.1 ≤ r₁.1
   cp_joinable : ∀ r₁ r₂, r₁ ∈ st.rules → r₂ ∈ st.rules → r₁ ≠ r₂ → Overlap r₁.1 r₂.1 →
+    ¬ r₁.1 ≤ r₂.1 → ¬ r₂.1 ≤ r₁.1 →
     Joinable (Rw L st.rules) (criticalPair L r₁ r₂).1 (criticalPair L r₁ r₂).2
+
+/-- Every critical pair of two distinct overlapping rules of a fixed round
+is joinable: a containing pair does not exist (`lhs_reduced`), and the
+other pairs are the ones the superposition loop closed (`cp_joinable`). -/
+theorem RoundFixed.cp_joinable_all {L : Laws n} {st : State n} (h : RoundFixed L st) :
+    ∀ r₁ r₂, r₁ ∈ st.rules → r₂ ∈ st.rules → r₁ ≠ r₂ → Overlap r₁.1 r₂.1 →
+      Joinable (Rw L st.rules) (criticalPair L r₁ r₂).1 (criticalPair L r₁ r₂).2 :=
+  fun r₁ r₂ h₁ h₂ hne hov =>
+    h.cp_joinable r₁ r₂ h₁ h₂ hne hov (h.lhs_reduced r₂ r₁ h₂ h₁ (Ne.symm hne))
+      (h.lhs_reduced r₁ r₂ h₁ h₂ hne)
 
 end SemperProofs.CC

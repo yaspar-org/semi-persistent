@@ -16,12 +16,15 @@ a plain binary operator `g`:
 
 The completion state is the one of `CC/AtomsWitness.lean` (`wst`, with the
 asserted equation `a + b = c` and the stored `+`-nodes `{a, b}` in `c`'s
-class and `{a, b, d}`, `{c, d}` in class 4), for which `witness_complete`
-proves `CompleteAtoms`. The e-graph stores the four leaf constants, the
-three `+`-nodes, and, after round 0, the four `g`-nodes the rewrite builds:
-`g(a, b)`, `g(b, a)` in `c`'s class and `g(c, d)`, `g(d, c)` in class 4.
-The rewrite matches `{a, b}` and `{c, d}` in both orders, and `{a, b, d}`
-not at all (the pattern has two elements and no rest).
+class and `{a, b, d}`, `{c, d}` in class 4, the first retired by the
+reducibility pass), for which `witness_complete` proves `CompleteAtoms`.
+The e-graph stores the four leaf constants, the three `+`-nodes (the
+retired `{a, b, d}` stays in the graph and matchable: `FLAG_AC_COLLAPSED`
+removes it from completion only), and, after round 0, the four `g`-nodes
+the rewrite builds: `g(a, b)`, `g(b, a)` in `c`'s class and `g(c, d)`,
+`g(d, c)` in class 4. The rewrite matches `{a, b}` and `{c, d}` in both
+orders, and `{a, b, d}` not at all (the pattern has two elements and no
+rest).
 
 Symbols: `+ = 0`, `g = 1`, `a, b, c, d = 2, 3, 4, 5`. Classes: `a, b, c, d`
 are `0, 1, 2, 3`, the class of `t` and `u` is `4`. Node ids: the leaf
@@ -35,7 +38,12 @@ emit every naive match. `witness_saturation_modulo_complete` instantiates
 proved, none assumed. The rewrite's right-hand side is a `g`-node, which
 the former final theorem (`represents` as the whole graph, literal `Den`)
 could not hold. `witness_fires_modulo` reads the conclusion at the match
-`x ↦ c, y ↦ d` rooted at `{c, d}` and the theory-equal node `{a, b, d}`.
+`x ↦ c, y ↦ d` rooted at `{c, d}`. The active `+`-nodes `act` are `{a, b}`
+and `{c, d}`; the retired `{a, b, d}` is not among them, so the theorem
+says nothing about a match rooted at it, and the covering form
+`saturation_modulo_complete_store_cover` does not apply to this store: its
+`FCover` requires every `+`-node of the index to be active, and the
+collapsed node is not.
 -/
 
 namespace SemperProofs.Final.Witness
@@ -48,12 +56,13 @@ open Semper.EMatch Semper.EMatch.Fidelity SemperProofs.CC SemperProofs.CC.Bridge
 /-- The kinds: `+` is AC, `g` plain binary, the constants plain nullary. -/
 def sig : Sym → Kind := fun s => if s = 0 then .ac else if s = 1 then .plain 2 else .plain 0
 
-/-- The stored active `+`-nodes of `wst`. -/
+/-- The stored `+`-nodes of `wst`; `p₂` is retired. -/
 def p₁ : Monomial 5 × Fin 5 := ({0, 1}, 2)
 def p₂ : Monomial 5 × Fin 5 := ({0, 1, 3}, 4)
 def p₃ : Monomial 5 × Fin 5 := ({2, 3}, 4)
 
-def act : Finset (Monomial 5 × Fin 5) := {p₁, p₂, p₃}
+/-- The active `+`-nodes. -/
+def act : Finset (Monomial 5 × Fin 5) := {p₁, p₃}
 
 /-- The ids of the `+`-nodes. -/
 def ι (p : Monomial 5 × Fin 5) : NodeId := if p = p₁ then 10 else if p = p₂ then 11 else 12
@@ -455,15 +464,14 @@ theorem hyp_chain : SChainN naive rules A₀ [A₁] := by
 
 theorem hyp_fix : A₁.Unchanged := ⟨fun _ => Iff.rfl, fun _ => rfl, fun _ => rfl⟩
 
-theorem mem_act {p : Monomial 5 × Fin 5} (hp : p ∈ act) : p = p₁ ∨ p = p₂ ∨ p = p₃ := by
+theorem mem_act {p : Monomial 5 × Fin 5} (hp : p ∈ act) : p = p₁ ∨ p = p₃ := by
   simpa [act] using hp
 
 theorem hyp_within : Within wst act := by
   intro p hp
-  rcases mem_act hp with rfl | rfl | rfl
+  rcases mem_act hp with rfl | rfl
   · exact stored_active (Or.inl ⟨rfl, rfl⟩)
-  · exact stored_active (Or.inr (Or.inl ⟨rfl, rfl⟩))
-  · exact stored_active (Or.inr (Or.inr ⟨rfl, rfl⟩))
+  · exact stored_active (Or.inr ⟨rfl, rfl⟩)
 
 theorem ι₁ : ι p₁ = 10 := by simp [ι]
 theorem ι₂ : ι p₂ = 11 := by simp [ι, show p₂ ≠ p₁ by decide]
@@ -479,26 +487,25 @@ theorem hyp_sub : SubRep A₁.Sa.index wst 0 act ι := by
   rw [S₁_index]
   refine ⟨?_, ?_⟩
   · intro p hp
-    rcases mem_act hp with rfl | rfl | rfl
+    rcases mem_act hp with rfl | rfl
     · rw [ι₁, mkNode₁]; simp [G₁, nodes₁, nodes₀]
-    · rw [ι₂, mkNode₂]; simp [G₁, nodes₁, nodes₀]
     · rw [ι₃, mkNode₃]; simp [G₁, nodes₁, nodes₀]
   · intro p hp
-    rcases mem_act hp with rfl | rfl | rfl
+    rcases mem_act hp with rfl | rfl
     · rw [ι₁]; rfl
-    · rw [ι₂]; rfl
     · rw [ι₃]; rfl
 
-theorem hyp_cover : FCover A₁.Sa.index 0 act ι := by
-  show FCover S₁.index 0 act ι
+/-- The retired node `{a, b, d}` is a `+`-node of the index that is not
+active: `FCover` fails, so the covering form of the final theorem does not
+apply to a store in which completion collapsed a node. -/
+theorem not_cover : ¬ FCover A₁.Sa.index 0 act ι := by
+  show ¬ FCover S₁.index 0 act ι
   rw [S₁_index]
-  intro id nd hmem hop
-  have := plus_of_mem₁ hmem hop
-  simp only [plusNodes, List.mem_cons, List.not_mem_nil, or_false, Prod.mk.injEq] at this
-  rcases this with ⟨rfl, -⟩ | ⟨rfl, -⟩ | ⟨rfl, -⟩
-  · exact ⟨p₁, by simp [act], ι₁.symm⟩
-  · exact ⟨p₂, by simp [act], ι₂.symm⟩
-  · exact ⟨p₃, by simp [act], ι₃.symm⟩
+  intro h
+  obtain ⟨p, hp, hι⟩ := h 11 ⟨0, .mset {0, 1, 3}⟩ (by simp [G₁, nodes₁, nodes₀]) rfl
+  rcases mem_act hp with rfl | rfl
+  · rw [ι₁] at hι; exact absurd hι (by decide)
+  · rw [ι₃] at hι; exact absurd hι (by decide)
 
 /-! ## The final theorem, instantiated -/
 
@@ -532,22 +539,6 @@ theorem witness_saturation_modulo_complete_atomic :
         MatchN A₁.Sa.index P (mkNode wst 0 p') σ :=
   saturation_modulo_complete_store_atomic (naive := naive) A₀ [A₁] plansOK hyp_h₀ hyp_ok
     hyp_emit₀ hyp_chain (A := A₁) (by simp) hyp_fix witness_complete_atomic hyp_within hyp_sub
-
-/-- The covering form, with the same run: every match of the rewrite at the
-fixpoint is fired and lands in the class of every theory-equal stored
-`+`-node. -/
-theorem witness_saturation_modulo_complete_cover :
-    ∀ r ∈ rules, ∀ (P : Pat) (root : Var), r.atoms = (atoms P root).map QAtom.scan →
-      P.head = some 0 →
-      ∀ σ, Matches A₁.Sa.index r.atoms σ →
-        FiredN A₁.Sa.graph ops σ r ∧
-        ∃ p' ∈ act, σ.node root = some (ι p') ∧
-          ∀ p ∈ act, E (Laws.plainAC 5) wS p.1 p'.1 →
-            σ.cls root = some (A₁.Sa.find (ι p)) ∧
-              MatchC A₁.Sa.index P (A₁.Sa.find (ι p)) σ :=
-  saturation_modulo_complete_store_cover (naive := naive) A₀ [A₁] plansOK hyp_h₀ hyp_ok
-    hyp_emit₀ hyp_chain (A := A₁) (by simp) hyp_fix witness_complete hyp_within hyp_sub
-    hyp_cover
 
 /-! ## A match the conclusion speaks about -/
 
@@ -604,24 +595,25 @@ theorem σcd_matches : Matches A₁.Sa.index rule.atoms σcd := by
   · intro r
     simp [rule, σcd, RAtom.setRestVars, atom]
 
-/-- `{a, b, d}` and `{c, d}` are theory-equal under `a + b = c`. -/
-theorem E₂₃ : E (Laws.plainAC 5) wS p₂.1 p₃.1 := by
-  have h := E.congr (L := Laws.plainAC 5) ({3} : Monomial 5) (E.ax (S := wS) rfl)
-  have e₁ : ({0, 1} : Monomial 5) + {3} = {0, 1, 3} := by decide
-  have e₂ : ({2} : Monomial 5) + {3} = {2, 3} := by decide
-  rw [e₁, e₂] at h
-  exact h
-
 /-- **The conclusion at a match.** The rewrite matched at `{c, d}` is fired
-(`g(c, d)` is in the class of the root), and its root class is the class
-of the theory-equal node `{a, b, d}`, where the rewrite also matches at the
-class level. -/
+(`g(c, d)` is in the class of the root), its root class is the class of
+`{c, d}`, where the rewrite matches at the class level, and it matches at
+the represented node. The only active node theory-equal to `{c, d}` is
+itself: `{a, b, d}`, theory-equal to it under `a + b = c`, is retired, and
+the theorem quantifies over active nodes. Its class is that of `{c, d}` by
+the construction of `wfind` (`wfind 11 = 4`), which records the merge
+completion made before retiring it. -/
 theorem witness_fires_modulo :
     FiredN A₁.Sa.graph ops σcd rule ∧
-      σcd.cls 2 = some (A₁.Sa.find (ι p₂)) ∧
-      MatchC A₁.Sa.index pat (A₁.Sa.find (ι p₂)) σcd ∧
+      σcd.cls 2 = some (A₁.Sa.find (ι p₃)) ∧
+      MatchC A₁.Sa.index pat (A₁.Sa.find (ι p₃)) σcd ∧
       MatchN A₁.Sa.index pat (mkNode wst 0 p₃) σcd :=
-  witness_saturation_modulo_complete rule (by simp [rules]) pat 2 rule_atoms rfl p₂
-    (by simp [act]) p₃ (by simp [act]) E₂₃ σcd σcd_matches (by rw [ι₃]; rfl)
+  witness_saturation_modulo_complete rule (by simp [rules]) pat 2 rule_atoms rfl p₃
+    (by simp [act]) p₃ (by simp [act]) (E.refl _) σcd σcd_matches (by rw [ι₃]; rfl)
+
+/-- The retired node's class is the root class of the match, by the store's
+union-find. -/
+theorem retired_class : A₁.Sa.find (ι p₂) = A₁.Sa.find (ι p₃) := by
+  rw [ι₂, ι₃]; rfl
 
 end SemperProofs.Final.Witness

@@ -181,9 +181,12 @@ slot state the completion state agrees with; every class holding an
 active node has an active node as right-hand side (`I0Active`; a leaf
 constant, with no node, is unconstrained, and
 `saturation_modulo_complete_atoms` reads it as its one-element monomial); the right-hand sides are clamped; the round is fixed
-(`RoundFixed L st`, no rule to add, no critical pair left); the law
-relation is `degLex`-decreasing, no clamped monomial rewrites by an axiom
-rule, the critical pairs of the rules and axiom rules are joinable;
+(`RoundFixed L st`: every normal form present, no rule's left-hand side
+reducible by another rule, every critical pair of two overlapping,
+non-containing rules joinable); the law relation is `degLex`-decreasing,
+no clamped monomial rewrites by an axiom rule, the critical pairs that
+involve an axiom rule are joinable (`AxiomCP`; the rule-rule pairs follow
+from the fixed round, `hcp_of_fixed`);
 congruence holds on the active nodes (`hcc`: two active nodes with the
 same monomial are in one class); every asserted equation of `S` is present between
 active nodes of one class (`hS`); for a cancellative operator, lattice

@@ -964,20 +964,30 @@ The invariants (`CC/Defs.lean:214-236`, `CC/Assemble.lean:94`):
 - **I3**: a retired node rewrites in at least one step to a node of its class.
 - **I5**: each class's `rhs` is the `degLex`-least active node of the class.
 
-`RoundFixed` (`CC/Defs.lean:253`) is the fixpoint condition. Every normal form of an active
-node is an active node of the same class, and every critical pair of the state's rules is
-joinable:
+`RoundFixed` (`CC/Defs.lean`) is the fixpoint condition, stated as the three checks of the
+engine's `cc_round`. Every normal form of an active node is an active node of the same
+class (the (A′) normalize pass); no rule's left-hand side is reducible by another rule (the
+reducibility pass: a node whose monomial contains another rule's left-hand side is
+rewritten, merged and retired with `FLAG_AC_COLLAPSED`); and the critical pair of two
+overlapping rules, neither left-hand side containing the other, is joinable (the (B)
+superposition loop):
 
 ```lean
 structure RoundFixed (L : Laws n) (st : State n) : Prop where
   nf_present : ∀ M c N, (M, c) ∈ st.active →
     Relation.ReflTransGen (Rw L st.rules) M N → (∀ P, ¬ Rw L st.rules N P) →
     ∃ c', (N, c') ∈ st.active ∧ st.find c' = st.find c
+  lhs_reduced : ∀ r₁ r₂, r₁ ∈ st.rules → r₂ ∈ st.rules → r₁ ≠ r₂ → ¬ r₂.1 ≤ r₁.1
   cp_joinable : ∀ r₁ r₂, r₁ ∈ st.rules → r₂ ∈ st.rules → r₁ ≠ r₂ → Overlap r₁.1 r₂.1 →
+    ¬ r₁.1 ≤ r₂.1 → ¬ r₂.1 ≤ r₁.1 →
     Joinable (Rw L st.rules) (criticalPair L r₁ r₂).1 (criticalPair L r₁ r₂).2
 ```
 
-`RoundFixed` is a hypothesis about the final state; no theorem derives it from an engine run.
+`RoundFixed.cp_joinable_all` recovers joinability for every overlapping pair of distinct
+rules: a containing pair does not exist by `lhs_reduced`. Before commit `2e40098d` the
+structure had the unrestricted `cp_joinable` and no `lhs_reduced`, so it asserted
+joinability of the containing pairs, which the engine never superposes. `RoundFixed` is a
+hypothesis about the final state; no theorem derives it from an engine run.
 
 ### 5.2 Soundness
 
@@ -1026,19 +1036,25 @@ theorem completion_complete_at_convergence {L : Laws n}
 At a state where the last round changed nothing, two active nodes with theory-equal monomials
 are in one class. Commit `7838c767` weakened two hypotheses: `h0` now constrains only the
 classes that hold an active node, and `hcc` only the active nodes. The former statement is
-the corollary `completion_complete_at_convergence_of_all` (`CC/Main.lean:125`). The
-hypotheses, who is meant to supply each, and the check the runtime design note proposes
-(tier 1: every run, one pass over the nodes; tier 2: in CI, by a proved Lean checker on a
-dump of the final state):
+the corollary `completion_complete_at_convergence_of_all` (`CC/Main.lean:125`). The theorem
+keeps `hcp` as stated; the bundles `CompleteHyps` and `CompleteAtoms` take instead
+`hcp_ax : AxiomCP L st.rules` (`CC/Assemble.lean`), the critical pairs that involve a law
+instance, and `hcp_of_fixed` rebuilds `hcp` from `RoundFixed` and `AxiomCP`:
+`ruleRuleCP_of_fixed` lifts `RoundFixed.cp_joinable_all` to plain rewriting (each plain
+reduct reaches its clamp in at most one law step, `clamp_rtg_RwAx`, and a clamped step
+embeds, `Rw_rtg_embed`). The law theorems of `CC/Laws/Main.lean` discharge their former
+`hRR` the same way. The hypotheses, who is meant to supply each, and the check the runtime
+design note proposes (tier 1: every run, one pass over the nodes; tier 2: in CI, by a
+proved Lean checker on a dump of the final state):
 
 | Hypothesis | Meaning | Supplied by | Runtime check |
 |---|---|---|---|
 | `h5₀`, `hrun`, `ha` | minimal-monomial maintenance from a good initial state, agreeing with `st` at the end | assumed; equivalent to assuming I5 (see below) | tier 1, as I5 |
 | `h0` | each class holding an active node has an active node as `rhs` | assumed of the engine | tier 1 |
 | `hcanon` | stored right-hand sides are clamp-normal | assumed of the engine (`nary_canon` output) | tier 1 |
-| `hfix` | the round is fixed (`RoundFixed`) | assumed of the engine at convergence | tier 2 (`nf_present`, `cp_joinable`) |
+| `hfix` | the round is fixed (`RoundFixed`) | assumed of the engine at convergence | tier 2 (`nf_present`, `lhs_reduced`, `cp_joinable`) |
 | `hlaw`, `hnf_ax` | law instances decrease `degLex`; clamp outputs are law-normal | discharged for every `NFLaw` instance | once per signature |
-| `hcp` | every critical pair of the rules and law instances is joinable under plain rewriting | reduced per law in `CC/Laws/`; the rule-rule part is assumed | tier 2 |
+| `hcp` | every critical pair of the rules and law instances is joinable under plain rewriting | the rule-rule part is derived from `hfix` (`ruleRuleCP_of_fixed`); the part involving a law instance (`AxiomCP`) is reduced per law in `CC/Laws/` to conditions on left-hand sides, and is a hypothesis (`hcp_ax`) for an abstract law set | none for the rule-rule part beyond `hfix`; `AxiomCP` as the per-law conditions |
 | `hcc` | two active nodes with the same monomial share a class | assumed of the engine (hash-consing) | tier 1 |
 | `hS` | every asserted pair is two active nodes of one class | assumed of the input | none |
 | `hcancel` | joinability cancels a common summand | not an engine fact (Section 5.7); `CompleteHyps` replaces it by `hlat` (lattice closure), which the engine establishes | tier 1, as lattice closure |
@@ -1077,14 +1093,18 @@ earlier formulation.
   of the modelled operations is argued in prose.
   `AtomsWitness.witness_complete` (Section 5.9) discharges the triple with `ss₀ = ss` and the
   reflexive run, which confirms the reduction.
-- `hcp` is never derived from `RoundFixed`. The engine's critical-pair round establishes
-  clamped joinability over the rules (`cp_joinable`). The theorem needs plain joinability
-  over rules and law instances, including containment pairs. The engine skips disjoint and
-  containment pairs in its critical-pair loop (`egraph/src/egraph.rs:3881`) and states, in
-  the comment above, that the normalize pass handles containment; no theorem connects that
-  pass to `hcp`. The runtime design note assigns `hcp` to tier 2 and also states that the
-  engine's confirmation round checks it; the second statement is inaccurate for the
-  containment pairs.
+- The rule-rule part of `hcp` is derived from `RoundFixed` (`hcp_of_fixed`, commit
+  `2e40098d`). The engine skips disjoint and containing pairs in its critical-pair loop
+  (`egraph/src/egraph.rs`, `cc_round`): a disjoint pair is outside `Overlap` and is handled
+  inside `critical_pair_lemma`; a containing pair does not exist at the fixpoint because the
+  reducibility pass retired the containing node (`lhs_reduced`). The fixture
+  `egraph/tests/egg/cc_containment_chain.egg` exercises two containing pairs that join only
+  through that pass. What remains a hypothesis is `AxiomCP`, the pairs involving a law
+  instance: `CC/Laws/` reduces it, law by law, to conditions on the stored left-hand sides
+  (`hu`, `hlhs`, `hax`, `hmatch`), and `Laws/InvRulesMain.lean` derives the inverse ones from
+  the fixpoints of R1 to R5; for an abstract law set nothing more can be said. The reducibility
+  pass itself is the composition mint, joinMerge, retire of `Infer`, so soundness covers it; no
+  separate inference step was added.
 - The first edition recorded that `I0Active` quantified over every class id in `Fin n`, so
   every id had to carry an active node. Commit `7838c767` resolves it: `I0Active` constrains
   only the classes that hold an active node.
@@ -1123,7 +1143,8 @@ order a node grows past its classmate and I5 fails.
 
 `CC/Laws/Main.lean` instantiates the completeness theorem for each law set. The law
 hypotheses `hlaw` and `hnf_ax` are discharged, and `hcp` is reduced to conditions on the
-rules (`RuleRuleCP`, and conditions on left-hand sides). For `:inverse`, the reduction leaves
+rules: `RuleRuleCP`, which the fixed round supplies (`ruleRuleCP_of_fixed`, so the theorems
+no longer take `hRR`), and conditions on left-hand sides. For `:inverse`, the reduction leaves
 four conditions the engine did not establish: `InvMatching`, `InvUnitFree`, `InverseAxiomCP`
 and `NilpotentInverseCP`.
 
@@ -1136,8 +1157,8 @@ The engine now applies five inverse rules R1 to R5 (`inverse_law_repair`,
 `completion_complete_combined_engine` (`:371`).
 
 **Adequacy.** `STATUS.md` describes the two `_engine` theorems as having engine-level
-hypotheses only. They still take `hcancel`, `hcc`, `hS`, the minimal-monomial hypotheses, `I3`, the
-rule-rule condition `hRR`, and conditions on left-hand sides. With a cancellative operator, which `inv_rules_sound`
+hypotheses only. They still take `hcancel`, `hcc`, `hS`, the minimal-monomial hypotheses, `I3`, and conditions on left-hand
+sides (`hRR` was dropped in commit `2e40098d`). With a cancellative operator, which `inv_rules_sound`
 requires, `hcancel` is the hypothesis Section 5.7 shows the engine does not establish.
 
 ### 5.7 The lattice round
@@ -1347,9 +1368,13 @@ witnesses discharge it: `witness_atomicOf : atomicOf wst = wA` (by `fin_cases` a
 
 over plain AC at its completion fixpoint: classes `a, b, c, d = 0, …, 3` are leaf constants,
 the stored nodes are `{a, b}` in `c`'s class and `{a, b, d}`, `{c, d}` in class 4, and every
-atom's right-hand side is its one-element monomial. `witness_complete` (`:251`) proves every
-hypothesis of `CompleteAtoms` for this state, with the asserted equation `{a, b} = {c}`
-between a stored node and a leaf constant. `witness_not_all` (`:297`) shows that
+atom's right-hand side is its one-element monomial. Since commit `2e40098d` the node
+`{a, b, d}` is retired, as the engine's reducibility pass leaves it (its left-hand side
+contains `{a, b}`; before, the state had an active containing pair, which the engine never
+reaches, and the new `lhs_reduced` rejects it). The view has one rule. `witness_complete`
+proves every hypothesis of `CompleteAtoms` for this state, with the asserted equation
+`{a, b} = {c}` between a stored node and a leaf constant; `witness_I3` checks that the retired
+node rewrites to a node of its class. `witness_not_all` shows that
 `I0ActiveAll` fails on the stored state: before `7838c767`, `completion_complete_at_convergence`
 did not apply to any state with a leaf constant.
 
@@ -1362,9 +1387,11 @@ did not apply to any state with a leaf constant.
   and not in `atomicOf st`.
 - The witness is plain AC: it does not exercise the unit, the laws, `hcancel` (vacuous for a
   non-cancellative operator) or a non-trivial minimal-monomial history (`ss₀ = ss`). Its
-  closing `example` derives `wst.find 4 = wst.find 4` and `wst.find 2 = wst.find 2`, which
-  hold by reflexivity; it shows that the corollaries apply, not that they derive a merge the
-  state lacks.
+  closing `example` derives `wst.find 2 = wst.find 2`, which holds by reflexivity; it shows
+  that the corollaries apply, not that they derive a merge the state lacks. With `{a, b, d}`
+  retired, the only active node theory-equal to `{c, d}` is itself: a witness with two
+  active, mutually irreducible, theory-equal nodes needs a superposition (two rules whose
+  left-hand sides overlap without containment) and is not written.
 - `AtomCollapse` is derived from a fixpoint of `AddStep` (`atomCollapse_of_addFixed`), the
   normalize step with `add` modelled by `addNF`. The fixpoint `AddFixed` is a hypothesis on
   the engine's normalize pass of the same kind as `RoundFixed`: that the pass runs `add` on
@@ -1802,17 +1829,22 @@ constants, the three `+`-nodes `{a, b}`, `{a, b, d}`, `{c, d}`, and after round 
 builds the `g`-nodes; round 1 matches on the result, builds nothing new and is the fixpoint.
 Every hypothesis is proved by hand and `decide`, no `native_decide`:
 `witness_saturation_modulo_complete` is the final theorem itself, applied to this run, and
-`witness_fires_modulo` reads its conclusion at the match `x ↦ c, y ↦ d` rooted at `{c, d}` for
-the theory-equal node `{a, b, d}`. The rule is routed naive in both rounds, so the semi-naive
-branch of `SChainN` is not exercised; the matches are characterized on the concrete graphs
-(`match_cases`), not by running the plan.
+`witness_fires_modulo` reads its conclusion at the match `x ↦ c, y ↦ d` rooted at `{c, d}`.
+Since commit `2e40098d` the node `{a, b, d}` is retired in the completion state (Section 5.9),
+so `act` holds `{a, b}` and `{c, d}` only, and the theorem says nothing about a match rooted
+at `{a, b, d}`; its class is that of `{c, d}` by the store's union-find (`retired_class`), not
+by the theorem. The collapsed node stays in the index, so `FCover` fails on it (`not_cover`)
+and `saturation_modulo_complete_store_cover` has no witness on this run. The rule is routed
+naive in both rounds, so the semi-naive branch of `SChainN` is not exercised; the matches are
+characterized on the concrete graphs (`match_cases`), not by running the plan.
 
 **What remains.** `SubRep`, `CompleteAtoms` and the round facts are still hypotheses: no
 theorem relates the completion state to the rounds or to the engine's rebuild, so the
 theorem says nothing about a run whose index does not hold the active nodes of a converged
-state. `hcp` and the minimal-monomial hypotheses stay in `CompleteAtoms`
-(Section 10, items 5 and 6), and `hcancel` is replaced by lattice closure (item 3, resolved), and `StorePersist` assumes recanonicalization is a literal
-map (item 9).
+state. The minimal-monomial hypotheses stay in `CompleteAtoms` (Section 10, item 6); `hcp`
+is reduced to `AxiomCP` (item 5, resolved) and `hcancel` is replaced by lattice closure
+(item 3, resolved); `StorePersist` assumes recanonicalization is a literal map (item 9); and
+the covering form excludes any index holding a collapsed `f`-node (item 18).
 
 ## 8. Counterexamples and the engine defects they record
 
@@ -2036,9 +2068,13 @@ resolution after the original text.
    **Resolved** by commit `f1e8be1a`: `Env.WF κ B plan` with per-step kinds (`joinKinds`,
    `KindOk`), `env_refine` re-proved, `planOK_envWF` under `EnvAtomsWF`, `exec_matches`, and
    the worked plans of `(f (g x) y)` (`nested_plans_wf`, `nested_exec_matches`; Section 3.7).
-5. `hcp` is not derived from `RoundFixed`, and the engine skips containment pairs. Fix: prove
-   `hcp` from `cp_joinable` plus a model of the normalize pass, or state the containment pairs
-   as an explicit hypothesis checked in tier 2.
+5. *Resolved, commit `2e40098d`.* `hcp` was not derived from `RoundFixed`, and the engine
+   skips containment pairs. Fix applied: `RoundFixed` states the engine's three checks
+   (`nf_present`, `lhs_reduced`, `cp_joinable` over non-containing pairs);
+   `RoundFixed.cp_joinable_all`, `ruleRuleCP_of_fixed` and `hcp_of_fixed` derive the rule-rule
+   part of `hcp`; the bundles take `AxiomCP` (the pairs involving a law instance) in its
+   place, and the law theorems drop `hRR`. Remainder: `AxiomCP` for an abstract law set, which
+   `CC/Laws/` reduces per law to conditions on the stored left-hand sides.
 6. The minimal-monomial hypotheses amount to assuming I5. Fix: replace `h5₀`, `hrun`, `ha`
    by `I5 st` in the statements, or link `OpsStar` to the inference run.
 7. `AtomCollapse` and the atomic set `A` are assumed. Fix: derive `AtomCollapse` from a model
@@ -2081,3 +2117,12 @@ resolution after the original text.
     remaining hypotheses and the restriction to right-hand sides the graph holds.
 17. The runtime design note claims the skips have no check and the confirmation round
     checks `hcp`. Fix: drop the first claim and assign the containment pairs to tier 2.
+    *Updated with item 5:* the note now states that the confirmation round checks the
+    rule-rule part through `lhs_reduced` and `cp_joinable`, and that `AxiomCP` is the part
+    left to the per-law conditions.
+18. **New.** `FCover` requires every `f`-node of the index to be an active node of the
+    completion state, and the engine keeps a collapsed node (`FLAG_AC_COLLAPSED`) in the
+    index and matchable. So `saturation_modulo_complete_store_cover` applies to no run in
+    which completion collapsed a node (`Final/Witness.lean`, `not_cover`). Fix: extend
+    `SubRep` to the retired nodes and conclude, for a match rooted at a retired node, at the
+    class of an active node it rewrites to (I3 and `nf_present` give one).

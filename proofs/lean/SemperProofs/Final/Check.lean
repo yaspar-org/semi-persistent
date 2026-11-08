@@ -17,5 +17,5 @@ import SemperProofs.Final.Witness
 #print axioms SemperProofs.Final.saturation_modulo_complete_store_cover
 #print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete
 #print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete_atomic
-#print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete_cover
+#print axioms SemperProofs.Final.Witness.not_cover
 #print axioms SemperProofs.Final.Witness.witness_fires_modulo
