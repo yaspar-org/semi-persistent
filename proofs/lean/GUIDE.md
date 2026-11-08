@@ -628,9 +628,18 @@ updated (`refold_ac_inert`, `Laws.lean:1381`), because the taken classes keep th
 normalized counts. The closed view is still a node, because it holds a taken class and the
 opened class.
 
-The ACI version (`demand_engine_complete_aci`, `EngineComplete.lean:332`) needs `TwoClassesL`:
-no raw view of the node collapses to a single class after unit drop. `STATUS.md` says rebuild
-guarantees this by merging a one-class member into its child's class. No theorem derives it.
+The ACI version (`demand_engine_complete_aci`, `EngineComplete.lean`) needs `TwoClassesL`: no
+raw view of the node collapses to a single class after unit drop. `twoClassesL_of_members`
+derives it from the collapse invariant of the stored graph: every filed `f`-member
+(`MembersTwoClassesL`) and the node itself (`NodeTwoClassesL`) hold two classes less the unit.
+An opening tree either keeps the classes of its positions or holds the classes of an opened
+member's view (`OTL.twoClasses`). The engine's `add` establishes the invariant: a set node
+whose normal form is one class is not stored, its class is returned (`egraph.rs`,
+`Normal::Single(g) => find(g)`), and rebuild re-normalizes a stored node whose children merged
+and merges it into that class. The fixture `egraph/tests/egg/aci1.egg` records it:
+`z = And{x, s}`, `n = And{x, z}`, and `s ∪ Tru` merges `z`, then `n`, with `x`, so that
+`(And v ..r)` matches only `And{a, b}`. The theorem takes the invariant as a hypothesis on
+the context, as `NoNullary` for sequences.
 The `:assoc` versions need no extra hypothesis under laws; the laws-free one needs
 `NoNullary` (no member with zero children).
 
@@ -858,7 +867,7 @@ same way preserves the cover (`Cov.derive`, `:471`).
 ```lean
 theorem regroupSkipG_iff {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR}
     (hb : BaseGood ctx.κ base) {gs : List (C × List (C × Nat))}
-    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : ∀ gg ∈ groupsOf ctx, gg ∈ gs)
+    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : CandSup ctx dir gs)
     {F : Nat} (hF : ∀ r ∈ base, viewSize r.1 ≤ F) {limit : Nat} {w : List (C × Nat)}
     {taken : List C} :
     (∃ r ∈ withinLimit limit (regroupSkipG ctx dir laws gs base), r.1 = w ∧
@@ -871,10 +880,19 @@ For any laws, kind, fold direction and order of the candidate groups, a view has
 within the item limit that passes the engine's demand rule in the engine's loop exactly when
 it has one in the full enumeration. The hypotheses are discharged for the engine's inputs:
 `BaseGood` (positive counts, distinct classes for multisets and sets, no class needed twice)
-by `baseGood_baseRecsR` (`:1273`), the two inclusions of the candidate list by
-`groupsOfEngine_sub` and `groupsOfEngine_sup` (`:1266`, `:1269`), and `hF` by
-`viewSize_le_regroupFuel`. `regroupSkipG_iffL` (`:1245`) is the same for the demand rule
-under laws.
+by `baseGood_baseRecsR`, the inclusion of the candidate list in the filed `f`-members by
+`groupsOfEngine_sub`, `hgs'` by `candSup_of_sup` from `groupsOfEngine_sup`, and `hF` by
+`viewSize_le_regroupFuel`. `CandSup ctx dir gs` (`RegroupSkipDefs.lean`) asks of the
+candidate list only the members with a fit in some view (`CandSupAt` per view): the engine
+reads the candidates of a view from the use lists `by_contains` of its classes, that is,
+the filed `f`-members holding a class of the view (`isCand`, `groupsOfEngineAt`), and a
+member holding no class of the view has no fit for any kind, because a fit is a
+sub-multiset, a subset or a run of the view (`isCand_of_fitsR`, `fitsR_nil_of_not_cand`,
+`RegroupBounds.lean`). `groupsOfEngineAt_candSupAt` discharges `CandSupAt` for them, and
+`regroupAllSkipAt_eq` shows that the loop reading each view's candidates from the use lists
+(`SkipSt.runAt`, `regroupAllSkipAt`) ends with the records of the loop over every filed
+`f`-member (`regroupView_filter_cand`, `runAt_eq_run`). `regroupSkipG_iffL` is the same
+statement for the demand rule under laws.
 
 *Proof.* `regroupRec_shrink` (`:259`) shows that a regrouping strictly shrinks a view under
 any laws, so the full enumeration is exactly the set of records reachable from the walk's
@@ -902,15 +920,19 @@ theorem regroupSkip_match_iff {c : FCtx} {dir : Sym → Dir} {σ : Binding} {a :
 
 **Adequacy.**
 
-- The engine computes a view's size as a `u128` sum of counts saturated at `u64::MAX`. With
-  a count past `u64::MAX` two views can have equal saturated sizes, and the engine's skip of
-  a target already regrouped can then fire. The model's counts are `Nat`, and the skip never
-  fires (`flatten.rs`, the comment above `Some(&t) if entries[t].3`). No theorem covers
-  the saturated case.
+- The engine computes a view's size as a `u128` sum of counts read as `u64`
+  (`saturated_size`, `flatten.rs`). A count past `u64::MAX` is read as `u64::MAX`; since
+  commit `54bea39b` such a count is counted in `flatten_overflowed`, and a fit whose normalized
+  view holds one is skipped as a fit whose normalization overflows the width (`Ix.wide`,
+  Section 4.6). With the counter zero every size is exact, a regrouped view is strictly
+  smaller than its source and the skip of a target already regrouped never fires
+  (`regroupRec_shrink`), which is what `regroupBounded_query_exact` assumes. No configured
+  width is past 64 bits, so the case is unreachable today; the counter makes it checked
+  rather than argued.
 - The engine's candidates are the `f`-members found through the use lists of the view's
-  classes; the model's are every filed `f`-member (`hgs'` requires all of them). A member
-  holding no class of the view has no fit, so the two lists give the same records, but no
-  theorem states it.
+  classes; the model's `regroupAllSkip` reads every filed `f`-member for every view.
+  `regroupAllSkipAt_eq` equates the two loops, and `CandSup` states what the proof needs of
+  the candidates (above).
 - The bounds of Section 4.6 apply here too: the engine counts `MAX_REGROUP_VIEWS` after the
   skips, and the model has no bound.
 - The conformance generators still use `regroupLevels` (`STATUS.md`): the engine's loop
@@ -1846,8 +1868,10 @@ marked **new** were found for this edition.
    leaf-constant form `hcp` also ranges over the view's rules `M → {x}`.
 5. **Still true.** The minimal-monomial hypotheses amount to assuming I5:
    `witness_complete` discharges them with `ss₀ = ss` and the reflexive run.
-6. **Still true.** `TwoClassesL`, which ACI demand completeness needs, is assumed. The probe
-   `aci1.egg` that `EMatch/Flatten/EngineComplete.lean:24` cites is not in the repository.
+6. **Resolved** by `798af6c9` (`twoClassesL_of_members`, `EMatch/Flatten/EngineComplete.lean`).
+   `TwoClassesL` is derived from the collapse invariant `MembersTwoClassesL` and
+   `NodeTwoClassesL`, which `demand_engine_complete_aci` now takes (Section 4.3), and the
+   fixture `egraph/tests/egg/aci1.egg` is committed.
 7. **Still true.** `Round.Persist` and `StorePersist` assume recanonicalization is a literal
    map. Rebuild's inverse-pair cancellation (`canon_repair_round`) and the nilpotent clamp
    are not.
@@ -1904,15 +1928,18 @@ marked **new** were found for this edition.
 3. **Changed.** The view bounds `MAX_VIEWS`, `MAX_WORK` and `MAX_ELEMS`, the regrouping
    bounds `MAX_REGROUP_VIEWS` and `MAX_REGROUP_WORK`, and multiplicity widths appear as
    hypotheses or not at all. The regrouping skips are now modelled (item 8 above). The
-   saturated view size of the engine's loop is not (Section 4.7).
+   saturated view size of the engine's loop is counted in `flatten_overflowed` since `54bea39b`,
+   so `regroupBounded_query_exact` covers it (Section 4.7).
 4. **Still true.** Emitted lists are compared as sets; `Nodup` is not modelled beyond single
    steps.
 5. **Still true.** The build-time spelling of an AC right-hand side (`flatten_mset_children`,
    which reads each argument class's `atomic` bit and minimal monomial) is outside
    `saturation_complete`. The engine covers it with `spelling_epoch`.
-6. **New.** The engine's regrouping candidates come from the use lists of the view's
-   classes; the model's are every filed `f`-member. The two give the same records, because a
-   member holding no class of the view has no fit, but no theorem states it.
+6. **Resolved** by `636ea372` (`regroupAllSkipAt_eq`, `groupsOfEngineAt_candSupAt`,
+   `EMatch/Flatten/RegroupBounds.lean`; `CandSup`, `RegroupSkipDefs.lean`). The engine's
+   regrouping candidates come from the use lists of the view's classes; the model's loop over
+   every filed `f`-member ends with the same records, and `hgs'` asks only for the members
+   with a fit (Section 4.7).
 
 **Stale statements in the sources.** These do not affect the proofs, but they mislead a reader
 who checks the Rust.
@@ -2002,17 +2029,25 @@ resolution after the original text.
    by `I5 st` in the statements, or link `OpsStar` to the inference run.
 7. `AtomCollapse` and the atomic set `A` are assumed. Fix: derive `AtomCollapse` from a model
    of `add` returning `x`'s class, and `A` from a model of the `atomic` bit.
-8. `TwoClassesL` is assumed, and the cited `aci1.egg` is missing. Fix: derive it from
-   rebuild's merge of a one-class member, or commit the probe and cite it from `proofs/repro`.
+8. *Resolved, commit `798af6c9`.* `TwoClassesL` was assumed, and the cited `aci1.egg` was
+   missing. Fix applied: `twoClassesL_of_members` derives it from the collapse invariant
+   (`MembersTwoClassesL`, `NodeTwoClassesL`), which `demand_engine_complete_aci` takes in its
+   place; `egraph/tests/egg/aci1.egg` is committed and cited from the docstring.
 9. `Round.Persist`, `StorePersist` and `rebuild_idle` are assumed. Fix: weaken `Persist` to
    normal-form recanonicalization (`DenN.persist`) and model `CompletionOutcome`.
 10. The re-activation of collapsed nodes may break I5. Fix: add an un-retire step to `Infer`
     and prove I5 is preserved, or change the engine to refresh after clearing the flag.
-11. The engine's regrouping loop saturates view sizes at `u64::MAX`, where the skip of a
-    regrouped target can fire. Fix: prove the skip harmless under saturation, or assert in
-    the engine that no regrouped target is reached.
-12. The engine's regrouping candidates are a subset of the model's. Fix: prove that a member
-    with no class in the view has no fit, and restate `hgs'` over members with a fit.
+11. *Resolved, commit `54bea39b`.* The engine's regrouping loop saturated view sizes at
+    `u64::MAX` without counting it, where the skip of a regrouped target could fire. Fix
+    applied: a count past `u64::MAX` is counted in `flatten_overflowed` (`saturated_size`,
+    `flatten.rs`, with a unit test on the conversion), and a fit whose normalized view holds
+    one is skipped as `Ix.wide` models; `regroupBounded_query_exact` covers the case with no
+    new proof.
+12. *Resolved, commit `636ea372`.* The engine's regrouping candidates were a subset of the
+    model's. Fix applied: `fitsR_nil_of_not_cand` (a member with no class in the view has no
+    fit, every kind), `hgs'` restated as `CandSup` (members with a fit), and
+    `regroupAllSkipAt_eq` (the loop with the engine's per-view candidates `groupsOfEngineAt`
+    ends with the model's records).
 13. Soundness of regrouping under laws and for fold chains, and completeness under laws, are
     unproved. Fix: extend `regroup_views_sound_*` to `regroupLevels` with laws and to
     `OTLeft`/`OTRight` chains.

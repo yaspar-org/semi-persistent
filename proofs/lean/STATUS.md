@@ -262,7 +262,10 @@ completion state to the rounds or to the engine's rebuild.
   `nonInertB` on every leaf block (`nonInertEng_eq`); the walk's pruning
   with `may_be_non_inert` is match-preserving (`prune_engine`);
   completeness of the engine's rule under any laws,
-  `demand_engine_complete_{ac,aci,assoc}` (sets under `TwoClassesL`).
+  `demand_engine_complete_{ac,aci,assoc}` (sets under the collapse
+  invariant `MembersTwoClassesL` and `NodeTwoClassesL`, from which
+  `twoClassesL_of_members` derives `TwoClassesL`; `aci1.egg` records the
+  engine merging a set node reduced to one class into that class).
   `PlanDefs.lean`/`Plan.lean`: the flattened plan with one view register
   per n-ary atom (`planF`, `runE`, any atom order, joins without
   `by_contains`, pruned enumeration), `lowerF_sound`/`lowerF_complete`,
@@ -349,7 +352,12 @@ completion state to the rounds or to the engine's rebuild.
   `run_finished`, `init_inv`) and `regroupSkipG_spec`: every record kept is
   reachable, every reachable record is covered by one kept. Hence
   `regroupSkipG_iff` / `regroupSkipG_iffL` (same accepted matches per view
-  after the item limit, any laws, kind, direction, candidate order),
+  after the item limit, any laws, kind, direction, candidate order; the
+  candidate list need only hold the members with a fit, `CandSup`, and
+  `regroupAllSkipAt_eq` equates the loop with the engine's per-view
+  candidates from the use lists, `groupsOfEngineAt`, to the loop over every
+  filed `f`-member, since a member holding no class of the view has no fit,
+  `fitsR_nil_of_not_cand`),
   `enumerateRSkip_iff`, `enumerateRDSkip_iff`, `regroupSkip_spec`,
   `atomSat_regroupSkip_iff`, and the final theorems for
   `Enumerator.regroupSkip`: `regroupSkip_plan_sound`,
@@ -366,7 +374,9 @@ completion state to the rounds or to the engine's rebuild.
   distinct classes, then each candidate's children, checked against
   `MAX_REGROUP_WORK`, 2^20, so a view no record reaches still costs), the
   stored elements against `MAX_ELEMS` (`OVER_BOUND`: the node is skipped),
-  and the fits whose normalization overflows the width (`Ix.wide`). A run
+  and the fits whose normalization overflows the width or leaves a count
+  past `u64::MAX`, which the engine counts in `flatten_overflowed` since
+  `54bea39b` (`Ix.wide`). A run
   stops at once and keeps its records. `regroupBounded_halt_iff`: the run
   stops iff the run without bounds ends past a bound, wherever the bound is
   crossed (`regroupBounded_halt_ok`, `regroupBounded_truncated_iff` for
