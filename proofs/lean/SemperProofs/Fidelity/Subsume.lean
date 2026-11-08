@@ -183,24 +183,24 @@ def InvLagS (A : SActRound) (rules : List Rule) : Prop :=
 
 /-- What round 0 emits: every naive match on the index. -/
 def EmitsAllS (A : SActRound) (rules : List Rule) : Prop :=
-  ∀ rule ∈ rules, ∀ σ ∈ runNaive A.R.before rule.plan, A.emitted rule σ
+  ∀ rule ∈ rules, ∀ σ ∈ rule.matcher.naive A.R.before, A.emitted rule σ
 
 /-- What round `r ≥ 1` emits (`EmitsRound` with stores). -/
 def EmitsRoundS (naive : Rule → Bool) (prev : Round) (A : SActRound) (rules : List Rule) : Prop :=
   ∀ rule ∈ rules,
-    (naive rule = true → ∀ σ ∈ runNaive A.R.before rule.plan, A.emitted rule σ) ∧
+    (naive rule = true → ∀ σ ∈ rule.matcher.naive A.R.before, A.emitted rule σ) ∧
     (naive rule = false → ∀ (k : Nat) (ak : RAtom), rule.atoms[k]? = some (.scan ak) →
-      ∀ σ ∈ runVariant A.R.before prev.isNew k rule.plan, A.emitted rule σ)
+      ∀ σ ∈ rule.matcher.variant A.R.before prev.isNew k, A.emitted rule σ)
 
 theorem invLagS_zero {sig : Sym → Kind} {rules : List Rule} (A : SActRound) (hwf : A.R.WF)
-    (hatoms : RulesWF sig A.R.before rules) (hplan : PlansOK rules) (hemit : EmitsAllS A rules) :
+    (hatoms : RulesWF sig A.R.before rules) (hmatch : MatchersOK rules) (hemit : EmitsAllS A rules) :
     InvLagS A rules := by
   intro rule hr _ σ hm
   have hidem : A.Sa.graph.FindIdem := by
     have := hwf.find_idem; rw [A.after_eq] at this; exact this
   rw [← A.before_eq] at hm
   exact fired_after_actions_store A hidem
-    (hemit rule hr σ ((mem_runNaive_iff (hatoms rule hr) (hplan rule hr) σ).2 hm))
+    (hemit rule hr σ ((MatcherOK.naive_iff (hmatch rule hr) (hatoms rule hr) σ).2 hm))
 
 /-- `inv_step` without `subsumed = ∅` and without literal persistence of
 the n-ary nodes: a round whose rebuild was not literal routes the rules
@@ -210,14 +210,14 @@ theorem inv_step_store {sig : Sym → Kind} {naive : Rule → Bool} {rules : Lis
     (hprev : prev.R.WF) (htr : prev.R.tracking = true)
     (_hA : A.R.WF) (hAp : StorePersistFixed A.Sb A.Sa)
     (hatoms₀ : RulesWF sig prev.R.before rules) (hatoms₁ : RulesWF sig prev.R.after rules)
-    (hplan : PlansOK rules) {resp : Bool} (hresp : ¬ Literal prev.Sb prev.Sa → resp = true)
+    (hmatch : MatchersOK rules) {resp : Bool} (hresp : ¬ Literal prev.Sb prev.Sa → resp = true)
     (hemit : EmitsRoundS (route naive resp) prev.R A rules)
     (hinv : InvLagS prev rules) : InvLagS A rules := by
   intro rule hr hlit σ hm
   have hRlink : A.R.before = prev.R.after := by rw [A.before_eq, prev.after_eq, hlink]
   have hm' : Matches prev.R.after rule.atoms σ := by rw [prev.after_eq, ← hlink]; exact hm
-  have hnew : σ ∈ runNaive prev.R.after rule.plan :=
-    (mem_runNaive_iff (hatoms₁ rule hr) (hplan rule hr) σ).2 hm'
+  have hnew : σ ∈ rule.matcher.naive prev.R.after :=
+    (MatcherOK.naive_iff (hmatch rule hr) (hatoms₁ rule hr) σ).2 hm'
   obtain ⟨h1, h2⟩ := hemit rule hr
   rw [hRlink] at h1 h2
   have hroute : route naive resp rule = true → Fired A.Sa.graph σ rule :=
@@ -240,11 +240,10 @@ theorem inv_step_store {sig : Sym → Kind} {naive : Rule → Bool} {rules : Lis
     | true => exact hroute hn
     | false =>
         apply fired_after_actions_store A hAp.after_idem
-        have hold' : σ ∉ runNaive prev.R.before rule.plan := fun h =>
-          hold ((mem_runNaive_iff (hatoms₀ rule hr) (hplan rule hr) σ).1 h)
+        have hold' : σ ∉ rule.matcher.naive prev.R.before := fun h =>
+          hold ((MatcherOK.naive_iff (hmatch rule hr) (hatoms₀ rule hr) σ).1 h)
         obtain ⟨k, ak, hk, hv⟩ :=
-          semi_naive_round_complete hprev htr (hatoms₀ rule hr) (hatoms₁ rule hr) (hplan rule hr)
-            hnew hold'
+          MatcherOK.round_complete (hmatch rule hr) hprev htr (hatoms₀ rule hr) (hatoms₁ rule hr) hnew hold'
         exact h2 hn k ak hk σ hv
 
 /-- A chain of store rounds: each round reads the previous store and emits
@@ -266,7 +265,7 @@ structure RoundOKS (sig : Sym → Kind) (rules : List Rule) (A : SActRound) : Pr
   atoms : RulesWF sig A.R.after rules
 
 theorem invLag_chain_store_aux {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (hplan : PlansOK rules) : ∀ (A₀ : SActRound) (As : List SActRound),
+    (hmatch : MatchersOK rules) : ∀ (A₀ : SActRound) (As : List SActRound),
     RulesWF sig A₀.R.before rules → (∀ A ∈ A₀ :: As, RoundOKS sig rules A) →
     InvLagS A₀ rules → SChain naive rules A₀ As → ∀ A ∈ As, InvLagS A rules := by
   intro A₀ As
@@ -278,7 +277,7 @@ theorem invLag_chain_store_aux {sig : Sym → Kind} {naive : Rule → Bool} {rul
       have hok₀ := hok A₀ (by simp)
       have hokA := hok A (by simp)
       have hinvA : InvLagS A rules :=
-        inv_step_store hlink hok₀.wf hok₀.tracking hokA.wf hokA.store h₀ hok₀.atoms hplan hresp
+        inv_step_store hlink hok₀.wf hok₀.tracking hokA.wf hokA.store h₀ hok₀.atoms hmatch hresp
           hemit hinv
       have hRlink : A.R.before = A₀.R.after := by rw [A.before_eq, A₀.after_eq, hlink]
       rcases List.mem_cons.1 hA' with rfl | hA'
@@ -287,15 +286,15 @@ theorem invLag_chain_store_aux {sig : Sym → Kind} {naive : Rule → Bool} {rul
           hchain' A' hA'
 
 theorem invLag_chain_store {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRound) (As : List SActRound) (hplan : PlansOK rules)
+    (A₀ : SActRound) (As : List SActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKS sig rules A)
     (hemit₀ : EmitsAllS A₀ rules) (hchain : SChain naive rules A₀ As) :
     ∀ A ∈ A₀ :: As, InvLagS A rules := by
-  have hinv₀ : InvLagS A₀ rules := invLagS_zero A₀ (hok A₀ (by simp)).wf h₀ hplan hemit₀
+  have hinv₀ : InvLagS A₀ rules := invLagS_zero A₀ (hok A₀ (by simp)).wf h₀ hmatch hemit₀
   intro A hA
   rcases List.mem_cons.1 hA with rfl | hA
   · exact hinv₀
-  · exact invLag_chain_store_aux hplan A₀ As h₀ hok hinv₀ hchain A hA
+  · exact invLag_chain_store_aux hmatch A₀ As h₀ hok hinv₀ hchain A hA
 
 /-- Every match on the index of `S` is fired in the store of `S`. -/
 def InvS (S : Store) (rules : List Rule) : Prop :=
@@ -311,12 +310,12 @@ def SActRound.Unchanged (A : SActRound) : Prop :=
 every match on the index (so at no subsumed node) is fired in the store,
 at both snapshots. -/
 theorem saturation_complete_store {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRound) (As : List SActRound) (hplan : PlansOK rules)
+    (A₀ : SActRound) (As : List SActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKS sig rules A)
     (hemit₀ : EmitsAllS A₀ rules) (hchain : SChain naive rules A₀ As)
     {A : SActRound} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged) :
     InvS A.Sb rules ∧ InvS A.Sa rules := by
-  have hinvL := invLag_chain_store A₀ As hplan h₀ hok hemit₀ hchain A hA
+  have hinvL := invLag_chain_store A₀ As hmatch h₀ hok hemit₀ hchain A hA
   obtain ⟨hn, hf, hs⟩ := hfix
   have hlit : Literal A.Sb A.Sa := literal_of_unchanged (hok A hA).store.children_canon hn
   have hinv : ∀ rule ∈ rules, ∀ σ, Matches A.Sb.index rule.atoms σ → Fired A.Sa.graph σ rule :=

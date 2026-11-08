@@ -109,24 +109,24 @@ def InvLagN (A : SActRoundN L) (rules : List Rule) : Prop :=
     ∀ σ, Matches A.Sb.index rule.atoms σ → FiredN A.Sa.graph L σ rule
 
 def EmitsAllN (A : SActRoundN L) (rules : List Rule) : Prop :=
-  ∀ rule ∈ rules, ∀ σ ∈ runNaive A.R.before rule.plan, A.emitted rule σ
+  ∀ rule ∈ rules, ∀ σ ∈ rule.matcher.naive A.R.before, A.emitted rule σ
 
 def EmitsRoundN (naive : Rule → Bool) (prev : Round) (A : SActRoundN L) (rules : List Rule) :
     Prop :=
   ∀ rule ∈ rules,
-    (naive rule = true → ∀ σ ∈ runNaive A.R.before rule.plan, A.emitted rule σ) ∧
+    (naive rule = true → ∀ σ ∈ rule.matcher.naive A.R.before, A.emitted rule σ) ∧
     (naive rule = false → ∀ (k : Nat) (ak : RAtom), rule.atoms[k]? = some (.scan ak) →
-      ∀ σ ∈ runVariant A.R.before prev.isNew k rule.plan, A.emitted rule σ)
+      ∀ σ ∈ rule.matcher.variant A.R.before prev.isNew k, A.emitted rule σ)
 
 theorem invLagN_zero {sig : Sym → Kind} {rules : List Rule} (A : SActRoundN L) (hwf : A.R.WF)
-    (hatoms : RulesWF sig A.R.before rules) (hplan : PlansOK rules) (hemit : EmitsAllN A rules) :
+    (hatoms : RulesWF sig A.R.before rules) (hmatch : MatchersOK rules) (hemit : EmitsAllN A rules) :
     InvLagN A rules := by
   intro rule hr _ σ hm
   have hidem : A.Sa.graph.FindIdem := by
     have := hwf.find_idem; rw [A.after_eq] at this; exact this
   rw [← A.before_eq] at hm
   exact fired_after_actions_N A hidem
-    (hemit rule hr σ ((mem_runNaive_iff (hatoms rule hr) (hplan rule hr) σ).2 hm))
+    (hemit rule hr σ ((MatcherOK.naive_iff (hmatch rule hr) (hatoms rule hr) σ).2 hm))
 
 /-- `inv_step_store` with normalized right-hand sides and normal-form
 recanonicalization: an old instance of a rule that builds an n-ary term is
@@ -136,14 +136,14 @@ theorem inv_step_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Ru
     {prev A : SActRoundN L} (hlink : A.Sb = prev.Sa)
     (hprev : prev.R.WF) (htr : prev.R.tracking = true) (hAp : StorePersistN L A.Sb A.Sa)
     (hatoms₀ : RulesWF sig prev.R.before rules) (hatoms₁ : RulesWF sig prev.R.after rules)
-    (hplan : PlansOK rules) {resp : Bool} (hresp : ¬ Literal prev.Sb prev.Sa → resp = true)
+    (hmatch : MatchersOK rules) {resp : Bool} (hresp : ¬ Literal prev.Sb prev.Sa → resp = true)
     (hemit : EmitsRoundN (route naive resp) prev.R A rules)
     (hinv : InvLagN prev rules) : InvLagN A rules := by
   intro rule hr hlit σ hm
   have hRlink : A.R.before = prev.R.after := by rw [A.before_eq, prev.after_eq, hlink]
   have hm' : Matches prev.R.after rule.atoms σ := by rw [prev.after_eq, ← hlink]; exact hm
-  have hnew : σ ∈ runNaive prev.R.after rule.plan :=
-    (mem_runNaive_iff (hatoms₁ rule hr) (hplan rule hr) σ).2 hm'
+  have hnew : σ ∈ rule.matcher.naive prev.R.after :=
+    (MatcherOK.naive_iff (hmatch rule hr) (hatoms₁ rule hr) σ).2 hm'
   obtain ⟨h1, h2⟩ := hemit rule hr
   rw [hRlink] at h1 h2
   have hroute : route naive resp rule = true → FiredN A.Sa.graph L σ rule :=
@@ -166,11 +166,10 @@ theorem inv_step_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Ru
     | true => exact hroute hn
     | false =>
         apply fired_after_actions_N A hAp.after_idem
-        have hold' : σ ∉ runNaive prev.R.before rule.plan := fun h =>
-          hold ((mem_runNaive_iff (hatoms₀ rule hr) (hplan rule hr) σ).1 h)
+        have hold' : σ ∉ rule.matcher.naive prev.R.before := fun h =>
+          hold ((MatcherOK.naive_iff (hmatch rule hr) (hatoms₀ rule hr) σ).1 h)
         obtain ⟨k, ak, hk, hv⟩ :=
-          semi_naive_round_complete hprev htr (hatoms₀ rule hr) (hatoms₁ rule hr) (hplan rule hr)
-            hnew hold'
+          MatcherOK.round_complete (hmatch rule hr) hprev htr (hatoms₀ rule hr) (hatoms₁ rule hr) hnew hold'
         exact h2 hn k ak hk σ hv
 
 /-- A chain of store rounds, routed as `SChain`: after a round whose rebuild
@@ -193,7 +192,7 @@ structure RoundOKN (sig : Sym → Kind) (rules : List Rule) (A : SActRoundN L) :
   atoms : RulesWF sig A.R.after rules
 
 theorem invLag_chain_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (hplan : PlansOK rules) : ∀ (A₀ : SActRoundN L) (As : List (SActRoundN L)),
+    (hmatch : MatchersOK rules) : ∀ (A₀ : SActRoundN L) (As : List (SActRoundN L)),
     RulesWF sig A₀.R.before rules → (∀ A ∈ A₀ :: As, RoundOKN sig rules A) →
     EmitsAllN A₀ rules → SChainN naive rules A₀ As → ∀ A ∈ A₀ :: As, InvLagN A rules := by
   intro A₀ As h₀ hok hemit₀ hchain
@@ -209,13 +208,13 @@ theorem invLag_chain_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : Lis
         have hokB := hok B (by simp)
         have hokA := hok A (by simp)
         have hinvA : InvLagN A rules :=
-          inv_step_N hlink hokB.wf hokB.tracking hokA.store h₀ hokB.atoms hplan hresp hemit hinv
+          inv_step_N hlink hokB.wf hokB.tracking hokA.store h₀ hokB.atoms hmatch hresp hemit hinv
         have hRlink : A.R.before = B.R.after := by rw [A.before_eq, B.after_eq, hlink]
         rcases List.mem_cons.1 hA' with rfl | hA'
         · exact hinvA
         · exact ih A (by rw [hRlink]; exact hokB.atoms) (fun C hC => hok C (by simp [hC])) hinvA
             hchain' A' hA'
-  have hinv₀ := invLagN_zero A₀ (hok A₀ (by simp)).wf h₀ hplan hemit₀
+  have hinv₀ := invLagN_zero A₀ (hok A₀ (by simp)).wf h₀ hmatch hemit₀
   intro A hA
   rcases List.mem_cons.1 hA with rfl | hA
   · exact hinv₀
@@ -233,11 +232,11 @@ def SActRoundN.Unchanged (A : SActRoundN L) : Prop :=
 on the index the loop returns is fired, its right-hand sides present as
 normal forms; `:subsume` rules allowed. -/
 theorem saturation_complete_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hplan : PlansOK rules)
+    (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
     {A : SActRoundN L} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged) : InvN A.Sa L rules := by
-  have hinv := invLag_chain_N hplan A₀ As h₀ hok hemit₀ hchain A hA
+  have hinv := invLag_chain_N hmatch A₀ As h₀ hok hemit₀ hchain A hA
   obtain ⟨hn, hf, hs⟩ := hfix
   have hlit : Literal A.Sb A.Sa := literal_of_unchanged (hok A hA).store.children_canon hn
   have hfeq : A.Sa.find = A.Sb.find := funext hf

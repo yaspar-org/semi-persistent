@@ -88,7 +88,7 @@ matched node is the represented node of `p'`. Literal right-hand sides
 (`Den`); `Fidelity` / `Final/Store.lean` has the normalized ones. -/
 theorem saturation_modulo_complete_sub {sig : Sym → Kind} {naive : Rule → Bool}
     {rules : List Rule}
-    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (A₀ : ActRound) (As : List ActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
     (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
     {A : ActRound} (hA : A ∈ A₀ :: As) (hfix : A.R.Unchanged)
@@ -105,7 +105,7 @@ theorem saturation_modulo_complete_sub {sig : Sym → Kind} {naive : Rule → Bo
         MatchC A.R.after P (A.R.after.find (ι p)) σ ∧
         MatchN A.R.after P (mkNode st f p') σ := by
   intro rule hr P r hatoms hhead p hp p' hp' hE σ hm hroot
-  have hinv := (saturation_complete A₀ As hplan h₀ hok hemit₀ hchain hA hfix).2
+  have hinv := (saturation_complete A₀ As hmatch h₀ hok hemit₀ hchain hA hfix).2
   have hk : A.R.after.KeysNodup := ((hok A hA).atoms rule hr).keys
   refine ⟨hinv rule hr σ hm, ?_⟩
   rw [hatoms] at hm
@@ -117,7 +117,7 @@ theorem saturation_modulo_complete_sub {sig : Sym → Kind} {naive : Rule → Bo
 (`Within`) instead of enumerating them; the form the leaf-constant
 statement instantiates. -/
 theorem saturation_modulo_complete_within {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (A₀ : ActRound) (As : List ActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
     (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
     {A : ActRound} (hA : A ∈ A₀ :: As) (hfix : A.R.Unchanged)
@@ -133,7 +133,7 @@ theorem saturation_modulo_complete_within {sig : Sym → Kind} {naive : Rule →
         MatchC A.R.after P (A.R.after.find (nodeId p)) σ := by
   intro rule hr P r hatoms hhead p hp p' hp' hE σ hm hroot
   have hs : SubRep A.R.after st f act nodeId := hG ▸ represents_subRep st f act
-  obtain ⟨h1, h2, h3, -⟩ := saturation_modulo_complete_sub A₀ As hplan h₀ hok hemit₀ hchain hA
+  obtain ⟨h1, h2, h3, -⟩ := saturation_modulo_complete_sub A₀ As hmatch h₀ hok hemit₀ hchain hA
     hfix hcomp hw hs rule hr P r hatoms hhead p hp p' hp' hE σ hm hroot
   exact ⟨h1, h2, h3⟩
 
@@ -164,9 +164,11 @@ atoms are well formed on each snapshot (`RulesWF`: distinct keys, nodes
 conform to the kind signature, atoms well kinded, node variables
 distinct, rest variables linear).
 
-(b) The scheduler: every rule's annotated plan is a scheduled plan of its
-atoms (`PlansOK`, the grammar `SchedA`), and the rule's atoms are the
-flattening of its pattern `P` at the root node variable `r`
+(b) The scheduler: every rule's matcher emits exactly the matches its
+modes admit (`MatchersOK`: a theorem for the adaptive scheduler,
+`matcherOK_engine`, and `SchedA` of the plan for a static one,
+`matcherOK_static`), and the rule's atoms are the flattening of its
+pattern `P` at the root node variable `r`
 (`rule.atoms = (atoms P r).map QAtom.scan`) with `P.head = some f`.
 
 (c) Emission: round 0 applies every binding of the naive run of every
@@ -232,7 +234,7 @@ Known limits.
    `saturation_modulo_complete_store_atoms` (`Final/Store.lean`) is the
    statement without this restriction. -/
 theorem saturation_modulo_complete {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (A₀ : ActRound) (As : List ActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
     (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
     {A : ActRound} (hA : A ∈ A₀ :: As) (hfix : A.R.Unchanged)
@@ -246,7 +248,7 @@ theorem saturation_modulo_complete {sig : Sym → Kind} {naive : Rule → Bool} 
         Fired A.R.after σ rule ∧
         σ.cls r = some (A.R.after.find (nodeId p)) ∧
         MatchC A.R.after P (A.R.after.find (nodeId p)) σ :=
-  saturation_modulo_complete_within A₀ As hplan h₀ hok hemit₀ hchain hA hfix hcomp henum.within hG
+  saturation_modulo_complete_within A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp henum.within hG
 
 /-- **Saturation is complete modulo the AC theory, with leaf constants.**
 `saturation_modulo_complete` for a completion state whose atomic classes
@@ -263,7 +265,7 @@ also makes the hypotheses contradictory; see
 `saturation_modulo_complete_store_atoms`. -/
 theorem saturation_modulo_complete_atoms {sig : Sym → Kind} {naive : Rule → Bool}
     {rules : List Rule}
-    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (A₀ : ActRound) (As : List ActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
     (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
     {A : ActRound} (hA : A ∈ A₀ :: As) (hfix : A.R.Unchanged)
@@ -277,7 +279,7 @@ theorem saturation_modulo_complete_atoms {sig : Sym → Kind} {naive : Rule → 
         Fired A.R.after σ rule ∧
         σ.cls r = some (A.R.after.find (nodeId p)) ∧
         MatchC A.R.after P (A.R.after.find (nodeId p)) σ :=
-  saturation_modulo_complete_within (st := st.withAtoms X u) A₀ As hplan h₀ hok hemit₀ hchain hA
+  saturation_modulo_complete_within (st := st.withAtoms X u) A₀ As hmatch h₀ hok hemit₀ hchain hA
     hfix (CompleteHyps.ofAtoms hcomp) (henum.within_withAtoms X u) hG
 
 /-- **Soundness modulo the theory, matching side.**
@@ -298,10 +300,10 @@ theorem saturation_modulo_sound {sig : Sym → Kind} {rules : List Rule}
     {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
     {act : Finset (Monomial n × Fin n)} (hcomp : CompleteHyps L S st)
     (henum : Enumerates st act) {f : Sym} {G : Graph} (hG : G = represents st f act)
-    (hwf : RulesWF sig G rules) (hplan : PlansOK rules) :
+    (hwf : RulesWF sig G rules) (hmatch : MatchersOK rules) :
     ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
       P.head = some f →
-      ∀ σ ∈ runNaive G rule.plan,
+      ∀ σ ∈ rule.matcher.naive G,
         Matches G rule.atoms σ ∧
         ∃ p' ∈ act, σ.node r = some (nodeId p') ∧
           σ.cls r = some (G.find (nodeId p')) ∧
@@ -309,7 +311,7 @@ theorem saturation_modulo_sound {sig : Sym → Kind} {rules : List Rule}
           ∀ p ∈ act, E L S p.1 p'.1 → MatchC G P (G.find (nodeId p)) σ := by
   subst hG
   intro rule hr P r hatoms hhead σ hσ
-  have hm : Matches _ rule.atoms σ := (mem_runNaive_iff (hwf rule hr) (hplan rule hr) σ).1 hσ
+  have hm : Matches _ rule.atoms σ := (MatcherOK.naive_iff (hmatch rule hr) (hwf rule hr) σ).1 hσ
   refine ⟨hm, ?_⟩
   rw [hatoms] at hm
   obtain ⟨p', hp', hroot, hcls, hmn⟩ := matches_at_active hhead hm

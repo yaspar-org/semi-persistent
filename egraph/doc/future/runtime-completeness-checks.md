@@ -19,7 +19,9 @@ state, the state is complete":
   a cancellative operator lattice closure (`hlat`: active nodes whose count vectors differ
   by a member of the lattice the equations span are in one class).
 - `saturation_modulo_complete` (`Final/Main.lean`) adds the matching hypotheses:
-  `PlansOK`, `RulesWF`, `RoundOK`, `EmitsAll`, `AChain`, and the fixpoint `A.R.Unchanged`.
+  `MatchersOK`, `RulesWF`, `RoundOK`, `EmitsAll`, `AChain`, and the fixpoint `A.R.Unchanged`.
+  `MatchersOK` is a theorem for the adaptive scheduler (`matcherOK_engine`); for a static plan
+  it is `SchedA` of the compiled plan (`matcherOK_static`), the check below.
 
 If a run checks the hypotheses on its final state, the theorem gives completeness for
 that run. This is certificate checking: the run produces a state, and a checker
@@ -37,7 +39,7 @@ costs.
 | Hypothesis | Constrains | Check | Cost |
 |---|---|---|---|
 | `hlaw`, `hnf_ax` | the declared laws of an operator | once per signature | constant per operator |
-| `PlansOK`, `RulesWF` | the compiled rules | once per rule, at compilation | linear in the rule |
+| `MatchersOK` (as `SchedA` of the static plan), `RulesWF` | the compiled rules | once per rule, at compilation | linear in the rule |
 | `I0Active` (weakened to classes holding an `f`-node, see `feat/leaf-constants`), `I5`, `hcanon`, `FlatSound` at node level, congruence closure | the final state, node by node | every run | one pass over the nodes |
 | `hlat` (lattice closure, cancellative operators) | the final state, class by class | every run | one echelon form over the rows, the cost of one `lattice_round` |
 | `Converged` outcome, truncation and overflow counters | the run's outcome; `Converged` also gives `EnginePhase.before_fixed`, from which `Fidelity/StopTest.lean` derives `rebuild_idle` | every run | constant |
@@ -149,7 +151,8 @@ maintains a summary would let a defect in that code pass its own check.
    builds), returning the verdict of §3. Acceptance: each fixture listed in §3 fails the
    corresponding check when its fix is reverted, and the full suite passes with the
    option on; cost measured on the completion benchmarks and stated.
-2. Static checks of `hlaw`, `hnf_ax` per signature and of `PlansOK`, `RulesWF` per rule.
+2. Static checks of `hlaw`, `hnf_ax` per signature and of `MatchersOK` (`SchedA` of the
+   static plan), `RulesWF` per rule.
    Acceptance: a test per hypothesis with a declaration that violates it.
 3. Tier 2 Lean checker with its correctness theorems, audited in a `*Check.lean` file.
    Acceptance: no sorry, standard axioms only; CI runs it over the committed corpora.

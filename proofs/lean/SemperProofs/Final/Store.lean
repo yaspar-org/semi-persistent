@@ -55,7 +55,7 @@ matches `P` at that class, and `σ` matches `P` at the represented node of
 `p'`. -/
 theorem saturation_modulo_complete_store {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hplan : PlansOK rules)
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
     {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
@@ -72,7 +72,7 @@ theorem saturation_modulo_complete_store {ops : Sym → OpLaws} {sig : Sym → K
         MatchC A.Sa.index P (A.Sa.find (ι p)) σ ∧
         MatchN A.Sa.index P (mkNode st f p') σ := by
   intro rule hr P r hatoms hhead p hp p' hp' hE σ hm hroot
-  have hinv := saturation_complete_N A₀ As hplan h₀ hok hemit₀ hchain hA hfix
+  have hinv := saturation_complete_N A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
   have hk : A.Sa.index.KeysNodup := by
     have := ((hok A hA).atoms rule hr).keys
     rwa [A.after_eq] at this
@@ -91,7 +91,7 @@ leaf constants and the nodes the right-hand sides build are nodes of the
 store like any other. -/
 theorem saturation_modulo_complete_store_atoms {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hplan : PlansOK rules)
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
     {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
@@ -107,7 +107,7 @@ theorem saturation_modulo_complete_store_atoms {ops : Sym → OpLaws} {sig : Sym
         σ.cls r = some (A.Sa.find (ι p)) ∧
         MatchC A.Sa.index P (A.Sa.find (ι p)) σ ∧
         MatchN A.Sa.index P (mkNode st f p') σ :=
-  saturation_modulo_complete_store (st := st.withAtoms X u) A₀ As hplan h₀ hok hemit₀ hchain hA
+  saturation_modulo_complete_store (st := st.withAtoms X u) A₀ As hmatch h₀ hok hemit₀ hchain hA
     hfix (CompleteHyps.ofAtoms hcomp) (fun p hp => State.active_withAtoms (hw p hp))
     (hs.withAtoms X u)
 
@@ -116,7 +116,7 @@ engine's `atomic` bit defines (`atomicOf st`, `CC/AtomicOf.lean`) in place
 of the parameter `X`. -/
 theorem saturation_modulo_complete_store_atomic {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hplan : PlansOK rules)
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
     {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
@@ -132,7 +132,7 @@ theorem saturation_modulo_complete_store_atomic {ops : Sym → OpLaws} {sig : Sy
         σ.cls r = some (A.Sa.find (ι p)) ∧
         MatchC A.Sa.index P (A.Sa.find (ι p)) σ ∧
         MatchN A.Sa.index P (mkNode st f p') σ :=
-  saturation_modulo_complete_store_atoms A₀ As hplan h₀ hok hemit₀ hchain hA hfix hcomp hw hs
+  saturation_modulo_complete_store_atoms A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp hw hs
 
 /-- `saturation_modulo_complete_store_atoms` at the round where the
 engine's stop test holds (no reported change, an unmoved size stamp) and
@@ -140,7 +140,7 @@ the round matched on a completion fixpoint (`EnginePhase.before_fixed`: the
 previous rebuild converged), in place of `Unchanged`. -/
 theorem saturation_modulo_complete_store_engine {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hplan : PlansOK rules)
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
     {A : SActRoundN ops} (hA : A ∈ A₀ :: As) {K : Completion} (Eng : EnginePhase K A.Sb A.Sa)
@@ -157,14 +157,14 @@ theorem saturation_modulo_complete_store_engine {ops : Sym → OpLaws} {sig : Sy
         σ.cls r = some (A.Sa.find (ι p)) ∧
         MatchC A.Sa.index P (A.Sa.find (ι p)) σ ∧
         MatchN A.Sa.index P (mkNode st f p') σ :=
-  saturation_modulo_complete_store_atoms A₀ As hplan h₀ hok hemit₀ hchain hA
+  saturation_modulo_complete_store_atoms A₀ As hmatch h₀ hok hemit₀ hchain hA
     (engine_stop_unchanged_N A Eng hstop) hcomp hw hs
 
 /-- With the `f`-part covering every `f`-node of the index (`FCover`), the
 root may be any match: it is the node of some active `p'`. -/
 theorem saturation_modulo_complete_store_cover {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hplan : PlansOK rules)
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
     {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
@@ -186,7 +186,7 @@ theorem saturation_modulo_complete_store_cover {ops : Sym → OpLaws} {sig : Sym
   obtain ⟨id, nd, hid, hmem, -, hop, -⟩ :=
     backOk P hP r _ (fun a ha => hm'.sat _ (List.mem_map_of_mem ha))
   obtain ⟨p', hp', rfl⟩ := hcov id nd hmem (by rw [hhead] at hop; exact (Option.some.inj hop).symm)
-  have hmain := saturation_modulo_complete_store_atoms A₀ As hplan h₀ hok hemit₀ hchain hA hfix
+  have hmain := saturation_modulo_complete_store_atoms A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
     hcomp hw hs rule hr P r hatoms hhead
   refine ⟨(hmain p' hp' p' hp' (E.refl _) σ hm hid).1, p', hp', hid, fun p hp hE => ?_⟩
   obtain ⟨-, h2, h3, -⟩ := hmain p hp p' hp' hE σ hm hid

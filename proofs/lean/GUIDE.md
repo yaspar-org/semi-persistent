@@ -231,6 +231,7 @@ MatchC G P c σ                                    specification
   ⟺ Matches G atoms σ'                           (exact-domain form)
   ⟺ σ' ∈ run G plan ∅, any PlanOK plan           plan_matches
   ⟺ σ' ∈ runND ..., any choice function          runND_matches, runND_eq_plan
+  ⟺ σ' ∈ runEngine ..., the engine's choice       runEngine_matches, chooseEngine_mem
 runVariant k = runNaive ∩ {atom k new, atoms < k old}   variant_partition
 ```
 
@@ -365,6 +366,40 @@ The choice function is arbitrary, and different branches may choose different or
 `runND_indep` and `runND_eq_plan` (`:204`, `:212`) follow: the result does not depend on the
 heuristic and equals that of every `PlanOK` plan. The proof is an induction on fuel that
 reuses the `pick` and `eager` steps of `schedA_run`.
+
+**The engine's choice and the semi-naive modes** (commit `26ee4f9e`). `runNDA`
+(`Runtime.lean`) is `runND` with each lowered block run under a per-atom `IndexMode`, as the
+engine runs its variants through the same adaptive loop; `runNDA_matches` gives
+`Matches ∧ ModeOk`, and `runNDA_eq_runA` equates it with every `SchedA` plan under the same
+modes. `chooseEngine` (`EMatch/Engine/Choose.lean`) transcribes `choose_atom`
+(`ematch.rs:1609-1659`) and `cursor_len` (`:1673-1705`): among the unused scanning atoms, in
+index order, the one whose join opens the shortest bucket under the bindings in hand, read in
+the store its mode selects, a later atom replacing the best so far only when strictly cheaper.
+The join priced is the one `emit_atom` emits (`engineJoinLookups`: `joinLookups`, plus the
+`byContains` lookups of a `:comm` atom that `lower` omits); the bound set is read from the
+environment (`boundSet`, equal to the scheduler's by `boundSet_eq`). `chooseEngine_mem` says it
+is a choice function `runND` accepts (the `min'` fallback never fires, `chooseEngine_unusedScan`),
+and `runEngine_matches`, `runEngine_naive_matches`, `runEngine_indep`, `runEngine_eq_plan`
+instantiate the `runND` theorems with it.
+
+The unit test `atom_choice_agrees_with_the_model_on_the_rounds_corpus` (`ematch.rs`, commit
+`e48db120`) compares, at every phase-B decision of the `conform-rounds` corpus run naive and
+semi-naive under runtime scheduling, the atom `choose_atom` takes with the one a Rust
+transliteration of `chooseEngine` takes from the same bindings and bucket lengths (the Lean
+side cannot replay the decisions: they depend on the partial bindings, which the dumps do not
+carry). 200 files, 4945 decisions, 1591 with several candidates, all agree. Two mutations of the
+transliteration are caught: pricing a `:comm` atom over `lower`'s lookups (30 disagreements) and
+breaking ties toward the highest index (808).
+
+**Matchers.** A `Rule` carries its matching procedure as a `Matcher`
+(`EMatch/Engine/Matcher.lean`): the bindings emitted on a snapshot for a new-node predicate
+and a per-atom mode. `Matcher.static ap` is the static plan under `runA`, `Matcher.engine atoms`
+the adaptive scheduler with `chooseEngine`, `Matcher.runtime atoms choose` the same with any
+choice function. `MatcherOK atoms m` says `m` emits exactly `Matches ∧ ModeOk` wherever the atoms
+are well formed; `matcherOK_static` proves it from `SchedA`, `matcherOK_runtime` and
+`matcherOK_engine` prove it outright. `MatcherOK.naive_iff` and `MatcherOK.round_complete` are
+`mem_runNaive_iff` and `semi_naive_round_complete` on a matcher, and the saturation theorems
+(Sections 6 and 7) take `hmatch : MatchersOK rules` in place of the former `hplan : PlansOK rules`.
 
 **The single-pattern corollary.** `engine_plan_sound` and `engine_plan_complete`
 (`EMatch/Engine/Main.lean:66`, `:74`) specialise the chain to one pattern:
@@ -1620,7 +1655,7 @@ applied a law to a stored node (`VarCanon::law_applied`, counted in `spelling_ep
 
 ```lean
 theorem saturation_complete {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (A₀ : ActRound) (As : List ActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
     (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
     {A : ActRound} (hA : A ∈ A₀ :: As) (hfix : A.R.Unchanged) :
@@ -1724,7 +1759,7 @@ says every node of `A` is an active node of `st`. Commit `15b5fa2e` restated
 
 ```lean
 theorem saturation_modulo_complete {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (A₀ : ActRound) (As : List ActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
     (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
     {A : ActRound} (hA : A ∈ A₀ :: As) (hfix : A.R.Unchanged)
@@ -1783,7 +1818,7 @@ state by definition (`represents_withAtoms`, `:77`).
 | Hypothesis | Meaning | Status |
 |---|---|---|
 | `A₀`, `As` | the rounds, with their applied bindings and action facts | assumed; `Den` is literal (Section 6.3) |
-| `hplan` | each rule's plan is in the scheduler grammar | assumed; no theorem proves the Rust scheduler emits `SchedA` plans |
+| `hmatch` | each rule's matcher emits exactly the matches its modes admit (`MatchersOK`, Section 3.4) | a theorem for the adaptive scheduler (`matcherOK_engine`, commit `26ee4f9e`); for a static plan it reduces to `SchedA` (`matcherOK_static`), which no theorem proves of `schedule_with_stats` |
 | `h₀`, `hok` | rule atoms well formed; per round: `WF`, tracking, `PersistFixed`, no subsumption | assumed; the fixed-arity nodes persist literally in every rebuild; n-ary nodes are not constrained here, the routing of `AChain` covers a non-literal rebuild |
 | `hemit₀`, `hchain` | every naive or variant binding was applied | assumed of the engine's matcher |
 | `hfix` | round `A` changed nothing | assumed here; `engine_stop_unchanged` derives it from the stop test, but this theorem does not use it |
@@ -1792,7 +1827,7 @@ state by definition (`represents_withAtoms`, `:77`).
 | `hG` | the fixpoint snapshot is the represented graph | assumed; the weakest point (Section 7.5); replaced by `SubRep` on the index in `saturation_modulo_complete_store_atoms` (Section 7.7) |
 | `rule.atoms = ...`, `P.head = some f` | the rule's query is one pattern with head `f` | side conditions; no `Eq` atoms, no globals |
 
-The runtime design note checks `hplan` and `h₀` once per rule at compilation, assigns `hfix`
+The runtime design note checks `hmatch` (as `SchedA` of the static plan) and `h₀` once per rule at compilation, assigns `hfix`
 to tier 2 (the stop test), and replaces the history hypotheses `hok`, `hemit₀` and `hchain` by
 one naive matching round at the final state, which checks the conclusion of
 `saturation_complete` directly. It has no check for `hG`, which no engine state satisfies
@@ -1906,7 +1941,7 @@ bridge theorems on such a part.
 ```lean
 theorem saturation_modulo_complete_store_atoms {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hplan : PlansOK rules)
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
     {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
@@ -2068,7 +2103,15 @@ marked **new** were found for this edition.
    has one variable that is both a class and a node variable (Section 3.7). *Resolved since,
    by commit `f1e8be1a`:* per-step binding kinds, `planOK_envWF` and `exec_matches`
    (Section 3.7).
-2. **Still true.** `runND` models the adaptive scheduler, and `exec` models static plans only.
+2. **Still true for `exec`.** `runND` models the adaptive scheduler, and `exec` models static
+   plans only. *Since commit `26ee4f9e`:* the adaptive scheduler reaches the saturation
+   theorems. `runNDA` runs it under the semi-naive modes, `chooseEngine` is the engine's choice
+   function (`runEngine_matches`), and a `Rule` carries a `Matcher` of which both schedulers
+   are instances; the former `hplan : PlansOK rules` (the static plan is in the grammar) is
+   `hmatch : MatchersOK rules`, a theorem for the adaptive scheduler (`matcherOK_engine`) and
+   `SchedA` of the compiled plan for the static one (`matcherOK_static`). What remains assumed
+   is only the static side: no theorem proves `schedule_with_stats` emits `SchedA` plans. The
+   choice function is checked against `choose_atom` by a conformance test (Section 3.4).
 3. **Still true.** Guards, literals and globals have per-step theorems only (Section 3.8).
 4. **Still true.** The executable fold enumerator is not linked to `OTLeft` and `OTRight`
    (Section 4.5).
