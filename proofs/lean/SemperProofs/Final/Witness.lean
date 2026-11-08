@@ -152,21 +152,21 @@ def atom : RAtom := ⟨2, 0, .ac [(0, .exact 1), (1, .exact 1)] none⟩
 theorem atoms_pat : atoms pat 2 = [atom] := by
   simp [pat, atom, atoms, atomsAt, atomsChildrenAC, atomsChild, Pat.freshAbove, Pat.vars]
 
-/-- The rewrite: its atom, the scheduler's plan for it, and the action
-`union (var root) rhs` (`apply.rs:377-384`). -/
+/-- The scheduler's plan for the atom. -/
+def plan : APlan := (lower atom ∅).map (0, ·) ++ []
+
+/-- The rewrite: its atom, the static matcher of the scheduler's plan, and
+the action `union (var root) rhs` (`apply.rs:377-384`). -/
 def rule : Rule where
   atoms := [.scan atom]
-  plan := (lower atom ∅).map (0, ·) ++ []
+  matcher := .static plan
   actions := [.union (.var 2) rhs]
 
 def rules : List Rule := [rule]
 
 theorem rule_atoms : rule.atoms = (atoms pat 2).map QAtom.scan := by rw [atoms_pat]; rfl
 
-theorem plansOK : PlansOK rules := by
-  intro r hr
-  simp only [rules, List.mem_singleton] at hr
-  subst hr
+theorem plan_schedA : SchedA rule.atoms ∅ ∅ plan := by
   refine SchedA.pick (i := 0) rfl (by simp) (SchedA.done ?_ ?_)
   · intro i a hi
     match i, hi with
@@ -275,7 +275,13 @@ theorem match_cases {nodes : List (NodeId × Node)}
 /-- No unit, no nilpotent count, no inverse. -/
 def ops : Sym → OpLaws := fun _ => ⟨none, none, none⟩
 
-theorem rule_plan_ok : SchedA rule.atoms ∅ ∅ rule.plan := plansOK rule (by simp [rules])
+theorem matchersOK : MatchersOK rules := by
+  intro r hr
+  simp only [rules, List.mem_singleton] at hr
+  subst hr
+  exact matcherOK_static plan_schedA
+
+theorem rule_matcher_ok : MatcherOK rule.atoms rule.matcher := matchersOK rule (by simp [rules])
 
 /-- `(g x y)` is built: the `g`-node over the two classes. -/
 theorem den_rhs {σ : Binding} {t₀ t₁ : C} (h0 : σ.cls 0 = some t₀) (h1 : σ.cls 1 = some t₁)
@@ -403,7 +409,7 @@ def mkActRound (Sb : Store) {nodes : List (NodeId × Node)}
   Sa := S₁
   before_eq := rfl
   after_eq := rfl
-  emitted := fun r σ => r = rule ∧ σ ∈ runNaive Sb.index r.plan
+  emitted := fun r σ => r = rule ∧ σ ∈ r.matcher.naive Sb.index
   inserts := by
     rintro r σ ⟨rfl, -⟩ t ht
     simp [rule] at ht
@@ -411,7 +417,7 @@ def mkActRound (Sb : Store) {nodes : List (NodeId × Node)}
     rintro r σ ⟨rfl, hσ⟩ a b hab
     simp only [rule, List.mem_singleton, Action.union.injEq] at hab
     obtain ⟨rfl, rfl⟩ := hab
-    have hm := (mem_runNaive_iff hwf rule_plan_ok σ).1 hσ
+    have hm := (MatcherOK.naive_iff rule_matcher_ok hwf σ).1 hσ
     rw [hidx] at hm
     exact unions_ok hplus hm
   subsumes := by
@@ -523,7 +529,7 @@ theorem witness_saturation_modulo_complete :
         σ.cls root = some (A₁.Sa.find (ι p)) ∧
         MatchC A₁.Sa.index P (A₁.Sa.find (ι p)) σ ∧
         MatchN A₁.Sa.index P (mkNode wst 0 p') σ :=
-  saturation_modulo_complete_store_atoms (naive := naive) A₀ [A₁] plansOK hyp_h₀ hyp_ok
+  saturation_modulo_complete_store_atoms (naive := naive) A₀ [A₁] matchersOK hyp_h₀ hyp_ok
     hyp_emit₀ hyp_chain (A := A₁) (by simp) hyp_fix witness_complete hyp_within hyp_sub
 
 /-- The same run with the atomic set derived from the `atomic` bit
@@ -537,7 +543,7 @@ theorem witness_saturation_modulo_complete_atomic :
         σ.cls root = some (A₁.Sa.find (ι p)) ∧
         MatchC A₁.Sa.index P (A₁.Sa.find (ι p)) σ ∧
         MatchN A₁.Sa.index P (mkNode wst 0 p') σ :=
-  saturation_modulo_complete_store_atomic (naive := naive) A₀ [A₁] plansOK hyp_h₀ hyp_ok
+  saturation_modulo_complete_store_atomic (naive := naive) A₀ [A₁] matchersOK hyp_h₀ hyp_ok
     hyp_emit₀ hyp_chain (A := A₁) (by simp) hyp_fix witness_complete_atomic hyp_within hyp_sub
 
 /-! ## A match the conclusion speaks about -/

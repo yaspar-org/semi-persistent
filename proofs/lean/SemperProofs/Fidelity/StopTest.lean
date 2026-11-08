@@ -251,34 +251,34 @@ theorem engine_stop_unchanged_round (R : Round) {Sb Sa : Store} (hb : R.before =
 
 /-- `saturation_complete` at the round where the engine stops. -/
 theorem saturation_complete_engine {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
+    (A₀ : ActRound) (As : List ActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
     (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
     {A : ActRound} (hA : A ∈ A₀ :: As) {Sb Sa : Store} (hb : A.R.before = Sb.graph)
     (ha : A.R.after = Sa.graph) (E : EnginePhase Sb Sa) (hstop : E.Stop) :
     Saturate.Inv A.R.before rules ∧ Saturate.Inv A.R.after rules :=
-  saturation_complete A₀ As hplan h₀ hok hemit₀ hchain hA
+  saturation_complete A₀ As hmatch h₀ hok hemit₀ hchain hA
     (engine_stop_unchanged_round A.R hb ha E hstop)
 
 /-- `saturation_complete_store` at the round where the engine stops. -/
 theorem saturation_complete_store_engine {sig : Sym → Kind} {naive : Rule → Bool}
-    {rules : List Rule} (A₀ : SActRound) (As : List SActRound) (hplan : PlansOK rules)
+    {rules : List Rule} (A₀ : SActRound) (As : List SActRound) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKS sig rules A)
     (hemit₀ : EmitsAllS A₀ rules) (hchain : SChain naive rules A₀ As)
     {A : SActRound} (hA : A ∈ A₀ :: As) (E : EnginePhase A.Sb A.Sa) (hstop : E.Stop) :
     InvS A.Sb rules ∧ InvS A.Sa rules :=
-  saturation_complete_store A₀ As hplan h₀ hok hemit₀ hchain hA
+  saturation_complete_store A₀ As hmatch h₀ hok hemit₀ hchain hA
     (engine_stop_unchanged A E hstop)
 
 /-- `saturation_complete_N` at the round where the engine stops. -/
 theorem saturation_complete_N_engine {L : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hplan : PlansOK rules)
+    (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
     {A : SActRoundN L} (hA : A ∈ A₀ :: As) (E : EnginePhase A.Sb A.Sa) (hstop : E.Stop) :
     InvN A.Sa L rules :=
-  saturation_complete_N A₀ As hplan h₀ hok hemit₀ hchain hA
+  saturation_complete_N A₀ As hmatch h₀ hok hemit₀ hchain hA
     (engine_stop_unchanged_N A E hstop)
 
 end Semper.EMatch.Fidelity

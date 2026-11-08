@@ -1,4 +1,4 @@
-import SemperProofs.EMatch.Engine.Rounds.Complete
+import SemperProofs.EMatch.Engine.Matcher
 
 /-!
 # Rule actions and fired instances (spec-actions §A-§C)
@@ -110,13 +110,14 @@ inductive Action where
   | union (a b : Pat)
   | subsume (x : Var)
 
-/-- A rule: its resolved query atoms, an annotated plan for them, and its
-head actions in order. `(rewrite L R)` is `[union (var root) R]` plus
-`subsume root` under `:subsume` (`apply.rs:377-384`); `(rule body head)` is
-the head in order (`apply.rs:431-434`). -/
+/-- A rule: its resolved query atoms, the procedure that matches them (the
+static plan or the adaptive scheduler, `Matcher`), and its head actions in
+order. `(rewrite L R)` is `[union (var root) R]` plus `subsume root` under
+`:subsume` (`apply.rs:377-384`); `(rule body head)` is the head in order
+(`apply.rs:431-434`). -/
 structure Rule where
   atoms : List QAtom
-  plan : APlan
+  matcher : Matcher
   actions : List Action
 
 /-- The consequence of one action is present in `G` under `σ`. -/

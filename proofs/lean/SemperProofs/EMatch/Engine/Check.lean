@@ -1,6 +1,8 @@
 import SemperProofs.EMatch.Main
 import SemperProofs.EMatch.Engine.Main
 import SemperProofs.EMatch.Engine.Runtime
+import SemperProofs.EMatch.Engine.Choose
+import SemperProofs.EMatch.Engine.Matcher
 import SemperProofs.EMatch.Engine.SemiNaive
 import SemperProofs.EMatch.Engine.WF
 import SemperProofs.EMatch.Engine.ByOp
@@ -14,6 +16,24 @@ import SemperProofs.EMatch.Engine.ByOp
 #print axioms Semper.EMatch.planOK_wf
 #print axioms Semper.EMatch.runND_indep
 #print axioms Semper.EMatch.runND_matches
+#print axioms Semper.EMatch.runNDA_matches
+#print axioms Semper.EMatch.runNDA_eq_runA
+#print axioms Semper.EMatch.runNDA_full_iff
+#print axioms Semper.EMatch.chooseEngine_mem
+#print axioms Semper.EMatch.chooseEngine_unusedScan
+#print axioms Semper.EMatch.boundSet_eq
+#print axioms Semper.EMatch.runEngine_matches
+#print axioms Semper.EMatch.runEngine_naive_matches
+#print axioms Semper.EMatch.runEngine_indep
+#print axioms Semper.EMatch.runEngine_eq_plan
+#print axioms Semper.EMatch.matcherOK_static
+#print axioms Semper.EMatch.matcherOK_runtime
+#print axioms Semper.EMatch.matcherOK_engine
+#print axioms Semper.EMatch.MatcherOK.naive_iff
+#print axioms Semper.EMatch.MatcherOK.variant_iff
+#print axioms Semper.EMatch.MatcherOK.round_complete
+#print axioms Semper.EMatch.modeOk_variant_iff
+#print axioms Semper.EMatch.matches_cover_new
 #print axioms Semper.EMatch.byOp_demotion
 #print axioms Semper.EMatch.byOp_demotion_op
 #print axioms Semper.EMatch.variant_partition
