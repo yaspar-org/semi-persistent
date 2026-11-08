@@ -1,4 +1,5 @@
 import SemperProofs.CC.Main
+import SemperProofs.CC.Lattice
 
 /-!
 # Leaf constants: a class read as its one-element monomial
@@ -273,7 +274,11 @@ theorem completion_complete_atoms {L : Laws n} {S : Set (Monomial n × Monomial 
   completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix.roundFixed hlaw hnf_ax hcp
     (hfix.congr hcc) hS hcancel hM hN hMN
 
-/-- The hypotheses of `completion_complete_atoms`, packaged. -/
+/-- The hypotheses of `completion_complete_atoms`, packaged, with `hcancel`
+replaced by lattice closure for a cancellative operator: the engine's
+`lattice_round` establishes `LatticeClosed` at its fixpoint
+(`Lattice.latticeClosed_of_engineFixed`) and does not establish `hcancel`
+(`Lattice.hcancel_not_derivable`). -/
 structure CompleteAtoms (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : State n)
     (A : Set (Fin n)) (u : Option (Fin n)) : Prop where
   slots : ∃ ss₀ ss : SlotState n,
@@ -290,22 +295,26 @@ structure CompleteAtoms (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : 
   hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d
   hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A u).active ∧
     (N, d) ∈ (st.withAtoms A u).active ∧ st.find c = st.find d
-  hcancel : L.cancellative → ∀ M N X,
-    Joinable (Rw (plain n) ((st.withAtoms A u).rules ∪ L.axRules)) (M + X) (N + X) →
-    Joinable (Rw (plain n) ((st.withAtoms A u).rules ∪ L.axRules)) M N
+  hlat : L.cancellative → Lattice.LatticeClosed L (st.withAtoms A u)
 
 namespace CompleteAtoms
 
 variable {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n} {A : Set (Fin n)}
   {u : Option (Fin n)}
 
-/-- `completion_complete_atoms` on the packaged hypotheses. -/
+/-- `completion_complete_atoms` on the packaged hypotheses. For a
+cancellative operator the conclusion comes from lattice closure alone
+(`Lattice.complete_of_latticeClosed`, what the engine's `lattice_round`
+establishes at its fixpoint); otherwise `hcancel` is vacuous and the
+rewriting argument applies. -/
 theorem same_class (h : CompleteAtoms L S st A u) {M N : Monomial n} {c d : Fin n}
     (hM : (M, c) ∈ (st.withAtoms A u).active) (hN : (N, d) ∈ (st.withAtoms A u).active)
     (hMN : E L S M N) : st.find c = st.find d := by
-  obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
-  exact completion_complete_atoms h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw h.hnf_ax h.hcp h.hcc
-    h.hS h.hcancel hM hN hMN
+  by_cases hc : L.cancellative
+  · exact Lattice.complete_of_latticeClosed (h.hlat hc) h.hS hM hN (Lattice.E_union_left hMN)
+  · obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
+    exact completion_complete_atoms h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw h.hnf_ax h.hcp h.hcc
+      h.hS (fun h => absurd h hc) hM hN hMN
 
 /-- Two stored active nodes. -/
 theorem nodes (h : CompleteAtoms L S st A u) {M N : Monomial n} {c d : Fin n}

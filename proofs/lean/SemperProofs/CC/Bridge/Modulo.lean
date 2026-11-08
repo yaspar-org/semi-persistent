@@ -10,7 +10,9 @@ e-matching engine (`engine_plan_sound` / `engine_plan_complete`) on the
 graph `represents st f A`.
 
 * `CompleteHyps L S st` packages the hypotheses of
-  `completion_complete_at_convergence` verbatim.
+  `completion_complete_cancellative_engine`: those of
+  `completion_complete_at_convergence` with `hcancel` replaced by
+  `LatticeClosed`.
 * `ac_equal_same_class`: two `=_E`-equal active nodes are in one class;
   `ac_equal_same_class_graph` restates it on the graph.
 * `Term` / `ETerm`: the binary ground terms of the operator over the class
@@ -30,9 +32,12 @@ variable {n : ℕ}
 
 /-! ## The hypotheses of completeness at convergence -/
 
-/-- The hypotheses of `completion_complete_at_convergence`, verbatim, on
-the converged state `st` for the laws `L` and the asserted equations `S`.
-See `CC/Main.lean` and `CC/Assemble.lean` for their reading. -/
+/-- The hypotheses of `completion_complete_cancellative_engine`
+(`CC/Lattice.lean`) on the converged state `st` for the laws `L` and the
+asserted equations `S`: those of `completion_complete_at_convergence` with
+`hcancel` replaced by lattice closure for a cancellative operator, which is
+what the engine's `lattice_round` establishes at its fixpoint. See
+`CC/Main.lean` and `CC/Assemble.lean` for their reading. -/
 structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : State n) :
     Prop where
   slots : ∃ ss₀ ss : SlotState n,
@@ -49,9 +54,7 @@ structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : S
   hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d
   hS : ∀ M N, (M, N) ∈ S →
     ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d
-  hcancel : L.cancellative → ∀ M N X,
-    Joinable (Rw (plain n) (st.rules ∪ L.axRules)) (M + X) (N + X) →
-    Joinable (Rw (plain n) (st.rules ∪ L.axRules)) M N
+  hlat : L.cancellative → Lattice.LatticeClosed L st
 
 /-- The hypotheses of `completion_complete_atoms` give those of
 `completion_complete_at_convergence` on the completion view: the fixed
@@ -69,7 +72,7 @@ theorem CompleteHyps.ofAtoms {L : Laws n} {S : Set (Monomial n × Monomial n)} {
   hcp := h.hcp
   hcc := h.hfix.congr h.hcc
   hS := h.hS
-  hcancel := h.hcancel
+  hlat := h.hlat
 
 /-- The graph of the completion view is the graph of the stored state: the
 view changes the node set, and the graph reads only `find` and the
@@ -93,8 +96,8 @@ theorem ac_equal_same_class {L : Laws n} {S : Set (Monomial n × Monomial n)} {s
     (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active) (hMN : E L S M N) :
     st.find c = st.find d := by
   obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
-  exact completion_complete_at_convergence h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw h.hnf_ax
-    h.hcp h.hcc h.hS h.hcancel hM hN hMN
+  exact Lattice.completion_complete_cancellative_engine h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw
+    h.hnf_ax h.hcp h.hcc h.hS h.hlat hM hN hMN
 
 /-- On the graph: two `mset` nodes whose monomials are `=_E`-equal are in
 one class. -/

@@ -186,8 +186,11 @@ relation is `degLex`-decreasing, no clamped monomial rewrites by an axiom
 rule, the critical pairs of the rules and axiom rules are joinable;
 congruence holds on the active nodes (`hcc`: two active nodes with the
 same monomial are in one class); every asserted equation of `S` is present between
-active nodes of one class (`hS`); cancellation (`hcancel`, under
-`L.cancellative`). `Enumerates st act` says `act` is the set of active
+active nodes of one class (`hS`); for a cancellative operator, lattice
+closure (`hlat`: two active nodes whose vectors differ by a member of the
+state's lattice are in one class, what `lattice_round` establishes at its
+fixpoint; `hcancel_not_derivable` shows the engine does not establish the
+former hypothesis `hcancel`). `Enumerates st act` says `act` is the set of active
 nodes.
 
 (e) The fixpoint: `A.R.Unchanged` (same nodes, same `find` before and
