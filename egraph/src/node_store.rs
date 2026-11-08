@@ -427,7 +427,7 @@ where
     /// appropriate cache with the correct canonization strategy.
     /// `g_buf` — scratch for PlainN/A/ACI (child type G).
     /// `mset_buf` — scratch for MSet children (child type `C` = `(G, mult)`).
-    /// `collisions` — destination for collision pairs to push onto worklist. Returns the
+    /// `collisions`: destination for collision pairs to push onto worklist. Returns the
     /// canonization's result and whether a law changed the children beyond `find`
     /// (`VarCanon::law_applied`).
     /// `unit_of` resolves an op to its identity (unit) **class** as of this rebuild
