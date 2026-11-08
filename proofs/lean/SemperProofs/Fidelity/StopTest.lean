@@ -30,11 +30,12 @@ whoever performs them (ordinary or sequence rules):
 `Phase.nodeCount` and `Phase.classCount` count the first two;
 `engine_stop_idle` says a phase with the same stamp and no fresh subsume
 left the store as it was, and `engine_stop_unchanged` lifts that to the
-round, given that the rebuild opening the next round has nothing to do
-when nothing was minted or merged (`EnginePhase.rebuild_idle`: the
-worklist is filled only by merges, and completion reads new nodes and
-merges only). `Phase.stamp_ne` is the converse: a phase that minted or
-merged moves the stamp, so the loop does not stop on it.
+round: the rebuild opening the next round has nothing to do when nothing
+was minted or merged (`EnginePhase.rebuild_idle`, a theorem of the model
+of `rebuild` below: the worklist is filled only by merges, and the
+completion run from a completion fixpoint, which the previous converged
+rebuild left, goes nowhere). `Phase.stamp_ne` is the converse: a phase
+that minted or merged moves the stamp, so the loop does not stop on it.
 `saturation_complete_engine`, `saturation_complete_store_engine` and
 `saturation_complete_N_engine` are the fixpoint theorems with the engine's
 stop condition in place of `Unchanged`.
@@ -197,12 +198,87 @@ theorem engine_stop_idle {S S' : Store} {m g s : Nat} (h : Phase S S' m g s)
   have hc := h.stamp_counts hst
   h.idle hc.1 hc.2 hs
 
+/-! ## The rebuild and its completion outcome
+
+`rebuild` (`egraph.rs`) drains the merge worklist (`rebuild_congruence`),
+then, with completion on, runs completion rounds until a full round finds
+nothing (`CompletionOutcome::Converged`) or a stop: the node-growth budget
+(`AbortedGrowthLimit`), the work budget (`AbortedWorkLimit`), a
+multiplicity past the width (`AbortedOverflow`), or the goal pair of a lazy
+check joining (`GoalMet`). With completion off the outcome is `Disabled`.
+
+The pass is modelled as a function `Completion.step` of the store: one
+inference (a minted critical-pair node, a merge), `none` when a full round
+finds nothing. A run is a sequence of steps; it converges at a store with
+no step and stops anywhere otherwise. `rebuild_idle`, formerly assumed, is
+then a theorem: a rebuild from a completion fixpoint whose action phase
+minted and merged nothing changes nothing (`CompletionRun.idle`), and the
+store a converged rebuild returns is a completion fixpoint
+(`CompletionRun.converged_fixed`). A rebuild after an aborted one is not
+idle in general, which is why the runtime check asks for `Converged`. -/
+
+/-- `CompletionOutcome` (`egraph.rs`). -/
+inductive CompletionOutcome where
+  | disabled
+  | converged (rounds : Nat)
+  | abortedGrowthLimit (addedNodes limit : Nat)
+  | abortedWorkLimit (work limit : Nat)
+  | abortedOverflow
+  | goalMet (rounds : Nat)
+
+/-- Whether the outcome reports the joint fixpoint. -/
+def CompletionOutcome.isConverged : CompletionOutcome → Bool
+  | .converged _ => true
+  | _ => false
+
+/-- The completion pass as a function of the store: one inference, or
+`none` when a full round over every pair finds nothing (`cc_round`,
+`a_round`, `canon_repair_round`, `lattice_round` all report no change).
+With completion disabled, `step` is `fun _ => none`. -/
+structure Completion where
+  step : Store → Option Store
+
+/-- A sequence of completion inferences. -/
+def Completion.Steps (K : Completion) : Store → Store → Prop :=
+  Relation.ReflTransGen (fun S S' => K.step S = some S')
+
+/-- A rebuild's completion: it converges at a store with no inference left,
+or stops anywhere along the steps with another outcome. -/
+inductive CompletionRun (K : Completion) : Store → Store → CompletionOutcome → Prop
+  | converged {S S' : Store} (n : Nat) :
+      K.Steps S S' → K.step S' = none → CompletionRun K S S' (.converged n)
+  | stopped {S S' : Store} (o : CompletionOutcome) :
+      o.isConverged = false → K.Steps S S' → CompletionRun K S S' o
+
+/-- From a store with no inference the steps go nowhere. -/
+theorem Completion.Steps.eq_of_none {K : Completion} {S S' : Store} (h : K.Steps S S')
+    (hs : K.step S = none) : S' = S := by
+  induction h with
+  | refl => rfl
+  | tail _ hstep ih => subst ih; rw [hs] at hstep; exact absurd hstep (by simp)
+
+/-- A rebuild from a completion fixpoint changes nothing, whatever its
+outcome. -/
+theorem CompletionRun.idle {K : Completion} {S S' : Store} {o : CompletionOutcome}
+    (h : CompletionRun K S S' o) (hs : K.step S = none) : S' = S := by
+  cases h with
+  | converged _ hsteps _ => exact hsteps.eq_of_none hs
+  | stopped _ _ hsteps => exact hsteps.eq_of_none hs
+
+/-- The store a converged rebuild returns is a completion fixpoint. -/
+theorem CompletionRun.converged_fixed {K : Completion} {S S' : Store} {n : Nat}
+    (h : CompletionRun K S S' (.converged n)) : K.step S' = none := by
+  cases h with
+  | converged _ _ hfix => exact hfix
+  | stopped _ hne _ => simp [CompletionOutcome.isConverged] at hne
+
 /-- A round as the engine runs it: the action phase from the snapshot the
 round matched on (`Sb`, the store at the index build, after the rebuild)
 to the live store `mid`, the actions' own change count (which counts a
 fresh subsume, `apply.rs`, `CompiledAction::Subsume`), and the rebuild that
-opens the next round, which produces `Sa`. -/
-structure EnginePhase (Sb Sa : Store) where
+opens the next round: congruence closure (`cong`), then the completion run
+with its outcome, which produces `Sa`. -/
+structure EnginePhase (K : Completion) (Sb Sa : Store) where
   mid : Store
   mints : Nat
   merges : Nat
@@ -211,39 +287,60 @@ structure EnginePhase (Sb Sa : Store) where
   /-- The sum of the actions' reported changes. -/
   changes : Nat
   subs_counted : subs ≤ changes
-  /-- The rebuild drains the worklist, which only merges fill, and
-  completion acts on new nodes and merges: with neither it changes
-  nothing. -/
-  rebuild_idle : mints = 0 → merges = 0 → Sa = mid
+  /-- The snapshot the round matched on is a completion fixpoint: the
+  rebuild that produced it converged (`CompletionRun.converged_fixed`), or
+  completion is disabled and `K.step` is `none` everywhere. -/
+  before_fixed : K.step Sb = none
+  /-- The store after `rebuild_congruence`: the worklist holds the merges,
+  so with none it is empty, and a node `add` minted is canonical and fresh
+  in the hash-cons, so it collides with nothing. -/
+  cong : Store
+  cong_idle : mints = 0 → merges = 0 → cong = mid
+  outcome : CompletionOutcome
+  rebuild : CompletionRun K cong Sa outcome
+
+/-- `rebuild_idle`, formerly a field: a rebuild after an action phase that
+minted, merged and subsumed nothing changes nothing. Congruence is idle
+(`cong_idle`), the live store is the snapshot (`Phase.idle`), which is a
+completion fixpoint (`before_fixed`), so the completion run goes nowhere
+(`CompletionRun.idle`). -/
+theorem EnginePhase.rebuild_idle {K : Completion} {Sb Sa : Store} (E : EnginePhase K Sb Sa)
+    (hm : E.mints = 0) (hg : E.merges = 0) (hs : E.subs = 0) : Sa = E.mid := by
+  have hmid : E.mid = Sb := E.run.idle hm hg hs
+  have hc : E.cong = E.mid := E.cong_idle hm hg
+  have := E.rebuild.idle (by rw [hc, hmid]; exact E.before_fixed)
+  exact this.trans hc
 
 /-- The engine's stop test (`saturate.rs`): no action reported a change and
 the size stamp did not move across the action phase. -/
-def EnginePhase.Stop {Sb Sa : Store} (E : EnginePhase Sb Sa) : Prop :=
+def EnginePhase.Stop {K : Completion} {Sb Sa : Store} (E : EnginePhase K Sb Sa) : Prop :=
   E.changes = 0 ∧ E.mid.stamp = Sb.stamp
 
 /-- At a stop the next snapshot is the one the round matched on. -/
-theorem EnginePhase.after_eq {Sb Sa : Store} (E : EnginePhase Sb Sa) (h : E.Stop) :
-    Sa = Sb := by
+theorem EnginePhase.after_eq {K : Completion} {Sb Sa : Store} (E : EnginePhase K Sb Sa)
+    (h : E.Stop) : Sa = Sb := by
   have hs : E.subs = 0 := by have := E.subs_counted; have := h.1; omega
   have hc := E.run.stamp_counts h.2
-  rw [E.rebuild_idle hc.1 hc.2]
+  rw [E.rebuild_idle hc.1 hc.2 hs]
   exact engine_stop_idle E.run h.2 hs
 
 /-- `engine_stop_unchanged`: the engine's stop test implies the round
 model's `Unchanged`. -/
-theorem engine_stop_unchanged (A : SActRound) (E : EnginePhase A.Sb A.Sa) (h : E.Stop) :
+theorem engine_stop_unchanged {K : Completion} (A : SActRound) (E : EnginePhase K A.Sb A.Sa)
+    (h : E.Stop) :
     A.Unchanged := by
   have he := E.after_eq h
   exact ⟨fun p => by rw [he], fun id => by rw [he], fun id => by rw [he]⟩
 
-theorem engine_stop_unchanged_N {L : Sym → OpLaws} (A : SActRoundN L)
-    (E : EnginePhase A.Sb A.Sa) (h : E.Stop) : A.Unchanged := by
+theorem engine_stop_unchanged_N {K : Completion} {L : Sym → OpLaws} (A : SActRoundN L)
+    (E : EnginePhase K A.Sb A.Sa) (h : E.Stop) : A.Unchanged := by
   have he := E.after_eq h
   exact ⟨fun p => by rw [he], fun id => by rw [he], fun id => by rw [he]⟩
 
 /-- The same on a bare `Round` whose snapshots are the two stores' graphs. -/
-theorem engine_stop_unchanged_round (R : Round) {Sb Sa : Store} (hb : R.before = Sb.graph)
-    (ha : R.after = Sa.graph) (E : EnginePhase Sb Sa) (h : E.Stop) : R.Unchanged := by
+theorem engine_stop_unchanged_round {K : Completion} (R : Round) {Sb Sa : Store}
+    (hb : R.before = Sb.graph) (ha : R.after = Sa.graph) (E : EnginePhase K Sb Sa) (h : E.Stop) :
+    R.Unchanged := by
   have he := E.after_eq h
   unfold Round.Unchanged
   rw [ha, hb, he]
@@ -254,8 +351,9 @@ theorem saturation_complete_engine {sig : Sym → Kind} {naive : Rule → Bool} 
     (A₀ : ActRound) (As : List ActRound) (hplan : PlansOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOK sig rules A)
     (hemit₀ : EmitsAll A₀ rules) (hchain : AChain naive rules A₀ As)
-    {A : ActRound} (hA : A ∈ A₀ :: As) {Sb Sa : Store} (hb : A.R.before = Sb.graph)
-    (ha : A.R.after = Sa.graph) (E : EnginePhase Sb Sa) (hstop : E.Stop) :
+    {A : ActRound} (hA : A ∈ A₀ :: As) {K : Completion} {Sb Sa : Store}
+    (hb : A.R.before = Sb.graph) (ha : A.R.after = Sa.graph) (E : EnginePhase K Sb Sa)
+    (hstop : E.Stop) :
     Saturate.Inv A.R.before rules ∧ Saturate.Inv A.R.after rules :=
   saturation_complete A₀ As hplan h₀ hok hemit₀ hchain hA
     (engine_stop_unchanged_round A.R hb ha E hstop)
@@ -265,8 +363,8 @@ theorem saturation_complete_store_engine {sig : Sym → Kind} {naive : Rule → 
     {rules : List Rule} (A₀ : SActRound) (As : List SActRound) (hplan : PlansOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKS sig rules A)
     (hemit₀ : EmitsAllS A₀ rules) (hchain : SChain naive rules A₀ As)
-    {A : SActRound} (hA : A ∈ A₀ :: As) (E : EnginePhase A.Sb A.Sa) (hstop : E.Stop) :
-    InvS A.Sb rules ∧ InvS A.Sa rules :=
+    {A : SActRound} (hA : A ∈ A₀ :: As) {K : Completion} (E : EnginePhase K A.Sb A.Sa)
+    (hstop : E.Stop) : InvS A.Sb rules ∧ InvS A.Sa rules :=
   saturation_complete_store A₀ As hplan h₀ hok hemit₀ hchain hA
     (engine_stop_unchanged A E hstop)
 
@@ -276,8 +374,8 @@ theorem saturation_complete_N_engine {L : Sym → OpLaws} {sig : Sym → Kind}
     (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hplan : PlansOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
-    {A : SActRoundN L} (hA : A ∈ A₀ :: As) (E : EnginePhase A.Sb A.Sa) (hstop : E.Stop) :
-    InvN A.Sa L rules :=
+    {A : SActRoundN L} (hA : A ∈ A₀ :: As) {K : Completion} (E : EnginePhase K A.Sb A.Sa)
+    (hstop : E.Stop) : InvN A.Sa L rules :=
   saturation_complete_N A₀ As hplan h₀ hok hemit₀ hchain hA
     (engine_stop_unchanged_N A E hstop)
 

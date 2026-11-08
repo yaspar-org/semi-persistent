@@ -111,14 +111,16 @@ theorem saturation_modulo_complete_store_atoms {ops : Sym → OpLaws} {sig : Sym
     (hs.withAtoms X u)
 
 /-- `saturation_modulo_complete_store_atoms` at the round where the
-engine's stop test holds (no reported change, an unmoved size stamp),
-under `rebuild_idle` (`EnginePhase`), in place of `Unchanged`. -/
+engine's stop test holds (no reported change, an unmoved size stamp) and
+the round matched on a completion fixpoint (`EnginePhase.before_fixed`: the
+previous rebuild converged), in place of `Unchanged`. -/
 theorem saturation_modulo_complete_store_engine {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
     (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hplan : PlansOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
-    {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (Eng : EnginePhase A.Sb A.Sa) (hstop : Eng.Stop)
+    {A : SActRoundN ops} (hA : A ∈ A₀ :: As) {K : Completion} (Eng : EnginePhase K A.Sb A.Sa)
+    (hstop : Eng.Stop)
     {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n} {X : Set (Fin n)}
     {u : Option (Fin n)} {act : Finset (Monomial n × Fin n)} (hcomp : CompleteAtoms L S st X u)
     (hw : Within st act) {f : Sym} {ι : Monomial n × Fin n → NodeId}
