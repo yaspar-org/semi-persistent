@@ -200,7 +200,7 @@ theorem engine_stop_idle {S S' : Store} {m g s : Nat} (h : Phase S S' m g s)
 
 /-! ## The rebuild and its completion outcome
 
-`rebuild` (`egraph.rs`) drains the merge worklist (`rebuild_congruence`),
+`rebuild` (`egraph.rs`) empties the merge worklist (`rebuild_congruence`),
 then, with completion on, runs completion rounds until a full round finds
 nothing (`CompletionOutcome::Converged`) or a stop: the node-growth budget
 (`AbortedGrowthLimit`), the work budget (`AbortedWorkLimit`), a
