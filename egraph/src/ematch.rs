@@ -1628,7 +1628,7 @@ where
     if candidates.count_ones() == 1 {
         let ai = candidates.trailing_zeros() as usize;
         #[cfg(test)]
-        ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, ai)));
+        log_choice(ad, exec, eg, index, globals, env, ai);
         return Some(ai);
     }
     let mut best: Option<(usize, usize)> = None;
@@ -1644,7 +1644,7 @@ where
     }
     #[cfg(test)]
     if let Some((_, ai)) = best {
-        ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, ai)));
+        log_choice(ad, exec, eg, index, globals, env, ai);
     }
     best.map(|(_, ai)| ai)
 }
@@ -1662,6 +1662,210 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn take_atom_choices() -> Vec<(u64, usize)> {
     ATOM_CHOICE_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// One phase-B decision beside the model's answer for it: the atoms already
+/// scheduled, how many were candidates, the atom `choose_atom` took, and the
+/// atom `model_choice` takes from the same bindings and bucket lengths
+/// (`None` when a candidate is an atom kind the model has no lookups for).
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChoiceRecord {
+    pub used: u64,
+    pub candidates: u32,
+    pub engine: usize,
+    pub model: Option<usize>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// One `ChoiceRecord` per phase-B decision, for the conformance test of
+    /// `choose_atom` against the model.
+    static MODEL_CHOICE_LOG: std::cell::RefCell<Vec<ChoiceRecord>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Take and clear this thread's record of decisions with the model's answers.
+#[cfg(test)]
+pub(crate) fn take_model_choices() -> Vec<ChoiceRecord> {
+    MODEL_CHOICE_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// Record one decision in both logs.
+#[cfg(test)]
+fn log_choice<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    ad: &Adaptive<'_, Cfg, L, S>,
+    exec: &Exec<'_, Cfg, L, S>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+    engine: usize,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, engine)));
+    let rec = ChoiceRecord {
+        used: exec.used,
+        candidates: (ad.costed & !exec.used).count_ones(),
+        engine,
+        model: model_choice(ad, exec, eg, index, globals, env),
+    };
+    MODEL_CHOICE_LOG.with(|l| l.borrow_mut().push(rec));
+}
+
+/// `chooseEngine` of the Lean model
+/// (`proofs/lean/SemperProofs/EMatch/Engine/Choose.lean`), transliterated:
+/// the cheapest unused scanning atom in index order, a later one replacing
+/// the best so far only when strictly cheaper (`chooseStep`); the price of an
+/// atom is the shortest bucket among the lookups of its join
+/// (`cursorLen`, from `usize::MAX`) in the store its mode reads (`bucketLen`:
+/// the delta store for `Delta`, the full store otherwise).
+///
+/// What this computes independently of `choose_atom`: the join's lookups
+/// from the atom and the bindings in hand (`engineJoinLookups`, with a
+/// variable bound iff its environment slot is set, `boundSet`, rather than
+/// read from the `bound` mask), and the selection over them. The bucket
+/// lengths come from the index, as the model's `Lookup.bucket` reads an
+/// abstract index (its exactness is `Fidelity/Index.lean`). A global in a
+/// child position is bound (`pv_is_bound`); the model has no globals. An atom
+/// kind the model has no lookups for (a literal) makes the answer `None`.
+#[cfg(test)]
+fn model_choice<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    ad: &Adaptive<'_, Cfg, L, S>,
+    exec: &Exec<'_, Cfg, L, S>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+) -> Option<usize>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    use crate::resolve::RAtom;
+    let pv_bound = |pv: &PatVar| match pv {
+        PatVar::Local(v) => env.get_opt(*v).is_some(),
+        PatVar::Global(_) => true,
+    };
+    // `joinLookups` for a node already bound: the re-join in its class.
+    let rejoin = |node: &VarId, op: Cfg::O| -> Vec<IndexLookup<Cfg::O, Cfg::Index>> {
+        vec![
+            IndexLookup::ByRepr { repr: *node },
+            IndexLookup::ByOp { op },
+        ]
+    };
+    // `containsLookups`: `byOp` and `byContains` per bound element.
+    let contains = |node: &VarId, op: Cfg::O, elems: &[PatVar]| {
+        if env.get_opt(*node).is_some() {
+            rejoin(node, op)
+        } else {
+            let mut ls = vec![IndexLookup::ByOp { op }];
+            for &pv in elems {
+                if pv_bound(&pv) {
+                    ls.push(IndexLookup::ByContains { child: pv });
+                }
+            }
+            ls
+        }
+    };
+    // `engineJoinLookups`.
+    let lookups = |atom: &RAtom<Cfg::O, S, L>| -> Option<Vec<IndexLookup<Cfg::O, Cfg::Index>>> {
+        match atom {
+            RAtom::Plain { node, op, children } => {
+                if env.get_opt(*node).is_some() {
+                    return Some(rejoin(node, *op));
+                }
+                let mut ls = vec![IndexLookup::ByOp { op: *op }];
+                for (pos, cv) in children.iter().enumerate() {
+                    if pv_bound(cv) {
+                        ls.push(IndexLookup::ByChildPos {
+                            child: *cv,
+                            pos: Cfg::Index::try_from_usize(pos)?,
+                        });
+                    }
+                }
+                Some(ls)
+            }
+            RAtom::Comm { node, op, elems }
+            | RAtom::ACExact { node, op, elems }
+            | RAtom::ACSub {
+                node, op, elems, ..
+            } => {
+                let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
+                Some(contains(node, *op, &evs))
+            }
+            RAtom::ACIExact { node, op, elems }
+            | RAtom::ACISub {
+                node, op, elems, ..
+            } => Some(contains(node, *op, elems)),
+            RAtom::AExact {
+                node, op, children, ..
+            } => Some(contains(node, *op, children)),
+            RAtom::APrefix {
+                node, op, fixed, ..
+            }
+            | RAtom::ASuffix {
+                node, op, fixed, ..
+            }
+            | RAtom::ABoth {
+                node, op, fixed, ..
+            } => Some(contains(node, *op, fixed)),
+            _ => None,
+        }
+    };
+    // `bucketLen`: the length of the bucket a lookup reads in a store.
+    let bucket_len = |store: &IndexStore<Cfg>, l: &IndexLookup<Cfg::O, Cfg::Index>| -> usize {
+        match l {
+            IndexLookup::ByOp { op } => store.nodes_by_op(*op).len(),
+            IndexLookup::ByChildPos { child, pos } => store
+                .nodes_by_child_pos(canon(index, eg, env.resolve_pv(*child, globals)), *pos)
+                .len(),
+            IndexLookup::ByRepr { repr } => {
+                store.nodes_by_repr(canon(index, eg, env.get(*repr))).len()
+            }
+            IndexLookup::ByContains { child } => store
+                .nodes_by_contains(canon(index, eg, env.resolve_pv(*child, globals)))
+                .len(),
+        }
+    };
+    let candidates = ad.costed & !exec.used;
+    let mut best: Option<(usize, usize)> = None;
+    for ai in 0..ad.atoms.len() {
+        if candidates & (1 << ai) == 0 {
+            continue;
+        }
+        let ls = lookups(&ad.atoms[ai])?;
+        let store = match index.mode(ai) {
+            IndexMode::Delta => index.delta,
+            IndexMode::Full | IndexMode::FullMinusDelta => index.full,
+        };
+        // `cursorLen`.
+        let mut len = usize::MAX;
+        for l in &ls {
+            let n = bucket_len(store, l);
+            if n < len {
+                len = n;
+            }
+        }
+        // `chooseStep`.
+        best = match best {
+            None => Some((len, ai)),
+            Some((b, j)) => {
+                if len < b {
+                    Some((len, ai))
+                } else {
+                    Some((b, j))
+                }
+            }
+        };
+    }
+    best.map(|(_, ai)| ai)
 }
 
 /// Shortest bucket the block's join would open, in the slice this atom's
@@ -6579,6 +6783,98 @@ mod tests {
         assert!(
             after_f.contains(&1) && after_f.contains(&2),
             "both atoms must be chosen second on some binding, got {choices:?}"
+        );
+    }
+
+    /// `choose_atom` and the model's `chooseEngine`
+    /// (`proofs/lean/SemperProofs/EMatch/Engine/Choose.lean`, transliterated as
+    /// `model_choice`) pick the same atom at every phase-B decision of the
+    /// multi-round conformance corpus, run naive and semi-naive under runtime
+    /// scheduling. The corpus is the one `tests/conform.rs` runs; the Lean
+    /// generator wrote it from the engine's own dumps, so the Lean side cannot
+    /// replay the decisions (they depend on the partial bindings), and the
+    /// comparison is made here, at the decision, against the transliteration.
+    #[test]
+    fn atom_choice_agrees_with_the_model_on_the_rounds_corpus() {
+        use crate::interpret::Interpreter;
+        use crate::model::{MachineLit, MachineModel};
+        use crate::saturate::SaturationStrategy;
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/egg/conform-rounds");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+            .map(|e| e.expect("directory entry").path())
+            .filter(|p| p.extension().is_some_and(|x| x == "egg"))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "{} holds no .egg file", dir.display());
+
+        let (mut decisions, mut agree, mut contested, mut outside) =
+            (0usize, 0usize, 0usize, 0usize);
+        let mut disagreements = Vec::new();
+        let _ = take_model_choices();
+        set_runtime_scheduling(true);
+        for path in &paths {
+            let src = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {
+                let cmds = crate::parser::parse_program_v2(&src)
+                    .unwrap_or_else(|e| panic!("{}: parse error: {e}", path.display()));
+                let mut interp =
+                    Interpreter::<DefaultConfig, MachineLit, MachineModel, true, false>::new(
+                        MachineModel,
+                    );
+                interp.set_strategy(strategy);
+                let mut globals = crate::resolve::GlobalCtx::new();
+                let checked = crate::sortcheck::sortcheck_program(
+                    cmds,
+                    &mut interp.eg,
+                    &interp.model,
+                    &mut globals,
+                )
+                .unwrap_or_else(|e| panic!("{}: sort error: {e}", path.display()));
+                interp
+                    .run_checked(&checked)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                for rec in take_model_choices() {
+                    decisions += 1;
+                    if rec.candidates > 1 {
+                        contested += 1;
+                    }
+                    match rec.model {
+                        None => outside += 1,
+                        Some(m) if m == rec.engine => agree += 1,
+                        Some(m) => disagreements.push(format!(
+                            "{} [{strategy:?}] used={:#b} candidates={}: engine {} model {m}",
+                            path.display(),
+                            rec.used,
+                            rec.candidates,
+                            rec.engine
+                        )),
+                    }
+                }
+            }
+        }
+        set_runtime_scheduling(false);
+        let summary = format!(
+            "{} files, {decisions} decisions ({contested} with several candidates): \
+             {agree} agree, {} disagree, {outside} outside the model",
+            paths.len(),
+            disagreements.len()
+        );
+        eprintln!("atom choice against the model: {summary}");
+        assert!(
+            decisions > 0 && contested > 0,
+            "the corpus exercised no choice: {summary}"
+        );
+        assert_eq!(
+            outside, 0,
+            "the corpus has atoms outside the model: {summary}"
+        );
+        assert!(
+            disagreements.is_empty(),
+            "{summary}\n{}",
+            disagreements.join("\n")
         );
     }
 
