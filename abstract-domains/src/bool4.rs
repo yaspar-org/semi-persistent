@@ -116,6 +116,7 @@ impl Bool4 {
         }
     }
 
+    // TODO(abs-domain-registry): add `ite` (forward and the backward rule of eclass-analysis §6) and backward not/and/or/eq; the entry is 1 byte, see abstract-domains/doc/future/registry-task.md §4
     /// Boolean equality (SMT-LIB `=` on Bool).
     pub fn eq(&self, o: &Self) -> (r: Self)
         ensures

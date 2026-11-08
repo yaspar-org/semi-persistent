@@ -60,6 +60,7 @@ pub trait Mul<S: Semantics>: Domain<C = S::V> {
     ;
 }
 
+// TODO(abs-domain-registry): add backward transfers for Arith, Mul and DivRem (refine operands from a result value, never growing them); none exist, see abstract-domains/doc/future/registry-task.md §4
 /// Whether a division may divide by zero.
 pub enum DivZero {
     /// No divisor in the concretization is zero.
@@ -107,6 +108,7 @@ pub trait DivRem<S: Semantics>: Domain<C = S::V> {
     ;
 }
 
+// TODO(abs-domain-registry): add the Bitwise, Shift<S> and Cast traits (doc/domain-traits.md §5); the registry's bv operators name them, see abstract-domains/doc/future/registry-task.md §4
 /// Comparisons. Forward: the possible truth values of `x op y`. Backward
 /// (`assume_*`): both operands refined by `(x op y) == t`, keeping every pair
 /// that satisfies it and never growing an operand.

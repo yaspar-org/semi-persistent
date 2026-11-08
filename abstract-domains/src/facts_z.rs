@@ -19,6 +19,8 @@ use vstd::prelude::*;
 
 verus! {
 
+// TODO(abs-domain-registry): add the fields `c` (congruence over Z) and `nz` (nonzero); the record keeps every field and a domain mask selects them, see abstract-domains/doc/future/registry-task.md §2
+// TODO(abs-domain-registry): IBig is not Copy: encode bounds into the entry as i64 with infinities, rounding outward, through the existing IBig::to_i64/from_i64 (no new trusted code), see abstract-domains/doc/future/registry-task.md §3
 pub struct FactsZ {
     /// Bounds.
     itv: IntervalZ,
@@ -46,6 +48,7 @@ impl FactsZ {
         FactsZ { itv }
     }
 
+    // TODO(abs-domain-registry): add `as_constant` here: Some(v) exactly when gamma is {v}; the registry's is_singleton calls it, see abstract-domains/doc/future/registry-task.md §5
     pub fn interval(&self) -> (r: IntervalZ)
         requires
             self.wf(),
@@ -144,6 +147,7 @@ impl Channel for FactsZ {
         }
     }
 
+    // TODO(abs-domain-registry): parameterize `normalize` and `reduced` by the domain mask (disabled fields stay top), see abstract-domains/doc/future/registry-task.md §6
     /// The identity: with one field there is nothing to propagate. The planned work adds
     /// interval against congruence and interval against the nonzero bit.
     fn normalize(&self) -> (r: BotOr<Self>) {
@@ -256,6 +260,7 @@ impl Arith<Euclid> for FactsZ {
     }
 }
 
+// TODO(abs-domain-registry): add `impl Mul<Euclid> for FactsZ` (Int `*`); it needs Mul<Euclid> on IntervalZ first, see abstract-domains/doc/future/registry-task.md §4
 impl Arith<Trunc> for FactsZ {
     fn add(&self, o: &Self) -> (r: Self) {
         lift(<IntervalZ as Arith<Trunc>>::add(&self.interval(), &o.interval()))
@@ -270,6 +275,7 @@ impl Arith<Trunc> for FactsZ {
     }
 }
 
+// TODO(abs-domain-registry): Int `div` and `mod` use DivRem<Euclid>, a placeholder (top plus the zero flag); the registry adds the result for a zero divisor, see abstract-domains/doc/future/registry-task.md §4
 impl DivRem<Euclid> for FactsZ {
     fn contains_zero(&self) -> (b: bool) {
         let i = self.interval();
@@ -304,6 +310,7 @@ impl DivRem<Trunc> for FactsZ {
     }
 }
 
+// TODO(abs-domain-registry): replace this stub (Int `<`, `<=`, `=`) with forward and backward transfers on `itv`, see abstract-domains/doc/future/registry-task.md §4
 /// Stub: forward answers `Top`, backward keeps both operands. The planned work
 /// replaces it with transfers on the `itv` field (doc/reduced-product.md).
 impl Compare<Euclid> for FactsZ {
