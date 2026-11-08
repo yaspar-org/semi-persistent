@@ -12,8 +12,9 @@ pairs of `R ∪ Ax` (infinitely many law instances) to those of `R ∪ gen`.
 This file characterizes the overlaps of a completion rule with a
 generator and of two generators, law by law, and states the rule-side
 hypothesis under which every such pair is joinable. The rule-rule pairs
-stay a hypothesis (`hRR`): they are what the (B) close of completion
-establishes.
+enter as the hypothesis `hRR`; `Main.lean` discharges it from the fixed
+round (`ruleRuleCP_of_fixed`: the (B) close of completion and the
+reducibility pass).
 
 Throughout, joinability is under plain rewriting by `R ∪ L.axRules`, the
 relation of `completion_complete_at_convergence`'s `hcp`.

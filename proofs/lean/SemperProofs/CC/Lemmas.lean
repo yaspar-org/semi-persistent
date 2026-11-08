@@ -336,7 +336,7 @@ an active node, I5 and canonical right-hand sides, is converged. -/
 theorem roundFixed_converged {L : Laws n} {st : State n} (h0 : I0On st) (h5 : I5 st)
     (hcanon : ∀ c, L.clamp (st.rhs c) = st.rhs c) (hfix : RoundFixed L st) :
     Converged L st := by
-  refine ⟨hfix.cp_joinable, ?_⟩
+  refine ⟨hfix.cp_joinable_all, ?_⟩
   intro M c hM
   rcases h5 M c hM with h | h
   · rw [h]

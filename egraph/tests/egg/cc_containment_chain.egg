@@ -1,0 +1,53 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Containing left-hand sides, joined only through the reducibility pass.
+;;
+;; The rules at the first round are `{a,b} -> c`, `{a,b,d} -> e`, `{c,d} -> f` and
+;; `{a,b,d,d} -> g`. The superposition loop skips a pair whose left-hand side contains
+;; the other's (`cc_round`, "containment is handled by the (A') normalize pass"), so the
+;; critical pairs of `{a,b}` with `{a,b,d}` and with `{a,b,d,d}` are never built there.
+;; The reducibility pass rewrites each containing node to its normal form by the other
+;; rules, merges it in and retires the node (`FLAG_AC_COLLAPSED`):
+;;     {a,b,d}   -> {c,d} -> {f}     so  e = f  (and e = c + d),
+;;     {a,b,d,d} -> {c,d,d} -> {f,d} so  g = f + d.
+;; At the fixpoint no rule's left-hand side contains another's
+;; (`RoundFixed.lhs_reduced`, proofs/lean/SemperProofs/CC/Defs.lean), which is what
+;; `hcp_of_fixed` needs to derive the critical-pair hypothesis of the completeness theorem.
+;; Expected equalities computed by hand and cross-checked with the bounded oracle
+;; (proofs/lean/Conform/CC/Oracle.lean, bound 5).
+(sort E)
+(function Add (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function e () E)
+(function f () E)
+(function g () E)
+(set-option :completion eager)
+(union (Add (a) (b)) (c))
+(union (Add (a) (b) (d)) (e))
+(union (Add (c) (d)) (f))
+(union (Add (a) (b) (d):2) (g))
+(run 5)
+;; Through the first containing pair.
+(check-eq (e) (Add (c) (d)))
+(check-eq (e) (f))
+;; Through the second, whose normal form needs two rules.
+(check-eq (g) (Add (f) (d)))
+(check-eq (g) (Add (e) (d)))
+(check-eq (g) (Add (c) (d):2))
+(check-eq (Add (a) (b) (d):2) (Add (c) (d):2))
+;; Congruence on top of the derived equalities.
+(check-eq (Add (e) (a)) (Add (f) (a)))
+(check-eq (Add (g) (a)) (Add (c) (d):2 (a)))
+;; Separated classes.
+(check-neq (e) (g))
+(check-neq (c) (f))
+(check-neq (e) (c))
+(check-neq (a) (b))
+(check-neq (d) (e))
+(check-neq (f) (Add (f) (d)))
+(check-neq (Add (a) (d)) (e))

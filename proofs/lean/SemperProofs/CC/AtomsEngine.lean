@@ -88,7 +88,6 @@ theorem completion_complete_inverse_engine_atoms (inv : Fin n → Option (Fin n)
     (h3 : I3 (Laws.inverse inv cancel) st)
     (hfixinv : RoundFixedInv (invWalk inv) inv (st.withAtoms A u))
     (hinv : InvNodes (st.withAtoms A u) gnodes inv)
-    (hRR : RuleRuleCP (Laws.inverse inv cancel) (st.withAtoms A u).rules)
     (hlhs : ∀ A' B, (A', B) ∈ (st.withAtoms A u).rules → InvNormal inv A')
     (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A u).active ∧
@@ -101,7 +100,7 @@ theorem completion_complete_inverse_engine_atoms (inv : Fin n → Option (Fin n)
     (hN : (N, d) ∈ (st.withAtoms A u).active) (hMN : E (Laws.inverse inv cancel) S M N) :
     st.find c = st.find d :=
   completion_complete_inverse_engine inv cancel h5₀ hrun ha h0 hcanon hfix.roundFixed
-    (I3_withAtoms h3) hfixinv hinv hRR hlhs (hfix.congr hcc) hS hcancel hM hN hMN
+    (I3_withAtoms h3) hfixinv hinv hlhs (hfix.congr hcc) hS hcancel hM hN hMN
 
 /-- `completion_complete_combined_engine` with leaf constants; the unit `u`
 is the implicit node `(∅, u)` of the view. -/
@@ -122,8 +121,6 @@ theorem completion_complete_combined_engine_atoms (u : Fin n) (k : ℕ) (hk : 2 
     (hfix : RoundFixedA (Laws.combined u k hk inv cancel
       (invUnitFree_of_fixed hfixu hinv hurep)) st A (some u))
     (h3 : I3 (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) st)
-    (hRR : RuleRuleCP (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep))
-      (st.withAtoms A (some u)).rules)
     (hlhs_u : ∀ A' B, (A', B) ∈ (st.withAtoms A (some u)).rules → u ∉ A')
     (hlhs_k : ∀ A' B, (A', B) ∈ (st.withAtoms A (some u)).rules → ∀ a, A'.count a < k)
     (hlhs_inv : ∀ A' B, (A', B) ∈ (st.withAtoms A (some u)).rules → InvNormal inv A')
@@ -147,7 +144,7 @@ theorem completion_complete_combined_engine_atoms (u : Fin n) (k : ℕ) (hk : 2 
     (hMN : E (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) S M N) :
     st.find c = st.find d :=
   completion_complete_combined_engine (st := st.withAtoms A (some u)) u k hk inv cancel hurep hfixu hinv hfixinv hfixk h5₀
-    hrun ha h0 hcanon hfix.roundFixed (I3_withAtoms h3) hRR hlhs_u hlhs_k hlhs_inv hax_nil
+    hrun ha h0 hcanon hfix.roundFixed (I3_withAtoms h3) hlhs_u hlhs_k hlhs_inv hax_nil
     (hfix.congr hcc) hS hcancel hM hN hMN
 
 end SemperProofs.CC
