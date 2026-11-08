@@ -13,7 +13,9 @@ for nested patterns, 2026-11-06 (branch `feat/real-rules`).
 `saturation_modulo_complete_store_atoms` (`Final/Store.lean`): for a chain of
 store rounds with normalized right-hand sides (`SActRoundN`: round 0 naive,
 then semi-naive rounds; rebuild's round facts, merge tracking on,
-`StorePersist`, `:subsume` allowed, well-formed rules and plans, every
+`StorePersist`, `:subsume` allowed, well-formed rules, matchers emitting
+exactly the matches their modes admit (`MatchersOK`: a theorem for the
+adaptive scheduler, `SchedA` of the compiled plan for a static one), every
 variant or naive match emitted per round), at a round that changed nothing,
 and for a completion state with leaf constants satisfying `CompleteAtoms`
 whose active `f`-nodes are stored in the index after the round under ids
@@ -220,8 +222,13 @@ collapsed `f`-node (`Final/Witness.lean`, `not_cover`).
 - `Engine/`: atoms (`atoms_iff_match`), lowering under any bound set
   (`lower_sound_complete`), scheduler plan grammar (`Sched`, `PlanOK`,
   `plan_matches`, `engine_plan_sound/complete`), runtime scheduling
-  (`runND_matches`, `runND_indep`), `byOp_demotion`, semi-naive
-  `variant_partition`/`variants_disjoint`/`variants_cover_new`.
+  (`runND_matches`, `runND_indep`; under the semi-naive modes
+  `runNDA_matches`; with the engine's choice function `chooseEngine`, the
+  transcription of `choose_atom`, `runEngine_matches`, checked against the
+  engine on the `conform-rounds` corpus by
+  `atom_choice_agrees_with_the_model_on_the_rounds_corpus`), the rule's
+  `Matcher` with `matcherOK_static`/`matcherOK_engine`, `byOp_demotion`,
+  semi-naive `variant_partition`/`variants_disjoint`/`variants_cover_new`.
 - `Engine/Rounds/`: the cross-round half of semi-naive matching. A
   `Round` is the transition between two frozen snapshots with the deferred
   unions, the added nodes, subsumption, the touched log and the
