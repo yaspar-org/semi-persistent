@@ -1,0 +1,31 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; CHECK_AC_BASIS: on
+;; Regression: a collapsed node that completion materializes again is active again, and the
+;; class's minimal monomial must be refreshed with it (I5). The second union gives `2·C0 = 0`
+;; and the third `C2 = 0`, so `C3 = C0 + C1`. Along the way the class of `Add{C3:3}` holds
+;; `Add{C3, C1:2}`, collapsed against `Add{C1:2} -> Add{C3:2}` and left behind when the merge
+;; `C1 = C2` reoriented that rule to `Add{C3:2} -> Add{C1:2}`. The next round normalizes the
+;; class's minimal monomial `Add{C3:3}` by that rule to `Add{C3, C1:2}`: hash-consing returns
+;; the collapsed node, `materialize` clears its flag, and the round collapses `Add{C3:3}`.
+;; Without a refresh the stored minimal monomial stays on the collapsed `Add{C3:3}`, above
+;; the active `Add{C3, C1:2}`, and the class orients its rules toward a collapsed node.
+;; `check_min_monomial_invariant` reports the class in debug builds; CHECK_AC_BASIS reports
+;; it after the run. Reduced from `semper-conform-cc-cert` seed 1, case 129.
+(sort E)
+(function C0 () E)
+(function C1 () E)
+(function C2 () E)
+(function C3 () E)
+(function Zero () E)
+(function Add (E) E :assoc-comm :identity (Zero) :cancellative)
+(set-option :completion eager)
+(union (Add (C0) (C1) (C2)) (C3))
+(union (Add (C0):2 (C3)) (C3))
+(union (Add (C0) (C1) (C2)) (Add (C0) (C1)))
+(check-eq (Zero) (C2))
+(check-eq (Zero) (Add (C0):2))
+(check-eq (C3) (Add (C0) (C1)))
+(check-eq (Add (C3):3 (C0)) (Add (C3) (C1):2 (C0)))
+(check-eq (Add (C3):3) (Add (C3) (C1):2))

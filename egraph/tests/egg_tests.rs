@@ -720,6 +720,8 @@ egg_test!(ac_inverse_cancel_control, "ac_inverse_cancel_control.egg");
 // The min-monomial slot refresh (I5) and the flatten demand refold, fixtures of the two
 // previous fixes on this branch that were never registered.
 egg_test!(ac_min_slot_refresh, "ac_min_slot_refresh.egg");
+// The refresh after a collapsed node is materialized again (I5).
+egg_test!(ac_reactivate_min_monomial, "ac_reactivate_min_monomial.egg");
 egg_test!(flatten_demand_refold, "flatten_demand_refold.egg");
 egg_test!(
     flatten_demand_refold_control,

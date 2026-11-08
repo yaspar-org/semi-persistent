@@ -2845,16 +2845,18 @@ where
         // The span changed (recanonize pushes to `touched` only then) and still forms a
         // node: keep the class's min-monomial slot least (I5).
         if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before {
-            self.refresh_min_monomial(parent);
             // A collapse retired the node because another rule's left-hand side was
             // contained in its old monomial; the new monomial may contain none, and then
             // the node is a rule completion must superpose. Reactivate it: the next round
             // re-tests reducibility and collapses it again if a rule still reduces it.
             // Left set, `Add{c2,c3,c5}` collapsed by `c2c4 → c2c3` became `Add{c2²,c5}` at
             // `C2 = C3`, and `C5 = C5·C5` was never derived (`ac_collapsed_recanon.egg`).
+            // The flag is cleared before the refresh, which skips collapsed nodes: a node
+            // active again takes part in the class's minimal monomial.
             if self.node_flags(parent) & crate::node_types::FLAG_AC_COLLAPSED != 0 {
                 self.clear_node_flag(parent, crate::node_types::FLAG_AC_COLLAPSED);
             }
+            self.refresh_min_monomial(parent);
         }
         // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
         // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
@@ -3637,7 +3639,11 @@ where
         // its superpositions are never generated. `ac_collapsed_recanon.egg`: the normal
         // form `c2²c5` of `c2c4c5` was such a node, and `C5 = C5·C5` was never derived.
         // Reactivation counts as a change, so the round loop does not report a fixpoint
-        // before the node is processed.
+        // before the node is processed. The node is active again, so it takes part in
+        // its class's minimal monomial (I5): the refresh folds it in. Without it the
+        // stored minimal monomial can stay on a node this round collapses, when the
+        // reactivated node is the normal form of the class's own minimal monomial under a
+        // rule a merge reoriented (`ac_reactivate_min_monomial.egg`).
         let reactivated = std::cell::Cell::new(false);
         let materialize =
             |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::C>| {
@@ -3646,6 +3652,7 @@ where
                     && eg.node_flags(id) & crate::node_types::FLAG_AC_COLLAPSED != 0
                 {
                     eg.clear_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
+                    eg.refresh_min_monomial(id);
                     reactivated.set(true);
                 }
                 Some(id)
