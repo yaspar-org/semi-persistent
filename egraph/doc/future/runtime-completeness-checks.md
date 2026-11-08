@@ -58,6 +58,7 @@ this kind (stale minimal monomial, stale collapsed flag, stale splice).
 | Check | Hypothesis | Defect it would have caught |
 |---|---|---|
 | No `f`-node has a non-`atomic` `f`-child | `FlatSound` (node part) | a nested spelling hiding summands from superposition |
+| The `atomic` bit of a class is set iff the class is in `atomicOf`: a child of a stored node, or a class holding a node of another operator (`CC/AtomicOf.lean`; the model's clause "no `f`-node" reads as "holds another operator's node" when every node is visible) | `A = atomicOf st` (`CompleteAtomic`) | a bit left clear after `add_use` or a merge, so a class is spliced where its rule should rewrite; a bit set on a pure `f`-class, so a nested spelling is kept (`atomic_bit_*.egg`) |
 | For each class and operator, the stored minimal monomial is the degree-lex least monomial among the class's active `f`-nodes, under the per-class keys | `I5` | `ac_min_slot_refresh.egg`, `ac_minmono_grow_wa.egg` |
 | The stored minimal monomial is clamped by the operator's laws | `hcanon` | an unclamped idempotent or nilpotent count |
 | Every class holding an `f`-node has an active node spelling its minimal monomial; a class with none is a leaf whose normal form is `{c}` | `I0Active` (weakened) | a class whose rule has no node, invisible to matching |

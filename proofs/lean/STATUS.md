@@ -93,10 +93,22 @@ completion state to the rounds or to the engine's rebuild.
   proves every hypothesis of `CompleteAtoms` for the converged state of
   `(union (+ a b) c)`, `t = a+b+d`, `u = c+d` (four leaf constants, a
   normal form `{c}` collapsed into `c`'s class), by hand and `decide`;
-  `witness_not_all` shows `I0ActiveAll` fails on it. Not modelled: which
-  classes are atomic (`A` is a parameter; the engine's `atomic` bit, set on
-  use as a child and on holding a non-AC node, is not derived; the
-  theorems hold for every `A` that meets their hypotheses).
+  `witness_not_all` shows `I0ActiveAll` fails on it. `A` is a parameter and
+  the theorems hold for every `A` that meets their hypotheses.
+- `AtomicOf.lean` (2026-11-08): `atomicOf st` is the set the engine's
+  `atomic` bit defines on the store of one operator, a child of a stored
+  node (`add_use`) or a class with no `f`-node (`register_if_fresh`, a node
+  of another operator); a class holding an `f`-node and another operator's
+  node, never a child, is atomic in the engine and outside the model's
+  store. `addNF` models `add` on a degenerate normal form (`{x}` to `x`'s
+  class, `∅` to the unit's), `AddStep` the normalize step with it, and
+  `atomCollapse_of_addFixed` derives `AtomCollapse` at a fixpoint of
+  `AddStep`; `roundFixedA_of_addFixed` gives `RoundFixedA` from `RoundFixed`
+  of the view and the fixpoint. `CompleteAtomic` is `CompleteAtoms` at
+  `atomicOf st`; `saturation_modulo_complete_store_atomic` is the final
+  theorem with it; `witness_atomicOf : atomicOf wst = wA` lets the witnesses
+  discharge both. The fixtures `egraph/tests/egg/atomic_bit_*.egg` probe
+  the bit's five transitions against the bounded oracle.
 - `reachable_I5`, `fix_sufficient`, `shrinkNoRefresh_breaks_I5`: the
   min-monomial refresh keeps I5; the unrefreshed shrink is the repro state.
 - `MinMonoKey.lean` (row EG1): completion orders monomials by per-class order
