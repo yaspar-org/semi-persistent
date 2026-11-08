@@ -155,10 +155,11 @@ Hypotheses, in engine terms.
 round is well formed (`Round.WF`: the snapshots are well-formed graphs,
 the merge record splits no class, the added ids are the new nodes),
 `track_merge_members` is on (`tracking = true`, needed by the delta of
-the tracked rules), nodes persist through the round (`Round.Persist`:
-every node of `before` not subsumed has a node of `after` with the same
-operator and canonicalised children; `recanonize_node`), nothing is
-subsumed (`subsumed = ∅`: no `:subsume` rule fires), and every rule's
+the tracked rules), the fixed-arity nodes persist through the round
+(`Round.PersistFixed`: every tuple, pair or sequence node of `before` not
+subsumed has a node of `after` with the same operator and canonicalised
+children; `recanonize_node`), nothing is subsumed (`subsumed = ∅`: no
+`:subsume` rule fires), and every rule's
 atoms are well formed on each snapshot (`RulesWF`: distinct keys, nodes
 conform to the kind signature, atoms well kinded, node variables
 distinct, rest variables linear).
@@ -173,7 +174,9 @@ rule (`EmitsAll`); a later round applies, for a rule routed naive, every
 binding of the naive run on the frozen snapshot, and for a tracked rule,
 every binding of every variant reading the previous round's delta
 (`EmitsRound`, inside `AChain`). `naive : Rule → Bool` is the routing
-`needs_naive_match`; both branches are covered.
+`needs_naive_match`, widened to the rules that build an n-ary term after a
+round whose rebuild did not persist every node literally (`route`, the
+engine's `respelled`); both branches are covered.
 
 (d) Completion has converged (`CompleteHyps L S st`): the slot invariant
 `I5` holds at an initial slot state and the refresh `OpsStar` leads to a

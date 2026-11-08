@@ -5,6 +5,9 @@ import SemperProofs.EMatch.Engine.Saturate.Invariant
 #print axioms Semper.EMatch.den_transport
 #print axioms Semper.EMatch.fired_transport
 #print axioms Semper.EMatch.fired_transport'
+#print axioms Semper.EMatch.den_transport_fixed
+#print axioms Semper.EMatch.fired_transport_fixed'
+#print axioms Semper.EMatch.Round.persist_of_unchanged
 #print axioms Semper.EMatch.atomSat_transport
 #print axioms Semper.EMatch.matches_transport
 #print axioms Semper.EMatch.fired_after_actions

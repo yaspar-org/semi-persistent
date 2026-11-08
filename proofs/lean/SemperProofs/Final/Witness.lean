@@ -437,9 +437,9 @@ theorem hyp_ok : ∀ A ∈ [A₀, A₁], RoundOKN sig rules A := by
   simp only [List.mem_cons, List.not_mem_nil, or_false] at hA
   rcases hA with rfl | rfl
   · exact ⟨mkRound_wf S₀ (by rw [S₀_index]; rfl), rfl,
-      persist S₀ rfl (fun p hp => List.mem_append_left _ hp),
+      (persist S₀ rfl (fun p hp => List.mem_append_left _ hp)).toN ops,
       by show RulesWF sig S₁.index rules; rw [S₁_index]; exact rulesWF₁⟩
-  · exact ⟨mkRound_wf S₁ (by rw [S₁_index]; rfl), rfl, persist S₁ rfl (fun p hp => hp),
+  · exact ⟨mkRound_wf S₁ (by rw [S₁_index]; rfl), rfl, (persist S₁ rfl (fun p hp => hp)).toN ops,
       by show RulesWF sig S₁.index rules; rw [S₁_index]; exact rulesWF₁⟩
 
 theorem hyp_emit₀ : EmitsAllN A₀ rules := by
@@ -448,10 +448,10 @@ theorem hyp_emit₀ : EmitsAllN A₀ rules := by
   exact ⟨hr, hσ⟩
 
 theorem hyp_chain : SChainN naive rules A₀ [A₁] := by
-  refine ⟨rfl, ?_, trivial⟩
+  refine ⟨rfl, ⟨true, fun _ => rfl, ?_⟩, trivial⟩
   intro r hr
   simp only [rules, List.mem_singleton] at hr
-  refine ⟨fun _ σ hσ => ⟨hr, hσ⟩, fun h => absurd h (by simp [naive])⟩
+  refine ⟨fun _ σ hσ => ⟨hr, hσ⟩, fun h => absurd h (by simp [route, naive])⟩
 
 theorem hyp_fix : A₁.Unchanged := ⟨fun _ => Iff.rfl, fun _ => rfl, fun _ => rfl⟩
 
