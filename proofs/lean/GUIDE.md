@@ -1293,7 +1293,7 @@ the cases: `nodes` (two stored nodes), `atom_class` (`:317`, a node theory-equal
 | `hcc` | the stored active nodes | assumed of the engine (hash-consing) | tier 1 |
 | `hS` | the view: an asserted pair may relate a node to a constant | assumed of the input | none |
 | `hcancel` | the view's rules | not an engine fact (Section 5.7); `CompleteAtoms` takes `hlat : L.cancellative → LatticeClosed L (st.withAtoms A u)` in its place since commit `1be51963` | tier 1, as lattice closure |
-| `A` | a parameter | not derived from the engine's `atomic` bit | none |
+| `A` | a parameter; the `_atomic` corollaries take `atomicOf st` (`CC/AtomicOf.lean`), the set the `atomic` bit defines on the store of one operator | derived: a child of a stored node (`add_use`) or a class with no `f`-node (`register_if_fresh`); a class holding an `f`-node and another operator's node, never a child, is outside the model's store | tier 1, "the bit is set iff `atomicOf`" |
 
 `CC/AtomsEngine.lean` restates the engine-level theorems on the view:
 `completion_complete_cancellative_engine_atoms` (`:57`, `LatticeClosed` of the view in place
@@ -1302,6 +1302,40 @@ of `hcancel`), `completion_complete_inverse_engine_atoms` (`:80`) and
 `(∅, u)`). `I3_withAtoms` (`:32`) carries the retirement invariant to the view, and
 `invNodes_withAtoms` (`:45`) derives the one-element nodes the inverse rules R1 to R5 are
 stated on from the implicit nodes, when every class a `g`-node touches is atomic.
+
+**The bit and `add`** (`CC/AtomicOf.lean`). The engine keeps one `atomic` bit per class,
+set and never cleared: `add_use` (`containers/src/eclasses.rs`) sets it on every child of a
+fresh node, `register_if_fresh` (`egraph.rs`) on the class of a fresh node whose operator has
+no completion column, and `fold_min_monomial` ORs the two bits at a merge. `atomicOf st`
+is that set as far as the store of one operator shows it:
+
+```lean
+def State.HoldsNode (st : State n) (c : Fin n) : Prop := ∃ p ∈ st.nodes, st.find p.2 = st.find c
+def State.IsChild (st : State n) (c : Fin n) : Prop :=
+  ∃ p ∈ st.nodes, ∃ x ∈ p.1, st.find x = st.find c
+def atomicOf (st : State n) : Set (Fin n) := {c | st.IsChild c ∨ ¬ st.HoldsNode c}
+```
+
+A child of a stored node, active or retired (a retired node keeps its uses), or a class
+with no `f`-node, which holds a node of another operator since every class holds a node. A
+class that holds both an `f`-node and another operator's node and is no child is atomic in
+the engine and not in `atomicOf st`; the parametric theorems cover it with any `A ⊇
+atomicOf st`. `child_mem_atomicOf` is the tier 1 check "no `f`-node has a non-atomic
+`f`-child", by definition.
+
+`addNF st u N` is `add` on a degenerate normal form: `some (find x)` for `{x}`
+(`Normal::Single`), `u.map find` for `∅` (`Normal::Unit`), `none` when a node is built.
+`AddStep L A u` is the normalize step of completion with `add` so modelled: an active node
+of the view whose normal form `addNF` resolves to a class is merged into it. At a fixpoint
+(`AddFixed`, no step applies) the collapse holds: `atomCollapse_of_addFixed`, and
+`roundFixedA_of_addFixed` gives `RoundFixedA` from `RoundFixed` of the view and the
+fixpoint. `AddStep.find_changed` shows the step is not idle under an idempotent `find`.
+`CompleteAtomic L S st u` is `CompleteAtoms` at `A := atomicOf st`, with the corollaries
+`child_class` and `leaf_class`; `completion_complete_atomic` restates
+`completion_complete_atoms` with `RoundFixed` of the view and `AddFixed` in place of
+`RoundFixedA`. `Final/Store.lean` has `saturation_modulo_complete_store_atomic`, and the
+witnesses discharge it: `witness_atomicOf : atomicOf wst = wA` (by `fin_cases` and
+`decide`), `witness_complete_atomic`, `witness_saturation_modulo_complete_atomic`.
 
 **Non-vacuity.** `CC/AtomsWitness.lean` takes the program
 
@@ -1321,16 +1355,21 @@ did not apply to any state with a leaf constant.
 
 **Adequacy.**
 
-- `A` is a parameter. The engine's `atomic` bit, set when a class is used as a child or holds
-  a non-AC node, is not modelled, and the theorems hold for every `A` that meets their
-  hypotheses.
+- `A` is a parameter in the theorems of `CC/Atoms.lean`, which hold for every `A` that meets
+  their hypotheses; `atomicOf st` (`CC/AtomicOf.lean`) is the engine's bit on the store of
+  one operator, and the `_atomic` corollaries take it. The case outside the store, a class
+  holding an `f`-node and another operator's node that is no child, is atomic in the engine
+  and not in `atomicOf st`.
 - The witness is plain AC: it does not exercise the unit, the laws, `hcancel` (vacuous for a
   non-cancellative operator) or a non-trivial minimal-monomial history (`ss₀ = ss`). Its
   closing `example` derives `wst.find 4 = wst.find 4` and `wst.find 2 = wst.find 2`, which
   hold by reflexivity; it shows that the corollaries apply, not that they derive a merge the
   state lacks.
-- `AtomCollapse` is assumed. That completion merges a node whose normal form is `{x}` into
-  `x`'s class is the docstring's reading of `add`; no theorem relates it to a completion run.
+- `AtomCollapse` is derived from a fixpoint of `AddStep` (`atomCollapse_of_addFixed`), the
+  normalize step with `add` modelled by `addNF`. The fixpoint `AddFixed` is a hypothesis on
+  the engine's normalize pass of the same kind as `RoundFixed`: that the pass runs `add` on
+  every active node's normal form and merges the result in. No theorem relates `AddStep` to
+  `Infer`, whose `mint` step builds a node for every normal form.
 - The docstring of `CC/Atoms.lean` (`:53`) names `completion_complete_atom_class`, which does
   not exist; the theorem is `CompleteAtoms.atom_class`.
 
@@ -1860,8 +1899,10 @@ marked **new** were found for this edition.
    recorded that `I0Active` quantified over every class id of `Fin n`. It now constrains only
    the classes that hold an active node, and `hcc` only the active nodes;
    `witness_not_all` shows the former hypothesis failed on a state with leaf constants.
-10. **New.** `AtomCollapse` and the set `A` of atomic classes are assumed (Section 5.9). No
-    theorem derives the collapse from a completion run or `A` from the engine's `atomic` bit.
+10. **Resolved** by `c4530325` (`CC/AtomicOf.lean`, Section 5.9). `atomicOf st` is the set the
+    `atomic` bit defines on the store of one operator, and `atomCollapse_of_addFixed`
+    derives the collapse from a fixpoint of the normalize step with `add` modelled by
+    `addNF`. The first edition recorded both as assumed.
 
 **Model components not connected to each other.**
 
@@ -2002,6 +2043,16 @@ resolution after the original text.
    by `I5 st` in the statements, or link `OpsStar` to the inference run.
 7. `AtomCollapse` and the atomic set `A` are assumed. Fix: derive `AtomCollapse` from a model
    of `add` returning `x`'s class, and `A` from a model of the `atomic` bit.
+   **Resolved** by commit `c4530325`: `atomicOf st` (`CC/AtomicOf.lean`; a child of a stored
+   node, or a class with no `f`-node) and `addNF`, `AddStep`, `AddFixed`,
+   `atomCollapse_of_addFixed`, `roundFixedA_of_addFixed`; `CompleteAtomic`,
+   `completion_complete_atomic`, `saturation_modulo_complete_store_atomic`; the witnesses
+   `witness_atomicOf`, `witness_complete_atomic`, `witness_saturation_modulo_complete_atomic`.
+   The five fixtures `egraph/tests/egg/atomic_bit_*.egg` (commit `68814795`) probe the bit's
+   transitions against the bounded oracle; the engine passes them. What remains: `AddFixed`
+   is a hypothesis on the normalize pass, and a class that holds an `f`-node and another
+   operator's node without being a child is atomic in the engine and not in `atomicOf st`,
+   because the model's store holds `f`-nodes only.
 8. `TwoClassesL` is assumed, and the cited `aci1.egg` is missing. Fix: derive it from
    rebuild's merge of a one-class member, or commit the probe and cite it from `proofs/repro`.
 9. `Round.Persist`, `StorePersist` and `rebuild_idle` are assumed. Fix: weaken `Persist` to

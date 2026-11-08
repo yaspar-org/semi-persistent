@@ -608,6 +608,29 @@ egg_test!(
     inverse_cancel_keeps_atomic_pair,
     "inverse_cancel_keeps_atomic_pair.egg"
 );
+// The `atomic` bit's transitions, one fixture each: a leaf class gains an f-node, the last
+// f-node of a class collapses to one element, an atomic and a non-atomic class merge after
+// the latter was spliced, a class turns atomic as `Neg`'s child after a splice, and a class
+// used as a child before and after it holds an f-node. The expected equalities are
+// consequences of the theory, checked against the bounded oracle of
+// `proofs/lean/Conform/CC/Oracle.lean`.
+egg_test!(atomic_bit_leaf_gains_node, "atomic_bit_leaf_gains_node.egg");
+egg_test!(
+    atomic_bit_last_node_collapses,
+    "atomic_bit_last_node_collapses.egg"
+);
+egg_test!(
+    atomic_bit_merge_spliced_side,
+    "atomic_bit_merge_spliced_side.egg"
+);
+egg_test!(
+    atomic_bit_inverse_after_splice,
+    "atomic_bit_inverse_after_splice.egg"
+);
+egg_test!(
+    atomic_bit_child_before_and_after_node,
+    "atomic_bit_child_before_and_after_node.egg"
+);
 // A-only associativity on a written nested application, in both statement orders and on a
 // rule right-hand side.
 egg_test!(

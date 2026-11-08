@@ -519,6 +519,20 @@ theorem witness_saturation_modulo_complete :
   saturation_modulo_complete_store_atoms (naive := naive) A₀ [A₁] plansOK hyp_h₀ hyp_ok
     hyp_emit₀ hyp_chain (A := A₁) (by simp) hyp_fix witness_complete hyp_within hyp_sub
 
+/-- The same run with the atomic set derived from the `atomic` bit
+(`witness_complete_atomic`: `atomicOf wst = wA`). -/
+theorem witness_saturation_modulo_complete_atomic :
+    ∀ r ∈ rules, ∀ (P : Pat) (root : Var), r.atoms = (atoms P root).map QAtom.scan →
+      P.head = some 0 →
+      ∀ p ∈ act, ∀ p' ∈ act, E (Laws.plainAC 5) wS p.1 p'.1 →
+      ∀ σ, Matches A₁.Sa.index r.atoms σ → σ.node root = some (ι p') →
+        FiredN A₁.Sa.graph ops σ r ∧
+        σ.cls root = some (A₁.Sa.find (ι p)) ∧
+        MatchC A₁.Sa.index P (A₁.Sa.find (ι p)) σ ∧
+        MatchN A₁.Sa.index P (mkNode wst 0 p') σ :=
+  saturation_modulo_complete_store_atomic (naive := naive) A₀ [A₁] plansOK hyp_h₀ hyp_ok
+    hyp_emit₀ hyp_chain (A := A₁) (by simp) hyp_fix witness_complete_atomic hyp_within hyp_sub
+
 /-- The covering form, with the same run: every match of the rewrite at the
 fixpoint is fired and lands in the class of every theory-equal stored
 `+`-node. -/

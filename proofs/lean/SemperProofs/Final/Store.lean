@@ -1,5 +1,6 @@
 import SemperProofs.Final.Main
 import SemperProofs.Fidelity.StopTest
+import SemperProofs.CC.AtomicOf
 
 /-!
 # The final theorem over the store, with normalized right-hand sides
@@ -109,6 +110,29 @@ theorem saturation_modulo_complete_store_atoms {ops : Sym → OpLaws} {sig : Sym
   saturation_modulo_complete_store (st := st.withAtoms X u) A₀ As hplan h₀ hok hemit₀ hchain hA
     hfix (CompleteHyps.ofAtoms hcomp) (fun p hp => State.active_withAtoms (hw p hp))
     (hs.withAtoms X u)
+
+/-- `saturation_modulo_complete_store_atoms` with the atomic set the
+engine's `atomic` bit defines (`atomicOf st`, `CC/AtomicOf.lean`) in place
+of the parameter `X`. -/
+theorem saturation_modulo_complete_store_atomic {ops : Sym → OpLaws} {sig : Sym → Kind}
+    {naive : Rule → Bool} {rules : List Rule}
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hplan : PlansOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
+    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
+    {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
+    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    {u : Option (Fin n)} {act : Finset (Monomial n × Fin n)} (hcomp : CompleteAtomic L S st u)
+    (hw : Within st act) {f : Sym} {ι : Monomial n × Fin n → NodeId}
+    (hs : SubRep A.Sa.index st f act ι) :
+    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
+      P.head = some f →
+      ∀ p ∈ act, ∀ p' ∈ act, E L S p.1 p'.1 →
+      ∀ σ, Matches A.Sa.index rule.atoms σ → σ.node r = some (ι p') →
+        FiredN A.Sa.graph ops σ rule ∧
+        σ.cls r = some (A.Sa.find (ι p)) ∧
+        MatchC A.Sa.index P (A.Sa.find (ι p)) σ ∧
+        MatchN A.Sa.index P (mkNode st f p') σ :=
+  saturation_modulo_complete_store_atoms A₀ As hplan h₀ hok hemit₀ hchain hA hfix hcomp hw hs
 
 /-- `saturation_modulo_complete_store_atoms` at the round where the
 engine's stop test holds (no reported change, an unmoved size stamp),

@@ -1,7 +1,7 @@
 import SemperProofs.CC.AtomsWitness
 import SemperProofs.CC.AtomsEngine
 
-/-! Axiom audit for leaf constants (`Atoms.lean`, `AtomsEngine.lean`,
+/-! Axiom audit for leaf constants (`Atoms.lean`, `AtomicOf.lean`, `AtomsEngine.lean`,
 `AtomsWitness.lean`). Expected: only `propext`, `Classical.choice`,
 `Quot.sound`. -/
 
@@ -22,3 +22,12 @@ import SemperProofs.CC.AtomsEngine
 #print axioms SemperProofs.CC.AtomsWitness.witness_fixed
 #print axioms SemperProofs.CC.AtomsWitness.witness_complete
 #print axioms SemperProofs.CC.AtomsWitness.witness_not_all
+#print axioms SemperProofs.CC.atomCollapse_of_addFixed
+#print axioms SemperProofs.CC.roundFixedA_of_addFixed
+#print axioms SemperProofs.CC.AddStep.find_changed
+#print axioms SemperProofs.CC.completion_complete_atomic
+#print axioms SemperProofs.CC.CompleteAtomic.same_class
+#print axioms SemperProofs.CC.CompleteAtomic.child_class
+#print axioms SemperProofs.CC.CompleteAtomic.leaf_class
+#print axioms SemperProofs.CC.AtomsWitness.witness_atomicOf
+#print axioms SemperProofs.CC.AtomsWitness.witness_complete_atomic

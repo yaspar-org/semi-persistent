@@ -1,0 +1,35 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; Atomic bit, transition (c): a merge of an atomic class and a non-atomic one whose
+;; monomial was spliced into parents (`fold_min_monomial`, the `surv_atomic !=
+;; absorbed_atomic` branch, in both argument orders). The spliced parents keep their flat
+;; spelling; the rule `{A, B} -> {C}` of the joined class must reach them.
+(sort E)
+(constructor A () E)
+(constructor B () E)
+(constructor C () E)
+(constructor D () E)
+(constructor A2 () E)
+(constructor B2 () E)
+(constructor C2 () E)
+(constructor Add (E) E :assoc :comm)
+(set-option :completion eager)
+(let s (Add (A) (B)))
+(let t (Add s (D)))
+(let t2 (Add s s))
+(union s (C))
+(check-eq t (Add (C) (D)))
+(check-eq t2 (Add (C) (C)))
+(check-eq (Add s (D)) t)
+;; The other argument order of the union.
+(let s2 (Add (A2) (B2)))
+(let r (Add s2 (D)))
+(let r2 (Add s2 s2 (D)))
+(union (C2) s2)
+(check-eq r (Add (C2) (D)))
+(check-eq r2 (Add (C2) (C2) (D)))
+(check-eq (Add s2 (D)) r)
+(check-neq t r)
