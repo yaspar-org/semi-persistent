@@ -897,7 +897,7 @@ theorem fitStep_spec (hb : BaseGood ctx.κ base) {w : View} {D : View → Bool} 
     intro h; exact hn t h
 
 theorem regroupView_spec (hb : BaseGood ctx.κ base) {gs : List (C × List (C × Nat))}
-    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : ∀ gg ∈ groupsOf ctx, gg ∈ gs)
+    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : CandSup ctx dir gs)
     {w : View} {D : View → Bool} {st₀ : SkipSt}
     (hp : ProcInv ctx dir laws base w D st₀) (hD : ∀ v, D v = true → viewSize w ≤ viewSize v)
     (hDw : D w = true) :
@@ -924,7 +924,7 @@ theorem regroupView_spec (hb : BaseGood ctx.κ base) {gs : List (C × List (C ×
   let P : SkipSt → Prop := fun st => ∃ c ∈ st.recs b.1, Cov c b
   have hPm : ∀ st st', StepOK D st st' → P st → P st' :=
     fun st st' hok ⟨c, hc, hcov⟩ => ⟨c, hok.1.1 _ c hc, hcov⟩
-  refine foldl_establish (I := I) (P := P) (hgs' _ hgg) hgrp ?_ ?_ st₀ ⟨hp, StepOK.refl _ _⟩
+  refine foldl_establish (I := I) (P := P) (hgs' w _ hgg _ hraw) hgrp ?_ ?_ st₀ ⟨hp, StepOK.refl _ _⟩
   · intro st gg hgg' hI hP
     have := foldl_induct (SkipSt.fitStep ctx laws w gg)
       (fun st' => I st' ∧ StepOK D st st') _ st ⟨hI, StepOK.refl _ _⟩
@@ -933,7 +933,7 @@ theorem regroupView_spec (hb : BaseGood ctx.κ base) {gs : List (C × List (C ×
         exact ⟨⟨h1, hI'.2.trans h2⟩, hok'.trans h2⟩)
     exact hPm _ _ this.2 hP
   · intro st hI
-    refine foldl_establish (I := I) (P := P) hraw (fun st raw hraw h => hfit _ (hgs' _ hgg) st raw hraw h)
+    refine foldl_establish (I := I) (P := P) hraw (fun st raw hraw h => hfit _ (hgs' w _ hgg _ hraw) st raw hraw h)
       ?_ ?_ st hI
     · intro st' raw' hraw' hI' hP'
       obtain ⟨-, h2, -⟩ := fitStep_spec hb hI'.1 hD hDw hgg hraw'
@@ -1056,7 +1056,7 @@ theorem mark_procInv {st : SkipSt} {w : View} (hi : SkipInv ctx dir laws base st
 
 /-- **One iteration** keeps the invariant and regroups one more view. -/
 theorem step_spec (hb : BaseGood ctx.κ base) {gs : List (C × List (C × Nat))}
-    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : ∀ gg ∈ groupsOf ctx, gg ∈ gs)
+    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : CandSup ctx dir gs)
     {st : SkipSt} {w : View} (hi : SkipInv ctx dir laws base st) (hn : st.next = some w) :
     SkipInv ctx dir laws base (SkipSt.regroupView ctx dir laws gs w (st.mark w)) ∧
       doneSet (SkipSt.regroupView ctx dir laws gs w (st.mark w)) = insert w (doneSet st) ∧
@@ -1105,7 +1105,7 @@ theorem doneSet_subset (hb : BaseGood ctx.κ base) {st : SkipSt}
 
 /-- **The loop ends with every view regrouped**, within the fuel. -/
 theorem run_finished (hb : BaseGood ctx.κ base) {gs : List (C × List (C × Nat))}
-    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : ∀ gg ∈ groupsOf ctx, gg ∈ gs) :
+    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : CandSup ctx dir gs) :
     ∀ (n : Nat) (st : SkipSt), SkipInv ctx dir laws base st →
       (regroupAll ctx dir laws (regroupFuel base) base).length + 1 ≤ (doneSet st).card + n →
       SkipInv ctx dir laws base (SkipSt.run ctx dir laws gs n st) ∧
@@ -1191,7 +1191,7 @@ theorem init_inv (base : List RecR) : SkipInv ctx dir laws base (SkipSt.init bas
 /-- **The engine's regrouping**: its records are reachable, and every
 reachable record is covered by one of them. -/
 theorem regroupSkipG_spec (hb : BaseGood ctx.κ base) {gs : List (C × List (C × Nat))}
-    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : ∀ gg ∈ groupsOf ctx, gg ∈ gs) :
+    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : CandSup ctx dir gs) :
     (∀ r ∈ regroupSkipG ctx dir laws gs base, Reach ctx dir laws base r) ∧
       ∀ b, Reach ctx dir laws base b → ∃ c ∈ regroupSkipG ctx dir laws gs base, Cov c b := by
   obtain ⟨hi, hnext⟩ := run_finished hb hgs hgs' (skipFuel ctx dir laws base)
@@ -1235,7 +1235,7 @@ in the other. The full side is the covered record; the engine's side covers
 it, needs no more classes and passes the rule whenever it does. -/
 theorem regroupSkipG_iff {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR}
     (hb : BaseGood ctx.κ base) {gs : List (C × List (C × Nat))}
-    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : ∀ gg ∈ groupsOf ctx, gg ∈ gs)
+    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : CandSup ctx dir gs)
     {F : Nat} (hF : ∀ r ∈ base, viewSize r.1 ≤ F) {limit : Nat} {w : List (C × Nat)}
     {taken : List C} :
     (∃ r ∈ withinLimit limit (regroupSkipG ctx dir laws gs base), r.1 = w ∧
@@ -1258,7 +1258,7 @@ theorem regroupSkipG_iff {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR
 `okL`). -/
 theorem regroupSkipG_iffL {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR}
     (hb : BaseGood ctx.κ base) {gs : List (C × List (C × Nat))}
-    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : ∀ gg ∈ groupsOf ctx, gg ∈ gs)
+    (hgs : ∀ gg ∈ gs, gg ∈ groupsOf ctx) (hgs' : CandSup ctx dir gs)
     {F : Nat} (hF : ∀ r ∈ base, viewSize r.1 ≤ F) {limit : Nat} {w : List (C × Nat)}
     {taken : List C} :
     (∃ r ∈ withinLimit limit (regroupSkipG ctx dir laws gs base), r.1 = w ∧
@@ -1304,7 +1304,7 @@ theorem enumerateRSkip_iff {ctx : Ctx} {dir : Dir} {laws : Laws} {limit : Nat} {
   unfold enumerateRSkip enumerateR regroupAllSkip regroupAll
   rw [acceptsE_enumerateFromR, acceptsE_enumerateFromR]
   exact regroupSkipG_iff (baseGood_baseRecsR ctx dir laws n) (groupsOfEngine_sub ctx)
-    (groupsOfEngine_sup ctx) (fun _ h => viewSize_le_regroupFuel h)
+    (candSup_of_sup dir (groupsOfEngine_sup ctx)) (fun _ h => viewSize_le_regroupFuel h)
 
 /-- `enumerateRD` and the engine's pruned enumeration accept the same matches. -/
 theorem enumerateRDSkip_iff {T : C → Bool} {ctx : Ctx} {dir : Dir} {laws : Laws} {limit : Nat}
@@ -1314,7 +1314,7 @@ theorem enumerateRDSkip_iff {T : C → Bool} {ctx : Ctx} {dir : Dir} {laws : Law
   unfold enumerateRDSkip enumerateRD regroupAllSkip regroupAll
   rw [acceptsE_enumerateFromR, acceptsE_enumerateFromR]
   exact regroupSkipG_iff (baseGood_filter (baseGood_baseRecsR ctx dir laws n) _)
-    (groupsOfEngine_sub ctx) (groupsOfEngine_sup ctx)
+    (groupsOfEngine_sub ctx) (candSup_of_sup dir (groupsOfEngine_sup ctx))
     (fun _ h => viewSize_le_regroupFuel (List.mem_filter.1 h).1)
 
 theorem reach_normal {ctx : Ctx} {dir : Dir} {laws : Laws} {base : List RecR}
@@ -1335,7 +1335,7 @@ theorem normal_enumerateFromRSkip {ctx : Ctx} {dir : Dir} {laws : Laws} {limit :
     ∃ v, normalize ctx.κ laws v = .node w := by
   obtain ⟨r, hr, rfl⟩ := mem_enumerateFromR h
   exact reach_normal h0 ((regroupSkipG_spec hb (groupsOfEngine_sub ctx)
-    (groupsOfEngine_sup ctx)).1 r (mem_withinLimit.1 hr).1)
+    (candSup_of_sup dir (groupsOfEngine_sup ctx))).1 r (mem_withinLimit.1 hr).1)
 
 /-- **The engine's enumeration meets the plan specification**, every fold
 direction, any laws. -/

@@ -145,6 +145,9 @@ end Semper.EMatch.Flatten
 #print axioms Semper.EMatch.Flatten.regroupBounded_sub_skip
 #print axioms Semper.EMatch.Flatten.regroupBounded_reach
 #print axioms Semper.EMatch.Flatten.isCand_of_fitsR
+#print axioms Semper.EMatch.Flatten.fitsR_nil_of_not_cand
+#print axioms Semper.EMatch.Flatten.regroupAllSkipAt_eq
+#print axioms Semper.EMatch.Flatten.groupsOfEngineAt_candSupAt
 #print axioms Semper.EMatch.Flatten.takeableRCap_down
 #print axioms Semper.EMatch.Flatten.takenOf_takeableRCap
 #print axioms Semper.EMatch.Flatten.regroupSkipCap_spec
