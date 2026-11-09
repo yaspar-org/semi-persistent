@@ -3989,6 +3989,9 @@ where
                 crit.push((op, CpOrigin::Cancellative, m, r));
             } else {
                 // §5.2(iii)(b): f(ne ∪ {c}) = f({c}) for every constant c in the pool.
+                // Only the right side empties: a left side contained in the right side is
+                // below it in degree-lex, so orientation puts it on the right.
+                debug_assert!(!m.is_empty(), "cancel-close: the left side emptied");
                 let ne = if m.is_empty() { r } else { m };
                 for &g in pool {
                     let one = [(g, Cfg::M::ONE)];
