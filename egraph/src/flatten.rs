@@ -919,11 +919,19 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                         continue;
                     }
                     let target = match by_content.get(fresh.as_slice()) {
-                        // A view already regrouped. Every count of every view read exactly
-                        // (above), a regrouped view is strictly smaller than its source
-                        // (`regroupRec_shrink`, `RegroupSkip.lean`), so this does not fire.
-                        Some(&t) if entries[t].3 => continue,
-                        Some(&t) => t,
+                        Some(&t) => {
+                            // A regrouped view is strictly smaller than its source
+                            // (`regroupRec_shrink`, `RegroupSkip.lean`) and views are
+                            // regrouped largest first, so a target is never a view already
+                            // regrouped while every count is read exactly; a count past
+                            // `u64::MAX` saturates the order (`saturated_size`) and is
+                            // counted in `overflows`.
+                            debug_assert!(
+                                !entries[t].3 || self.overflows > 0,
+                                "regroup: a target view was regrouped before its source"
+                            );
+                            t
+                        }
                         None => {
                             let s = self.elems.len();
                             if s.checked_add(fresh.len()).ok_or(OVER_BOUND)? > self.bounds.elems {
@@ -1880,6 +1888,7 @@ where
 mod tests {
     use super::{FlatKind, FlattenScratch, next_colex, overlap_drops, saturated_size};
     use crate::multiplicity::Multiplicity as M;
+    use crate::nary_canon::{NaryKind, NaryLaws};
     use crate::registry::AssocDir;
     use num_bigint::BigUint;
 
@@ -2010,5 +2019,72 @@ mod tests {
             (u128::from(u64::MAX) + 7, 1)
         );
         assert_eq!(saturated_size(std::iter::empty()), (0, 0));
+    }
+
+    /// A source for the walk: per node its operator, class and children; per class its
+    /// members; and the operator's unit class, which `laws` returns as is.
+    struct Src {
+        nodes: Vec<(u32, u32, Vec<u32>)>,
+        members: Vec<Vec<u32>>,
+        unit: Option<u32>,
+    }
+
+    impl super::Members<u32, u32, M> for Src {
+        fn members(&self, class: u32) -> &[u32] {
+            &self.members[class as usize]
+        }
+        fn op(&self, node: u32) -> Option<u32> {
+            Some(self.nodes[node as usize].0)
+        }
+        fn children(
+            &self,
+            node: u32,
+            _kind: FlatKind,
+            kids: &mut Vec<(u32, M)>,
+            _ids: &mut Vec<u32>,
+        ) {
+            kids.clear();
+            kids.extend(self.nodes[node as usize].2.iter().map(|&c| (c, M(1))));
+        }
+        fn laws(&self, _op: u32) -> NaryLaws<u32, u32> {
+            NaryLaws {
+                kind: NaryKind::Ac { nilpotent: None },
+                unit: self.unit,
+                inverse: None,
+            }
+        }
+        fn inverse_class(&self, _inv: u32, _x: u32) -> Option<u32> {
+            None
+        }
+        fn assoc_dir(&self, _op: u32) -> AssocDir {
+            AssocDir::Both
+        }
+        fn class_of(&self, node: u32) -> u32 {
+            self.nodes[node as usize].1
+        }
+    }
+
+    /// The leaf groups of the walk of `f{0, 3}` with class 0 an `f`-member `f{1, 2}`
+    /// and `unit` the operator's unit: the class the leaf opened and its flag.
+    fn unit_leaf_groups(unit: Option<u32>) -> Vec<(u32, bool)> {
+        let src = Src {
+            nodes: vec![(7, 0, vec![1, 2]), (7, 4, vec![0, 3])],
+            members: vec![vec![0], vec![], vec![], vec![], vec![1]],
+            unit,
+        };
+        let mut s = FlattenScratch::<u32, M>::new();
+        super::enumerate(&src, 1, 7, FlatKind::Ac, |_| true, 0, &mut s).unwrap();
+        s.groups.iter().map(|g| (g.2, g.3)).collect()
+    }
+
+    /// A leaf whose class is the operator's unit is not inert: closing it refolds its
+    /// elements into the unit, which the normalization drops. No `.egg` fixture reaches
+    /// this: recanonicalization under `:identity` removes a child in the unit class from
+    /// its parent before matching, so the walk sees such a leaf only from a source that
+    /// lists it, as here. A leaf of the same shape whose class is not the unit is inert.
+    #[test]
+    fn non_inert_flags_a_leaf_of_the_unit_class() {
+        assert_eq!(unit_leaf_groups(Some(0)), vec![(0, true)]);
+        assert_eq!(unit_leaf_groups(Some(3)), vec![(0, false)]);
     }
 }

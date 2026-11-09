@@ -1186,8 +1186,8 @@ signatures of the records regrouping added to each view. The next view (`SkipSt.
 `:139`) is the one not yet regrouped with the largest total count, the latest entry among
 equal counts, as the engine's `BinaryHeap` of `(size, entry)` pairs pops it. The candidate
 groups (`groupsOfEngine`, `:82`) are the `f`-members sorted by node id. For each candidate,
-each fit and each normalized target (`SkipSt.addTarget`, `:106`), the loop skips a target
-already regrouped, gives nothing to a target that has an unconditional record (no leaf, no
+each fit and each normalized target (`SkipSt.addTarget`, `:106`), the loop gives nothing to
+a target that has an unconditional record (no leaf, no
 needed class), derives only from the source's first unconditional record when it has one
 (`srcRecs`, `:70`), and drops a derived record whose signature the target already has
 (`SkipSt.addRec`, `:97`); a signature (`recSig`, `:59`) is the leaves' opened classes, flags
@@ -1234,9 +1234,10 @@ counts since `54bea39b`.
 
 *Proof.* `regroupRec_shrink` (`:259`) shows that a regrouping strictly shrinks a view under
 any laws, so the full enumeration is exactly the set of records reachable from the walk's
-records (`mem_regroupLevels_iff_reach`, `:345`), and the skip of a target already regrouped
-never fires in the model. The loop invariant `SkipInv` (`:1008`) says that every record is
-reachable and every regrouped view is **closed**: each regrouping of each of its records is
+records (`mem_regroupLevels_iff_reach`, `:345`), and a target is never a view already
+regrouped (`addTarget_spec`; the engine asserts it in debug builds). The loop invariant
+`SkipInv` (`:1008`) says that every record is reachable and every regrouped view is
+**closed**: each regrouping of each of its records is
 covered by a record of the target; a skipped record is covered at the moment it is skipped.
 `run_finished` (`:1093`) shows the loop ends with every view regrouped, and
 `regroupSkipG_spec` (`:1179`) concludes by induction on the chain that every record kept is
@@ -3301,7 +3302,7 @@ regroup(node, κ, dir, laws, items):                   -- SkipSt.run; flatten.rs
       for raw in fits(κ, dir, w, g, grp):             -- fitsR: sub-multiset | subset | run | prefix | suffix, ≥ 2 entries, not all of w, g ∉ grp
         t := normalize(κ, laws, raw)                  -- normalize; nary_canon::normalize
         if t is not a node, or a count overflows: count flatten_overflowed; continue   -- Ix.wide, saturated_size
-        if t already regrouped: continue              -- SkipSt.addTarget (never fires)
+        assert t not regrouped                        -- addTarget_spec: regroupRec_shrink
         if t is new: push (size(t), t)                -- SkipSt.addTarget
         if some record of t is unconditional: continue        -- RecR.uncond
         for r in srcRecs(records of w):               -- srcRecs: the first unconditional record alone, else all
