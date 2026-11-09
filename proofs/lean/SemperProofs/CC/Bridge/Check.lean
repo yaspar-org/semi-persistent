@@ -16,6 +16,7 @@ import SemperProofs.CC.Bridge.Sub
 #print axioms SemperProofs.CC.Bridge.engine_match_modulo_complete
 #print axioms SemperProofs.CC.Bridge.engine_match_modulo_sound
 #print axioms SemperProofs.CC.Bridge.CompleteHyps.ofAtoms
+#print axioms SemperProofs.CC.Bridge.CompleteHyps.ofLaws
 #print axioms SemperProofs.CC.Bridge.represents_subRep
 #print axioms SemperProofs.CC.Bridge.represents_fcover
 #print axioms SemperProofs.CC.Bridge.ac_equal_same_class_sub

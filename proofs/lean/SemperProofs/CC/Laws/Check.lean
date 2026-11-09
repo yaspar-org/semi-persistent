@@ -1,4 +1,5 @@
 import SemperProofs.CC.Laws.Main
+import SemperProofs.CC.Laws.AxiomCP
 
 /-! Axiom audit for the concrete law sets. Expected: `propext`,
 `Classical.choice`, `Quot.sound` only. -/
@@ -31,3 +32,10 @@ import SemperProofs.CC.Laws.Main
 #print axioms SemperProofs.CC.completion_complete_idempotent
 #print axioms SemperProofs.CC.completion_complete_inverse
 #print axioms SemperProofs.CC.completion_complete_combined
+#print axioms SemperProofs.CC.AxiomCP.of_hcp
+#print axioms SemperProofs.CC.LawSpec.hlaw
+#print axioms SemperProofs.CC.LawSpec.hnf_ax
+#print axioms SemperProofs.CC.LawSpec.hcp
+#print axioms SemperProofs.CC.axiomCP_of_laws
+#print axioms SemperProofs.CC.LawSpec.conds_inverse_of_fixed
+#print axioms SemperProofs.CC.LawSpec.conds_combined_of_fixed

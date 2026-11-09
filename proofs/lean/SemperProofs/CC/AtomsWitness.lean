@@ -1,4 +1,5 @@
 import SemperProofs.CC.AtomicOf
+import SemperProofs.CC.AtomsEngine
 
 /-!
 # A state with leaf constants that meets every hypothesis
@@ -230,14 +231,15 @@ theorem witness_fixed : RoundFixedA (Laws.plainAC 5) wst wA none := by
     exact absurd rfl hne
 
 /-- **Non-vacuity of `completion_complete_atoms`.** The state with leaf
-constants above meets every hypothesis. Plain AC has no law instance, so
-`AxiomCP` is empty. -/
+constants above meets every hypothesis. The bundle is built through
+`CompleteAtoms.ofLaws` at the law set `LawSpec.plain`, whose per-law
+conditions are empty: plain AC has no law instance. -/
 theorem witness_complete : CompleteAtoms (Laws.plainAC 5) wS wst wA none := by
   have hL : ∀ M, (Laws.plainAC 5).clamp M = M := fun _ => rfl
   let ss : SlotState 5 :=
     ⟨![{{0}}, {{1}}, {{0, 1}, {2}}, {{3}}, {{2, 3}}], fun c => some (wst.rhs c)⟩
-  refine ⟨⟨ss, ss, ?_, ReflTransGen.refl, ?_, fun _ _ => rfl⟩, ?_, fun _ => hL _, witness_fixed,
-    fun _ _ h => h.elim, ?_, AxiomCP.of_no_ax fun _ h => h, ?_, ?_, fun h => h.elim⟩
+  refine CompleteAtoms.ofLaws .plain ⟨ss, ss, ?_, ReflTransGen.refl, ?_, fun _ _ => rfl⟩ ?_
+    (fun _ => hL _) witness_fixed trivial ?_ ?_ (fun h => h.elim)
   · intro c
     fin_cases c <;>
       exact ⟨fun _ => ⟨_, rfl, by unfold SlotState.IsMin; decide⟩, fun h => absurd h (by decide)⟩
@@ -254,9 +256,6 @@ theorem witness_complete : CompleteAtoms (Laws.plainAC 5) wS wst wA none := by
       change (wst.rhs c, c) ∈ wv.active
       rw [rhs_atom hc]
       exact atom_mem hc
-  · intro M N h
-    obtain ⟨A, B, hAB, -, -⟩ := h
-    exact hAB
   · intro P c d hc hd
     rcases stored_mem hc with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
     rcases stored_mem hd with ⟨h, rfl⟩ | ⟨h, rfl⟩ <;>

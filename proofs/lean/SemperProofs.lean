@@ -6,8 +6,10 @@ import SemperProofs.CC.AtomsEngine
 import SemperProofs.CC.AtomsWitness
 import SemperProofs.CC.Laws.Main
 import SemperProofs.CC.Laws.InvRulesMain
+import SemperProofs.CC.Laws.AxiomCP
 import SemperProofs.EMatch.Main
 import SemperProofs.EMatch.Engine.Main
+import SemperProofs.EMatch.Engine.Cursor
 import SemperProofs.EMatch.Flatten.Main
 import SemperProofs.EMatch.Flatten.FixMain
 import SemperProofs.EMatch.Flatten.FixKind

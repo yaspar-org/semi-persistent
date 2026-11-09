@@ -1,6 +1,7 @@
 import SemperProofs.CC.Atoms
 import SemperProofs.CC.Lattice
 import SemperProofs.CC.Laws.InvRulesMain
+import SemperProofs.CC.Laws.AxiomCP
 
 /-!
 # The engine-level completeness theorems with leaf constants
@@ -19,6 +20,10 @@ view these are the implicit nodes of the atoms: `invNodes_withAtoms` gives
 `InvNodes` of the view when every class a `g`-node touches is atomic, which
 the engine guarantees (a child of a non-`f` node and a class holding one
 are `atomic`), with no stored one-element node.
+
+`CompleteAtoms.ofLaws` builds the bundle for a law set the model names
+(`LawSpec`) from the per-law conditions on the view's rules in place of
+`AxiomCP`, which `axiomCP_of_laws` derives.
 -/
 
 namespace SemperProofs.CC
@@ -146,5 +151,32 @@ theorem completion_complete_combined_engine_atoms (u : Fin n) (k : ℕ) (hk : 2 
   completion_complete_combined_engine (st := st.withAtoms A (some u)) u k hk inv cancel hurep hfixu hinv hfixinv hfixk h5₀
     hrun ha h0 hcanon hfix.roundFixed (I3_withAtoms h3) hlhs_u hlhs_k hlhs_inv hax_nil
     (hfix.congr hcc) hS hcancel hM hN hMN
+
+/-- **`CompleteAtoms` from the per-law conditions.** For a law set the model
+names, the bundle is built from the engine-side hypotheses and the
+conditions `LawSpec.Conds` on the view's rules; `hlaw` and `hnf_ax` are the
+law's, and `hcp_ax` is `axiomCP_of_laws` at the fixed round of the view.
+No hypothesis on the critical pairs that involve a law instance remains. -/
+theorem CompleteAtoms.ofLaws (sp : LawSpec n) {S : Set (Monomial n × Monomial n)}
+    {st : State n} {A : Set (Fin n)} {u : Option (Fin n)}
+    (slots : ∃ ss₀ ss : SlotState n,
+      SlotState.I5 ss₀ ∧ SlotState.OpsStar ss₀ ss ∧ SlotState.Agrees (st.withAtoms A u) ss)
+    (h0 : I0Active (st.withAtoms A u)) (hcanon : ∀ c, sp.laws.clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixedA sp.laws st A u) (hc : sp.Conds (st.withAtoms A u).rules)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A u).active ∧
+      (N, d) ∈ (st.withAtoms A u).active ∧ st.find c = st.find d)
+    (hlat : sp.laws.cancellative → Lattice.LatticeClosed sp.laws (st.withAtoms A u)) :
+    CompleteAtoms sp.laws S st A u where
+  slots := slots
+  h0 := h0
+  hcanon := hcanon
+  hfix := hfix
+  hlaw := sp.hlaw
+  hnf_ax := sp.hnf_ax
+  hcp_ax := axiomCP_of_laws sp hfix.roundFixed hc
+  hcc := hcc
+  hS := hS
+  hlat := hlat
 
 end SemperProofs.CC

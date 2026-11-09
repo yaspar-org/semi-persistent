@@ -1,5 +1,6 @@
 import SemperProofs.CC.Bridge.Represents
 import SemperProofs.CC.Atoms
+import SemperProofs.CC.Laws.AxiomCP
 
 /-!
 # Bridge: matching modulo the AC theory
@@ -14,6 +15,8 @@ graph `represents st f A`.
   `completion_complete_at_convergence` with `hcancel` replaced by
   `LatticeClosed` and `hcp` by its part involving a law instance
   (`AxiomCP`; the rule-rule part follows from `RoundFixed`).
+  `CompleteHyps.ofLaws` builds it for a law set the model names
+  (`LawSpec`) from the per-law conditions in place of `AxiomCP`.
 * `ac_equal_same_class`: two `=_E`-equal active nodes are in one class;
   `ac_equal_same_class_graph` restates it on the graph.
 * `Term` / `ETerm`: the binary ground terms of the operator over the class
@@ -73,6 +76,31 @@ theorem CompleteHyps.ofAtoms {L : Laws n} {S : Set (Monomial n × Monomial n)} {
   hcc := h.hfix.congr h.hcc
   hS := h.hS
   hlat := h.hlat
+
+/-- **`CompleteHyps` from the per-law conditions.** For a law set the model
+names, the bundle is built from the engine-side hypotheses and the
+conditions `LawSpec.Conds` on the rules; `hlaw` and `hnf_ax` are the law's,
+and `hcp_ax` is `axiomCP_of_laws` at the fixed round. -/
+theorem CompleteHyps.ofLaws (sp : LawSpec n) {S : Set (Monomial n × Monomial n)} {st : State n}
+    (slots : ∃ ss₀ ss : SlotState n,
+      SlotState.I5 ss₀ ∧ SlotState.OpsStar ss₀ ss ∧ SlotState.Agrees st ss)
+    (h0 : I0Active st) (hcanon : ∀ c, sp.laws.clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixed sp.laws st) (hc : sp.Conds st.rules)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    (hlat : sp.laws.cancellative → Lattice.LatticeClosed sp.laws st) :
+    CompleteHyps sp.laws S st where
+  slots := slots
+  h0 := h0
+  hcanon := hcanon
+  hfix := hfix
+  hlaw := sp.hlaw
+  hnf_ax := sp.hnf_ax
+  hcp_ax := axiomCP_of_laws sp hfix hc
+  hcc := hcc
+  hS := hS
+  hlat := hlat
 
 /-- The graph of the completion view is the graph of the stored state: the
 view changes the node set, and the graph reads only `find` and the
