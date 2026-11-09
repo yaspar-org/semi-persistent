@@ -34,10 +34,15 @@ move the element re-took the entry just undone: `findStep false` is that version
 The fixed version scans from `ri_at[ei]`, which the backward move has advanced, and
 `findStep_pos_lt` shows the measure increases on every move.
 
-`ac_advance` before this change completed the later elements greedily and undid the moved
-element twice; `cursor_shapes.rs`, `decompositions_with_a_bound_element`, is the failing
-shape. The transcription below is of the fixed engine, where `ac_advance` resumes
-through `ac_find_first`.
+The transcription is of the engine after the fixes the model and its mirrors found:
+`ac_advance` completed the later elements greedily and undid the moved element twice
+(`cursor_shapes.rs`, `decompositions_with_a_bound_element`), and now resumes through
+`ac_find_first`; a bound element took any entry of its class from the scan's start, and
+now takes the first matching entry of its class, as `decompose_ac_elem` does, so that a
+commutative pair with equal children gives an assignment once. The frame stack above the
+decompositions (`next_match`, `backtrack` over the plan) is not modelled; the test
+`cursor_agrees_with_the_recursive_executor_on_the_rounds_corpus` (`ematch.rs`) compares
+the two executors' match multisets on the rounds corpus.
 -/
 
 namespace Semper.EMatch.Cursor
@@ -867,16 +872,18 @@ def defElem : Var × Mult := (0, .exact 1)
 def usesMult (elems : List (Var × Mult)) (e : Nat) (k : Var) : Bool :=
   (elems.take e).any fun p => match p.2 with | .var k' _ _ => k' == k | .exact _ => false
 
-/-- `ac_scan`'s test of one entry: on the bound-repr path `residual[ri].0 == repr &&
-mult_matches(...)`, otherwise `mult_matches(mult, avail, bound_mult_val(mult, &self.env))`.
-The model's `multMatches` is `mult_matches` with the binding of a multiplicity variable
-folded in. An element index past the end accepts nothing (the loop guard `ei < elems.len()`). -/
+/-- `ac_scan`'s test of one entry. On the bound-repr path the entry is the first of the
+class that matches (`residual.iter().position(|(r, m)| r == repr && mult_matches(..))`,
+as `decompose_ac_elem`), taken when it is at or past the scan's start; otherwise
+`mult_matches(mult, avail, bound_mult_val(mult, &self.env))`. The model's `multMatches`
+is `mult_matches` with the binding of a multiplicity variable folded in. An element index
+past the end accepts nothing (the loop guard `ei < elems.len()`). -/
 def acAccept (elems : List (Var × Mult)) (a : ACStore) (e ri : Nat) : Bool :=
   match elems[e]? with
   | none => false
   | some (x, μ) =>
       match a.σ.cls x with
-      | some c' => decide ((a.res.getD ri (0, 0)).1 = c') && (multMatches a.σ μ (a.res.getD ri (0, 0)).2).isSome
+      | some c' => a.res.findIdx? (fun en => decide (en.1 = c') && (multMatches a.σ μ en.2).isSome) == some ri
       | none => (multMatches a.σ μ (a.res.getD ri (0, 0)).2).isSome
 
 /-- `ac_scan`'s body at a hit: on the bound-repr path the variable is left alone and
@@ -1047,21 +1054,24 @@ theorem acAccept_some {elems : List (Var × Mult)} {a : ACStore} {e ri : Nat}
       by_contra hc; push Not at hc
       rw [List.getElem?_eq_none hc] at hx; simp at hx
     have hμ : MultPos μ := hpos (x, μ) (List.mem_of_getElem? hx)
-    have hri : ri < a.res.length := by
-      by_contra hc; push Not at hc
-      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_none hc] at h
-      simp only [Option.getD_none, multMatches_zero hμ] at h
-      split at h <;> simp at h
-    refine ⟨x, μ, hx, he, hri, ?_⟩
     split at h
     · rename_i c' hc'
-      simp only [Bool.and_eq_true, decide_eq_true_eq, Option.isSome_iff_exists] at h
-      obtain ⟨hceq, σ', hσ'⟩ := h
-      exact ⟨σ', hσ', fun c'' hc'' => by rw [hc'] at hc''; simp only [Option.some.injEq] at hc''; subst hc''; exact hceq⟩
+      rw [beq_iff_eq, List.findIdx?_eq_some_iff_getElem] at h
+      obtain ⟨hri, hp, _⟩ := h
+      simp only [Bool.and_eq_true, decide_eq_true_eq, Option.isSome_iff_exists] at hp
+      obtain ⟨hceq, σ', hσ'⟩ := hp
+      rw [List.getD_eq_getElem a.res (0, 0) hri]
+      exact ⟨x, μ, hx, he, hri, σ', hσ', fun c'' hc'' => by
+        rw [hc'] at hc''; simp only [Option.some.injEq] at hc''; subst hc''; exact hceq⟩
     · rename_i hc
+      have hri : ri < a.res.length := by
+        by_contra hcl; push Not at hcl
+        rw [List.getD_eq_getElem?_getD, List.getElem?_eq_none hcl] at h
+        simp only [Option.getD_none, multMatches_zero hμ] at h
+        simp at h
       simp only [Option.isSome_iff_exists] at h
       obtain ⟨σ', hσ'⟩ := h
-      exact ⟨σ', hσ', fun c'' hc'' => by rw [hc] at hc''; simp at hc''⟩
+      exact ⟨x, μ, hx, he, hri, σ', hσ', fun c'' hc'' => by rw [hc] at hc''; simp at hc''⟩
 
 theorem acLaws (elems : List (Var × Mult)) (res₀ : List (C × Nat)) (hpos : ∀ p ∈ elems, MultPos p.2) :
     (acOps elems res₀.length).Laws (ACGood elems res₀) := by
@@ -1249,14 +1259,28 @@ theorem flatMap_range_congr {γ : Type} (f g : Nat → List γ) (n : Nat) (h : �
       rw [List.range_succ, List.flatMap_append, List.flatMap_append, ih (fun i hi => h i (by omega)),
         List.flatMap_singleton, List.flatMap_singleton, h n (by omega)]
 
-/-- `ac_scan`'s test at an in-range entry, by the state of the element variable. -/
+/-- `ac_scan`'s test at an in-range entry, by the state of the element variable. With
+distinct classes the first matching entry of a class is the entry of that class. -/
 theorem acAccept_eq {elems : List (Var × Mult)} {a : ACStore} {e ri : Nat} {x : Var} {μ : Mult}
-    (hx : elems[e]? = some (x, μ)) (hri : ri < a.res.length) :
+    (hnd : (a.res.map Prod.fst).Nodup) (hx : elems[e]? = some (x, μ)) (hri : ri < a.res.length) :
     acAccept elems a e ri = (match a.σ.cls x with
       | some c' => decide (a.res[ri].1 = c') && (multMatches a.σ μ a.res[ri].2).isSome
       | none => (multMatches a.σ μ a.res[ri].2).isSome) := by
   have hres : a.res.getD ri (0, 0) = a.res[ri] := List.getD_eq_getElem a.res (0, 0) hri
   simp only [acAccept, hx, hres]
+  split
+  · rename_i c' _
+    apply Bool.eq_iff_iff.2
+    rw [beq_iff_eq, List.findIdx?_eq_some_iff_getElem, Bool.and_eq_true, decide_eq_true_eq]
+    constructor
+    · rintro ⟨_, hp, _⟩
+      simpa using hp
+    · rintro ⟨hc, hm⟩
+      refine ⟨hri, by simp [hc, hm], fun j hj => ?_⟩
+      simp only [Bool.and_eq_true, decide_eq_true_eq, not_and]
+      intro hcj
+      exact absurd (cls_index_unique hnd (by omega) hri (hcj.trans hc.symm)) (by omega)
+  · rfl
 
 /-- The frame's enumeration from element `e` is the executor's decomposition of the
 elements from `e`, after the leaf. -/
@@ -1308,7 +1332,7 @@ theorem enum_eq_decomposeAC (elems : List (Var × Mult)) (rest : Option Var) (re
         rw [← flatMap_range_getD a.res (0, 0)]
         apply flatMap_range_congr
         intro ri hri
-        rw [List.getD_eq_getElem a.res (0, 0) hri, acAccept_eq hxe hri, hcx]
+        rw [List.getD_eq_getElem a.res (0, 0) hri, acAccept_eq hnd' hxe hri, hcx]
         simp only
         by_cases hm : a.res[ri].2 = 0
         · rw [hm, multMatches_zero hμ]; simp
@@ -1316,7 +1340,7 @@ theorem enum_eq_decomposeAC (elems : List (Var × Mult)) (rest : Option Var) (re
           rcases hmm : multMatches a.σ μ a.res[ri].2 with _ | σ'
           · simp
           · have hacc : acAccept elems a e ri = true := by
-              rw [acAccept_eq hxe hri, hcx, hmm]; rfl
+              rw [acAccept_eq hnd' hxe hri, hcx, hmm]; rfl
             simp only [Option.isSome_some, ↓reduceIte]
             rw [hrec ri hacc]
             obtain ⟨hres, hσ⟩ := acApply_eq hxe hri hmm
@@ -1328,18 +1352,18 @@ theorem enum_eq_decomposeAC (elems : List (Var × Mult)) (rest : Option Var) (re
           obtain ⟨hc, hm⟩ : en.1 = c₀ ∧ en.2 ≠ 0 := by simpa using List.find?_some hfind
           obtain ⟨ri, hri, hen⟩ := List.getElem_of_mem (List.mem_of_find?_eq_some hfind)
           rw [flatMap_range_single _ a.res.length ri hri]
-          · rw [acAccept_eq hxe hri, hcx, hen]
+          · rw [acAccept_eq hnd' hxe hri, hcx, hen]
             simp only [hc, decide_true, Bool.true_and]
             rcases hmm : multMatches a.σ μ en.2 with _ | σ'
             · simp
             · have hacc : acAccept elems a e ri = true := by
-                rw [acAccept_eq hxe hri, hcx, hen, hmm]; simp [hc]
+                rw [acAccept_eq hnd' hxe hri, hcx, hen, hmm]; simp [hc]
               simp only [Option.isSome_some, ↓reduceIte]
               rw [hrec ri hacc]
               obtain ⟨hres, hσ⟩ := acApply_eq hxe hri (hen ▸ hmm)
               rw [hres, hσ, hcx, ← hc, ← hen, zeroEntry_eq_set hnd' hri]
           · intro j hj hne
-            rw [acAccept_eq hxe hj, hcx]
+            rw [acAccept_eq hnd' hxe hj, hcx]
             have : a.res[j].1 ≠ c₀ := fun h => hne (cls_index_unique hnd' hj hri (by rw [h, hen, hc]))
             simp [this]
         · rename_i hfind
@@ -1349,7 +1373,7 @@ theorem enum_eq_decomposeAC (elems : List (Var × Mult)) (rest : Option Var) (re
           rw [List.mem_range] at hri
           have hnone := List.find?_eq_none.1 hfind a.res[ri] (List.getElem_mem hri)
           simp only [decide_eq_true_eq, not_and, not_not] at hnone
-          rw [acAccept_eq hxe hri, hcx]
+          rw [acAccept_eq hnd' hxe hri, hcx]
           simp only
           by_cases hc : a.res[ri].1 = c₀
           · rw [hnone hc, multMatches_zero hμ]; simp
