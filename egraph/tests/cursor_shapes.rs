@@ -173,3 +173,24 @@ fn exact_and_rest_only_patterns() {
     assert_eq!(agree(&eg, "(F ..r)").len(), 2);
     assert_eq!(agree(&eg, "(G ..r)").len(), 1);
 }
+
+/// Exact and rest patterns whose last element is bound before the decomposition (a
+/// constant child, joined first): the cursor's `ac_advance` must backtrack into the
+/// earlier elements and re-run the full search, not a greedy completion.
+#[test]
+fn decompositions_with_a_bound_element() {
+    let eg = build();
+    for (pattern, n) in [
+        ("(F x y (a))", 2),
+        ("(F x y (b))", 2),
+        ("(F x y (c))", 2),
+        ("(F x (a) ..r)", 3),
+        ("(F x y (c) ..r)", 2),
+        ("(G x y (a))", 2),
+        ("(G x y (b))", 2),
+        ("(G x y (c))", 2),
+        ("(G x (a) ..r)", 2),
+    ] {
+        assert_eq!(agree(&eg, pattern).len(), n, "{pattern}");
+    }
+}

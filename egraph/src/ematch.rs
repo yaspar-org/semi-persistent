@@ -4179,6 +4179,13 @@ where
         }
     }
 
+    /// Move to the next assignment in entry order: undo the last element, advance its
+    /// index, and resume the search from it with [`Self::ac_find_first`], which
+    /// backtracks into the earlier elements when no entry is left. Completing the later
+    /// elements greedily here instead (the first entry each accepts, with no retry on a
+    /// later failure) missed assignments when a later element is bound, and its retry
+    /// path undid the moved element twice, the second time at an index it never took
+    /// (`cursor_shapes.rs`, `decompositions_with_a_bound_element`).
     fn ac_advance(
         &mut self,
         elems: &[(PatVar, RMult)],
@@ -4190,47 +4197,15 @@ where
         if elems.is_empty() || *ei != elems.len() {
             return false;
         }
-        // Undo last element, try next residual entry. If exhausted, undo previous, etc.
-        let mut e = elems.len() - 1;
-        loop {
-            self.ac_undo(elems, residual, e, ri_at[e], bound);
-            ri_at[e] += 1;
-            // Try to find a valid entry for element e and all subsequent elements.
-            // ac_scan only looks at element e; if it succeeds we try e+1.. from scratch.
-            if let Some(ri) = self.ac_scan(elems, residual, e, ri_at[e], bound) {
-                ri_at[e] = ri;
-                // Now try to bind e+1..end from scratch.
-                let mut ok = true;
-                for e2 in (e + 1)..elems.len() {
-                    ri_at[e2] = 0;
-                    match self.ac_scan(elems, residual, e2, 0, bound) {
-                        Some(ri2) => ri_at[e2] = ri2,
-                        None => {
-                            // Undo e2-1..=e+1 that we just bound, then undo e and try next.
-                            for undo in (e + 1..e2).rev() {
-                                self.ac_undo(elems, residual, undo, ri_at[undo], bound);
-                            }
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                if ok {
-                    *ei = elems.len();
-                    return true;
-                }
-                // ac_scan for e succeeded but downstream failed. Undo e and try next ri.
-                self.ac_undo(elems, residual, e, ri_at[e], bound);
-                ri_at[e] += 1;
-                continue;
-            }
-            // No more entries for element e. Backtrack to e-1.
-            ri_at[e] = 0;
-            if e == 0 {
-                *ei = 0;
-                return false;
-            }
-            e -= 1;
+        let e = elems.len() - 1;
+        self.ac_undo(elems, residual, e, ri_at[e], bound);
+        ri_at[e] += 1;
+        if self.ac_find_first(elems, residual, ri_at, bound, e) {
+            *ei = elems.len();
+            true
+        } else {
+            *ei = 0;
+            false
         }
     }
 
@@ -4329,6 +4304,7 @@ where
         bound[ei] = false;
     }
 
+    /// See [`Self::ac_advance`].
     fn aci_advance(
         &mut self,
         elems: &[PatVar],
@@ -4341,40 +4317,15 @@ where
         if elems.is_empty() || *ei != elems.len() {
             return false;
         }
-        let mut e = elems.len() - 1;
-        loop {
-            self.aci_undo(elems, used, e, ri_at[e], bound);
-            ri_at[e] += 1;
-            if let Some(ri) = self.aci_scan(elems, residual, used, e, ri_at[e], bound) {
-                ri_at[e] = ri;
-                let mut ok = true;
-                for e2 in (e + 1)..elems.len() {
-                    ri_at[e2] = 0;
-                    match self.aci_scan(elems, residual, used, e2, 0, bound) {
-                        Some(ri2) => ri_at[e2] = ri2,
-                        None => {
-                            for undo in (e + 1..e2).rev() {
-                                self.aci_undo(elems, used, undo, ri_at[undo], bound);
-                            }
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                if ok {
-                    *ei = elems.len();
-                    return true;
-                }
-                self.aci_undo(elems, used, e, ri_at[e], bound);
-                ri_at[e] += 1;
-                continue;
-            }
-            ri_at[e] = 0;
-            if e == 0 {
-                *ei = 0;
-                return false;
-            }
-            e -= 1;
+        let e = elems.len() - 1;
+        self.aci_undo(elems, used, e, ri_at[e], bound);
+        ri_at[e] += 1;
+        if self.aci_find_first(elems, residual, used, ri_at, bound, e) {
+            *ei = elems.len();
+            true
+        } else {
+            *ei = 0;
+            false
         }
     }
 }
