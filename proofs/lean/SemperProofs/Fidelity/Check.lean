@@ -45,6 +45,10 @@ import SemperProofs.Fidelity.Main
 #print axioms Semper.EMatch.Fidelity.denE_denN_eq
 #print axioms Semper.EMatch.Fidelity.invE_union_eq
 #print axioms Semper.EMatch.Fidelity.saturation_complete_closed
+#print axioms Semper.EMatch.Fidelity.TheoryClosed.ofParts
+#print axioms Semper.EMatch.Fidelity.closedAC_of_absent
+#print axioms Semper.EMatch.Fidelity.closedACI_of_absent
+#print axioms Semper.EMatch.Fidelity.closedA_of_absent
 #print axioms Semper.EMatch.Fidelity.PersistFails.sa_not_closed
 #print axioms Semper.EMatch.Fidelity.PersistFails.closedC
 #print axioms Semper.EMatch.Fidelity.PersistFails.completed

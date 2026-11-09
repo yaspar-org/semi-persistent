@@ -36,7 +36,13 @@ This file states and proves that expectation at the level of the store.
   modulo the laws and the store's equations are one class. It is the store
   reading of the completion completeness theorem at a fixpoint
   (`ac_equal_same_class`, `CompleteAtoms.same_class`: two `=_E`-equal
-  active nodes are in one class). `denE_denN_eq`: under it, a right-hand
+  active nodes are in one class), and `Final/Closed.lean` derives it from
+  the completion state through the correspondence
+  (`theoryClosed_of_complete`): the AC field for the operator of the state,
+  the node and pair fields from the hash-cons and the sorted pairs; the
+  other operators and the ACI and A theories are the remainder
+  `TheoryClosedRest` (`ClosedAC`, `ClosedACI`, `ClosedA`,
+  `TheoryClosed.ofParts`). `denE_denN_eq`: under it, a right-hand
   side present modulo the theory has every value `add` would build in that
   class. `saturation_complete_closed`: with completion on, at the fixpoint,
   every union the rules ask for holds between any values its two sides
@@ -876,8 +882,10 @@ laws and the store's equations are one class, for every n-ary operator;
 two nodes of one content, or a pair in either order, are in one class
 (the hash-cons). This is the store reading of the completion completeness
 theorem at a fixpoint: `ac_equal_same_class` and `CompleteAtoms.same_class`
-(two `=_E`-equal active nodes of a converged state are in one class),
-`I0Active` (every class holds an active node), and congruence closure. -/
+(two `=_E`-equal active nodes of a converged state are in one class), and
+congruence closure. `theoryClosed_of_complete` (`Final/Closed.lean`) derives
+it from the completion state of one AC operator and the remainder
+`TheoryClosedRest`. -/
 structure TheoryClosed (S : Store) (L : Sym → OpLaws) : Prop where
   mset : ∀ f c c', EqAC S.graph L f {S.find c} {S.find c'} → S.find c = S.find c'
   set : ∀ f c c', EqACI S.graph L f {S.find c} {S.find c'} → S.find c = S.find c'
@@ -885,6 +893,92 @@ structure TheoryClosed (S : Store) (L : Sym → OpLaws) : Prop where
   node : ∀ id₁ id₂ n, (id₁, n) ∈ S.nodes → (id₂, n) ∈ S.nodes → S.find id₁ = S.find id₂
   pair : ∀ id₁ id₂ f a b, (id₁, ⟨f, .spair a b⟩) ∈ S.nodes → (id₂, ⟨f, .spair b a⟩) ∈ S.nodes →
     S.find id₁ = S.find id₂
+
+/-! ### The split of `TheoryClosed` -/
+
+/-- The store is closed under the theory of the AC operator `f`: the
+`mset` field of `TheoryClosed` at `f`. -/
+def ClosedAC (S : Store) (L : Sym → OpLaws) (f : Sym) : Prop :=
+  ∀ c c', EqAC S.graph L f {S.find c} {S.find c'} → S.find c = S.find c'
+
+/-- The store is closed under the theory of the ACI operator `f`. -/
+def ClosedACI (S : Store) (L : Sym → OpLaws) (f : Sym) : Prop :=
+  ∀ c c', EqACI S.graph L f {S.find c} {S.find c'} → S.find c = S.find c'
+
+/-- The store is closed under the theory of the A operator `f`. -/
+def ClosedA (S : Store) (L : Sym → OpLaws) (f : Sym) : Prop :=
+  ∀ c c', EqA S.graph L f [S.find c] [S.find c'] → S.find c = S.find c'
+
+/-- Every stored pair is sorted (`CCanon`: the engine stores a commutative
+node with its two children in order). -/
+def PairsSorted (S : Store) : Prop :=
+  ∀ id f a b, (id, ⟨f, .spair a b⟩) ∈ S.nodes → a ≤ b
+
+/-- What the completion state of one AC operator `f` does not cover: the
+closure under the theory of every other AC operator, and under the ACI and
+A theories of every operator. `theoryClosed_of_complete`
+(`Final/Closed.lean`) derives the rest of `TheoryClosed` from the state. -/
+structure TheoryClosedRest (S : Store) (L : Sym → OpLaws) (f : Sym) : Prop where
+  mset : ∀ g, g ≠ f → ClosedAC S L g
+  set : ∀ g, ClosedACI S L g
+  seq : ∀ g, ClosedA S L g
+
+/-- `TheoryClosed` from its parts: the closure under the theory of the AC
+operator `f`, the remainder, the hash-cons dedup and sorted pairs. -/
+theorem TheoryClosed.ofParts {S : Store} {L : Sym → OpLaws} {f : Sym} (hf : ClosedAC S L f)
+    (hrest : TheoryClosedRest S L f)
+    (hdedup : ∀ id₁ id₂ n, (id₁, n) ∈ S.nodes → (id₂, n) ∈ S.nodes → S.find id₁ = S.find id₂)
+    (hsorted : PairsSorted S) : TheoryClosed S L where
+  mset g c c' h := by
+    by_cases hg : g = f
+    · subst hg; exact hf c c' h
+    · exact hrest.mset g hg c c' h
+  set g := hrest.set g
+  seq g := hrest.seq g
+  node := hdedup
+  pair id₁ id₂ g a b h₁ h₂ := by
+    have hab : a = b := le_antisymm (hsorted _ _ _ _ h₁) (hsorted _ _ _ _ h₂)
+    subst hab
+    exact hdedup _ _ _ h₁ h₂
+
+/-- An operator with no stored AC node and no law is closed: no step applies. -/
+theorem closedAC_of_absent {S : Store} {L : Sym → OpLaws} {f : Sym}
+    (hno : ∀ id m, (id, ⟨f, .mset m⟩) ∉ S.nodes) (hu : (L f).unit = none)
+    (hn : (L f).nilpotent = none) (hi : (L f).invOp = none) : ClosedAC S L f := by
+  intro c c' h
+  have hstep : ∀ m m', ACStep S.graph L f m m' → False := by
+    intro m m' hs
+    cases hs with
+    | splice hmem => exact hno _ _ hmem
+    | unit hu' => rw [hu] at hu'; cases hu'
+    | nil hn' => rw [hn] at hn'; cases hn'
+    | inv hi' _ => rw [hi] at hi'; cases hi'
+  have := eqvGen_invariant (fun m : Multiset C => m) (fun m m' hs => (hstep m m' hs).elim) h
+  exact Multiset.singleton_inj.1 this
+
+/-- An operator with no stored ACI node and no unit is closed. -/
+theorem closedACI_of_absent {S : Store} {L : Sym → OpLaws} {f : Sym}
+    (hno : ∀ id s, (id, ⟨f, .set s⟩) ∉ S.nodes) (hu : (L f).unit = none) : ClosedACI S L f := by
+  intro c c' h
+  have hstep : ∀ s s', ACIStep S.graph L f s s' → False := by
+    intro s s' hs
+    cases hs with
+    | splice hmem => exact hno _ _ hmem
+    | unit hu' => rw [hu] at hu'; cases hu'
+  have := eqvGen_invariant (fun s : Finset C => s) (fun s s' hs => (hstep s s' hs).elim) h
+  exact Finset.singleton_inj.1 this
+
+/-- An operator with no stored sequence node and no unit is closed. -/
+theorem closedA_of_absent {S : Store} {L : Sym → OpLaws} {f : Sym}
+    (hno : ∀ id l, (id, ⟨f, .seq l⟩) ∉ S.nodes) (hu : (L f).unit = none) : ClosedA S L f := by
+  intro c c' h
+  have hstep : ∀ l l', AStep S.graph L f l l' → False := by
+    intro l l' hs
+    cases hs with
+    | splice hmem => exact hno _ _ hmem
+    | unit hu' => rw [hu] at hu'; cases hu'
+  have := eqvGen_invariant (fun l : List C => l) (fun l l' hs => (hstep l l' hs).elim) h
+  exact List.singleton_inj.1 this
 
 /-! ### The values of a right-hand side are determined by the binding -/
 
