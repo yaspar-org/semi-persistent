@@ -47,6 +47,9 @@ pub enum InterpError {
     /// A count past the configured multiplicity width, met while building or rebuilding:
     /// reported as `multiplicity overflow: …` with the width and its maximum.
     MultOverflow(String),
+    /// An empty abstract meet: the program's equalities and seeds have no model
+    /// (abstract-engine-task.md §5). Reported as `abstract conflict: …`.
+    AbsConflict(String),
 }
 
 impl From<crate::resolve::ResolveError> for InterpError {
@@ -77,6 +80,8 @@ impl std::fmt::Display for InterpError {
             }
             InterpError::TermError(m) => write!(f, "term: {m}"),
             InterpError::MultOverflow(m) => write!(f, "{m}"),
+            InterpError::AbsConflict(m) if m.contains("abstract conflict") => write!(f, "{m}"),
+            InterpError::AbsConflict(m) => write!(f, "abstract conflict: {m}"),
         }
     }
 }
@@ -417,9 +422,8 @@ where
     /// incremental or full transient-index repair.
     fn lazy_txn_open(&mut self) {
         if self.lazy_txn.is_none() {
-            // TODO(abs-saturation-engine): the mark rebuilds, so values are propagated before the
-            // transaction opens; values refined inside it roll back when it closes, see
-            // egraph/doc/future/abstract-engine-task.md §6
+            // The mark rebuilds, so values are propagated before the transaction opens; values
+            // refined inside it roll back when it closes (abstract-engine-task.md §6).
             self.lazy_txn = Some(self.eg.mark(self.shrink_policy));
             self.eg.set_cc(true);
         }
@@ -459,12 +463,15 @@ where
     fn lazy_ac_decide(&mut self, a: Cfg::G, b: Cfg::G) -> Result<(bool, bool), InterpError> {
         self.lazy_txn_open();
         self.eg.set_cc_goal(Some((a, b)));
-        // TODO(abs-saturation-engine): completion merges inside the transaction meet values like
-        // any merge; a conflict found here is entailed by the program, so the check reports it
-        // instead of discarding it with the transaction, see
-        // egraph/doc/future/abstract-engine-task.md §6
+        // Completion merges inside the transaction meet values like any merge. A conflict found
+        // here is entailed by the program: the search stops, and `run_checked` reports it before
+        // the transaction closes, since `restore` would clear the flag (abstract-engine-task.md §6).
         self.eg.rebuild();
         let mut equal = self.eg.find(a) == self.eg.find(b);
+        if self.eg.abs_has_conflict() {
+            self.eg.set_cc_goal(None);
+            return Ok((equal, false));
+        }
         let aborted = |eg: &EGraph<Cfg, L, TRACK, PROOFS>| {
             matches!(
                 eg.completion_outcome(),
@@ -812,7 +819,17 @@ where
             ) {
                 self.lazy_txn_close();
             }
+            // A top-level command outside a run is one budget epoch (abstract-engine-task.md §3).
+            self.eg.abs_begin_epoch();
             let r = self.exec_checked(cmd);
+            // An abstract conflict met by this command wins over the error it caused (a run
+            // stops on it with a placeholder fault). It is taken before the lazy-check
+            // transaction closes: `restore` resets the flag to its value at the mark, which
+            // would discard a conflict the program entails (abstract-engine-task.md §5, §6).
+            if let Some(c) = self.eg.take_abs_conflict() {
+                self.lazy_txn_close();
+                return Err(InterpError::AbsConflict(c));
+            }
             if r.is_err() {
                 self.lazy_txn_close();
             }
@@ -820,9 +837,6 @@ where
             // A rebuild that met a multiplicity past the configured width (a union that
             // makes two children of one AC node sum past it, or completion) left that
             // node as it was: the run reports it and stops.
-            // TODO(abs-saturation-engine): report an abstract conflict met by this command the
-            // same way, through `take_abs_conflict` and a new `InterpError` variant, see
-            // egraph/doc/future/abstract-engine-task.md §5
             if let Some(e) = self.eg.take_width_error() {
                 self.lazy_txn_close();
                 let _ = e;
@@ -1267,9 +1281,8 @@ where
                 } else {
                     self.shrink_policy
                 };
-                // TODO(abs-saturation-engine): no engine work at push: `mark` rebuilds and drains
-                // the abs queues, and #2's pool is marked with the classes, see
-                // egraph/doc/future/abstract-engine-task.md §6
+                // No engine work at push: `mark` rebuilds and drains the abs queues, and saves
+                // the conflict flag with the snapshot (abstract-engine-task.md §6).
                 self.marks.push(Mark {
                     token: self.eg.mark(policy),
                     rules_len: self.rules.len(),
@@ -1386,9 +1399,9 @@ where
                 // fused, so it costs one pop core per column (design doc 08 §1;
                 // the verified `restore` alone keeps the scope open).
                 self.eg.restore_and_pop(mark.token);
-                // TODO(abs-saturation-engine): values roll back with the classes (#2), and a
-                // conflict raised inside the scope is cleared with it, see
-                // egraph/doc/future/abstract-engine-task.md §6
+                // A conflict raised inside the scope is cleared by `restore_and_pop`.
+                // TODO(abs-saturation-engine): values roll back with the classes once they live
+                // in #146's pool; until then they survive the pop (abstract-engine-task.md §6).
                 self.rules.truncate(mark.rules_len);
                 self.globals.truncate(mark.globals_len);
             }
