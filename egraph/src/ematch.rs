@@ -4042,13 +4042,22 @@ where
         bound: &mut [bool],
         from: usize,
     ) -> bool {
+        // `ri_at[ei]` is the entry to resume from: the caller's index for `from`, the
+        // index advanced by a backtrack for an earlier element, and 0 for an element
+        // entered afresh (reset below on the forward move). Scanning every element but
+        // `from` from 0 instead ignored the advanced index after a backtrack, so the
+        // element re-took the entry just undone and the search never terminated
+        // (`cursor_shapes.rs`, `exact_decompositions_backtrack_without_a_rest`).
         let mut ei = from;
         while ei < elems.len() {
-            let start = if ei == from { ri_at[ei] } else { 0 };
+            let start = ri_at[ei];
             match self.ac_scan(elems, residual, ei, start, bound) {
                 Some(ri) => {
                     ri_at[ei] = ri;
                     ei += 1;
+                    if ei < elems.len() {
+                        ri_at[ei] = 0;
+                    }
                 }
                 None => {
                     ri_at[ei] = 0;
@@ -4236,13 +4245,17 @@ where
         bound: &mut [bool],
         from: usize,
     ) -> bool {
+        // Same resume discipline as `ac_find_first`.
         let mut ei = from;
         while ei < elems.len() {
-            let start = if ei == from { ri_at[ei] } else { 0 };
+            let start = ri_at[ei];
             match self.aci_scan(elems, residual, used, ei, start, bound) {
                 Some(ri) => {
                     ri_at[ei] = ri;
                     ei += 1;
+                    if ei < elems.len() {
+                        ri_at[ei] = 0;
+                    }
                 }
                 None => {
                     ri_at[ei] = 0;

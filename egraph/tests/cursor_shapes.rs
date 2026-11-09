@@ -149,15 +149,13 @@ fn sequence_windows_short_node_and_no_binding() {
     }
 }
 
-/// Exact AC and ACI patterns with three free elements over three entries: every order is
-/// a match, the later ones found by backtracking without a rest. The recursive matcher
-/// finds the six in milliseconds; the cursor (`run_query_iter`) does not return on
-/// `(F x y z)`: `MatchIterator::backtrack`, `FrameKind::ACDecompose` with `rest: None`,
-/// looping on `ac_advance`, whose retry path undoes element `e` once explicitly and once
-/// more at the loop head with the already advanced `ri_at[e]`. Recorded in
-/// proofs/lean/GUIDE.md §10; ignored until the cursor is fixed.
+/// Exact AC and ACI patterns with three free elements over the entries `{a, b}` and
+/// `{a, b, c}`: on the three-entry node every order is a match, and on the two-entry node
+/// the third element fails and the search must backtrack. The cursor's initial search
+/// (`ac_find_first`, `aci_find_first`) scanned every element but the first from entry 0
+/// after a backtrack, re-took the entry just undone and never terminated; it now resumes
+/// from the advanced index (GUIDE.md §10, item 19).
 #[test]
-#[ignore = "the cursor matcher does not terminate on an exact AC pattern with three free elements (MatchIterator::backtrack / ac_advance, ACDecompose without a rest); see GUIDE.md §10"]
 fn exact_decompositions_backtrack_without_a_rest() {
     let eg = build();
     assert_eq!(agree(&eg, "(F x y z)").len(), 6);
