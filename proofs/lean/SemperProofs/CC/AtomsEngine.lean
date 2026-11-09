@@ -152,6 +152,45 @@ theorem completion_complete_combined_engine_atoms (u : Fin n) (k : ℕ) (hk : 2 
     hrun ha h0 hcanon hfix.roundFixed (I3_withAtoms h3) hlhs_u hlhs_k hlhs_inv hax_nil
     (hfix.congr hcc) hS hcancel hM hN hMN
 
+/-- `completion_complete_identityInverse_engine` with leaf constants; the
+unit `u` is the implicit node `(∅, u)` of the view. -/
+theorem completion_complete_identityInverse_engine_atoms (u : Fin n)
+    (inv : Fin n → Option (Fin n)) (cancel : Prop)
+    {S : Set (Monomial n × Monomial n)} {st : State n} {A : Set (Fin n)}
+    {ss₀ ss : SlotState n} {gnodes : Set (Fin n × Fin n)}
+    (hurep : st.find u = u)
+    (hfixu : RoundFixedInvUnit inv u (st.withAtoms A (some u)))
+    (hinv : InvNodes (st.withAtoms A (some u)) gnodes inv)
+    (hfixinv : RoundFixedInv (identityInverseClamp u inv) inv (st.withAtoms A (some u)))
+    (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss)
+    (ha : SlotState.Agrees (st.withAtoms A (some u)) ss)
+    (h0 : I0Active (st.withAtoms A (some u)))
+    (hcanon : ∀ c, (Laws.identityInverse u inv cancel
+      (invUnitFree_of_fixed hfixu hinv hurep)).clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixedA (Laws.identityInverse u inv cancel
+      (invUnitFree_of_fixed hfixu hinv hurep)) st A (some u))
+    (h3 : I3 (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) st)
+    (hlhs_u : ∀ A' B, (A', B) ∈ (st.withAtoms A (some u)).rules → u ∉ A')
+    (hlhs_inv : ∀ A' B, (A', B) ∈ (st.withAtoms A (some u)).rules → InvNormal inv A')
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A (some u)).active ∧
+      (N, d) ∈ (st.withAtoms A (some u)).active ∧ st.find c = st.find d)
+    (hcancel : (Laws.identityInverse u inv cancel
+        (invUnitFree_of_fixed hfixu hinv hurep)).cancellative → ∀ M N X,
+      Joinable (Rw (plain n) ((st.withAtoms A (some u)).rules ∪
+          (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).axRules))
+        (M + X) (N + X) →
+      Joinable (Rw (plain n) ((st.withAtoms A (some u)).rules ∪
+          (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).axRules))
+        M N)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ (st.withAtoms A (some u)).active)
+    (hN : (N, d) ∈ (st.withAtoms A (some u)).active)
+    (hMN : E (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) S M N) :
+    st.find c = st.find d :=
+  completion_complete_identityInverse_engine (st := st.withAtoms A (some u)) u inv cancel hurep
+    hfixu hinv hfixinv h5₀ hrun ha h0 hcanon hfix.roundFixed (I3_withAtoms h3) hlhs_u hlhs_inv
+    (hfix.congr hcc) hS hcancel hM hN hMN
+
 /-- **`CompleteAtoms` from the per-law conditions.** For a law set the model
 names, the bundle is built from the engine-side hypotheses and the
 conditions `LawSpec.Conds` on the view's rules; `hlaw` and `hnf_ax` are the

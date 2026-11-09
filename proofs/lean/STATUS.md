@@ -94,8 +94,8 @@ commits and the withdrawn claims.
   `completion_complete_atoms` (packaged as `CompleteAtoms`, with
   `atom_class`: a node `=_E` a constant `{x}` is in `x`'s class, `atoms`,
   `unit_class`, `materialized`) and
-  `completion_complete_{cancellative,inverse,combined}_engine_atoms` are the
-  completeness theorems for graphs with leaf constants;
+  `completion_complete_{cancellative,inverse,combined,identityInverse}_engine_atoms`
+  are the completeness theorems for graphs with leaf constants;
   `invNodes_withAtoms` derives the one-element nodes the inverse rules R1-R5
   are stated on from atomic `g`-node classes; `CompleteAtoms.ofLaws` builds
   the bundle from the per-law conditions `LawSpec.Conds` on the view's rules
@@ -175,9 +175,11 @@ commits and the withdrawn claims.
   `check-neq` there is an engine unsoundness.
 - `Laws/`: concrete instances `identity`, `nilpotent`, `idempotent`,
   `inverse` (the engine's one-directional walk `invWalk`, proved normalizing
-  by `invNormal_invWalk`), `combined`; `hlaw` and `hnf_ax` discharged;
-  `completion_complete_{identity,nilpotent,idempotent,inverse,combined}` with
-  `hcp` reduced to rule-side conditions: `RuleRuleCP` (derived from the
+  by `invNormal_invWalk`), `combined`, `identityInverse` (identity, inverse)
+  and `idempotentIdentity` (identity, idempotent), one for every tag set the
+  engine accepts; `hlaw` and `hnf_ax` discharged;
+  `completion_complete_{identity,nilpotent,idempotent,inverse,combined,identityInverse,idempotentIdentity}`
+  with `hcp` reduced to rule-side conditions: `RuleRuleCP` (derived from the
   fixed round), and for `:inverse` `InvMatching`, `InvUnitFree`,
   `InverseAxiomCP`, `NilpotentInverseCP`, which the inverse rules R1 to R5
   establish (below; reproducers in `proofs/repro`).
@@ -188,22 +190,23 @@ commits and the withdrawn claims.
   `RoundFixedInvUnit`, `RoundFixedInvNil` discharge the four hypotheses
   (`invMatching_of_fixed`, `invUnitFree_of_fixed`,
   `inverseAxiomCP_of_fixed`, `nilpotentInverseCP_of_fixed`), giving
-  `completion_complete_inverse_engine` and
-  `completion_complete_combined_engine`, which take `hcancel`, `hcc`, `hS`,
+  `completion_complete_inverse_engine`, `completion_complete_combined_engine`
+  and `completion_complete_identityInverse_engine`, which take `hcancel`, `hcc`, `hS`,
   the minimal-monomial hypotheses, I3 and conditions on left-hand sides
   (GUIDE Section 5.6).
 - `Laws/AxiomCP.lean`: `LawSpec`, the law sets the model names (`plain`,
-  `identity`, `nilpotent`, `idempotent`, `inverse`, `combined`;
-  `identityNilpotent` is `combined` with the empty inverse), with
-  `LawSpec.laws` and the per-law conditions `LawSpec.Conds`
+  `identity`, `nilpotent`, `idempotent`, `inverse`, `combined`,
+  `identityInverse`, `idempotentIdentity`; `identityNilpotent` is
+  `combined` with the empty inverse), one case for every tag set the engine
+  accepts, with `LawSpec.laws` and the per-law conditions `LawSpec.Conds`
   (`IdentityConds`, `NilpotentConds`, `IdempotentConds`, `InverseConds`,
-  `CombinedConds`); `LawSpec.hlaw`, `LawSpec.hnf_ax`, `LawSpec.hcp` and
+  `CombinedConds`, `IdentityInverseConds`, `IdempotentIdentityConds`);
+  `LawSpec.hlaw`, `LawSpec.hnf_ax`, `LawSpec.hcp` and
   `axiomCP_of_laws` (a `RoundFixed` state whose rules meet the conditions
   satisfies `AxiomCP`, by case analysis on the law set);
-  `LawSpec.conds_inverse_of_fixed` and `conds_combined_of_fixed` (the
-  inverse conditions from the fixpoints of R1 to R5). The tag sets
-  `:idempotent :identity` and `:identity :inverse` without `:nilpotent`
-  have no `Laws` instance (GUIDE Sections 5.6, 9).
+  `LawSpec.conds_inverse_of_fixed`, `conds_identityInverse_of_fixed` and
+  `conds_combined_of_fixed` (the inverse conditions from the fixpoints of
+  R1 to R5). GUIDE Sections 5.6, 9.
 
 - `Bridge/`: `represents st f A`, the matching graph of one AC operator read
   from a completion state; `ac_equal_same_class_graph` (at a converged

@@ -73,6 +73,7 @@ change to `proofs/lean/`.
 | 2026-11-09 | `85077252` | engine | `MatchIterator` mirrored against `run_query` on the rounds corpus and against the Lean frame on random residuals |
 | 2026-11-09 | `e49dc09e` | proofs | `AxiomCP` derived from the fixed round and the per-law conditions for every law set `LawSpec` names (`axiomCP_of_laws`); `CompleteHyps.ofLaws` and `CompleteAtoms.ofLaws` take the conditions in place of `hcp_ax` (gap 3 of the guide reduced to the count-threshold conditions and the two tag sets without a model) |
 | 2026-11-09 | `f5d1ed97` | proofs | `TheoryClosed` derived from the completion state through the correspondence (`theoryClosed_of_complete`); the remainder `TheoryClosedRest` |
+| 2026-11-09 | `e2a6b9ce` | proofs | `Laws.identityInverse` and `Laws.idempotentIdentity`, the two accepted tag sets without an instance, with `hcp_identityInverse`, `hcp_idempotentIdentity`, their completeness theorems and `LawSpec` cases; `axiomCP_of_laws` covers every tag set the engine accepts (gap 3 reduced to the count-threshold conditions) |
 
 ## 2. The findings of the second edition and their resolutions
 

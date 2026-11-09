@@ -22,3 +22,4 @@ import SemperProofs.CC.Laws.InvRulesMain
 #print axioms SemperProofs.CC.combined_clamp_replicate_self
 #print axioms SemperProofs.CC.completion_complete_inverse_engine
 #print axioms SemperProofs.CC.completion_complete_combined_engine
+#print axioms SemperProofs.CC.completion_complete_identityInverse_engine

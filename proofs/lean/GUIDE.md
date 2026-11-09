@@ -1892,7 +1892,11 @@ hypotheses `hlaw` and `hnf_ax` are discharged, and `hcp` is reduced to `RuleRule
 the fixed round supplies (`ruleRuleCP_of_fixed`), and conditions on left-hand sides. For
 `:inverse`, the reduction leaves four conditions, which the inverse rules R1 to R5
 establish (below): `InvMatching`, `InvUnitFree`, `InverseAxiomCP` and
-`NilpotentInverseCP`.
+`NilpotentInverseCP`. The law sets are the five single laws and compositions `identity`,
+`nilpotent`, `idempotent`, `inverse`, `combined` (identity, nilpotent, inverse) and the two
+other compositions the engine accepts, `identityInverse` (identity, inverse) and
+`idempotentIdentity` (identity, idempotent), all in `CC/Laws/Combined.lean` as normal-form
+law sets.
 
 ```lean
 theorem completion_complete_identity (u : Fin n) (cancel : Prop)
@@ -1906,18 +1910,21 @@ theorem completion_complete_identity (u : Fin n) (cancel : Prop)
     (hMN : E (Laws.identity u cancel) S M N) : st.find c = st.find d
 ```
 
-**Reading.** The five law theorems (`completion_complete_identity`, `_nilpotent`,
-`_idempotent`, `_inverse`, `_combined`, `CC/Laws/Main.lean`) are
+**Reading.** The seven law theorems (`completion_complete_identity`, `_nilpotent`,
+`_idempotent`, `_inverse`, `_combined`, `_identityInverse`, `_idempotentIdentity`,
+`CC/Laws/Main.lean`) are
 `completion_complete_at_convergence` with the law hypotheses discharged and `hcp` reduced to
 conditions on the stored rules, which the engine's clamp establishes: no left-hand side
 holds the unit (`hu`); under `:nilpotent k` every count is below `k` (`hlhs`) and each rule's
 pair with the clamp axiom joins (`hax`); under `:idempotent` every left-hand side is
 duplicate-free; under `:inverse` the inverse map is injective and involutive
 (`InvMatching`), left-hand sides hold no inverse pair (`InvNormal`), the rule-inverse pairs
-join (`InverseAxiomCP`), and for the combination the unit is no inverse (`InvUnitFree`) and
-the nilpotent-inverse pairs join (`NilpotentInverseCP`). The `_engine` forms
+join (`InverseAxiomCP`), and for the compositions with an inverse the unit is no inverse
+(`InvUnitFree`) and, with a nilpotent order, the nilpotent-inverse pairs join
+(`NilpotentInverseCP`). The `_engine` forms
 (`completion_complete_inverse_engine`, `completion_complete_combined_engine`,
-`CC/Laws/InvRulesMain.lean`, `:340`, `:371`) derive the four inverse conditions from the
+`completion_complete_identityInverse_engine`, `CC/Laws/InvRulesMain.lean`, `:350`, `:380`,
+`:435`) derive the inverse conditions from the
 fixpoints of the engine's rules R1 to R5 (`RoundFixedInv`, `RoundFixedInvUnit`,
 `RoundFixedInvNil`; `invMatching_of_fixed`, `invUnitFree_of_fixed`,
 `inverseAxiomCP_of_fixed`, `nilpotentInverseCP_of_fixed`) and the inverse nodes present
@@ -1955,7 +1962,7 @@ fixpoints (`RoundFixedInv`, `RoundFixedInvUnit`, `RoundFixedInvNil`) and derives
 inverse conditions from them; the engine generates the pairs for touched rules in
 intermediate rounds and for every rule in the full round.
 
-**Adequacy.** The two `_engine` theorems take `hcancel`, `hcc`, `hS`, the minimal-monomial
+**Adequacy.** The three `_engine` theorems take `hcancel`, `hcc`, `hS`, the minimal-monomial
 hypotheses, `I3` and conditions on left-hand sides, and with the cancellative operator
 `inv_rules_sound` requires, `hcancel` is the hypothesis Section 5.7 shows the engine does not
 establish; the `_atoms` forms of Section 5.9 and the bundles take lattice closure in its
@@ -1963,12 +1970,14 @@ place.
 
 **`AxiomCP` from the per-law conditions** (`CC/Laws/AxiomCP.lean`). `LawSpec n` enumerates
 the law sets the model names, with their parameters: `plain`, `identity u cancel`,
-`nilpotent k hk cancel`, `idempotent cancel`, `inverse inv cancel` and
-`combined u k hk inv cancel hu`; `LawSpec.laws` is the `Laws` of each, and `LawSpec.Conds R`
+`nilpotent k hk cancel`, `idempotent cancel`, `inverse inv cancel`,
+`combined u k hk inv cancel hu`, `identityInverse u inv cancel hu` and
+`idempotentIdentity u cancel`; `LawSpec.laws` is the `Laws` of each, and `LawSpec.Conds R`
 the conjunction of the per-law conditions above on the rule set `R` (`IdentityConds`: no
 left-hand side holds the unit; `NilpotentConds` and `IdempotentConds`: `hlhs` and `hax`;
 `InverseConds`: `InvMatching`, `InvNormal` left-hand sides, `InverseAxiomCP`;
-`CombinedConds`: the three together with `NilpotentInverseCP`).
+`CombinedConds`: the three together with `NilpotentInverseCP`; `IdentityInverseConds` and
+`IdempotentIdentityConds`: the conditions of the two laws composed).
 
 ```lean
 theorem axiomCP_of_laws (sp : LawSpec n) {st : State n} (hfix : RoundFixed sp.laws st)
@@ -1988,8 +1997,10 @@ theorem CompleteAtoms.ofLaws (sp : LawSpec n) ... (hfix : RoundFixedA sp.laws st
 law's conditions joins every critical pair that involves a law instance. The proof is one
 case per law set: the fixed round gives the rule-rule pairs (`ruleRuleCP_of_fixed`), the
 theorem of `CC/Laws/CriticalPairs.lean` for that law (`hcp_identity`, `hcp_nilpotent`,
-`hcp_idempotent`, `hcp_inverse`, `hcp_combined`, which handle the pairwise interactions of
-the combined laws: unit against nilpotent, unit against inverse, nilpotent against inverse)
+`hcp_idempotent`, `hcp_inverse`, `hcp_combined`, which handles the pairwise interactions of
+the combined laws: unit against nilpotent, unit against inverse, nilpotent against inverse;
+`hcp_identityInverse`, the same without the nilpotent cases; `hcp_idempotentIdentity`, where
+the unit generator and an idempotent generator never overlap)
 gives the whole `HCP`, and `AxiomCP` is its law part (`AxiomCP.of_hcp`); for plain AC every
 pair is a rule-rule pair. `LawSpec.hlaw` and `LawSpec.hnf_ax` discharge the two law
 hypotheses the same way. `CompleteHyps.ofLaws` (`CC/Bridge/Modulo.lean`) and
@@ -1997,21 +2008,26 @@ hypotheses the same way. `CompleteHyps.ofLaws` (`CC/Bridge/Modulo.lean`) and
 hypotheses and `LawSpec.Conds` in place of `hcp_ax`, `hlaw` and `hnf_ax`; the existing
 fields and theorems are unchanged, and `AtomsWitness.witness_complete` goes through
 `CompleteAtoms.ofLaws` at `LawSpec.plain`. The inverse conditions are what the fixpoints of
-R1 to R5 establish: `LawSpec.conds_inverse_of_fixed` and `conds_combined_of_fixed` assemble
-`Conds` from `RoundFixedInv`, `RoundFixedInvUnit`, `RoundFixedInvNil`, `InvNodes`, `I3` and
-`Converged`, as the `_engine` theorems do.
+R1 to R5 establish: `LawSpec.conds_inverse_of_fixed`, `conds_identityInverse_of_fixed` and
+`conds_combined_of_fixed` assemble `Conds` from `RoundFixedInv`, `RoundFixedInvUnit`,
+`RoundFixedInvNil`, `InvNodes`, `I3` and `Converged`, as the `_engine` theorems do.
 
 The engine accepts, on an AC operator, the tag sets plain, `:identity`, `:idempotent`,
 `:idempotent :identity`, `:identity :nilpotent k`, `:identity :inverse` and
 `:identity :nilpotent k :inverse` (`egraph/src/sortcheck.rs`: `:nilpotent` and `:inverse`
 require `:identity`; `:idempotent` excludes `:nilpotent`, `:inverse` and `:cancellative`).
-`LawSpec` covers plain, `:identity`, `:idempotent`, `:identity :nilpotent k`
+Every accepted tag set has a `Laws` instance and a `LawSpec` case: plain, `:identity`,
+`:idempotent`, `:idempotent :identity` (`idempotentIdentity`), `:identity :nilpotent k`
 (`LawSpec.identityNilpotent`, which is `combined` with the empty inverse: its inverse
-conditions are vacuous) and `:identity :nilpotent k :inverse`; `nilpotent` and `inverse`
-alone are the model's law sets with no engine tag set. Outside: `:idempotent :identity` and
-`:identity :inverse` without `:nilpotent`, which have no `Laws` instance (Section 9), and the
-conditions `hlhs` and `hax` of the nilpotent and idempotent laws, which are stated on the
-rules and not derived from a fixpoint structure as the inverse ones are.
+conditions are vacuous), `:identity :inverse` (`identityInverse`) and
+`:identity :nilpotent k :inverse` (`combined`); `nilpotent` and `inverse` alone are the
+model's law sets with no engine tag set. The two compositions with an inverse are normal-form
+law sets under `InvUnitFree`, which R2 supplies (`invUnitFree_of_fixed`); the composition
+with the idempotent law leaves out the idempotent generator at the unit, `{u, u} → {u}`,
+which is not an instance of the composite normal form and which `{u} → ∅` derives. Outside:
+the conditions `hlhs` and `hax` of the nilpotent and idempotent laws and `hu` of the identity
+law, which are stated on the rules and not derived from a fixpoint structure as the inverse
+ones are.
 
 ### 5.7 The lattice round
 
@@ -2255,11 +2271,12 @@ does not see.
 | `A` | a parameter; the `_atomic` corollaries take `atomicOf st` (`CC/AtomicOf.lean`), the set the `atomic` bit defines on the store of one operator | derived for the model's store, assumed for the bit | a child of a stored node (`add_use`) or a class with no `f`-node (`register_if_fresh`); a class holding an `f`-node and another operator's node, never a child, is outside the model's store | tier 1, "the bit is set iff `atomicOf`"; the five `atomic_bit_*.egg` fixtures probe the transitions |
 
 `CC/AtomsEngine.lean` restates the engine-level theorems on the view:
-`completion_complete_cancellative_engine_atoms` (`:57`, `LatticeClosed` of the view in place
-of `hcancel`), `completion_complete_inverse_engine_atoms` (`:80`) and
-`completion_complete_combined_engine_atoms` (`:108`, the unit as the implicit node
-`(∅, u)`). `I3_withAtoms` (`:32`) carries the retirement invariant to the view, and
-`invNodes_withAtoms` (`:45`) derives the one-element nodes the inverse rules R1 to R5 are
+`completion_complete_cancellative_engine_atoms` (`:62`, `LatticeClosed` of the view in place
+of `hcancel`), `completion_complete_inverse_engine_atoms` (`:85`),
+`completion_complete_combined_engine_atoms` (`:112`, the unit as the implicit node
+`(∅, u)`) and `completion_complete_identityInverse_engine_atoms` (`:157`). `I3_withAtoms`
+(`:37`) carries the retirement invariant to the view, and
+`invNodes_withAtoms` (`:50`) derives the one-element nodes the inverse rules R1 to R5 are
 stated on from the implicit nodes, when every class a `g`-node touches is atomic.
 
 **The bit and `add`** (`CC/AtomicOf.lean`). The engine keeps one `atomic` bit per class, set
@@ -3431,21 +3448,17 @@ models, and the limits that stay by design.
    place of the single state), and a set-node correspondence for the ACI operators under
    which `ACIStep` reads in a completion state with the idempotent law; the A theory has no
    completion theorem (gap 10). Acceptance: `TheoryClosedRest` reduced to its `seq` field.
-3. **The per-law conditions and the law sets without a model.** `axiomCP_of_laws` derives
-   `AxiomCP` for every law set `LawSpec` names from the fixed round and the per-law
-   conditions `LawSpec.Conds` (Section 5.6), and `CompleteHyps.ofLaws`, `CompleteAtoms.ofLaws`
-   take those conditions in place of `hcp_ax`. Two parts remain. The conditions `hlhs` and
-   `hax` of the nilpotent and idempotent laws (counts below the threshold on every left-hand
-   side; the engine's axiom pairs joinable) and `hu` of the identity law are stated on the
-   rules and derived from no fixpoint structure, where the inverse conditions are derived
-   from `RoundFixedInv`, `RoundFixedInvUnit` and `RoundFixedInvNil`. And the tag sets
-   `:idempotent :identity` and `:identity :inverse` without `:nilpotent`, which the engine
-   accepts, have no `Laws` instance, so `CompleteHyps` and `CompleteAtoms` take `hcp_ax` for
-   them. Closes it: a fixpoint structure for the axiom pairs of the count-threshold laws
-   (the per-rule pairs of `cc_round`, stated as `RoundFixedInv.r3_left` is) with a theorem
-   deriving `hax` from it, and two `NFLaw` compositions with their `hcp_*` theorems and
-   `LawSpec` cases. Acceptance: `LawSpec.conds_nilpotent_of_fixed`,
-   `conds_idempotent_of_fixed`, and `LawSpec` with cases for the two tag sets, audited in
+3. **The count-threshold conditions.** `axiomCP_of_laws` derives `AxiomCP` for every tag
+   set the engine accepts from the fixed round and the per-law conditions `LawSpec.Conds`
+   (Section 5.6), and `CompleteHyps.ofLaws`, `CompleteAtoms.ofLaws` take those conditions in
+   place of `hcp_ax`. What remains: the conditions `hlhs` and `hax` of the nilpotent and
+   idempotent laws (counts below the threshold on every left-hand side; the engine's axiom
+   pairs joinable) and `hu` of the identity law are stated on the rules and derived from no
+   fixpoint structure, where the inverse conditions are derived from `RoundFixedInv`,
+   `RoundFixedInvUnit` and `RoundFixedInvNil`. Closes it: a fixpoint structure for the axiom
+   pairs of the count-threshold laws (the per-rule pairs of `cc_round`, stated as
+   `RoundFixedInv.r3_left` is) with a theorem deriving `hax` from it. Acceptance:
+   `LawSpec.conds_nilpotent_of_fixed` and `conds_idempotent_of_fixed`, audited in
    `CC/Laws/Check.lean`.
 4. **The minimal-monomial history and the round facts.** The triple `h5₀`, `hrun`, `ha` is
    equivalent to assuming I5 of the final state (`OpsStar` is never linked to the inference
