@@ -470,15 +470,19 @@ outputs appear only in comments; nothing asserts them.
 Each claim below appeared in an edition of the guide, in `STATUS.md` or in a Lean docstring,
 and is withdrawn. None is to be cited as current.
 
-- **Retracted: the cursor matcher does not terminate.** The second edition (item 19 of
-  Section 2) reported that `MatchIterator` and `run_query_iter` (`cursor_shapes.rs`) looped on
-  an exact AC pattern with more elements than the node has entries, and commit `4e267030`
-  changed the resume point of `ac_find_first` and `aci_find_first` after a backtrack and
-  un-ignored the test `exact_decompositions_backtrack_without_a_rest`. The observation that
-  motivated the finding is a debug-versus-release timing difference on that test, not a
-  non-terminating search; the finding is withdrawn as a defect report. What stands is that the
-  cursor has no Lean model and is reached by no production path (`run_query` executes the
-  plans); the guide's Section 9 lists the model, with a termination theorem, as a gap.
+- **Retracted: eager completion does not terminate on a four-equation `:identity :inverse`
+  program.** A soundness wave reported that eager completion ran past 180 s in every matching
+  option on a ground program with negation applied to monomials. The timing compared a debug
+  binary at the PR head with a release binary at the main baseline; in one profile both
+  heads converge in 43 rounds with 215 rules and 5,752 nodes (11 s release, 112 s debug),
+  with byte-identical round traces. The run is a large but finite Gröbner basis of the
+  lattice ideal (coefficients 10 and 2, where a ℤ-echelon basis has 3 rows), not a defect.
+  Withdrawn as a nontermination report; what stands is the design observation that the
+  lattice pass runs only at the fixpoint, so eager completion on `:inverse` instances with
+  coefficients pays for the binomial basis first.
+  The cursor matcher finding (item 19 of Section 2) is not retracted: `MatchIterator` did
+  loop, and commit `4e267030` fixes the resume point of `ac_find_first` and `aci_find_first`.
+
 - **Retracted: `hcancel` is a hypothesis the engine establishes.** `completion_complete_at_convergence`
   takes `hcancel` (joinability cancels a common summand), and the first edition and
   `STATUS.md` described the inverse and combined `_engine` theorems as having engine-level
