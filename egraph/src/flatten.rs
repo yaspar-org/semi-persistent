@@ -1067,7 +1067,9 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                                 Some(&t) => t,
                                 None => {
                                     let s = self.elems.len();
-                                    if s.checked_add(fresh.len()).ok_or(OVER_BOUND)? > self.bounds.elems {
+                                    if s.checked_add(fresh.len()).ok_or(OVER_BOUND)?
+                                        > self.bounds.elems
+                                    {
                                         return Err(OVER_BOUND);
                                     }
                                     self.elems.extend_from_slice(&fresh);
