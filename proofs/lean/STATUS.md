@@ -40,8 +40,8 @@ commits and the withdrawn claims.
   matching run on the represented graph (not a converse of completeness).
   GUIDE Sections 7.2 to 7.6.
 - Hypotheses no theorem discharges (`SubRep`, `CompleteAtoms` with `hlat`,
-  `hcp_ax` and the minimal-monomial hypotheses, the round facts,
-  `TheoryClosed`): GUIDE Section 9.
+  the per-law conditions `LawSpec.Conds` and the minimal-monomial
+  hypotheses, the round facts, `TheoryClosed`): GUIDE Section 9.
 
 ## CC: AC-congruence closure (`SemperProofs/CC/`)
 
@@ -58,7 +58,10 @@ commits and the withdrawn claims.
   reducible by another rule, `cp_joinable` over non-containing pairs),
   `hcp_of_fixed` derives the rule-rule critical pairs from it
   (`ruleRuleCP_of_fixed`), and the bundles take `hcp_ax : AxiomCP`, the
-  pairs involving a law instance, in place of `hcp`. The atoms witness
+  pairs involving a law instance, in place of `hcp`; `CompleteHyps.ofLaws`
+  and `CompleteAtoms.ofLaws` take the per-law conditions `LawSpec.Conds`
+  instead, from which `axiomCP_of_laws` derives it for every law set
+  `LawSpec` names. The atoms witness
   retires `{a, b, d}` as the engine does (`witness_I3`). `I0Active`
   constrains only the classes that hold an active node and `hcc` only the
   active nodes; the statement over every class of `Fin n` (`I0ActiveAll`,
@@ -82,8 +85,11 @@ commits and the withdrawn claims.
   `completion_complete_{cancellative,inverse,combined}_engine_atoms` are the
   completeness theorems for graphs with leaf constants;
   `invNodes_withAtoms` derives the one-element nodes the inverse rules R1-R5
-  are stated on from atomic `g`-node classes. `AtomsWitness.witness_complete`
-  proves every hypothesis of `CompleteAtoms` for the converged state of
+  are stated on from atomic `g`-node classes; `CompleteAtoms.ofLaws` builds
+  the bundle from the per-law conditions `LawSpec.Conds` on the view's rules
+  in place of `hcp_ax`. `AtomsWitness.witness_complete`
+  proves every hypothesis of `CompleteAtoms` (through `CompleteAtoms.ofLaws`
+  at `LawSpec.plain`) for the converged state of
   `(union (+ a b) c)`, `t = a+b+d`, `u = c+d` (four leaf constants, a
   normal form `{c}` collapsed into `c`'s class), by hand and `decide`;
   `witness_not_all` shows `I0ActiveAll` fails on it. `A` is a parameter and
@@ -174,6 +180,18 @@ commits and the withdrawn claims.
   `completion_complete_combined_engine`, which take `hcancel`, `hcc`, `hS`,
   the minimal-monomial hypotheses, I3 and conditions on left-hand sides
   (GUIDE Section 5.6).
+- `Laws/AxiomCP.lean`: `LawSpec`, the law sets the model names (`plain`,
+  `identity`, `nilpotent`, `idempotent`, `inverse`, `combined`;
+  `identityNilpotent` is `combined` with the empty inverse), with
+  `LawSpec.laws` and the per-law conditions `LawSpec.Conds`
+  (`IdentityConds`, `NilpotentConds`, `IdempotentConds`, `InverseConds`,
+  `CombinedConds`); `LawSpec.hlaw`, `LawSpec.hnf_ax`, `LawSpec.hcp` and
+  `axiomCP_of_laws` (a `RoundFixed` state whose rules meet the conditions
+  satisfies `AxiomCP`, by case analysis on the law set);
+  `LawSpec.conds_inverse_of_fixed` and `conds_combined_of_fixed` (the
+  inverse conditions from the fixpoints of R1 to R5). The tag sets
+  `:idempotent :identity` and `:identity :inverse` without `:nilpotent`
+  have no `Laws` instance (GUIDE Sections 5.6, 9).
 
 - `Bridge/`: `represents st f A`, the matching graph of one AC operator read
   from a completion state; `ac_equal_same_class_graph` (at a converged
@@ -182,7 +200,8 @@ commits and the withdrawn claims.
   class's theory-equivalence class), `engine_match_modulo_complete`/`_sound`
   (every match at a theory-equal present node is emitted with the root in
   the class), and `per_node_form_fails`, the formal counterexample to the
-  per-node statement.
+  per-node statement; `CompleteHyps.ofLaws`, the bundle from the per-law
+  conditions for a law set `LawSpec` names.
 
 ## EMatch: e-matching (`SemperProofs/EMatch/`)
 

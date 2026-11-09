@@ -1691,9 +1691,10 @@ design note proposes (tier 1: every run, one pass over the nodes; tier 2: in CI,
 Lean checker on a dump of the final state). The engine-side hypotheses are I5 (`h5₀`,
 `hrun`, `ha`), `h0`, `hcanon`, `hcc` and `hfix : RoundFixed`; the input supplies `hS`;
 the law declaration supplies `hlaw` and `hnf_ax`, discharged in `CC/Laws/` for every law set
-the engine accepts; no engine fact supplies `hcancel`, which Section 5.7 replaces by lattice
-closure in the bundles, or the law part of `hcp`, which the bundles take as `AxiomCP`. The
-conclusion is completeness at the fixpoint: two theory-equal active nodes are in one class.
+the model names; the law part of `hcp` (`AxiomCP`) is derived from the fixed round and the
+per-law conditions on the rules for those law sets (`axiomCP_of_laws`, Section 5.6); no
+engine fact supplies `hcancel`, which Section 5.7 replaces by lattice closure in the bundles.
+The conclusion is completeness at the fixpoint: two theory-equal active nodes are in one class.
 Outside: retired nodes (in a class with their reduct by I3, not by this theorem), leaf
 constants (Section 5.9), the number of rounds, and any run that stopped on a budget.
 
@@ -1705,7 +1706,10 @@ stated; the bundles `CompleteHyps` and `CompleteAtoms` take instead
 `RoundFixed` and `AxiomCP`: `ruleRuleCP_of_fixed` lifts `RoundFixed.cp_joinable_all` to
 plain rewriting (each plain reduct reaches its clamp in at most one law step,
 `clamp_rtg_RwAx`, and a clamped step embeds, `Rw_rtg_embed`). The law theorems of
-`CC/Laws/Main.lean` discharge their rule-rule condition `RuleRuleCP` the same way.
+`CC/Laws/Main.lean` discharge their rule-rule condition `RuleRuleCP` the same way. For a law
+set `LawSpec` names, `CompleteHyps.ofLaws` and `CompleteAtoms.ofLaws` build the bundles
+from the per-law conditions `LawSpec.Conds` in place of `hcp_ax`, which `axiomCP_of_laws`
+derives (Section 5.6).
 
 | Hypothesis | Meaning | Class | Source | Runtime check |
 |---|---|---|---|---|
@@ -1715,7 +1719,7 @@ plain rewriting (each plain reduct reaches its clamp in at most one law step,
 | `hfix` | the round is a fixpoint (`RoundFixed`) | assumed | the confirmation round of `cc_round` at convergence | tier 2 (`nf_present`, `lhs_reduced`, `cp_joinable`) |
 | `hlaw`, `hnf_ax` | law instances decrease `degLex`; clamp outputs are law-normal | derived | discharged for every `NFLaw` instance in `CC/Laws/` | once per signature |
 | `hcp`, rule-rule part | every critical pair of two rules is joinable under plain rewriting | derived | `ruleRuleCP_of_fixed`, `hcp_of_fixed` from `hfix` | none beyond `hfix` |
-| `hcp`, law part (`AxiomCP`) | every critical pair involving a law instance is joinable | assumed, reduced per law | `CC/Laws/` reduces it to conditions on left-hand sides (`hu`, `hlhs`, `hax`, `hmatch`); `Laws/InvRulesMain.lean` derives the inverse ones from the fixpoints of R1 to R5; a hypothesis `hcp_ax` for an abstract law set | the per-law conditions, one pass over the rules |
+| `hcp`, law part (`AxiomCP`) | every critical pair involving a law instance is joinable | derived for the law sets `LawSpec` names; assumed for an abstract law set | `axiomCP_of_laws` from `hfix` and the per-law conditions `LawSpec.Conds` on left-hand sides (`hu`, `hlhs`, `hax`, `hmatch`), which `CC/Laws/` states; `Laws/InvRulesMain.lean` derives the inverse ones from the fixpoints of R1 to R5 (`LawSpec.conds_inverse_of_fixed`, `conds_combined_of_fixed`); a hypothesis `hcp_ax` for an abstract law set | the per-law conditions, one pass over the rules |
 | `hcc` | two active nodes with the same monomial share a class | assumed | hash-consing | tier 1; `debug_check_congruent_dup_invariant` exists as a debug check |
 | `hS` | every asserted pair is two active nodes of one class | assumed | the input | none |
 | `hcancel` | joinability cancels a common summand | limit | not an engine fact (`hcancel_not_derivable`, Section 5.7); `CompleteHyps` takes `hlat` (lattice closure) in its place, which `latticeClosed_of_engineFixed` derives from the fixpoint of `lattice_round` | tier 1, as lattice closure |
@@ -1756,9 +1760,11 @@ formulation over clamped rewriting.
   inside `critical_pair_lemma`; a containing pair does not exist at the fixpoint because the
   reducibility pass retired the containing node (`lhs_reduced`). The fixture
   `egraph/tests/egg/cc_containment_chain.egg` exercises two containing pairs that join only
-  through that pass. `AxiomCP` remains a hypothesis: `CC/Laws/` reduces it, law by law, to
-  conditions on the stored left-hand sides (`hu`, `hlhs`, `hax`, `hmatch`), and
-  `Laws/InvRulesMain.lean` derives the inverse ones from the fixpoints of R1 to R5. The
+  through that pass. `AxiomCP` is derived for every law set `LawSpec` names
+  (`axiomCP_of_laws`): `CC/Laws/` reduces it, law by law, to conditions on the stored
+  left-hand sides (`hu`, `hlhs`, `hax`, `hmatch`), `Laws/InvRulesMain.lean` derives the
+  inverse ones from the fixpoints of R1 to R5, and the case analysis on the law set
+  assembles them. For an abstract law set it stays a hypothesis of the bundles. The
   reducibility pass itself is the composition mint, joinMerge, retire of `Infer`, so
   soundness covers it without a further inference step.
 
@@ -1779,8 +1785,9 @@ theorem hcp_of_fixed {L : Laws n} {st : State n} (hfix : RoundFixed L st)
 side is a law instance (`L.axRules`). `hcp_of_fixed` says the fixed round supplies the rest:
 with `RoundFixed` and `AxiomCP`, every overlapping pair of rules and law instances is
 joinable under plain rewriting, which is the `hcp` above. For plain AC `AxiomCP` is vacuous
-(`AxiomCP.of_no_ax`). Outside: a law set the development has no instance for, where
-`AxiomCP` stays a hypothesis.
+(`AxiomCP.of_no_ax`); for the law sets `LawSpec` names, `axiomCP_of_laws` (Section 5.6)
+derives it from the fixed round and the per-law conditions. Outside: a law set the
+development has no instance for, where `AxiomCP` stays a hypothesis.
 
 ### 5.4 Confluence and termination
 
@@ -1953,6 +1960,58 @@ hypotheses, `I3` and conditions on left-hand sides, and with the cancellative op
 `inv_rules_sound` requires, `hcancel` is the hypothesis Section 5.7 shows the engine does not
 establish; the `_atoms` forms of Section 5.9 and the bundles take lattice closure in its
 place.
+
+**`AxiomCP` from the per-law conditions** (`CC/Laws/AxiomCP.lean`). `LawSpec n` enumerates
+the law sets the model names, with their parameters: `plain`, `identity u cancel`,
+`nilpotent k hk cancel`, `idempotent cancel`, `inverse inv cancel` and
+`combined u k hk inv cancel hu`; `LawSpec.laws` is the `Laws` of each, and `LawSpec.Conds R`
+the conjunction of the per-law conditions above on the rule set `R` (`IdentityConds`: no
+left-hand side holds the unit; `NilpotentConds` and `IdempotentConds`: `hlhs` and `hax`;
+`InverseConds`: `InvMatching`, `InvNormal` left-hand sides, `InverseAxiomCP`;
+`CombinedConds`: the three together with `NilpotentInverseCP`).
+
+```lean
+theorem axiomCP_of_laws (sp : LawSpec n) {st : State n} (hfix : RoundFixed sp.laws st)
+    (hc : sp.Conds st.rules) : AxiomCP sp.laws st.rules
+
+theorem LawSpec.hcp (sp : LawSpec n) {R : Rules n} (hor : Oriented R)
+    (hRR : RuleRuleCP sp.laws R) (hc : sp.Conds R) : HCP sp.laws R
+
+theorem CompleteHyps.ofLaws (sp : LawSpec n) ... (hfix : RoundFixed sp.laws st)
+    (hc : sp.Conds st.rules) ... : CompleteHyps sp.laws S st
+
+theorem CompleteAtoms.ofLaws (sp : LawSpec n) ... (hfix : RoundFixedA sp.laws st A u)
+    (hc : sp.Conds (st.withAtoms A u).rules) ... : CompleteAtoms sp.laws S st A u
+```
+
+**Reading.** For every law set `LawSpec` names, a `RoundFixed` state whose rules satisfy the
+law's conditions joins every critical pair that involves a law instance. The proof is one
+case per law set: the fixed round gives the rule-rule pairs (`ruleRuleCP_of_fixed`), the
+theorem of `CC/Laws/CriticalPairs.lean` for that law (`hcp_identity`, `hcp_nilpotent`,
+`hcp_idempotent`, `hcp_inverse`, `hcp_combined`, which handle the pairwise interactions of
+the combined laws: unit against nilpotent, unit against inverse, nilpotent against inverse)
+gives the whole `HCP`, and `AxiomCP` is its law part (`AxiomCP.of_hcp`); for plain AC every
+pair is a rule-rule pair. `LawSpec.hlaw` and `LawSpec.hnf_ax` discharge the two law
+hypotheses the same way. `CompleteHyps.ofLaws` (`CC/Bridge/Modulo.lean`) and
+`CompleteAtoms.ofLaws` (`CC/AtomsEngine.lean`) build the bundles from the engine-side
+hypotheses and `LawSpec.Conds` in place of `hcp_ax`, `hlaw` and `hnf_ax`; the existing
+fields and theorems are unchanged, and `AtomsWitness.witness_complete` goes through
+`CompleteAtoms.ofLaws` at `LawSpec.plain`. The inverse conditions are what the fixpoints of
+R1 to R5 establish: `LawSpec.conds_inverse_of_fixed` and `conds_combined_of_fixed` assemble
+`Conds` from `RoundFixedInv`, `RoundFixedInvUnit`, `RoundFixedInvNil`, `InvNodes`, `I3` and
+`Converged`, as the `_engine` theorems do.
+
+The engine accepts, on an AC operator, the tag sets plain, `:identity`, `:idempotent`,
+`:idempotent :identity`, `:identity :nilpotent k`, `:identity :inverse` and
+`:identity :nilpotent k :inverse` (`egraph/src/sortcheck.rs`: `:nilpotent` and `:inverse`
+require `:identity`; `:idempotent` excludes `:nilpotent`, `:inverse` and `:cancellative`).
+`LawSpec` covers plain, `:identity`, `:idempotent`, `:identity :nilpotent k`
+(`LawSpec.identityNilpotent`, which is `combined` with the empty inverse: its inverse
+conditions are vacuous) and `:identity :nilpotent k :inverse`; `nilpotent` and `inverse`
+alone are the model's law sets with no engine tag set. Outside: `:idempotent :identity` and
+`:identity :inverse` without `:nilpotent`, which have no `Laws` instance (Section 9), and the
+conditions `hlhs` and `hax` of the nilpotent and idempotent laws, which are stated on the
+rules and not derived from a fixpoint structure as the inverse ones are.
 
 ### 5.7 The lattice round
 
@@ -2175,7 +2234,9 @@ over the view's rules, which include `M → {x}`. `hcc` is on the stored nodes o
 unit alike: any two of them that are theory-equal are in one class. The proof applies
 `completion_complete_at_convergence` to the view, with `hfix.roundFixed` and
 `hfix.congr hcc`. `CompleteAtoms` (`:277`) packages the hypotheses with `hlat` in place of
-`hcancel` and `AxiomCP` in place of the law part of `hcp`; its corollaries name the cases:
+`hcancel` and `AxiomCP` in place of the law part of `hcp`, which `CompleteAtoms.ofLaws`
+derives from the per-law conditions for the law sets `LawSpec` names (Section 5.6); its
+corollaries name the cases:
 `nodes` (two stored nodes), `atom_class` (`:317`, a node theory-equal to `{x}` is in `x`'s
 class), `atoms`, `unit_class` and `materialized`. Outside: a class that holds an `f`-node and
 another operator's node and is no child, which the engine marks atomic and the model's store
@@ -2187,7 +2248,7 @@ does not see.
 | `h0` | the view | assumed | an atomic class's `rhs` is `{x}` (`class_rhs_into`) | tier 1, "a class with none is a leaf whose normal form is `{c}`" |
 | `hcanon` | the stored `rhs` | assumed | the output of `nary_canon` | tier 1 |
 | `hfix` (`RoundFixedA`) | the view, plus the collapse | assumed; the collapse derived at `A := atomicOf st` | the confirmation round; `atomCollapse_of_addFixed` derives the collapse from `AddFixed`, a hypothesis on the normalize pass | tier 2, as `nf_present` and `cp_joinable` |
-| `hcp` | the view's rules, which include `M → {x}` | assumed | not derived from `RoundFixedA` | tier 2 |
+| `hcp` | the view's rules, which include `M → {x}` | rule-rule part derived from `RoundFixedA`; law part derived for the law sets `LawSpec` names, assumed for an abstract law set | `hcp_of_fixed` at `hfix.roundFixed`; `CompleteAtoms.ofLaws` takes `LawSpec.Conds` on the view's rules and `axiomCP_of_laws` supplies `hcp_ax` | tier 2, the per-law conditions over the view's rules |
 | `hcc` | the stored active nodes | assumed | hash-consing | tier 1 |
 | `hS` | the view: an asserted pair may relate a node to a constant | assumed | the input | none |
 | `hcancel` | the view's rules | limit | not an engine fact (Section 5.7); `CompleteAtoms` takes `hlat : L.cancellative → LatticeClosed L (st.withAtoms A u)` in its place | tier 1, as lattice closure |
@@ -2286,7 +2347,8 @@ theorem witness_complete : CompleteAtoms (Laws.plainAC 5) wS wst wA none
 **Reading.** A concrete state (five classes, plain AC, no unit) satisfies every hypothesis
 of `CompleteAtoms` at once, with the asserted equation `{a, b} = {c}` between a stored node
 and a leaf constant; the parametric theorems alone do not show the hypotheses jointly
-satisfiable. `witness_I3` checks that the retired node rewrites to a node of its class.
+satisfiable. The bundle is built through `CompleteAtoms.ofLaws` at `LawSpec.plain`, whose
+per-law conditions are empty. `witness_I3` checks that the retired node rewrites to a node of its class.
 `witness_not_all` shows that `I0ActiveAll` fails on the stored state, so a completeness
 theorem over `I0ActiveAll` applies to no state with a leaf constant. The
 witness also establishes the reduction of the minimal-monomial triple to I5: it takes
@@ -2864,7 +2926,7 @@ removes both.
 | `h₀`, `hok` | rule atoms well formed; per round: `WF`, tracking, `PersistFixed`, no subsumption | assumed | the fixed-arity nodes persist literally in every rebuild; n-ary nodes are not constrained here, the routing of `AChain` covers a non-literal rebuild |
 | `hemit₀`, `hchain` | every naive or variant binding is applied | assumed | the engine's matcher and `apply.rs` |
 | `hfix` | round `A` changes nothing | derived in the `_engine` forms | `engine_stop_unchanged` derives it from the stop test; this form takes it as stated |
-| `hcomp` | completion has converged (`CompleteHyps`; `CompleteAtoms` in the leaf-constant form) | assumed, with the derived and limit parts of Section 5.3 | includes `hlat` (lattice closure, in place of `hcancel`) and `hcp_ax` (`AxiomCP`) |
+| `hcomp` | completion has converged (`CompleteHyps`; `CompleteAtoms` in the leaf-constant form) | assumed, with the derived and limit parts of Section 5.3 | includes `hlat` (lattice closure, in place of `hcancel`) and `hcp_ax` (`AxiomCP`), which `CompleteHyps.ofLaws` and `CompleteAtoms.ofLaws` derive from the per-law conditions for the law sets `LawSpec` names |
 | `henum` | `act` is the set of stored active nodes | definitional | |
 | `hG` | the fixpoint snapshot is the represented graph | limit of this form | no engine index satisfies it (Section 7.5); `SubRep` on the index replaces it in `saturation_modulo_complete_store_atoms` (Section 7.7) |
 | `rule.atoms = ...`, `P.head = some f` | the rule's query is one pattern with head `f` | side condition | no `Eq` atoms, no globals |
@@ -3134,8 +3196,9 @@ running the plan. `witness_atomicOf`, `witness_complete_atomic` and
 **What remains.** `SubRep`, `CompleteAtoms` and the round facts are hypotheses: no theorem
 relates the completion state to the rounds or to the engine's rebuild, so the theorem says
 nothing about a run whose index does not hold the active nodes of a converged state. The
-minimal-monomial hypotheses stay in `CompleteAtoms`; `hcp` is reduced to `AxiomCP`, and
-`hcancel` is replaced by lattice closure. The engine's completion settings, which do not
+minimal-monomial hypotheses stay in `CompleteAtoms`; `hcp` is reduced to `AxiomCP`, which
+the per-law conditions discharge for the law sets `LawSpec` names (`CompleteAtoms.ofLaws`),
+and `hcancel` is replaced by lattice closure. The engine's completion settings, which do not
 re-match, reach every instance at the class level: `saturation_complete_closed` takes the
 store's closure under the theory (`TheoryClosed`) in place of the routing of `SChainN`, and
 `TheoryClosed` is a hypothesis on the store, not derived from `CompleteHyps`. The covering
@@ -3289,15 +3352,22 @@ models, and the limits that stay by design.
    the ACI and A theories, which `CC/` does not model). Acceptance: `theoryClosed_of_complete`
    in `Fidelity/RecanonComplete.lean`, and `saturation_complete_closed` restated without the
    hypothesis.
-3. **`AxiomCP` for an abstract law set.** `CompleteHyps` and `CompleteAtoms` take
-   `hcp_ax : AxiomCP L st.rules`, the joinability of the critical pairs that involve a law
-   instance. `CC/Laws/` reduces it, law by law, to conditions on the stored left-hand sides,
-   and `Laws/InvRulesMain.lean` derives the inverse ones from the fixpoints of R1 to R5; for
-   the leaf-constant form it ranges over the view's rules `M → {x}`. Closes it: a theorem per
-   law set that derives `AxiomCP` of the view's rules from `RoundFixedA` and the per-law
-   fixpoints, so that the bundles take only engine facts. Acceptance: `CompleteAtoms` for
-   each of `identity`, `nilpotent`, `idempotent`, `inverse`, `combined` with `hcp_ax`
-   discharged, audited in `CC/LawsCheck.lean`.
+3. **The per-law conditions and the law sets without a model.** `axiomCP_of_laws` derives
+   `AxiomCP` for every law set `LawSpec` names from the fixed round and the per-law
+   conditions `LawSpec.Conds` (Section 5.6), and `CompleteHyps.ofLaws`, `CompleteAtoms.ofLaws`
+   take those conditions in place of `hcp_ax`. Two parts remain. The conditions `hlhs` and
+   `hax` of the nilpotent and idempotent laws (counts below the threshold on every left-hand
+   side; the engine's axiom pairs joinable) and `hu` of the identity law are stated on the
+   rules and derived from no fixpoint structure, where the inverse conditions are derived
+   from `RoundFixedInv`, `RoundFixedInvUnit` and `RoundFixedInvNil`. And the tag sets
+   `:idempotent :identity` and `:identity :inverse` without `:nilpotent`, which the engine
+   accepts, have no `Laws` instance, so `CompleteHyps` and `CompleteAtoms` take `hcp_ax` for
+   them. Closes it: a fixpoint structure for the axiom pairs of the count-threshold laws
+   (the per-rule pairs of `cc_round`, stated as `RoundFixedInv.r3_left` is) with a theorem
+   deriving `hax` from it, and two `NFLaw` compositions with their `hcp_*` theorems and
+   `LawSpec` cases. Acceptance: `LawSpec.conds_nilpotent_of_fixed`,
+   `conds_idempotent_of_fixed`, and `LawSpec` with cases for the two tag sets, audited in
+   `CC/Laws/Check.lean`.
 4. **The minimal-monomial history and the round facts.** The triple `h5₀`, `hrun`, `ha` is
    equivalent to assuming I5 of the final state (`OpsStar` is never linked to the inference
    run; `witness_complete` discharges it with `ss₀ = ss`). The round facts `Round.WF`,
