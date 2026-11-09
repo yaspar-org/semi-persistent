@@ -330,6 +330,16 @@ theorem combined_clamp_eq (u : Fin n) (k : ℕ) (hk : 2 ≤ k) (inv : Fin n → 
     (cancel : Prop) (hu : InvUnitFree inv u) :
     (Laws.combined u k hk inv cancel hu).clamp = combinedClamp u k inv := rfl
 
+/-- The engine's composite clamp without a nilpotent order, as a function
+(as `combinedClamp`). -/
+def identityInverseClamp (u : Fin n) (inv : Fin n → Option (Fin n)) (M : Monomial n) :
+    Monomial n :=
+  invWalk inv (M.filter (· ≠ u))
+
+theorem identityInverse_clamp_eq (u : Fin n) (inv : Fin n → Option (Fin n)) (cancel : Prop)
+    (hu : InvUnitFree inv u) :
+    (Laws.identityInverse u inv cancel hu).clamp = identityInverseClamp u inv := rfl
+
 /-! ## The engine-level completeness theorems -/
 
 /-- `completion_complete_inverse` with `hmatch` and `hax` replaced by a
@@ -416,5 +426,49 @@ theorem completion_complete_combined_engine (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
       (fun x hxx hk2 hodd =>
         combined_clamp_replicate_self u k hk cancel hu hxx (by omega) (by omega)))
     hcc hS hcancel hM hN hMN
+
+/-- `completion_complete_identityInverse` with `hu`, `hmatch` and `hax_inv`
+replaced by a fixed round under R1 to R3 (`hfixinv`, `hfixu`), `inv`
+reading the `g`-nodes (`hinv`), the unit class canonical (`hurep`) and the
+retirement discipline `I3` (`h3`). The law set is `Laws.identityInverse`
+at the `InvUnitFree` proof that R2 supplies. -/
+theorem completion_complete_identityInverse_engine (u : Fin n) (inv : Fin n → Option (Fin n))
+    (cancel : Prop)
+    {S : Set (Monomial n × Monomial n)} {st : State n} {ss₀ ss : SlotState n}
+    {gnodes : Set (Fin n × Fin n)}
+    (hurep : st.find u = u)
+    (hfixu : RoundFixedInvUnit inv u st)
+    (hinv : InvNodes st gnodes inv)
+    (hfixinv : RoundFixedInv (identityInverseClamp u inv) inv st)
+    (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
+    (h0 : I0Active st)
+    (hcanon : ∀ c, (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).clamp
+      (st.rhs c) = st.rhs c)
+    (hfix : RoundFixed (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) st)
+    (h3 : I3 (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) st)
+    (hlhs_u : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
+    (hlhs_inv : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    (hcancel : (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).cancellative →
+      ∀ M N X,
+      Joinable (Rw (plain n) (st.rules ∪
+          (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).axRules))
+        (M + X) (N + X) →
+      Joinable (Rw (plain n) (st.rules ∪
+          (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).axRules)) M N)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
+    (hMN : E (Laws.identityInverse u inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) S M N) :
+    st.find c = st.find d := by
+  set hu := invUnitFree_of_fixed hfixu hinv hurep
+  set L := Laws.identityInverse u inv cancel hu with hL
+  have h5 : I5 st := SlotState.state_I5_of_slot (SlotState.reachable_I5 h5₀ hrun) ha
+  have hconv : Converged L st := roundFixed_converged (I0On_of_active h0) h5 hcanon hfix
+  have hclamp : L.clamp = identityInverseClamp u inv := rfl
+  have hfixinv' : RoundFixedInv L.clamp inv st := by rw [hclamp]; exact hfixinv
+  exact completion_complete_identityInverse u inv cancel hu h5₀ hrun ha h0 hcanon hfix
+    (invMatching_of_fixed hfixinv hinv) hlhs_u hlhs_inv
+    (inverseAxiomCP_of_fixed hconv h3 hfixinv') hcc hS hcancel hM hN hMN
 
 end SemperProofs.CC

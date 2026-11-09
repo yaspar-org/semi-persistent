@@ -18,16 +18,16 @@ The engine accepts, on an AC operator, the tag sets plain, `:identity`,
 `:identity :inverse` and `:identity :nilpotent k :inverse`
 (`egraph/src/sortcheck.rs`: `:nilpotent` and `:inverse` require
 `:identity`, `:idempotent` excludes `:nilpotent`, `:inverse` and
-`:cancellative`). The model names plain, `identity`, `nilpotent`,
-`idempotent`, `inverse` and `combined` (identity, nilpotent, inverse); the
-tag set `:identity :nilpotent k` is `combined` with the empty inverse
-(`LawSpec.identityNilpotent`). The tag sets `:idempotent :identity` and
-`:identity :inverse` without `:nilpotent` have no `Laws` instance and are
-outside `LawSpec`.
+`:cancellative`). `LawSpec` has a case for each: plain, `identity`,
+`idempotent`, `idempotentIdentity`, `identityNilpotent` (`combined` with
+the empty inverse), `identityInverse` and `combined` (identity, nilpotent,
+inverse), together with `nilpotent` and `inverse` alone, the model's law
+sets with no engine tag set.
 
 The inverse conditions (`InvMatching`, `InverseAxiomCP`,
 `NilpotentInverseCP`) are what the fixpoints of the inverse rules R1 to R5
-establish (`Laws/InvRulesMain.lean`); `LawSpec.conds_inverse_of_fixed` and
+establish (`Laws/InvRulesMain.lean`); `LawSpec.conds_inverse_of_fixed`,
+`LawSpec.conds_identityInverse_of_fixed` and
 `LawSpec.conds_combined_of_fixed` assemble `Conds` from them.
 -/
 
@@ -86,6 +86,22 @@ structure CombinedConds (L : Laws n) (u : Fin n) (k : ℕ) (inv : Fin n → Opti
   ax_inv : InverseAxiomCP L inv R
   nilinv : NilpotentInverseCP (R ∪ L.axRules) k inv
 
+/-- The conditions of the composition identity, inverse: those of the two
+laws. -/
+structure IdentityInverseConds (L : Laws n) (u : Fin n) (inv : Fin n → Option (Fin n))
+    (R : Rules n) : Prop where
+  matching : InvMatching inv
+  lhs_u : ∀ A B, (A, B) ∈ R → u ∉ A
+  lhs_inv : ∀ A B, (A, B) ∈ R → InvNormal inv A
+  ax_inv : InverseAxiomCP L inv R
+
+/-- The conditions of the composition identity, idempotent: those of the
+two laws. -/
+structure IdempotentIdentityConds (L : Laws n) (u : Fin n) (R : Rules n) : Prop where
+  lhs_u : ∀ A B, (A, B) ∈ R → u ∉ A
+  lhs : ∀ A B, (A, B) ∈ R → A.Nodup
+  ax : ∀ A B, (A, B) ∈ R → ∀ a ∈ A, Joinable (Rw (plain n) (R ∪ L.axRules)) (B + {a}) A
+
 /-! ## The law sets the model names -/
 
 /-- The law sets the completeness theorems are instantiated for, with their
@@ -106,6 +122,11 @@ inductive LawSpec (n : ℕ) where
   `InvUnitFree`. -/
   | combined (u : Fin n) (k : ℕ) (hk : 2 ≤ k) (inv : Fin n → Option (Fin n)) (cancel : Prop)
       (hu : InvUnitFree inv u)
+  /-- `:identity u :inverse` without `:nilpotent`, under `InvUnitFree`. -/
+  | identityInverse (u : Fin n) (inv : Fin n → Option (Fin n)) (cancel : Prop)
+      (hu : InvUnitFree inv u)
+  /-- `:idempotent :identity u`. -/
+  | idempotentIdentity (u : Fin n) (cancel : Prop)
 
 namespace LawSpec
 
@@ -117,6 +138,8 @@ def laws : LawSpec n → Laws n
   | .idempotent cancel => Laws.idempotent cancel
   | .inverse inv cancel => Laws.inverse inv cancel
   | .combined u k hk inv cancel hu => Laws.combined u k hk inv cancel hu
+  | .identityInverse u inv cancel hu => Laws.identityInverse u inv cancel hu
+  | .idempotentIdentity u cancel => Laws.idempotentIdentity u cancel
 
 /-- The per-law conditions on a rule set, as `CriticalPairs.lean` states
 them. -/
@@ -127,6 +150,9 @@ def Conds : LawSpec n → Rules n → Prop
   | .idempotent cancel, R => IdempotentConds (Laws.idempotent cancel) R
   | .inverse inv cancel, R => InverseConds (Laws.inverse inv cancel) inv R
   | .combined u k hk inv cancel hu, R => CombinedConds (Laws.combined u k hk inv cancel hu) u k inv R
+  | .identityInverse u inv cancel hu, R =>
+    IdentityInverseConds (Laws.identityInverse u inv cancel hu) u inv R
+  | .idempotentIdentity u cancel, R => IdempotentIdentityConds (Laws.idempotentIdentity u cancel) u R
 
 /-- `:identity u :nilpotent k`: `combined` with the empty inverse. -/
 def identityNilpotent (u : Fin n) (k : ℕ) (hk : 2 ≤ k) (cancel : Prop) : LawSpec n :=
@@ -141,6 +167,8 @@ theorem hlaw (sp : LawSpec n) : ∀ P Q, sp.laws.lawRel P Q → degLex P Q := by
   | idempotent cancel => exact idempotent_hlaw
   | inverse inv cancel => exact inverse_hlaw inv cancel
   | combined u k hk inv cancel hu => exact combined_hlaw u k hk inv cancel hu
+  | identityInverse u inv cancel hu => exact identityInverse_hlaw u inv cancel hu
+  | idempotentIdentity u cancel => exact idempotentIdentity_hlaw u cancel
 
 /-- `hnf_ax` for every law set: clamp outputs are law-normal. -/
 theorem hnf_ax (sp : LawSpec n) :
@@ -152,6 +180,8 @@ theorem hnf_ax (sp : LawSpec n) :
   | idempotent cancel => exact idempotent_hnf_ax
   | inverse inv cancel => exact inverse_hnf_ax inv cancel
   | combined u k hk inv cancel hu => exact combined_hnf_ax u k hk inv cancel hu
+  | identityInverse u inv cancel hu => exact identityInverse_hnf_ax u inv cancel hu
+  | idempotentIdentity u cancel => exact idempotentIdentity_hnf_ax u cancel
 
 /-- **The critical-pair hypothesis from the rule-rule pairs and the per-law
 conditions**, for every law set the model names: one case per law, each
@@ -174,6 +204,10 @@ theorem hcp (sp : LawSpec n) {R : Rules n} (hor : Oriented R) (hRR : RuleRuleCP 
   | combined u k hk inv cancel hu =>
     exact hcp_combined u k hk inv cancel hu hor hRR hc.matching hc.lhs_u hc.lhs_k hc.lhs_inv
       hc.ax_nil hc.ax_inv hc.nilinv
+  | identityInverse u inv cancel hu =>
+    exact hcp_identityInverse u inv cancel hu hor hRR hc.matching hc.lhs_u hc.lhs_inv hc.ax_inv
+  | idempotentIdentity u cancel =>
+    exact hcp_idempotentIdentity u cancel hor hRR hc.lhs_u hc.lhs hc.ax
 
 end LawSpec
 
@@ -231,6 +265,24 @@ theorem conds_combined_of_fixed (u : Fin n) (k : ℕ) (hk : 2 ≤ k) (inv : Fin 
     nilpotentInverseCP_of_fixed hconv h3 (combined_hasInv u k hk inv cancel hu) hfixk
       (fun x hxx hk2 hodd =>
         combined_clamp_replicate_self u k hk cancel hu hxx (by omega) (by omega))
+
+/-- The conditions of `identityInverse` from a fixed round under R1 and R3,
+the `g`-nodes read by `inv`, the retirement discipline and canonical
+left-hand sides (as `completion_complete_identityInverse_engine` takes
+them). -/
+theorem conds_identityInverse_of_fixed (u : Fin n) (inv : Fin n → Option (Fin n))
+    (cancel : Prop) (hu : InvUnitFree inv u) {st : State n} {gnodes : Set (Fin n × Fin n)}
+    (hconv : Converged (Laws.identityInverse u inv cancel hu) st)
+    (h3 : I3 (Laws.identityInverse u inv cancel hu) st)
+    (hfixinv : RoundFixedInv (identityInverseClamp u inv) inv st)
+    (hinv : InvNodes st gnodes inv)
+    (hlhs_u : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
+    (hlhs_inv : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A) :
+    (LawSpec.identityInverse u inv cancel hu).Conds st.rules where
+  matching := invMatching_of_fixed hfixinv hinv
+  lhs_u := hlhs_u
+  lhs_inv := hlhs_inv
+  ax_inv := inverseAxiomCP_of_fixed hconv h3 hfixinv
 
 end LawSpec
 
