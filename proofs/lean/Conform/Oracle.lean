@@ -1,5 +1,5 @@
 import Conform.Case
-import SemperProofs.EMatch.Flatten.RegroupDefs
+import SemperProofs.EMatch.Flatten.RegroupOverlapDefs
 
 /-!
 # Conformance generator: the oracle
@@ -8,9 +8,11 @@ The expected match set of a case is computed by the reference interpreter
 `run (compile P)` of `EMatch/Ref.lean` on the stored nodes, and for a case
 tagged `:flatten` on every canonical view of every node of the root
 operator (`enumerateX`, with the per-kind demand rule `acceptsKindB`; under
-laws `enumerateL` with `acceptsLawsB`) and every regrouped view
-(`regroupAll` of `Flatten/RegroupDefs.lean`, the records needing at most one
-regrouped class per item of the root, `withinLimit`), the view standing in for the stored node through a fresh
+laws `enumerateL` with `acceptsLawsB`), every regrouped view
+(`regroupAll` of `Flatten/RegroupDefs.lean`) and, for a set operator, every
+overlap view of those (`overlapStage` of `Flatten/RegroupOverlapDefs.lean`),
+the records needing at most one regrouped class per item of the root
+(`withinLimit`), the view standing in for the stored node through a fresh
 node id in a fresh class.
 
 A match is reported as the root class and the list of tag arguments: the
@@ -82,11 +84,13 @@ exactly when `acceptsKindB`'s does. -/
 def recXtoR (r : RawX) : RecR :=
   (r.1, r.2.map (fun l => (⟨l.1, 1, l.2.map (fun c => (c, 1))⟩, false)), [])
 
-/-- The records of node `n` and their regroupings (`regroupLevels`) needing at
-most `limit` regrouped classes, one per item (`withinLimit`), within the budget
+/-- The records of node `n`, their regroupings (`regroupLevels`) and, for a
+set operator, the overlap records of those (`overlapStage`), needing at most
+`limit` regrouped classes, one per item (`withinLimit`), within the budget
 `regroupCap`; past it, the walk's records alone (`regroupOverBudget`). -/
 def regroupedRecs (ctx : Ctx) (laws : Laws) (limit : Nat) (recs : List RecR) : List RecR :=
-  withinLimit limit ((regroupLevelsCapped ctx .both laws regroupCap (regroupFuel recs) recs).getD recs)
+  withinLimit limit (overlapStage ctx laws limit
+    ((regroupLevelsCapped ctx .both laws regroupCap (regroupFuel recs) recs).getD recs))
 
 /-- The walk's records of node `n` as regrouping reads them. -/
 def recsOf (cs : Case) (ctx : Ctx) (laws : Laws) (n : Node) : List RecR :=

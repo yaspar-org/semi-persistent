@@ -44,3 +44,6 @@ import SemperProofs.CC.ARound
 import SemperProofs.CC.Lattice
 import SemperProofs.EMatch.Flatten.RegroupBoundsDefs
 import SemperProofs.EMatch.Flatten.RegroupBounds
+import SemperProofs.EMatch.Flatten.RegroupOverlapDefs
+import SemperProofs.EMatch.Flatten.RegroupOverlap
+import SemperProofs.EMatch.Flatten.RegroupOverlapBounds

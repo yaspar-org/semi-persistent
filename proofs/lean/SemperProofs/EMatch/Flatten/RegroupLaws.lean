@@ -73,11 +73,13 @@ two kinds of match are beyond any chain:
   insertions are unbounded.
 * **An idempotent group kept beside its class**: `S{a, b, c} = S{a, c, G}`
   when `G ∋ S{a, b}`, a canonical set the replacing regrouping never forms
-  (`regroup_idem_overlap_lost`); keeping members would multiply the views by
-  up to `2^|group|`.
+  (`regroup_idem_overlap_loop_lost`), sound in every join semilattice
+  (`regroup_idem_overlap_sound`). The engine's overlap stage for idempotent
+  operators forms it after the loop, as many members kept as the pattern's
+  item count fixes (`RegroupOverlap.lean`, `regroup_idem_overlap_found`).
 
-The fixtures `flatten_regroup_laws_insert.egg` and
-`flatten_regroup_laws_idem.egg` pin each loss in the engine.
+The fixture `flatten_regroup_laws_insert.egg` pins the first loss in the
+engine; `flatten_regroup_laws_idem.egg` checks the second match found.
 -/
 
 namespace Semper.EMatch.Flatten
@@ -1378,7 +1380,10 @@ theorem regroup_insert_unit_lost :
     rw [hw, ofEntries_entries] at this
     revert this; decide
 
-/-! ### Beyond chains: an idempotent group kept beside its class -/
+/-! ### Beyond chains: an idempotent group kept beside its class
+
+The regrouping loop never forms the view; the overlap stage does
+(`RegroupOverlap.lean`). -/
 
 /-- `S` (op 8) ACI; classes `a, b, c = 1, 2, 3`; `G = 4 ∋ S{a, b}` (node 10);
 the root `S{a, b, c}` (node 11, class 5). -/
@@ -1443,29 +1448,37 @@ theorem exAci_reach {r₀ r : RecR} (h₀ : r₀ ∈ baseRecsR exAciCtx .both La
         · exact absurd rfl hne
         · exact absurd hsub (by decide)
 
-/-- **Counter-model: an idempotent group kept beside its class** (ACI). With
+/-- **An idempotent group kept beside its class is sound** (ACI). With
 `G ∋ S{a, b}`, the node `S{a, b, c}` equals `S{a, c, G}` in every join
 semilattice where the members denote their classes (`a ⊔ c ⊔ (a ⊔ b)`), and
-`{a, c, G}` is a canonical set over classes present; but regrouping replaces
-the group (`{c, G}`) and never keeps one of its members beside `G`, so the
-engine has no view `{a, c, G}` and `(S x y z)` never binds `x = a, y = c,
-z = G` (`flatten_regroup_laws_idem.egg`). -/
-theorem regroup_idem_overlap_lost :
-    (∀ (M : Type) [SemilatticeSup M] [OrderBot M] (den : C → M), ConsistentACI exAciCtx den →
-        den 1 ⊔ den 3 ⊔ den 4 = den 1 ⊔ den 2 ⊔ den 3) ∧
-      ∀ d, ([(1, 1), (3, 1), (4, 1)], d) ∉ enumerateRSkip exAciCtx .both Laws.free 3 exAciRoot := by
-  refine ⟨fun M _ _ den hc => ?_, fun d hd => ?_⟩
-  · have h4 := hc 10 ⟨8, .set {1, 2}⟩ 4 (by simp [Ctx.IsMember, exAciCtx, exAciG])
-    have hd : denACI den (kids .aci (.set {1, 2})) = den 1 ⊔ den 2 := by
-      unfold denACI
-      rw [toFinset_ofEntries_of_pos (kids_pos _ _), toFinset_kids_aci]
-      simp
-    rw [hd] at h4
-    rw [h4]
-    apply le_antisymm <;>
-      simp [sup_le_iff, le_sup_left, le_sup_right, le_sup_of_le_left]
-  · obtain ⟨r, ⟨r₀, h₀, hch⟩, hw⟩ := reach_of_mem_enumerateRSkip hd
-    rcases exAci_reach h₀ ((regroupChainL_iff (viewOK_baseL h₀)).2 hch) with h | h <;>
-      rw [hw] at h <;> revert h <;> decide
+`{a, c, G}` is a canonical set over classes present. Regrouping replaces the
+group (`{c, G}`) and never keeps one of its members beside `G`; the overlap
+stage of `RegroupOverlap.lean` forms the view (`regroup_idem_overlap_found`),
+and `(S x y z)` binds `x = a, y = c, z = G` (`flatten_regroup_laws_idem.egg`). -/
+theorem regroup_idem_overlap_sound :
+    ∀ (M : Type) [SemilatticeSup M] [OrderBot M] (den : C → M), ConsistentACI exAciCtx den →
+      den 1 ⊔ den 3 ⊔ den 4 = den 1 ⊔ den 2 ⊔ den 3 := by
+  intro M _ _ den hc
+  have h4 := hc 10 ⟨8, .set {1, 2}⟩ 4 (by simp [Ctx.IsMember, exAciCtx, exAciG])
+  have hd : denACI den (kids .aci (.set {1, 2})) = den 1 ⊔ den 2 := by
+    unfold denACI
+    rw [toFinset_ofEntries_of_pos (kids_pos _ _), toFinset_kids_aci]
+    simp
+  rw [hd] at h4
+  rw [h4]
+  apply le_antisymm <;>
+    simp [sup_le_iff, le_sup_left, le_sup_right, le_sup_of_le_left]
+
+/-- **The regrouping loop alone never forms it**: no chain of regroupings
+from the walk records of `S{a, b, c}` reaches the view `{a, c, G}`
+(`exAci_reach`), so the engine's enumeration without the overlap stage has
+no such view. The stage adds it (`regroup_idem_overlap_found`,
+`RegroupOverlap.lean`). -/
+theorem regroup_idem_overlap_loop_lost :
+    ∀ d, ([(1, 1), (3, 1), (4, 1)], d) ∉ enumerateRSkip exAciCtx .both Laws.free 3 exAciRoot := by
+  intro d hd
+  obtain ⟨r, ⟨r₀, h₀, hch⟩, hw⟩ := reach_of_mem_enumerateRSkip hd
+  rcases exAci_reach h₀ ((regroupChainL_iff (viewOK_baseL h₀)).2 hch) with h | h <;>
+    rw [hw] at h <;> revert h <;> decide
 
 end Semper.EMatch.Flatten

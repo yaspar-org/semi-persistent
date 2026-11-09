@@ -342,8 +342,10 @@ that the normalization drops (the unit, a clamp to zero, a cancelled inverse) us
 leave a record no match satisfied; a regrouped record now needs only the classes its
 view holds (`regroup_drop_need_unit`, `flatten_regroup_laws_drop_need.egg`). Relative
 to the laws, a normal form reached only by inserting the unit, a cancel pair or `k`
-nilpotent copies, and a set group kept beside its class, are not reached by any chain
-(`regroup_insert_unit_lost`, `regroup_idem_overlap_lost`).
+nilpotent copies is not reached by any chain (`regroup_insert_unit_lost`); a set group kept
+beside its class is not reached by a chain either (`regroup_idem_overlap_loop_lost`), and the
+overlap stage for idempotent operators forms it, soundly in every join semilattice
+(`overlap_step_sound_aci_laws`, `regroup_idem_overlap_found`, `RegroupOverlap.lean`).
 [§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten), "Regrouped
 views", "Laws".
 
