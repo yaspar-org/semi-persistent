@@ -66,7 +66,7 @@ relative to a specification of its own. The final theorem joins three of them.
 | Layer | Directory | Models | Headline results |
 |---|---|---|---|
 | Matching | `EMatch/`, `EMatch/Engine/` | one rule matched on a frozen index: atoms, lowering, scheduling, semi-naive variants | `plan_matches`, `runND_matches`, `variant_partition` |
-| Flattened matching | `EMatch/Flatten/` | `:flatten` rules: views of nested same-operator children, demand, regrouping and the engine's regrouping loop | `views_sound`/`views_complete`, `demand_engine_complete_*`, `regroup_match_iff`, `regroupSkip_match_iff` |
+| Flattened matching | `EMatch/Flatten/` | `:flatten` rules: views of nested same-operator children, demand, regrouping, the engine's regrouping loop and its overlap stage under idempotence | `views_sound`/`views_complete`, `demand_engine_complete_*`, `regroup_match_iff`, `regroupSkip_match_iff`, `regroupSkipO_match_iff_laws` |
 | Congruence closure | `CC/` | AC completion of one operator under its laws, with leaf constants | `completion_sound`, `completion_complete_at_convergence`, `completion_complete_atoms` |
 | Saturation | `EMatch/Engine/Rounds/`, `Saturate/`, `Fidelity/` | the round loop: deltas, actions, rebuild, the stop test | `delta_complete`, `saturation_complete` |
 | Final | `CC/Bridge/`, `Final/` | the matching graph read from a completion state | `saturation_modulo_complete`, `saturation_modulo_complete_atoms` |
@@ -1008,14 +1008,120 @@ theorem regroup_idem_overlap_lost :
 ```
 
 **Reading.** Each is a concrete graph in which a view equal to the node in every model of
-the laws is not enumerated. In the first, with `zero ∋ add{B, D}`, the view `add{A, C}` of
-`add{add{A, B}, add{C, D}}` is reached only by inserting the unit and regrouping; a chain
-opens and contracts and never inserts, and insertions have no bound. In the second,
-`S{A, B, C}` equals `S{A, C, sab}` by idempotence, but a regrouping replaces the group and
-never keeps it beside its class, because keeping members would multiply the views by up to
-`2^|group|`. The fixtures `flatten_regroup_laws_insert.egg` and `flatten_regroup_laws_idem.egg`
-record both in the engine; `(set-option :completion eager)` proves each equality instead.
-These are documented limits of the regrouping guarantee, not defects.
+the laws is not enumerated by the regrouping loop. In the first, with `zero ∋ add{B, D}`, the
+view `add{A, C}` of `add{add{A, B}, add{C, D}}` is reached only by inserting the unit and
+regrouping; a chain opens and contracts and never inserts, and insertions have no bound. The
+fixture `flatten_regroup_laws_insert.egg` records the loss in the engine; `(set-option
+:completion eager)` proves the equality instead. A documented limit of the regrouping
+guarantee, not a defect. In the second, `S{A, B, C}` equals `S{A, C, sab}` by idempotence,
+but a regrouping replaces the group and never keeps a member beside its class
+(`regroup_idem_overlap_loop_lost`, the second conjunct of the former
+`regroup_idem_overlap_lost`); the view is sound in every join semilattice
+(`regroup_idem_overlap_sound`, its first conjunct). The engine forms it in a stage after the
+loop, below.
+
+**Overlap views under idempotence** (`EMatch/Flatten/RegroupOverlapDefs.lean`,
+`RegroupOverlap.lean`, `RegroupOverlapBounds.lean`; commit `893fc3ac`, engine
+`b932241b`). For an `:assoc-comm-idem` operator, after the regrouping loop, the engine
+also matches the *overlap views* of every view the loop ends with: the view with the class
+`g` of an `f`-member added and some members of its group dropped. A dropped member is
+covered by `g`, a kept member is absorbed, so the view denotes the node in every join
+semilattice where the members denote their classes (`overlap_step_sound_aci`,
+`overlap_step_sound_aci_laws` under an identity; `regroupO_views_sound_aci_laws`,
+`regroupSkipO_views_sound_aci_laws` for every view of both enumerations). The pattern's item
+count fixes how many members are kept: with `base` the entries of the view plus one when
+`g` is new, the stage drops `k = base - limit` members, so the view has `limit` entries, one
+per item, and a rest variable holds nothing (`overlapDrops`, `overlapFits`). The group must
+have at least two classes, all in the view, not `g`; at least one member is kept; a group with
+`g` already in the view and nothing to drop would repeat the view. The candidates are the
+loop's: the `S`-members on the use lists of the view's classes, the matched node among them,
+so a pattern with one item more than a node has children binds that item to the node's own
+class (`S{s, A, B} = s` for `s = S{A, B}`), as the conformance sample `conform/c1_0101.egg`
+shows. The dropped sets are the
+`k`-element sublists of the group's classes in the order of `List.sublists` (`dropSets`), the
+engine's order of combinations. An overlap record keeps the leaves and needs of a regrouping
+by the same group (`deriveRec`), so it needs `g`, and the demand rule reads it unchanged. The
+stage regroups nothing and overlaps no overlap view: an overlap view is one step from a view
+of the loop, and its source records are the loop's (`SkipSt.overlapAll`). Two items never
+bind the same class: an overlap view is a set, `g` enters it once, and the set decomposition
+takes a distinct entry per item, as on every set view. For an operator without idempotence
+every family is empty and each definition is the one without the stage
+(`enumerateRO_eq_of_not_aci`, `enumerateRSkipO_eq_of_not_aci`,
+`regroupChainO_iff_of_not_aci`).
+
+```lean
+theorem regroupSkipO_match_iff_laws {c : FCtx} {dir : Sym → Dir} {σ : Binding} {a : RAtom}
+    {κ : FlatKind} (hκ : a.shape.flatKind = some κ) :
+    AtomSatG (Enumerator.regroupSkipO dir) c σ a ↔
+      ∃ id n, σ.node a.node = some id ∧ (id, n) ∈ c.G.nodes ∧
+        σ.cls a.node = some (c.G.find id) ∧ n.op = a.op ∧
+        ∃ r₀ ∈ baseRecsR (c.ctx a.op κ) (dir a.op) (c.laws a.op) n, ∃ r,
+          RegroupChainO (c.ctx a.op κ) (dir a.op) (c.laws a.op) a.elems.length r₀ r ∧
+          r.2.2.length ≤ a.elems.length ∧
+          MatchN c.G a.shallow ⟨a.op, ofView κ r.1⟩ σ ∧
+          ∀ l ∈ r.alt, l.okE κ (takenOf σ a.elems)
+
+theorem regroup_idem_overlap_found :
+    ∃ d, ([(1, 1), (3, 1), (4, 1)], d) ∈ enumerateRSkipO exAciCtx .both Laws.free 3 exAciRoot ∧
+      d.acceptsE .aci [1, 3, 4]
+```
+
+**Reading.** `regroupSkipO_match_iff_laws` is `regroupSkip_match_iff_laws` with the stage:
+`RegroupChainO` is a chain of regroupings under the laws followed by at most one overlap step
+(`OverlapStepL`: an `f`-member of class `g`, a raw overlap fit of its group, normalized under
+the laws, with the derived leaves and needs). The theorem says what the engine finds for an
+idempotent operator, relative to the classes present; `regroupO_match_iff_laws` is the same
+for the full enumeration with the stage, and `regroupSkipO_views_iff_laws`,
+`regroupO_views_iff_laws` the versions at the level of views. The statements without the
+stage (`regroup_match_iff_laws`, `regroupSkip_match_iff_laws`) are untouched and still hold
+of the loop alone. `regroup_idem_overlap_found` is the counter-model turned witness: in the
+graph of `regroup_idem_overlap_sound`, the view `{a, c, G}` is enumerated for a pattern of
+three items and accepts the item classes, so `(S x y z)` binds `x = a, y = c, z = G`
+(`flatten_regroup_laws_idem.egg`, whose last check is `check-eq`, and which also checks the
+four-item match `(S w x y z)` keeping both members). Two matches the stage
+does not form: a view with two overlap groups (`{A, C, sab, scd}` of `S{A, B, C, D}`), and a
+kept member in a rest variable; both are documented limits of the stage, as the unit
+insertion is of the loop.
+
+*Proof.* The stage is a fold over the loop's views; `overlapAll_spec`
+(`RegroupOverlap.lean`) shows, with the loop's `Core` invariant as its hypothesis, that every
+record it adds is one overlap step from a reachable record (`ReachO`) and that every overlap
+step of every loop view by a candidate group is covered (`Cov`) by a record of the result:
+its three skips (a target with an unconditional record, the source's first unconditional
+record alone, the signature deduplication) drop only covered records, by `cov_uncond`,
+`Cov.derive` and `cov_of_same` as in the loop. `regroupSkipO_spec` joins it with
+`regroupSkipG_spec`, `regroupSkipO_iff` and `enumerateRSkipO_iff` conclude that the engine's
+enumeration with the stage accepts the same matches as `regroupAllO`, the full enumeration
+followed by the stage, and `prune_regroupO` (through `recRel_overlap`) keeps the pruning
+match-preserving, so `Enumerator.regroupSkipO` meets the plan specification
+(`regroupSkipO_specE`, `regroupSkipO_plan_sound`, `regroupSkipO_plan_complete`,
+`regroupSkipO_plan_complete_laws`). `regroupAllSkipOAt_eq` is `regroupAllSkipAt_eq` with the
+stage: a group holding no class of the view has no overlap fit (`overlapFits_nil_of_not_cand`).
+
+**The bounds.** The stage counts against the same budgets as the loop: the use lists of
+each source view, the children of each candidate and one unit per raw fit against
+`MAX_REGROUP_WORK`, each record added against `MAX_REGROUP_VIEWS`, elements against
+`MAX_ELEMS`, checked where the engine checks them (`BSt.overlapAll`,
+`RegroupOverlapDefs.lean`). The raw fits are counted one by one because a group of `m`
+classes has `C(m, k)` of them, and the count must stop the stage before the family is
+enumerated. `RegroupOverlapBounds.lean` repeats the simulation of `RegroupBounds.lean` for
+the stage (`overlapAll_stepR`, `overlapAll_projR`): `regroupBoundedO_cases`,
+`regroupBoundedO_halt_iff`, `regroupBoundedO_exact`, `regroupBoundedO_sub`,
+`regroupBoundedO_reach`, and the final theorems `regroupBoundedO_plan_sound`,
+`regroupBoundedO_plan_complete`, `regroupBoundedO_query_exact`, `regroupBoundedO_match_exact`:
+with the three counters zero the bindings emitted are exactly those of
+`Enumerator.regroupSkipO`, and a truncated run reports only matches. No fixture exercises a
+truncation inside the stage yet (Section 10, item 20): a family large enough to pass
+`MAX_REGROUP_VIEWS` needs a set of about fifty children, on which the set decomposition of a
+five-item pattern enumerates `48 · 47 · 46 · 45 · 44` partial assignments per node before the
+stage is reached, hours in a debug build.
+
+**Cost.** The stage runs only for `:assoc-comm-idem` operators and patterns with items
+(`SkipSt.overlapAll`'s guard, `kind == FlatKind::Aci && limit > 0` in `flatten.rs`): an AC or
+sequence operator pays nothing. For a set operator it reads the use lists of each loop view
+once more and, per candidate group of `m` classes, enumerates `C(m, k)` combinations, each
+normalized and deduplicated by signature; the budgets bound both. Measured on the
+conformance tests and the bench corpus (Section 12): the suites were not re-timed in this round (the baseline is 155 s for `egg_tests.rs`, 126 s for `flatten_differential.rs` and 51 s for `conform.rs`, debug build, one thread, medians of three); the stage is guarded by the kind, so an operator without idempotence runs the same code as before.
 
 ### 4.7 The engine's regrouping loop and its skips
 
@@ -2776,6 +2882,35 @@ resolution after the original text.
     which completion collapsed a node (`Final/Witness.lean`, `not_cover`). Fix: extend
     `SubRep` to the retired nodes and conclude, for a match rooted at a retired node, at the
     class of an active node it rewrites to (I3 and `nf_present` give one).
+19. *Resolved, commits `893fc3ac` (model) and `b932241b` (engine).* Regrouped
+    matching under idempotence never kept a member of a set group beside its class, so with
+    `sab = S{A, B}` and `s = S{A, B, C}` the pattern `(S x y z)` never bound
+    `x = sab, y = A, z = C`, although `S{sab, A, C} = s` in every ACI model
+    (`regroup_idem_overlap_lost`, `flatten_regroup_laws_idem.egg`). Fix applied: an overlap
+    stage after the regrouping loop, for `:assoc-comm-idem` operators only, forms the views
+    that add the class of a group and drop as many of its members as the pattern's item count
+    fixes, counted against the regrouping budgets (`FlattenScratch::regroup`, `flatten.rs`);
+    the model has it in all three forms (`RegroupOverlapDefs.lean`), with soundness
+    (`overlap_step_sound_aci_laws`, `regroupSkipO_views_sound_aci_laws`), the
+    characterization (`regroupSkipO_match_iff_laws`, `RegroupChainO`), the step-for-step
+    theorems (`regroupSkipO_iff`, `regroupAllSkipOAt_eq`) and the bounds
+    (`regroupBoundedO_query_exact`); `regroup_idem_overlap_lost` became
+    `regroup_idem_overlap_sound`, `regroup_idem_overlap_loop_lost` and
+    `regroup_idem_overlap_found` (Section 4.6). Eight of the 400 conformance samples changed
+    (`conform/c1_0081.egg`, `c1_0101.egg`, `c1_0152.egg`, `c1_0181.egg`,
+    `conform-flatten/f2_0026.egg`, `f2_0112.egg`, `f2_0118.egg`, `f2_0135.egg`) and were
+    regenerated; the engine agrees with all 400. Remainder: a view with two overlap groups,
+    and a kept member in a rest variable, are not formed (Section 12).
+20. **New.** Truncation of overlap views is not exercised by a fixture. The bounds are
+    constants (`MAX_REGROUP_VIEWS` 2^14, `MAX_REGROUP_WORK` 2^20), and a family of overlap
+    views past them needs a set of about fifty children, on which the set decomposition of
+    the pattern enumerates `48 · 47 · 46 · 45 · 44` partial assignments per node before the
+    stage is reached (hours in a debug build; the fixture drafted for this round ran for
+    seven hours in the matcher's `decompose_aci_elem` and was dropped). Fix: make the two
+    bounds options a program can set (`set-option`, defaulting to the constants; the Lean
+    bounds model already takes them as values, `Bounds` in `RegroupBoundsDefs.lean`), lower
+    them in a small fixture, and assert the truncation counter and that only overlap views
+    are reported, as `regroupBoundedO_plan_sound` states.
 ## 11. Algorithms, as the model states them
 
 Each block is the algorithm as the Lean model states it, in neutral pseudo-code. A trailing
@@ -2957,13 +3092,37 @@ regroup(node, κ, dir, laws, items):                   -- SkipSt.run; flatten.rs
           if signature(d) already at t: continue      -- RecSig.same; sigs
           views += 1; if views > MAX_REGROUP_VIEWS: truncate; stop
           add d to t                                  -- SkipSt.addRec
+  if κ = set and |items| > 0:                         -- SkipSt.overlapAll; the overlap stage, idempotence only
+    for w in the loop's views, in entry order:        -- st₀.order; entries[0..n_loop]
+      cands := f-members holding a class of w, by node id   -- groupsOfEngineAt
+      work += use-list lengths; if work > MAX_REGROUP_WORK: truncate; stop
+      for (g, grp) in cands:                          -- SkipSt.overlapGroupStep
+        work += |grp|; if work > MAX_REGROUP_WORK: truncate; stop
+        cs := classes of grp, sorted, distinct        -- groupClasses
+        if g ∈ cs or |cs| < 2 or cs ⊄ w: continue     -- overlapDrops
+        base := |w| + (g ∉ w ? 1 : 0); if base < |items|: continue
+        k := base - |items|; if k ≥ |cs| or (k = 0 and g ∈ w): continue
+        for D in the k-element sublists of cs, in sublists order:   -- dropSets; next_colex
+          work += 1; if work > MAX_REGROUP_WORK: truncate; stop
+          t := normalize(κ, laws, (w less D) ++ [g])  -- overlapFits; normalize
+          if t is not a node, or a count overflows: count flatten_overflowed; continue
+          if t is new: enter t (no heap: the stage regroups nothing)  -- SkipSt.addTargetO
+          if some record of t is unconditional: continue
+          for r in srcRecs(the loop's records of w):  -- st₀.recs w; records with index < n_loop
+            d := (t, leaves of r with g added where they hold a class of grp, needs of r less grp plus g, kept if t holds them)
+            if signature(d) already at t: continue
+            views += 1; if views > MAX_REGROUP_VIEWS: truncate; stop
+            add d to t
   keep the records needing at most |items| classes    -- withinLimit; Demand::needs
 ```
 
 The model's `regroupSkipG` has no bounds and `BSt.run` adds them at the same places; the
 engine also caps the takeable closure at 4,096 classes (`takeableRCap`) and skips regrouping
 altogether when the decomposition has no item and the laws cannot drop a class
-(`laws_drop`, `canDrop`).
+(`laws_drop`, `canDrop`). The overlap stage (`SkipSt.overlapAll`, `BSt.overlapAll`,
+`RegroupOverlapDefs.lean`) runs after the loop, only when the loop was not truncated, and
+derives from the loop's records alone, so an overlap view is one step from a view of the
+loop (Section 4.6, "Overlap views under idempotence").
 
 ### 11.8 The adaptive scheduler
 
@@ -3259,11 +3418,22 @@ Evidence: `regroup_insert_unit_lost` (`Flatten/RegroupLaws.lean:1363`), fixture
 `flatten_regroup_laws_insert.egg`. A documented limit of the regrouping guarantee, not a
 defect.
 
-**Must not expect regrouping to keep a set group beside its class.** `S{A, B, C}` equals
-`S{A, C, sab}` by idempotence, but regrouping replaces the group; keeping members would
-multiply the views by up to `2^|group|`. Evidence: `regroup_idem_overlap_lost`
-(`Flatten/RegroupLaws.lean:1453`), fixture `flatten_regroup_laws_idem.egg`. A documented
-limit; completion proves the equality.
+**Must keep a set group beside its class only as many members as the pattern asks for.**
+`S{A, B, C}` equals `S{A, C, sab}` by idempotence, and regrouping alone never forms that
+view (`regroup_idem_overlap_loop_lost`, `Flatten/RegroupLaws.lean`): `(S x y z)` missed
+`x = sab, y = A, z = C` (completeness relative to the classes present). Keeping every subset
+of the members would multiply the views by up to `2^|group|`; the engine's overlap stage
+keeps exactly `|items| - 1 - (|view| - |group|)` of them, one family of `C(|group|, k)`
+views per group, and counts each raw fit and each record against `MAX_REGROUP_WORK` and
+`MAX_REGROUP_VIEWS`, so a large family truncates the node and the run reports it instead of
+enumerating `2^|group|` views. Evidence: `regroup_idem_overlap_found`,
+`regroupSkipO_match_iff_laws`, `regroupBoundedO_query_exact`
+(`Flatten/RegroupOverlap.lean`, `RegroupOverlapBounds.lean`), the fixture
+`flatten_regroup_laws_idem.egg` (the match found), the regenerated conformance samples
+(Section 10, item 19). Cost: nothing for an
+operator without idempotence, since the stage is guarded by the kind; for a set operator one
+more read of the use lists per view of the loop and the binomial families, both bounded
+(the suites were not re-timed in this round (the baseline is 155 s for `egg_tests.rs`, 126 s for `flatten_differential.rs` and 51 s for `conform.rs`, debug build, one thread, medians of three); the stage is guarded by the kind, so an operator without idempotence runs the same code as before).
 
 **Must not seek a completeness theorem for completion modulo associativity alone.** The
 problem is completion of a string rewriting system, and the word problem for finitely

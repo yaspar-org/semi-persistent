@@ -133,11 +133,16 @@ maintains a summary would let a defect in that code pass its own check.
 
 ## 6. Not covered
 
-- The completeness theorems for matching under regrouping are laws-free, and the regroup
-  bounds are modelled (`RegroupBounds.lean`), and tier 1 covers them by the three counters
-  (`regroupBounded_query_exact`).
-  The skipping of redundant records needs no check: `regroupSkipG_iff` proves it keeps the
-  match set.
+- The completeness theorems for matching under regrouping are relative to chains of
+  regroupings under the operator's laws, followed for an idempotent operator by at most one
+  overlap step (`regroupSkip_match_iff_laws`, `regroupSkipO_match_iff_laws`); the regroup
+  bounds are modelled with the overlap stage (`RegroupBounds.lean`,
+  `RegroupOverlapBounds.lean`), and tier 1 covers them by the same three counters
+  (`regroupBounded_query_exact`, `regroupBoundedO_query_exact`): the stage counts its raw
+  fits and records against `MAX_REGROUP_WORK` and `MAX_REGROUP_VIEWS`, so a truncation inside
+  it is reported as one inside the loop.
+  The skipping of redundant records needs no check: `regroupSkipG_iff` and `regroupSkipO_iff`
+  prove it keeps the match set.
 - Completion modulo A alone has no completeness theorem (the word problem for semigroups
   is undecidable), so for `:assoc` operators the checks establish matching completeness
   relative to the classes present and nothing about completion.

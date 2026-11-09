@@ -465,10 +465,42 @@ collapsed `f`-node (`Final/Witness.lean`, `not_cover`).
   every leaf under an identity, `canDrop_of_gone`, `mayNonInert_of_canDrop` and the
   relaxed `LeafRel` keep `prune_regroup`;
   `regroup_drop_need_{unit,nilpotent,inverse,leaf}` are the four matches of
-  `flatten_regroup_laws_drop_need.egg`. Beyond chains, two kinds of match stay lost: a
-  normal form reached only by inserting the unit (`regroup_insert_unit_lost`,
-  `flatten_regroup_laws_insert.egg`) and a set group kept beside its class
-  (`regroup_idem_overlap_lost`, `flatten_regroup_laws_idem.egg`).
+  `flatten_regroup_laws_drop_need.egg`. Beyond chains, a normal form reached only by
+  inserting the unit stays lost (`regroup_insert_unit_lost`,
+  `flatten_regroup_laws_insert.egg`); a set group kept beside its class, which the loop
+  alone never forms (`regroup_idem_overlap_loop_lost`, sound by
+  `regroup_idem_overlap_sound`, the two conjuncts of the former
+  `regroup_idem_overlap_lost`), is found by the overlap stage below.
+  Overlap views under idempotence (2026-11-09, `RegroupOverlapDefs.lean`,
+  `RegroupOverlap.lean`, `RegroupOverlapBounds.lean`): after the regrouping loop, for an
+  `:assoc-comm-idem` operator, the engine adds the views with the class of a group and as
+  many of its members dropped as the pattern's item count fixes (`overlapDrops`,
+  `overlapFits`, `dropSets`), in the three forms of the regrouping model (`overlapStage`,
+  `regroupAllO`, `enumerateRO`, `Enumerator.regroupO`; `SkipSt.overlapAll`,
+  `regroupSkipO`, `enumerateRSkipO`, `Enumerator.regroupSkipO`; `BSt.overlapAll`,
+  `regroupBoundedO`, `enumerateRDBoundedO`, `runBO`). Soundness in join semilattices:
+  `overlap_step_sound_aci`, `overlap_step_sound_aci_laws`, `regroupO_views_sound_aci_laws`,
+  `regroupSkipO_views_sound_aci_laws`; without idempotence the stage is empty
+  (`enumerateRO_eq_of_not_aci`, `enumerateRSkipO_eq_of_not_aci`). The engine's stage
+  step for step: `overlapAll_spec`, `regroupSkipO_spec`, `regroupSkipO_iff`,
+  `enumerateRSkipO_iff`, `regroupAllSkipOAt_eq`, `prune_regroupO` (through
+  `recRel_overlap`), `regroupSkipO_specE`, `atomSat_regroupSkipO_iff`,
+  `regroupSkipO_plan_sound/complete`. The characterization: `OverlapStepL`,
+  `RegroupChainO` (a chain then at most one overlap step), `regroupO_views_iff_laws`,
+  `regroupO_match_iff_laws`, `regroupSkipO_views_iff_laws`, `regroupSkipO_match_iff_laws`,
+  `regroupSkipO_plan_complete_laws`, `regroupChainO_iff_of_not_aci`; the statements
+  without the stage are unchanged. The counter-model turned witness:
+  `regroup_idem_overlap_found` (`flatten_regroup_laws_idem.egg`, its last check now
+  `check-eq`). The bounds: `regroupBoundedO_cases`, `regroupBoundedO_halt_iff`,
+  `regroupBoundedO_exact`, `regroupBoundedO_sub`, `regroupBoundedO_reach`,
+  `enumerateRDBoundedO_le/ge`, `runBO_fst`, `runBO_ge`, `regroupBoundedO_plan_sound`,
+  `regroupBoundedO_plan_complete`, `regroupBoundedO_query_exact`,
+  `regroupBoundedO_match_exact`; the stage counts each raw fit against the work bound
+  (no fixture hits a bound inside the stage yet, `GUIDE.md` Section 10, item 20). Both
+  generators run the stage (`runERO`, `overlapStage` in `Conform.regroupedRecs`); eight
+  of the 400 committed samples changed and were regenerated, and the engine agrees with
+  all 400. Not formed: a view with two overlap groups, and a kept member in a rest
+  variable.
   Folds (2026-11-08, `FoldEnum.lean`, `FoldRegroup.lean`): the executable spine
   enumerator is the spine trees, `rawNodeD_left_iff`/`rawNodeD_right_iff`
   (`rawOptD` with a direction produces exactly the views of `OTLeft`/`OTRight`,

@@ -1482,10 +1482,42 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
      `:nilpotent k`: with `zero ∋ add{B, D}`, `add{A, C}` equals `add{add{A, B}, add{C, D}}`
      (`regroup_insert_unit_lost`, `flatten_regroup_laws_insert.egg`). A chain opens and
      contracts but never inserts, and insertions are unbounded: a limit of the guarantee.
-  3. *A set group kept beside its class.* `S{A, B, C}` equals `S{A, C, sab}` by idempotence,
-     but regrouping replaces the group (`regroup_idem_overlap_lost`,
-     `flatten_regroup_laws_idem.egg`); keeping members would multiply the views by up to
-     `2^|group|`.
+  3. *A set group kept beside its class* (fixed 2026-11-09, commit `b932241b`).
+     `S{A, B, C}` equals `S{A, C, sab}` by idempotence, but regrouping replaces the group
+     (`regroup_idem_overlap_loop_lost`, the former `regroup_idem_overlap_lost`), and keeping
+     every subset of the members would multiply the views by up to `2^|group|`. The overlap
+     stage below keeps as many as the pattern asks for (`regroup_idem_overlap_found`,
+     `flatten_regroup_laws_idem.egg`, whose last check is now `check-eq`).
+- **Overlap views under idempotence** (2026-11-09,
+  `proofs/lean/SemperProofs/EMatch/Flatten/RegroupOverlap*.lean`). After the regrouping
+  loop, for an `:assoc-comm-idem` operator and a decomposition with items, the matcher also
+  matches the *overlap views* of every view the loop ends with: the view with the class `G`
+  of an `f` node added and some members of its group dropped. The group's classes must number
+  at least two, lie in the view and not hold `G`; with `base` the view's entries plus one when
+  `G` is new, the stage drops `k = base - items` members, so the view has one entry per item
+  and a rest variable holds nothing, and it keeps at least one. The candidates are the loop's,
+  the matched node among them: a pattern with one item more than a node has children binds
+  that item to the node's own class (`S{s, A, B} = s` for `s = S{A, B}`). A dropped member is covered by
+  `G`, a kept one is absorbed, so the view spells a term equal to the view's in every join
+  semilattice (`overlap_step_sound_aci_laws`). The `k`-element subsets are enumerated in the
+  order of `List.sublists` (`next_colex`), each normalized and given the records of the
+  loop's view with the leaves and needs of a regrouping by the group, deduplicated by
+  signature; a target with an unconditional record gains nothing. The stage regroups
+  nothing and overlaps no overlap view, so an overlap view is one step from a view of the
+  loop; it derives from the loop's records only. Two items never bind the same class: the
+  view is a set and the set decomposition takes a distinct entry per item. The stage counts
+  the use lists of each view, the children of each candidate and one unit per subset against
+  `MAX_REGROUP_WORK`, and each record against `MAX_REGROUP_VIEWS`, so a family of
+  `C(|group|, k)` subsets truncates the node before it is enumerated (no fixture reaches
+  a bound inside the stage yet: `proofs/lean/GUIDE.md`, Section 10, item 20, and only
+    overlap views of the node are reported when one does, `regroupBoundedO_plan_sound`). Lean: `regroupSkipO_match_iff_laws` characterizes
+  the matches as chains of regroupings followed by at most one overlap step
+  (`RegroupChainO`), `regroupSkipO_iff` and `regroupAllSkipOAt_eq` the stage step for step,
+  `regroupBoundedO_query_exact` the bounds; the statements without the stage are unchanged
+  and hold of the loop alone. Not formed: a view with two overlap groups, and a kept member
+  in a rest variable. The brute-force reference of `flatten_differential.rs` has the same
+  stage. Cost: nothing for an operator without idempotence (the stage is guarded by the
+  kind); for a set operator, the suites were not re-timed in this round (the baseline is 155 s for `egg_tests.rs`, 126 s for `flatten_differential.rs` and 51 s for `conform.rs`, debug build, one thread, medians of three); the stage is guarded by the kind, so an operator without idempotence runs the same code as before.
 - **Cost** (release build, best of three runs per file, 2026-11-05). The 231 `:flatten`
   programs of `tests/egg` and `tests/egg/conform-flatten` other than
   `ac_lazy_budget_inconclusive.egg` take 0.590 s in total before and 0.604 s after.
