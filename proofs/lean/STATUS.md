@@ -31,16 +31,26 @@ of `p'`, the instance is fired in the store as normal forms (`FiredN`), its
 root binds the class of `p`, it matches the pattern at that class, and it
 matches at the represented node of `p'`. `saturation_modulo_complete_store`
 is the form with `CompleteHyps`, `_store_engine` takes the engine's stop
-test, `_store_cover` (with `FCover`) concludes for every match.
+test, `_store_cover` (with `FCover`) concludes for every match rooted at an
+active node, and `saturation_modulo_complete_store_retired` (with `SubRepR`
+over active and retired nodes, `FCover` over both, `I2` and `I3`) concludes
+for every match of the index, a match rooted at a retired node included: the
+root binds the class of an active node the retired one rewrites to, `=_E`-equal
+to it (`node_reduces_active`, `node_equal_active`, `CC/Bridge/Sub.lean`).
 
 Non-vacuity: `Final/Witness.lean` proves every hypothesis of
 `saturation_modulo_complete_store_atoms` for two concrete rounds of
-`(rewrite (+ x y) (g x y))` (`g` a plain binary operator) over the
-leaf-constant state of `AtomsWitness` (`(union (+ a b) c)`, `t = a+b+d`,
-`u = c+d`), by hand and `decide`: `witness_saturation_modulo_complete` is
-the theorem applied to that run, and `witness_fires_modulo` reads it at the
-match rooted at `{c, d}` for the theory-equal node `{a, b, d}`. Both rounds
-route the rule naive.
+`(rewrite (+ x y) (g x y))` (`g` a plain binary operator) and
+`(rewrite (+ x y z) k)` (`k` a constant) over the leaf-constant state of
+`AtomsWitness` (`(union (+ a b) c)`, `t = a+b+d`, `u = c+d`), by hand and
+`decide`: `witness_saturation_modulo_complete` is the theorem applied to that
+run, and `witness_fires_modulo` reads it at the match rooted at `{c, d}` for
+the theory-equal node `{a, b, d}`. `witness_saturation_modulo_complete_retired`
+is `saturation_modulo_complete_store_retired_atoms` on the same run, with the
+retired `{a, b, d}` stored under `SubRepR`, `I2` and `I3` on the completion
+view (`witness_I2`, `witness_I3`), and `witness_fires_retired` reads it at the
+match of the second rewrite rooted at `{a, b, d}`: fired, its root binds the
+class of the active `{c, d}`. Both rounds route both rules naive.
 
 The former statements remain: `saturation_modulo_complete` and
 `saturation_modulo_complete_atoms` (`Final/Main.lean`) take
@@ -62,7 +72,8 @@ critical pairs involving a law instance, and the minimal-monomial
 hypotheses) and the round facts; no theorem relates the completion state
 to the rounds or to the engine's rebuild. The covering form
 `saturation_modulo_complete_store_cover` has no witness on a store with a
-collapsed `f`-node (`Final/Witness.lean`, `not_cover`).
+collapsed `f`-node (`Final/Witness.lean`, `not_cover`); the retired form
+covers such a store at the price of `I2`, `I3` and `SubRepR` as hypotheses.
 
 ## CC: AC-congruence closure (`SemperProofs/CC/`)
 
