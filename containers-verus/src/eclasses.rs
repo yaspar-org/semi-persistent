@@ -39,6 +39,7 @@
 //! compile-time asserts. This kernel is the production e-graph class layer:
 //! `egraph::EClasses` and `egraph::UnionFind` are type aliases of it.
 
+// TODO(abs-class-storage): add W8 (abstract-value handles) to the W-invariant table above, see containers-verus/doc/design/21-abstract-value-pool.md §3
 use vstd::prelude::*;
 
 use crate::circular_list::{CircularList, CircularListNode};
@@ -58,6 +59,7 @@ verus! {
 // ClassData — per-class payload in the repr sparse set
 // ---------------------------------------------------------------------------
 
+// TODO(abs-class-storage): add `abs: Option<<T as DenseId>::Index>`, the class's handle into the abstract-value pool, see containers-verus/doc/design/21-abstract-value-pool.md §2
 /// Per-class data: the class's use-list id, its optional min-monomial pool
 /// row number, and the atomic flag (production's `ClassData`).
 #[derive(Copy)]
@@ -91,6 +93,7 @@ impl<L: DenseId, T: DenseId> crate::value_compressor::EqSpec for ClassData<L, T>
         ensures r == (self == other),
     {
         let ul = self.use_list.as_usize() == other.use_list.as_usize();
+        // TODO(abs-class-storage): compare `abs` here as `min_row` is compared, and extend the proof below, see containers-verus/doc/design/21-abstract-value-pool.md §7
         let mr = match (self.min_row, other.min_row) {
             (Option::None, Option::None) => true,
             (Option::Some(a), Option::Some(b)) => a.as_usize() == b.as_usize(),
@@ -136,6 +139,7 @@ impl<L: DenseId, T: DenseId> Clone for ClassData<L, T> {
     }
 }
 
+// TODO(abs-class-storage): the default payload carries `abs: None`, see containers-verus/doc/design/21-abstract-value-pool.md §2
 impl<L: DenseId, T: DenseId> core::default::Default for ClassData<L, T> {
     fn default() -> (r: ClassData<L, T>)
     {
@@ -149,6 +153,7 @@ impl<L: DenseId, T: DenseId> core::default::Default for ClassData<L, T> {
     }
 }
 
+// TODO(abs-class-storage): store `abs` as a (handle, present) pair or share a word; this decides the 16-byte budget, see containers-verus/doc/design/21-abstract-value-pool.md §5
 /// Repr for `ClassData`: the use-list word carries the capture tag
 /// (production's ordering); `min_row` is stored as `(row, present)` because
 /// `T::Index` has no spare niche. A named struct because Verus's
@@ -176,6 +181,7 @@ impl<LR: Copy, I: Copy> Clone for ClassDataRepr<LR, I> {
 /// word. `repr_wf` pins the absent-row encoding to a canonical `(min, false)`
 /// — without that, two reprs differing only in a hidden dead `row` word would
 /// decode equal, violating the extensionality law.
+// TODO(abs-class-storage): extend value_of, repr_wf (canonical absent handle), lemma_repr_extensional, into_repr and from_repr with `abs`, see containers-verus/doc/design/21-abstract-value-pool.md §7
 impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
     type Repr = ClassDataRepr<<L as Tagged>::Repr, <T as DenseId>::Index>;
 
@@ -282,6 +288,7 @@ pub open(crate) spec fn eg_model_wf<
     reprs_indices: Seq<<T as DenseId>::Index>,
     uses_model: Seq<Seq<usize>>,
     uses_nodes: Seq<ListNode<T, N>>,
+    // TODO(abs-class-storage): add the abstract-value pool view as a parameter here and at every call site, see containers-verus/doc/design/21-abstract-value-pool.md §3
     pool: Seq<Opt<T>>,
     min_width: nat,
 ) -> bool {
@@ -353,6 +360,7 @@ pub open(crate) spec fn eg_model_wf<
     // pool cells decode (Opt well-formedness; the cells are data, W6 is
     // geometry, but a read must round-trip)
     &&& (forall|i: int| 0 <= i < pool.len() ==> (#[trigger] pool[i]).wf())
+    // TODO(abs-class-storage): state W8 after the W6 clauses below: entries whole, live handles allocated and pairwise distinct, see containers-verus/doc/design/21-abstract-value-pool.md §3
     // W6: whole rows; live row numbers allocated and pairwise distinct
     &&& (min_width > 0 ==> pool_len % min_width == 0)
     &&& (forall|id: nat| #[trigger] ss_contains(reprs_sparse, reprs_indices, live, id)
@@ -400,6 +408,7 @@ pub open(crate) spec fn eg_archive_agrees<
     indices_snaps: Seq<Seq<<T as DenseId>::Index>>,
     uses_models: Seq<Seq<Seq<usize>>>,
     uses_nodes_snaps: Seq<Seq<ListNode<T, N>>>,
+    // TODO(abs-class-storage): add the archived abstract-value pool snapshots: one per frame, W8 per frame, monotone lengths, see containers-verus/doc/design/21-abstract-value-pool.md §4
     pool_snaps: Seq<Seq<Opt<T>>>,
     min_width: nat,
 ) -> bool {
@@ -465,6 +474,7 @@ where
     pub(crate) uf: UnionFind<T, J, TRACK, PROOFS, P>,
     /// Per-class parent lists.
     pub(crate) uses: ListArena<T, L, N, TRACK, P>,
+    // TODO(abs-class-storage): add the `abs_pool` field after this one, with its PlainFamily bound on every where clause, see containers-verus/doc/design/21-abstract-value-pool.md §2
     /// Min-monomial pool: flat rows of `min_width` columns. A plain-family
     /// column (`ParallelStore` under the default policy, as production's
     /// `VecP`): `Opt` owns its niche bit, so it cannot sit in a bit-stealing
@@ -680,6 +690,7 @@ where
                 self.uses.nodes_snapshots_view(),
                 self.min_pool.snapshots_view(),
                 self.min_width as nat)
+        // TODO(abs-class-storage): add `abs_pool.wf()`, pass the abs pool to both predicates, bound its archived lengths, see containers-verus/doc/design/21-abstract-value-pool.md §4
         // archived pool lengths never exceed the live pool (outside the
         // opaque predicate: the live length changes on row allocation, and
         // an opaque argument change would not transfer by congruence).
@@ -704,6 +715,7 @@ where
                 <P as TaggedFamily<ClassData<L, T>, T::Index, TRACK>>::empty()),
             uf: UnionFind::new(),
             uses: ListArena::new(),
+            // TODO(abs-class-storage): allocate the empty abstract-value pool here, see containers-verus/doc/design/21-abstract-value-pool.md §2
             min_pool: SpVec::with_store(<P as PlainFamily<Opt<T>, usize, TRACK>>::empty()),
             min_width: 0,
         };
@@ -864,6 +876,7 @@ where
             Some(o) => o,
             None => crate::guard::refuse("EClasses::add_singleton: index width below 1"),
         };
+        // TODO(abs-class-storage): a fresh class carries `abs: None`, here and in the spec literal below, see containers-verus/doc/design/21-abstract-value-pool.md §2
         let raw_key = match self.reprs.try_add(ClassData {
             use_list: list_id, min_row: None, atomic: false, matchable: true, size: one,
         }) {
@@ -1200,6 +1213,7 @@ pub(crate) proof fn lemma_splice_uses_w5<T: DenseId, N: DenseId + Tagged>(
 /// Returned by `merge`: the surviving and absorbed canonical ids plus the
 /// absorbed class's data, which the rebuild loop consumes (production's
 /// `MergeInfo`).
+// TODO(abs-class-storage): add `absorbed_abs: Option<<T as DenseId>::Index>` next to `absorbed_min_row`, see containers-verus/doc/design/21-abstract-value-pool.md §2
 pub struct MergeInfo<T: DenseId, L: DenseId> {
     pub survivor: T,
     pub absorbed: T,
@@ -1227,6 +1241,7 @@ where
         + PlainFamily<Opt<T>, usize, TRACK>,
 {
 
+    // TODO(abs-class-storage): carry `abs` through as `min_row` is carried, and discharge W8 for the merged state, see containers-verus/doc/design/21-abstract-value-pool.md §3
     /// Re-establishes `eg_model_wf` after a merge's three mutations (union,
     /// ring splice with payload clear, repr removal). Extracted for the same
     /// reason as `lemma_splice_disjoint` (list.rs): proved inline, the ring
@@ -1712,6 +1727,7 @@ where
                             == old(self).num_classes_spec() - 1
                         &&& mi.absorbed_uses == old(self).class_data_spec(
                                 old(self).key_of(mi.absorbed.id_nat() as int)).use_list
+                        // TODO(abs-class-storage): ensure `mi.absorbed_abs` is the absorbed class's handle and the pool view is unchanged, see containers-verus/doc/design/21-abstract-value-pool.md §2
                         &&& mi.absorbed_min_row == old(self).class_data_spec(
                                 old(self).key_of(mi.absorbed.id_nat() as int)).min_row
                         &&& mi.absorbed_atomic == old(self).class_data_spec(
@@ -1887,6 +1903,7 @@ where
             survivor: s,
             absorbed: ab,
             absorbed_uses: data.use_list,
+            // TODO(abs-class-storage): return `absorbed_abs: data.abs`, see containers-verus/doc/design/21-abstract-value-pool.md §2
             absorbed_min_row: data.min_row,
             absorbed_atomic: data.atomic,
         })
@@ -2230,6 +2247,7 @@ where
         }
     }
 
+    // TODO(abs-class-storage): `set_abs_value` follows this function: allocate on first use, tracked write otherwise, see containers-verus/doc/design/21-abstract-value-pool.md §7
     /// Write class `key`'s min-monomial for column `col`, allocating the
     /// class's pool row on first use (production's `ensure_min_row` +
     /// `set_min_monomial`). Refuses a dead key, an out-of-range column, a
@@ -2733,6 +2751,7 @@ where
         self.reprs.get_live(raw_key).size.as_usize()
     }
 
+    // TODO(abs-class-storage): `abs_value_at` follows this function: read the entry a MergeInfo handle names, see containers-verus/doc/design/21-abstract-value-pool.md §2
     /// Read completion column `col` of a pool row number carried in
     /// `MergeInfo` (production's `min_monomial_at_row`): `None` when the row
     /// is absent or the cell is empty. Refuses an out-of-range column or an
@@ -2777,6 +2796,7 @@ where
         &self.uses
     }
 
+    // TODO(abs-class-storage): carry the `absorbed_abs` ensures here and in every public merge form, see containers-verus/doc/design/21-abstract-value-pool.md §2
     /// Union-by-rank merge. Only available when `PROOFS = false`
     /// (production's contract, with its message); `merge_justified` is the
     /// proofs form.
@@ -2936,6 +2956,7 @@ where
         + PlainFamily<Opt<T>, usize, TRACK>,
 {
 
+    // TODO(abs-class-storage): push the abstract-value pool in lockstep and ensure its archive grows by its view, see containers-verus/doc/design/21-abstract-value-pool.md §4
     /// Push a frame on every component without minting (what a typed group
     /// drives): `mark` minus the token bundling, over the components' own
     /// structural pushes.
@@ -3111,6 +3132,7 @@ where
 
 
 
+    // TODO(abs-class-storage): reset the abstract-value pool to its snapshot at `target` in lockstep, see containers-verus/doc/design/21-abstract-value-pool.md §4
     /// Semantics B, token-free (what a typed group drives): every component
     /// resets to its snapshot at `target` and keeps that frame open; the
     /// aggregate's archive at `target` is the jointly valid state it lands in.
@@ -3270,6 +3292,7 @@ where
 
 
 
+    // TODO(abs-class-storage): restore the abstract-value pool and ensure its view equals its archive at `target`, see containers-verus/doc/design/21-abstract-value-pool.md §4
     /// The legacy pop-restore, token-free (what a typed group drives): every
     /// component restores to its snapshot at `target` and drops that frame
     /// with everything above it.

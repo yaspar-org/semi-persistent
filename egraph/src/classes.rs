@@ -47,6 +47,7 @@ const _: () = assert!(
     "e-class ring cell must stay two words at 31-bit ids"
 );
 
+// TODO(abs-class-storage): the `abs` handle breaks this 16-byte bound: widen and measure, or share a word, see containers-verus/doc/design/21-abstract-value-pool.md §5
 // The per-class slot: a use-list head, `min_row`, the member-count word (the
 // `--union-by` policy input, `T::Index`-wide so it follows the id
 // configuration), and two flags — 16 bytes at 31-bit ids. Was 12 before the
@@ -58,6 +59,7 @@ const _: () = assert!(
     "per-class slot must stay 16 bytes at 31-bit ids"
 );
 
+// TODO(abs-class-storage): a separate `abs` word makes this slot 40 bytes, over the 32-byte bound, see containers-verus/doc/design/21-abstract-value-pool.md §5
 // The 63-bit configuration's slot: the same fields at 8-byte words.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
