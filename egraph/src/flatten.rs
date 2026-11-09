@@ -241,6 +241,40 @@ fn saturated_size(counts: impl IntoIterator<Item = Option<u64>>) -> (u128, usize
         })
 }
 
+/// The bounds of one node's enumeration and regrouping: the module's constants by
+/// default. A test lowers them to reach the stops on a small graph
+/// ([`FlattenScratch::set_bounds`], `MatchPool::set_flatten_bounds`); the engine never does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FlattenBounds {
+    /// [`MAX_REGROUP_VIEWS`]: regrouped records added at one node.
+    pub regroup_views: usize,
+    /// [`MAX_REGROUP_WORK`]: regrouping candidates examined at one node.
+    pub regroup_work: usize,
+    /// [`MAX_VIEWS`]: complete combinations enumerated at one node.
+    pub views: usize,
+    /// [`MAX_WORK`]: options taken at one node.
+    pub work: usize,
+    /// [`MAX_ELEMS`]: view elements stored for one node.
+    pub elems: usize,
+}
+
+impl FlattenBounds {
+    /// The module's constants.
+    pub const DEFAULT: Self = Self {
+        regroup_views: MAX_REGROUP_VIEWS,
+        regroup_work: MAX_REGROUP_WORK,
+        views: MAX_VIEWS,
+        work: MAX_WORK,
+        elems: MAX_ELEMS,
+    };
+}
+
+impl Default for FlattenBounds {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 /// The enumerator's state, reused across nodes. The views of the last
 /// [`enumerate`] are [`FlattenScratch::views`].
 #[derive(Debug)]
@@ -280,6 +314,8 @@ pub struct FlattenScratch<G, M> {
     root: Option<G>,
     /// Its kind, for [`Demand::merge_on_close`].
     kind: FlatKind,
+    /// The bounds the enumeration and the regrouping stop at ([`FlattenBounds`]).
+    bounds: FlattenBounds,
 }
 
 /// A regrouped record's demand: per leaf, the class it opened, its flag and its sorted
@@ -402,6 +438,7 @@ impl<G, M> Default for FlattenScratch<G, M> {
             first_overflow: None,
             root: None,
             kind: FlatKind::Ac,
+            bounds: FlattenBounds::DEFAULT,
         }
     }
 }
@@ -421,6 +458,16 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
     /// Whether the last enumeration stopped regrouping at a bound ([`REGROUP_TRUNCATED`]).
     pub fn regroup_truncated(&self) -> bool {
         self.regroup_truncated
+    }
+
+    /// The bounds the next enumerations stop at ([`FlattenBounds`]).
+    pub fn set_bounds(&mut self, bounds: FlattenBounds) {
+        self.bounds = bounds;
+    }
+
+    /// The bounds the enumerations stop at.
+    pub fn bounds(&self) -> FlattenBounds {
+        self.bounds
     }
 
     /// The first of them, with the nesting that produced the count.
@@ -548,7 +595,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
             .and_then(|t| t.checked_add(self.group_elems.len()))
             .and_then(|t| t.checked_add(self.view.len()))
             .ok_or(OVER_BOUND)?;
-        if total > MAX_ELEMS {
+        if total > self.bounds.elems {
             return Err(OVER_BOUND);
         }
         self.elems.extend_from_slice(&self.norm);
@@ -789,7 +836,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                 }
                 for &m in src.containing(c) {
                     work += 1;
-                    if work > MAX_REGROUP_WORK {
+                    if work > self.bounds.regroup_work {
                         self.regroup_truncated = true;
                         return Ok(());
                     }
@@ -804,7 +851,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                 let m = cands[ci];
                 src.children(m, kind, &mut self.kids, &mut self.ids);
                 work = work.saturating_add(self.kids.len());
-                if work > MAX_REGROUP_WORK {
+                if work > self.bounds.regroup_work {
                     self.regroup_truncated = true;
                     return Ok(());
                 }
@@ -846,7 +893,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                         Some(&t) => t,
                         None => {
                             let s = self.elems.len();
-                            if s.checked_add(fresh.len()).ok_or(OVER_BOUND)? > MAX_ELEMS {
+                            if s.checked_add(fresh.len()).ok_or(OVER_BOUND)? > self.bounds.elems {
                                 return Err(OVER_BOUND);
                             }
                             self.elems.extend_from_slice(&fresh);
@@ -925,7 +972,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                             continue;
                         }
                         views += 1;
-                        if views > MAX_REGROUP_VIEWS {
+                        if views > self.bounds.regroup_views {
                             self.regroup_truncated = true;
                             return Ok(());
                         }
@@ -934,7 +981,7 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                             .len()
                             .checked_add(self.elems.len())
                             .ok_or(OVER_BOUND)?;
-                        if total > MAX_ELEMS {
+                        if total > self.bounds.elems {
                             return Err(OVER_BOUND);
                         }
                         let ng = self.groups.len();
@@ -1334,7 +1381,7 @@ where
         match s.pending.pop() {
             None => {
                 leaves = leaves.checked_add(1).ok_or(OVER_BOUND)?;
-                if leaves > MAX_VIEWS {
+                if leaves > s.bounds.views {
                     return Err(OVER_BOUND);
                 }
                 s.record(&laws, |inv, x| src.inverse_class(inv, x))?;
@@ -1418,7 +1465,7 @@ where
         return Ok(false);
     };
     *work = work.checked_add(1).ok_or(OVER_BOUND)?;
-    if *work > MAX_WORK {
+    if *work > s.bounds.work {
         return Err(OVER_BOUND);
     }
     // Keeping the class whole is always an option: an opening that no item needs
@@ -1578,8 +1625,72 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::saturated_size;
+    use super::{FlatKind, FlattenScratch, saturated_size};
+    use crate::multiplicity::Multiplicity as M;
+    use crate::registry::AssocDir;
     use num_bigint::BigUint;
+
+    /// `fits` with the candidate's children set directly: the view, the candidate's
+    /// class and the regrouped views it yields.
+    fn fits(
+        kind: FlatKind,
+        kids: &[(u32, u32)],
+        view: &[(u32, u32)],
+        g: u32,
+    ) -> Vec<Vec<(u32, u32)>> {
+        let mut s = FlattenScratch::<u32, M>::new();
+        s.kids = kids.iter().map(|&(c, k)| (c, M(k))).collect();
+        let view: Vec<(u32, M)> = view.iter().map(|&(c, k)| (c, M(k))).collect();
+        let mut outs = Vec::new();
+        s.fits(kind, AssocDir::Both, &view, g, &mut outs);
+        outs.into_iter()
+            .map(|v| v.into_iter().map(|(c, k)| (c, k.0)).collect())
+            .collect()
+    }
+
+    /// A sequence group has at least two entries and is not the whole view: a candidate
+    /// with one child, or with as many children as the view, regroups nothing, and one
+    /// with a proper run regroups that run.
+    #[test]
+    fn fits_assoc_rejects_short_and_whole_groups() {
+        let view = [(1, 1), (2, 1), (3, 1)];
+        assert!(fits(FlatKind::Assoc, &[(1, 1)], &view, 9).is_empty());
+        assert!(fits(FlatKind::Assoc, &[(1, 1), (2, 1), (3, 1)], &view, 9).is_empty());
+        assert!(fits(FlatKind::Assoc, &[(1, 1), (2, 1), (3, 1), (4, 1)], &view, 9).is_empty());
+        assert_eq!(
+            fits(FlatKind::Assoc, &[(2, 1), (3, 1)], &view, 9),
+            vec![vec![(1, 1), (9, 1)]]
+        );
+    }
+
+    /// A candidate whose children are read into one class twice (two children merged
+    /// since the node was stored) groups by class: the counts are summed for AC, and a
+    /// sum past the width means the group fits nowhere; for ACI the class counts once,
+    /// so a two-child node over one class is not a group of two.
+    #[test]
+    fn fits_coalesces_a_candidate_read_into_one_class() {
+        // AC: {1, 1} is the group {1:2}, taken out of {1:3, 2}.
+        assert_eq!(
+            fits(FlatKind::Ac, &[(1, 1), (1, 1)], &[(1, 3), (2, 1)], 9),
+            vec![vec![(1, 1), (2, 1), (9, 1)]]
+        );
+        // AC: the summed count does not fit the width, so there is no group.
+        assert!(fits(FlatKind::Ac, &[(1, u32::MAX), (1, 1)], &[(1, 1), (2, 1)], 9).is_empty());
+        // ACI: {1, 1} is the set {1}, not a group of two.
+        assert!(fits(FlatKind::Aci, &[(1, 1), (1, 1)], &[(1, 1), (2, 1)], 9).is_empty());
+        // ACI: the group is the whole view.
+        assert!(fits(FlatKind::Aci, &[(2, 1), (1, 1)], &[(1, 1), (2, 1)], 9).is_empty());
+        // ACI: a proper subset regroups.
+        assert_eq!(
+            fits(
+                FlatKind::Aci,
+                &[(2, 1), (1, 1)],
+                &[(1, 1), (2, 1), (3, 1)],
+                9
+            ),
+            vec![vec![(3, 1), (9, 1)]]
+        );
+    }
 
     /// A count past `u64::MAX`, from a `u128` or an unbounded integer, reads as
     /// `u64::MAX` and counts as one overflow; counts that fit are summed exactly.
