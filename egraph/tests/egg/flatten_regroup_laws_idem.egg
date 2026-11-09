@@ -2,21 +2,28 @@
 ;; SPDX-License-Identifier: Apache-2.0
 ;; EXPECT: ok
 ;; TYPES: machine
-;; Regrouped views of a set (design 07 §7.5, "Regrouped views"; Lean
-;; `regroup_idem_overlap_lost`, `RegroupLaws.lean`). Regrouping replaces the group by its class:
-;; with sab = S{A, B}, the view {A, B, C} regroups to {C, sab}. By idempotence S{A, B, C} also
-;; equals S{A, C, sab} and S{B, C, sab}, sets over classes present, but no regrouping keeps a
-;; member of the group beside its class, so (S x y z) never binds x = sab, y = A, z = C while
-;; (S x y) binds x = sab, y = C. With `(set-option :completion eager)` s equals S{sab, A, C}.
+;; Overlap views of a set (design 07 §7.5, "Regrouped views", "Overlap views under
+;; idempotence"; Lean `regroup_idem_overlap_found`, `RegroupOverlap.lean`). Regrouping
+;; replaces the group by its class: with sab = S{A, B}, the view {A, B, C} regroups to {C, sab},
+;; and (S x y) binds x = sab, y = C. By idempotence S{A, B, C} also equals S{A, C, sab} and
+;; S{B, C, sab}, sets over classes present; the regrouping loop never keeps a member of the group
+;; beside its class (`regroup_idem_overlap_loop_lost`), and the overlap stage after it forms both
+;; views for a pattern of three items, so (S x y z) binds x = sab, y = A, z = C. A pattern of
+;; four items keeps both members: (S w x y z) binds w = sab, x = A, y = B, z = C.
 (sort E)
 (function A () E) (function B () E) (function C () E)
 (function S (E) E :assoc-comm-idem)
 (function U2 (E E) E)
 (function U3 (E E E) E)
+(function U4 (E E E E) E)
 (let sab (S (A) (B)))
 (let s (S (A) (B) (C)))
 (rewrite (S x y) (U2 x y) :flatten)
 (rewrite (S x y z) (U3 x y z) :flatten)
+(rewrite (S w x y z) (U4 w x y z) :flatten)
 (run 2)
 (check-eq s (U2 sab (C)))
-(check-neq s (U3 sab (A) (C)))
+(check-eq s (U3 sab (A) (C)))
+(check-eq s (U3 sab (B) (C)))
+(check-eq s (U4 sab (A) (B) (C)))
+(check-neq s (U3 sab (A) (B)))
