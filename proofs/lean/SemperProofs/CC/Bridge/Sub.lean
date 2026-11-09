@@ -12,6 +12,14 @@ represented nodes sit inside an arbitrary graph `G`: the active node
 said of `G`'s other nodes. `FCover G f A ι` adds that every `f`-node of `G`
 is one of them.
 
+The engine keeps a collapsed node (`FLAG_AC_COLLAPSED`, retired in the
+model) in the index and matchable. `SubRepR G st f A R ι` extends the
+correspondence to a set `R` of stored nodes, the retired ones: they too
+sit in `G` under `ι`, with the children of `mkNode` and the class of
+`st`. A match rooted at a retired node is read at the class of an active
+node the retired one rewrites to, which `I3` provides
+(`node_reduces_active`).
+
 The bridge theorems of `Modulo.lean` hold on the part: two theory-equal
 active nodes are in one class of `G` (`ac_equal_same_class_sub`), and a
 match at one is a class-level match at the other
@@ -86,5 +94,58 @@ theorem matches_closed_under_theory_sub {L : Laws n} {S : Set (Monomial n × Mon
     MatchC G P (G.find (ι p)) σ := by
   rw [ac_equal_same_class_sub h hA hs hp hp' hE]
   exact MatchC.app (hs.nodes p' hp') rfl hhead hm
+
+/-! ## Retired nodes -/
+
+/-- Every node of `R` is a stored node of the state, active or retired. -/
+def Stored (st : State n) (R : Finset (Monomial n × Fin n)) : Prop :=
+  ∀ p ∈ R, p ∈ st.nodes
+
+/-- The graph of `f` read from `st` is a part of `G`, with the active nodes
+`A` and the retired nodes `R` both stored under `ι`. -/
+structure SubRepR (G : Graph) (st : State n) (f : Sym) (A R : Finset (Monomial n × Fin n))
+    (ι : Monomial n × Fin n → NodeId) : Prop where
+  active : SubRep G st f A ι
+  retired : SubRep G st f R ι
+
+/-- Both parts together are a `SubRep` of their union. -/
+theorem SubRepR.union {G : Graph} {st : State n} {f : Sym} {A R : Finset (Monomial n × Fin n)}
+    {ι : Monomial n × Fin n → NodeId} (h : SubRepR G st f A R ι) : SubRep G st f (A ∪ R) ι :=
+  ⟨fun p hp => (Finset.mem_union.1 hp).elim (h.active.nodes p) (h.retired.nodes p),
+   fun p hp => (Finset.mem_union.1 hp).elim (h.active.find p) (h.retired.find p)⟩
+
+/-- The completion view reads the same nodes and classes. -/
+theorem SubRepR.withAtoms {G : Graph} {st : State n} {f : Sym}
+    {A R : Finset (Monomial n × Fin n)} {ι : Monomial n × Fin n → NodeId}
+    (h : SubRepR G st f A R ι) (X : Set (Fin n)) (u : Option (Fin n)) :
+    SubRepR G (st.withAtoms X u) f A R ι :=
+  ⟨h.active.withAtoms X u, h.retired.withAtoms X u⟩
+
+/-- Every stored node rewrites to an active node of its class: an active
+node is its own reduct, and a retired node rewrites to a node of its
+class (`I3`), smaller under `≫`, so well-founded induction on `→_R`
+(`Rw_wf`) reaches an active one. -/
+theorem node_reduces_active {L : Laws n} {st : State n} (h3 : I3 L st) :
+    ∀ M c, (M, c) ∈ st.nodes →
+      ∃ M' c', Relation.ReflTransGen (Rw L st.rules) M M' ∧ (M', c') ∈ st.active ∧
+        st.find c' = st.find c := by
+  have hwf := (Rw_wf (L := L) (R := st.rules) (rules_oriented st)).transGen
+  intro M
+  induction M using hwf.induction with
+  | _ M ih =>
+    intro c hM
+    by_cases hr : (M, c) ∈ st.retired
+    · obtain ⟨M', c', hMM', hM', hc'⟩ := h3 M c hr
+      obtain ⟨M'', c'', h₁, h₂, h₃⟩ := ih M' (Relation.transGen_swap.2 hMM') c' hM'
+      exact ⟨M'', c'', hMM'.to_reflTransGen.trans h₁, h₂, h₃.trans hc'⟩
+    · exact ⟨M, c, Relation.ReflTransGen.refl, ⟨hM, hr⟩, rfl⟩
+
+/-- On a sound state (`I2`), a stored node is `=_E`-equal to an active node
+of its class. -/
+theorem node_equal_active {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (h2 : I2 L S st) (h3 : I3 L st) {M : Monomial n} {c : Fin n} (hM : (M, c) ∈ st.nodes) :
+    ∃ q ∈ st.active, E L S M q.1 ∧ st.find q.2 = st.find c := by
+  obtain ⟨M', c', hrw, hact, hc⟩ := node_reduces_active h3 M c hM
+  exact ⟨(M', c'), hact, Rw_rtg_sound (rules_sound h2) hrw, hc⟩
 
 end SemperProofs.CC.Bridge
