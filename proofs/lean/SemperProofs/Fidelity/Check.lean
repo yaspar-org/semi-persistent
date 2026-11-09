@@ -34,3 +34,17 @@ import SemperProofs.Fidelity.Main
 #print axioms Semper.EMatch.Fidelity.firedN_sound
 #print axioms Semper.EMatch.Fidelity.union_recorded_sound
 #print axioms Semper.EMatch.Fidelity.models_of_merge
+#print axioms Semper.EMatch.Fidelity.ACStep.mapE
+#print axioms Semper.EMatch.Fidelity.DenN.toDenE
+#print axioms Semper.EMatch.Fidelity.DenE.persist
+#print axioms Semper.EMatch.Fidelity.firedE_persist
+#print axioms Semper.EMatch.Fidelity.inv_step_E
+#print axioms Semper.EMatch.Fidelity.invLag_chain_E
+#print axioms Semper.EMatch.Fidelity.saturation_complete_E
+#print axioms Semper.EMatch.Fidelity.saturation_complete_E_engine
+#print axioms Semper.EMatch.Fidelity.denE_denN_eq
+#print axioms Semper.EMatch.Fidelity.invE_union_eq
+#print axioms Semper.EMatch.Fidelity.saturation_complete_closed
+#print axioms Semper.EMatch.Fidelity.PersistFails.sa_not_closed
+#print axioms Semper.EMatch.Fidelity.PersistFails.closedC
+#print axioms Semper.EMatch.Fidelity.PersistFails.completed

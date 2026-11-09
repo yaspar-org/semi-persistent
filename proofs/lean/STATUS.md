@@ -537,8 +537,9 @@ covers such a store at the price of `I2`, `I3` and `SubRepR` as hypotheses.
   `:subsume`, normal forms); `den_misses_single`, the literal `Den` has no
   value for a one-element AC right-hand side.
 - `Recanon.lean` (2026-11-08): recanonicalization as the laws apply it.
-  `StorePersistN`: the fixed-arity nodes persist literally (`LiteralFixed`),
-  an AC or ACI node persists as the normal form of its mapped children under
+  `StorePersistN`: the fixed-arity nodes persist literally (`LiteralFixed`:
+  tuple and pair; the sequence nodes are not covered, `RecanonComplete.lean`
+  adds them as `LiteralSeq`), an AC or ACI node persists as the normal form of its mapped children under
   the recanonicalization steps (`RStep`, `RSetStep`) or collapses to a leaf.
   `DenN.persist_fixed` carries right-hand sides without n-ary application;
   `denN_persist_fails` shows `DenN.persist` does not extend to n-ary ones,
@@ -548,6 +549,23 @@ covers such a store at the price of `I2`, `I3` and `SubRepR` as hypotheses.
   recanonicalization in `spelling_epoch`. The invariants are guarded
   accordingly (`InvLagL`, `InvLagS`, `InvLagN`); the fixpoint theorems keep
   their statements.
+- `RecanonComplete.lean` (2026-11-09): the completion-on case, where the
+  engine does not re-match. `EqAC`, `EqACI`, `EqA`: the theory of an n-ary
+  operator modulo the store, the equivalence the normalization steps
+  generate. `DenE`: a right-hand side present modulo the theory;
+  `DenE.persist` carries it across any rebuild meeting `StorePersistE`
+  (`StorePersistN` with the sequence nodes literal) with no routing
+  (`ACStep.mapE`: a splice through a recanonicalized node is a splice
+  through its normal form). `SChainE`, `saturation_complete_E`: the chain
+  with any routing per round and its fixpoint theorem (`InvE`).
+  `TheoryClosed`: the store is closed under the theory, the store reading of
+  `ac_equal_same_class`; `denE_denN_eq`, `saturation_complete_closed`: under
+  it every value `add` builds for a right-hand side is in the match root's
+  class, so a re-match would merge nothing. `PersistFails.sa_not_closed`:
+  the counter-model's after-store is not closed; `PersistFails.completed`:
+  its completion is, meets `StorePersistE`, and reaches the instance.
+  Fixture `egraph/tests/egg/semi_recanon_completion_on.egg`. Not derived:
+  `TheoryClosed` from `CompleteHyps` through `SubRep`.
 - `Sound.lean`: `denN_sound`, `firedN_sound`, `union_recorded_sound`: what
   the actions build denotes the right-hand side in every model of the graph
   and the operator laws. The round-level converse of `Saturate.Inv` (with
@@ -570,9 +588,10 @@ covers such a store at the price of `I2`, `I3` and `SubRepR` as hypotheses.
 - Known divergences, not modelled: none of the stop test (closed by
   `StopTest.lean` and the engine's size stamp) or of the minimal monomial
   under node growth (closed by `CC/MinMonoKey.lean` and the engine's order
-  keys). Whether the completion modes, which do not re-match after a
-  spelling change, join the instances the routing re-fires in plain mode is
-  not proved.
+  keys). The completion settings, which do not re-match after a spelling
+  change, join the instances the routing re-fires with completion off:
+  `saturation_complete_closed` (`RecanonComplete.lean`), under the store's
+  closure under the theory (`TheoryClosed`).
 
 ## Not modelled
 

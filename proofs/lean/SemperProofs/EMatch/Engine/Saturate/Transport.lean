@@ -571,8 +571,10 @@ theorem canonCh_self {G : Graph} {ch : Children} (hc : Children.Canon G ch) :
 
 namespace Round
 
-/-- The fixed-arity and sequence nodes persist literally: what
-`recanonize_node` does to a tuple, pair or sequence node. -/
+/-- The fixed-arity nodes (tuple, pair) persist literally: what
+`recanonize_node` does to them. The guard `isVariadic = false` excludes the
+sequence nodes, which `recanonize_node` treats the same way; their case is
+`LiteralSeq` (`StorePersistE.seq`, `Fidelity/RecanonComplete.lean`). -/
 structure PersistFixed (R : Round) : Prop where
   before_find_idem : R.before.FindIdem
   persist : ∀ id n, (id, n) ∈ R.before.nodes → id ∉ R.subsumed →
