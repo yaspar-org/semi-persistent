@@ -1491,6 +1491,467 @@ theorem decomposeAC_nodup (es : List (Var × Mult)) (rest : Option Var) :
           rw [h1] at h2
           exact hab (Option.some.inj h2)
 
+
+/-! ## The ACI frame (`FrameKind::ACIDecompose`)
+
+The store is the environment, one `used` bit per entry and the `bound` flags; the entries
+`res₀` themselves are read-only. -/
+
+structure ACIStore where
+  σ : Binding
+  used : List Bool
+  bound : List Bool
+
+/-- The entries not yet used, from index `i` on:
+`residual.iter().enumerate().filter(|(i, _)| !used.test(i))`. -/
+def remainingFrom (used : List Bool) : Nat → List C → List C
+  | _, [] => []
+  | i, c :: cs =>
+      if used.getD i false then remainingFrom used (i + 1) cs else c :: remainingFrom used (i + 1) cs
+
+def remainingOf (res₀ : List C) (used : List Bool) : List C := remainingFrom used 0 res₀
+
+/-- `aci_scan`'s test of one entry: `!used.test(ri)`, and on the bound-repr path
+`residual[ri] == repr`. An element index past the end accepts nothing. -/
+def aciAccept (elems : List Var) (res₀ : List C) (a : ACIStore) (e ri : Nat) : Bool :=
+  match elems[e]? with
+  | none => false
+  | some x =>
+      !a.used.getD ri true &&
+        (match a.σ.cls x with
+          | some c => decide (res₀.getD ri 0 = c)
+          | none => true)
+
+/-- `aci_scan`'s body at a hit: `self.env.set(vid, residual[ri]); bound[ei] = true` on the
+unbound path, and `used.set(ri)`. -/
+def aciApply (elems : List Var) (res₀ : List C) (a : ACIStore) (e ri : Nat) : ACIStore :=
+  let x := elems.getD e 0
+  let c := res₀.getD ri 0
+  ⟨match a.σ.cls x with | some _ => a.σ | none => a.σ.setCls x c,
+    a.used.set ri true,
+    a.bound.set e (match a.σ.cls x with | some _ => false | none => true)⟩
+
+/-- `aci_undo(elems, used, ei, ri, bound)`: `used.clear(ri)`, `env.clear(vid)` if
+`bound[ei]`, `bound[ei] = false`. -/
+def aciUndo (elems : List Var) (a : ACIStore) (e ri : Nat) : ACIStore :=
+  let x := elems.getD e 0
+  ⟨if a.bound.getD e false then clearCls a.σ x else a.σ, a.used.set ri false, a.bound.set e false⟩
+
+/-- The ACI frame over `elems` on a node with the set children `res₀`. -/
+def aciOps (elems : List Var) (res₀ : List C) : Ops ACIStore :=
+  ⟨elems.length, res₀.length, aciAccept elems res₀, aciApply elems res₀, aciUndo elems⟩
+
+/-- The leaf: `enter_aci` and `backtrack` push the unused entries as the rest, or require
+every entry used (`(0..residual.len()).all(|i| used.test(i))`, which is the unused list
+being empty) when there is no rest. -/
+def aciLeaf (res₀ : List C) (rest : Option Var) (a : ACIStore) : Option Binding :=
+  let rem := remainingOf res₀ a.used
+  match rest with
+  | none => if rem.isEmpty then some a.σ else none
+  | some r => some (a.σ.setSetRest r rem.toFinset)
+
+/-- The reachable stores at element `e`: `bound` is clear from `e` on and `used` has one
+bit per entry. -/
+structure ACIGood (elems : List Var) (res₀ : List C) (e : Nat) (a : ACIStore) : Prop where
+  bound_len : a.bound.length = elems.length
+  bound_clear : ∀ j, e ≤ j → a.bound.getD j false = false
+  used_len : a.used.length = res₀.length
+
+/-- `enter_aci`'s frame store: `used = BitSet::new(residual.len())`, `bound = vec![false; n]`. -/
+def aciInit (elems : List Var) (res₀ : List C) (σ₀ : Binding) : ACIStore :=
+  ⟨σ₀, List.replicate res₀.length false, List.replicate elems.length false⟩
+
+/-! ### The unused entries -/
+
+theorem getD_set_ne_bool (l : List Bool) (i j : Nat) (v : Bool) (hij : i ≠ j) :
+    (l.set i v).getD j false = l.getD j false := by
+  simp [List.getD_eq_getElem?_getD, List.getElem?_set_ne hij]
+
+theorem flatMap_congr_mem {β γ : Type} {l : List β} {f g : β → List γ} (h : ∀ x ∈ l, f x = g x) :
+    l.flatMap f = l.flatMap g := by
+  induction l with
+  | nil => rfl
+  | cons b l ih =>
+      simp only [List.flatMap_cons]
+      rw [h b (List.mem_cons_self ..), ih (fun x hx => h x (List.mem_cons_of_mem _ hx))]
+
+theorem remainingFrom_congr {used used' : List Bool} (cs : List C) :
+    ∀ i, (∀ j, i ≤ j → j < i + cs.length → used.getD j false = used'.getD j false) →
+      remainingFrom used i cs = remainingFrom used' i cs := by
+  induction cs with
+  | nil => intros; rfl
+  | cons c cs ih =>
+      intro i h
+      simp only [remainingFrom]
+      rw [h i le_rfl (by simp), ih (i + 1) (fun j hj1 hj2 => h j (by omega) (by simp at hj2 ⊢; omega))]
+
+theorem remainingFrom_sublist (used : List Bool) (cs : List C) : ∀ i, (remainingFrom used i cs).Sublist cs := by
+  induction cs with
+  | nil => intro i; simp [remainingFrom]
+  | cons c cs ih =>
+      intro i
+      simp only [remainingFrom]
+      split
+      · exact (ih (i + 1)).cons c
+      · exact (ih (i + 1)).cons_cons c
+
+theorem remainingFrom_mem {used : List Bool} {cs : List C} {c : C} :
+    ∀ i, c ∈ remainingFrom used i cs ↔ ∃ j, j < cs.length ∧ cs.getD j 0 = c ∧ used.getD (i + j) false = false := by
+  induction cs with
+  | nil => intro i; simp [remainingFrom]
+  | cons d cs ih =>
+      intro i
+      simp only [remainingFrom]
+      constructor
+      · intro h
+        split at h
+        · obtain ⟨j, hj, hc, hu⟩ := (ih (i + 1)).1 h
+          exact ⟨j + 1, by simp; omega, by simpa using hc, by rw [show i + (j + 1) = i + 1 + j by omega]; exact hu⟩
+        · rename_i hu
+          rcases List.mem_cons.1 h with rfl | h
+          · exact ⟨0, by simp, rfl, by simpa using hu⟩
+          · obtain ⟨j, hj, hc, hu⟩ := (ih (i + 1)).1 h
+            exact ⟨j + 1, by simp; omega, by simpa using hc, by rw [show i + (j + 1) = i + 1 + j by omega]; exact hu⟩
+      · rintro ⟨j, hj, hc, hu⟩
+        cases j with
+        | zero =>
+            simp only [List.getD_cons_zero] at hc
+            simp only [Nat.add_zero] at hu
+            rw [hu]; simp [hc]
+        | succ j =>
+            simp only [List.getD_cons_succ] at hc
+            have hu' : used.getD (i + 1 + j) false = false := by rw [show i + 1 + j = i + (j + 1) by omega]; exact hu
+            have hmem : c ∈ remainingFrom used (i + 1) cs := (ih (i + 1)).2 ⟨j, by simp at hj; omega, hc, hu'⟩
+            split
+            · exact hmem
+            · exact List.mem_cons_of_mem _ hmem
+
+/-- Using one more entry erases its class from the unused list. -/
+theorem remainingFrom_set_erase {used : List Bool} {cs : List C} (hnd : cs.Nodup) :
+    ∀ i ri, i ≤ ri → ri < i + cs.length → ri < used.length → used.getD ri false = false →
+      remainingFrom (used.set ri true) i cs = (remainingFrom used i cs).erase (cs.getD (ri - i) 0) := by
+  induction cs with
+  | nil => intro i ri h1 h2; simp at h2; omega
+  | cons c cs ih =>
+      intro i ri h1 h2 hlen hu
+      have hnd' := List.nodup_cons.1 hnd
+      simp only [remainingFrom]
+      rcases Nat.eq_or_lt_of_le h1 with rfl | hlt
+      · -- the entry used is this one
+        have ht : (used.set i true).getD i false = true := by
+          rw [List.getD_eq_getElem?_getD, List.getElem?_set_self hlen]; rfl
+        rw [ht, hu, Nat.sub_self, List.getD_cons_zero]
+        simp only [ite_true, Bool.false_eq_true, ite_false, List.erase_cons_head]
+        exact remainingFrom_congr cs (i + 1) (fun j hj _ => getD_set_ne_bool _ _ _ _ (by omega))
+      · have hne : (used.set ri true).getD i false = used.getD i false := getD_set_ne_bool _ _ _ _ (by omega)
+        rw [hne]
+        have hsub : ri - i = (ri - (i + 1)) + 1 := by omega
+        rw [hsub, List.getD_cons_succ]
+        have hih := ih hnd'.2 (i + 1) ri (by omega) (by simp at h2 ⊢; omega) hlen hu
+        split
+        · exact hih
+        · rw [hih]
+          have hmem : cs.getD (ri - (i + 1)) 0 ∈ cs := by
+            rw [List.getD_eq_getElem cs 0 (by simp at h2; omega)]; exact List.getElem_mem _
+          have : ¬ (c == cs.getD (ri - (i + 1)) 0) := by
+            simp only [beq_iff_eq]
+            intro h; exact hnd'.1 (h ▸ hmem)
+          rw [List.erase_cons_tail this]
+
+theorem remainingFrom_flatMap {γ : Type} (used : List Bool) (g : C → List γ) (cs : List C) :
+    ∀ i, (remainingFrom used i cs).flatMap g =
+      (List.range' i cs.length).flatMap fun ri => if used.getD ri false then [] else g (cs.getD (ri - i) 0) := by
+  induction cs with
+  | nil => intro i; rfl
+  | cons c cs ih =>
+      intro i
+      simp only [remainingFrom, List.length_cons, List.range'_succ, List.flatMap_cons, Nat.sub_self,
+        List.getD_cons_zero]
+      have hcongr : ((List.range' (i + 1) cs.length).flatMap fun ri =>
+          if used.getD ri false then [] else g ((c :: cs).getD (ri - i) 0)) =
+          (List.range' (i + 1) cs.length).flatMap fun ri =>
+            if used.getD ri false then [] else g (cs.getD (ri - (i + 1)) 0) := by
+        apply flatMap_congr_mem
+        intro ri hri
+        rw [List.mem_range'_1] at hri
+        rw [show ri - i = (ri - (i + 1)) + 1 by omega, List.getD_cons_succ]
+      rw [hcongr, ← ih (i + 1)]
+      split <;> simp
+
+theorem remainingOf_flatMap {γ : Type} (res₀ : List C) (used : List Bool) (g : C → List γ) :
+    (remainingOf res₀ used).flatMap g =
+      (List.range res₀.length).flatMap fun ri => if used.getD ri false then [] else g (res₀.getD ri 0) := by
+  unfold remainingOf
+  rw [remainingFrom_flatMap, List.range_eq_range']
+  simp only [Nat.sub_zero]
+
+theorem remainingOf_replicate (res₀ : List C) : remainingOf res₀ (List.replicate res₀.length false) = res₀ := by
+  unfold remainingOf
+  suffices h : ∀ (cs : List C) (i : Nat), remainingFrom (List.replicate res₀.length false) i cs = cs from h res₀ 0
+  intro cs
+  induction cs with
+  | nil => intro i; rfl
+  | cons c cs ih =>
+      intro i
+      simp only [remainingFrom]
+      have : (List.replicate res₀.length false).getD i false = false := by
+        rw [List.getD_eq_getElem?_getD, List.getElem?_replicate]; split <;> rfl
+      rw [this, ih]; simp
+
+/-! ### The ACI frame yields `decomposeACI` -/
+
+/-- A hit names an element and an unused entry of the class the variable holds. -/
+theorem aciAccept_some {elems : List Var} {res₀ : List C} {a : ACIStore} {e ri : Nat}
+    (h : aciAccept elems res₀ a e ri = true) :
+    ∃ x, elems[e]? = some x ∧ e < elems.length ∧ ri < a.used.length ∧ a.used.getD ri false = false ∧
+      ∀ c, a.σ.cls x = some c → res₀.getD ri 0 = c := by
+  unfold aciAccept at h
+  split at h
+  · simp at h
+  · rename_i x hx
+    have he : e < elems.length := by
+      by_contra hc; push Not at hc
+      rw [List.getElem?_eq_none hc] at hx; simp at hx
+    simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+    have hri : ri < a.used.length := by
+      by_contra hc; push Not at hc
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_none hc] at h; simp at h
+    refine ⟨x, hx, he, hri, ?_, ?_⟩
+    · rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hri] at h ⊢; exact h.1
+    · intro c hc
+      rw [hc] at h
+      simpa using h.2
+
+theorem aciLaws (elems : List Var) (res₀ : List C) : (aciOps elems res₀).Laws (ACIGood elems res₀) := by
+  constructor
+  · intro a e ri hg hacc
+    obtain ⟨x, hx, he, hri, hu, _⟩ := aciAccept_some hacc
+    have hxg : elems.getD e 0 = x := by rw [List.getD_eq_getElem?_getD, hx]; rfl
+    have hbe : e < a.bound.length := by rw [hg.bound_len]; exact he
+    have hb : a.bound[e] = false := by
+      have := hg.bound_clear e le_rfl
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hbe] at this; exact this
+    have hu' : a.used[ri] = false := by
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hri] at hu; exact hu
+    have hused : (a.used.set ri true).set ri false = a.used := by
+      rw [List.set_set, ← hu', List.set_getElem_self hri]
+    have hbset : ∀ b, (a.bound.set e b).set e false = a.bound := by
+      intro b; rw [List.set_set, ← hb, List.set_getElem_self hbe]
+    have hbt : (a.bound.set e true)[e]? = some true := List.getElem?_set_self hbe
+    have hbf : (a.bound.set e false)[e]? = some false := List.getElem?_set_self hbe
+    simp only [aciOps, aciApply, aciUndo, hxg, hused, List.getD_eq_getElem?_getD]
+    rcases hcx : a.σ.cls x with _ | c₀
+    · simp only [hbt, Option.getD_some, ite_true, hbset, clearCls_setCls hcx]
+    · simp only [hbf, Option.getD_some, Bool.false_eq_true, ite_false, hbset]
+  · intro a e ri hg hacc
+    obtain ⟨x, hx, he, hri, hu, _⟩ := aciAccept_some hacc
+    refine ⟨by simp [aciOps, aciApply, hg.bound_len], ?_, by simp [aciOps, aciApply, hg.used_len]⟩
+    intro j hj
+    simp only [aciOps, aciApply]
+    rw [getD_set_ne_bool _ _ _ _ (by omega)]
+    exact hg.bound_clear j (by omega)
+
+theorem aciGood_init (elems : List Var) (res₀ : List C) (σ₀ : Binding) :
+    ACIGood elems res₀ 0 (aciInit elems res₀ σ₀) := by
+  refine ⟨by simp [aciInit], ?_, by simp [aciInit]⟩
+  intro j _
+  simp only [aciInit, List.getD_eq_getElem?_getD, List.getElem?_replicate]
+  split <;> rfl
+
+/-- `aci_scan`'s test at an in-range entry, by the state of the element variable. -/
+theorem aciAccept_eq {elems : List Var} {res₀ : List C} {a : ACIStore} {e ri : Nat} {x : Var}
+    (hx : elems[e]? = some x) (hri : ri < a.used.length) :
+    aciAccept elems res₀ a e ri = (!a.used.getD ri false &&
+      (match a.σ.cls x with | some c => decide (res₀.getD ri 0 = c) | none => true)) := by
+  simp only [aciAccept, hx, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hri, Option.getD_some]
+
+/-- The index of a class in a list without duplicates is unique. -/
+theorem nodup_getD_inj {res₀ : List C} (hnd : res₀.Nodup) {i j : Nat} (hi : i < res₀.length)
+    (hj : j < res₀.length) (h : res₀.getD i 0 = res₀.getD j 0) : i = j := by
+  rw [List.getD_eq_getElem _ _ hi, List.getD_eq_getElem _ _ hj] at h
+  exact (List.Nodup.getElem_inj_iff hnd).1 h
+
+/-- The frame's enumeration from element `e` is the executor's decomposition of the
+elements from `e` over the unused entries, after the leaf. -/
+theorem enum_eq_decomposeACI (elems : List Var) (rest : Option Var) (res₀ : List C) (hnd : res₀.Nodup) :
+    ∀ (k e : Nat) (a : ACIStore), elems.length - e = k → ACIGood elems res₀ e a →
+      decomposeACI (elems.drop e) rest (remainingOf res₀ a.used) a.σ =
+        ((aciOps elems res₀).enum e a).filterMap (aciLeaf res₀ rest) := by
+  intro k
+  induction k with
+  | zero =>
+      intro e a hk hg
+      have he : elems.length ≤ e := by omega
+      rw [List.drop_eq_nil_of_le he]
+      have : (aciOps elems res₀).enum e a = [a] := by
+        unfold Ops.enum Ops.rest
+        rw [show (aciOps elems res₀).n = elems.length from rfl, Nat.sub_eq_zero_of_le he]; rfl
+      rw [this]
+      cases rest with
+      | none =>
+          simp only [decomposeACI, aciLeaf, List.filterMap_cons, List.filterMap_nil]
+          split <;> simp_all
+      | some r => simp [decomposeACI, aciLeaf]
+  | succ k ih =>
+      intro e a hk hg
+      have he : e < elems.length := by omega
+      obtain ⟨x, hx⟩ : ∃ x, elems[e] = x := ⟨_, rfl⟩
+      have hxe : elems[e]? = some x := by rw [List.getElem?_eq_getElem he, hx]
+      have hlen : a.used.length = res₀.length := hg.used_len
+      rw [List.drop_eq_getElem_cons he, hx]
+      have henum : (aciOps elems res₀).enum e a = (List.range res₀.length).flatMap fun ri =>
+          if aciAccept elems res₀ a e ri then (aciOps elems res₀).enum (e + 1) (aciApply elems res₀ a e ri) else [] := by
+        unfold Ops.enum
+        rw [Ops.rest_lt _ he, Nat.sub_zero, ← List.range_eq_range']
+        rfl
+      rw [henum, List.filterMap_flatMap]
+      have hrec : ∀ ri, aciAccept elems res₀ a e ri = true →
+          ((aciOps elems res₀).enum (e + 1) (aciApply elems res₀ a e ri)).filterMap (aciLeaf res₀ rest) =
+            decomposeACI (elems.drop (e + 1)) rest (remainingOf res₀ (aciApply elems res₀ a e ri).used)
+              (aciApply elems res₀ a e ri).σ :=
+        fun ri hacc => (ih (e + 1) _ (by omega) ((aciLaws elems res₀).good_apply a e ri hg hacc)).symm
+      have hxg : elems.getD e 0 = x := by rw [List.getD_eq_getElem?_getD, hxe]; rfl
+      -- the unused list after using entry `ri`
+      have herase : ∀ ri, ri < res₀.length → a.used.getD ri false = false →
+          remainingOf res₀ (a.used.set ri true) = (remainingOf res₀ a.used).erase (res₀.getD ri 0) := by
+        intro ri hri hu
+        unfold remainingOf
+        rw [remainingFrom_set_erase hnd 0 ri (Nat.zero_le _) (by omega) (by omega) hu, Nat.sub_zero]
+      simp only [decomposeACI]
+      rcases hcx : a.σ.cls x with _ | c₀
+      · -- unbound: both branch over the unused entries in order
+        rw [remainingOf_flatMap]
+        apply flatMap_range_congr
+        intro ri hri
+        rw [aciAccept_eq hxe (hlen ▸ hri), hcx]
+        simp only [Bool.and_true]
+        rcases hu : a.used.getD ri false with _ | _
+        · have hacc : aciAccept elems res₀ a e ri = true := by
+            rw [aciAccept_eq hxe (hlen ▸ hri), hcx, hu]; rfl
+          simp only [Bool.not_false, ↓reduceIte]
+          rw [hrec ri hacc]
+          simp only [aciApply, hxg, hcx, herase ri hri hu, Bool.false_eq_true, ite_false]
+        · simp
+      · -- bound: at most one entry has the class
+        dsimp only
+        by_cases hc : c₀ ∈ res₀
+        · obtain ⟨ri₀, hri₀, hc0'⟩ := List.getElem_of_mem hc
+          have hc0 : res₀.getD ri₀ 0 = c₀ := by rw [List.getD_eq_getElem _ _ hri₀]; exact hc0'
+          have hmem : c₀ ∈ remainingOf res₀ a.used ↔ a.used.getD ri₀ false = false := by
+            unfold remainingOf
+            rw [remainingFrom_mem]
+            constructor
+            · rintro ⟨j, hj, hcj, hu⟩
+              have := nodup_getD_inj hnd hj hri₀ (hcj.trans hc0.symm)
+              subst this; simpa using hu
+            · intro hu; exact ⟨ri₀, hri₀, hc0, by simpa using hu⟩
+          rw [flatMap_range_single _ res₀.length ri₀ hri₀]
+          · rw [aciAccept_eq hxe (hlen ▸ hri₀), hcx, hc0]
+            simp only [decide_true, Bool.and_true]
+            rcases hu : a.used.getD ri₀ false with _ | _
+            · have hacc : aciAccept elems res₀ a e ri₀ = true := by
+                rw [aciAccept_eq hxe (hlen ▸ hri₀), hcx, hc0, hu]; simp
+              simp only [hmem.2 hu, ↓reduceIte, Bool.not_false]
+              rw [hrec ri₀ hacc]
+              simp only [aciApply, hxg, hcx, herase ri₀ hri₀ hu, hc0]
+            · have : c₀ ∉ remainingOf res₀ a.used := fun h => by
+                rw [hmem] at h; rw [h] at hu; exact Bool.false_ne_true hu
+              simp only [this, ↓reduceIte, Bool.not_true, Bool.false_eq_true, List.filterMap_nil]
+          · intro j hj hne
+            rw [aciAccept_eq hxe (hlen ▸ hj), hcx]
+            have : res₀.getD j 0 ≠ c₀ := fun h => hne (nodup_getD_inj hnd hj hri₀ (h.trans hc0.symm))
+            rw [List.getD_eq_getElem?_getD] at this
+            simp [this]
+        · have hno : c₀ ∉ remainingOf res₀ a.used := fun h => hc ((remainingFrom_sublist _ _ 0).subset h)
+          simp only [hno, ↓reduceIte]
+          symm
+          rw [List.flatMap_eq_nil_iff]
+          intro ri hri
+          rw [List.mem_range] at hri
+          rw [aciAccept_eq hxe (hlen ▸ hri), hcx]
+          have : res₀.getD ri 0 ≠ c₀ := fun h => hc (h ▸ (by rw [List.getD_eq_getElem _ _ hri]; exact List.getElem_mem _))
+          rw [List.getD_eq_getElem?_getD] at this
+          simp [this]
+
+/-- Theorem B for ACI: the frame's yields, after the leaf, are the executor's `decomposeACI`,
+element for element, for every fuel, and with fuel for every yield the lists are equal. -/
+theorem aciFrame_eq_decomposeACI (elems : List Var) (rest : Option Var) (res₀ : List C) (σ₀ : Binding)
+    (hnd : res₀.Nodup) (hne : elems ≠ []) :
+    (∀ k, ((aciOps elems res₀).drive k ((aciOps elems res₀).init (aciInit elems res₀ σ₀))).filterMap
+        (aciLeaf res₀ rest) =
+        (((aciOps elems res₀).enum 0 (aciInit elems res₀ σ₀)).take k).filterMap (aciLeaf res₀ rest)) ∧
+    ∀ k, ((aciOps elems res₀).enum 0 (aciInit elems res₀ σ₀)).length ≤ k →
+      ((aciOps elems res₀).drive k ((aciOps elems res₀).init (aciInit elems res₀ σ₀))).filterMap
+        (aciLeaf res₀ rest) = decomposeACI elems rest res₀ σ₀ := by
+  have hn : 0 < (aciOps elems res₀).n := by
+    show 0 < elems.length; exact List.length_pos_iff.2 hne
+  have hl := aciLaws elems res₀
+  have h0 := aciGood_init elems res₀ σ₀
+  have hdec : decomposeACI elems rest res₀ σ₀ =
+      ((aciOps elems res₀).enum 0 (aciInit elems res₀ σ₀)).filterMap (aciLeaf res₀ rest) := by
+    have := enum_eq_decomposeACI elems rest res₀ hnd _ 0 _ rfl h0
+    rw [List.drop_zero] at this
+    simpa [aciInit, remainingOf_replicate] using this
+  refine ⟨fun k => ?_, fun k hk => ?_⟩
+  · rw [Ops.drive_eq_enum _ hl h0 hn]
+  · rw [Ops.drive_eq_enum _ hl h0 hn, List.take_of_length_le hk, hdec]
+
+/-- The set decomposition keeps a class binding it starts with. -/
+theorem decomposeACI_cls (es : List Var) (rest : Option Var) :
+    ∀ (res : List C) (σ σ' : Binding) (x : Var) (c : C),
+      σ' ∈ decomposeACI es rest res σ → σ.cls x = some c → σ'.cls x = some c := by
+  induction es with
+  | nil =>
+      intro res σ σ' x c h hx
+      simp only [decomposeACI] at h
+      cases rest with
+      | none =>
+          dsimp only at h
+          split at h <;> simp at h
+          exact h ▸ hx
+      | some r => simp at h; subst h; exact hx
+  | cons y es ih =>
+      intro res σ σ' x c h hx
+      simp only [decomposeACI] at h
+      split at h
+      · split at h
+        · exact ih _ _ _ x c h hx
+        · simp at h
+      · rename_i hy
+        rw [List.mem_flatMap] at h
+        obtain ⟨d, _, h⟩ := h
+        have hxy : x ≠ y := fun hxy => by subst hxy; rw [hy] at hx; simp at hx
+        exact ih _ _ _ x c h (by rw [setCls_cls_ne _ _ _ _ hxy]; exact hx)
+
+/-- The executor's set decomposition has no duplicate bindings when the entries are
+distinct. -/
+theorem decomposeACI_nodup (es : List Var) (rest : Option Var) :
+    ∀ (res : List C) (σ : Binding), res.Nodup → (decomposeACI es rest res σ).Nodup := by
+  induction es with
+  | nil =>
+      intro res σ _
+      simp only [decomposeACI]
+      cases rest with
+      | none => dsimp only; split <;> simp
+      | some r => simp
+  | cons y es ih =>
+      intro res σ hnd
+      simp only [decomposeACI]
+      split
+      · split
+        · exact ih _ _ (hnd.erase _)
+        · exact List.nodup_nil
+      · rw [List.nodup_flatMap]
+        refine ⟨fun d _ => ih _ _ (hnd.erase _), ?_⟩
+        refine hnd.imp ?_
+        intro a b hab
+        simp only [Function.onFun, List.disjoint_left]
+        intro σ' ha hb
+        have h1 := decomposeACI_cls es rest _ _ _ y a ha (setCls_cls_self' _ _ _)
+        have h2 := decomposeACI_cls es rest _ _ _ y b hb (setCls_cls_self' _ _ _)
+        rw [h1] at h2
+        exact hab (Option.some.inj h2)
+
 /-! ### The pre-fix search does not terminate
 
 Three elements over two entries, each element accepting any entry not yet taken, no
