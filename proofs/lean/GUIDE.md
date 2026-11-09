@@ -342,8 +342,9 @@ the resolver's checks on the query (well-kinded atoms, distinct node variables, 
 operand bound by some scanning atom, so no plan ends with an `Eq` unchecked) with two
 invariants of the rebuilt index (distinct node ids, one child shape per operator); the
 resolver and rebuild supply them, and `atoms_atomsWF` (`EMatch/Engine/AtomsWF.lean:417`)
-discharges it for a single pattern. `h : PlanOK` says the plan is one the grammar admits; no
-theorem proves it of `schedule_with_stats`. The conclusion is an equality of binding sets,
+discharges it for a single pattern. `h : PlanOK` says the plan is one the grammar admits;
+`scheduleEngine_planOK` (`EMatch/Engine/Schedule.lean`, below) proves it of the plan
+`schedule_with_stats` builds. The conclusion is an equality of binding sets,
 for every order the grammar allows. Outside: how many times a binding is emitted, the Rust
 join (an intersection of buckets in the model), and guards, literals and globals, which
 `Sched` does not contain.
@@ -407,10 +408,11 @@ hypothesis. `MatcherOK.naive_iff` and `MatcherOK.round_complete` are `mem_runNai
 `semi_naive_round_complete` on a matcher, so the saturation theorems (Sections 6 and 7)
 take `hmatch : MatchersOK rules`, a theorem for the adaptive scheduler, in place of the
 former `hplan : PlansOK rules`. Assumed: the correspondence between `chooseEngine` and
-`choose_atom`, which the unit test below checks on 4945 decisions, and the static side
-(`SchedA` of the compiled plan). Outside: the pricing of the join (`cursor_len`), which the
-model copies without justification, and the `Flatten` step, which the adaptive scheduler
-never runs (Section 4).
+`choose_atom`, which the unit test below checks on 4945 decisions, and between
+`scheduleEngine` and `schedule_with_stats`, which the second test checks on 2679 plans.
+Outside: the pricing of the join (`cursor_len`) and the estimate of the static scheduler
+(`estimate_cost`), which the model takes as parameters, and the `Flatten` step, which the
+adaptive scheduler never runs (Section 4).
 
 The unit test `atom_choice_agrees_with_the_model_on_the_rounds_corpus` (`ematch.rs`, commit
 `e48db120`) compares, at every phase-B decision of the `conform-rounds` corpus run naive and
@@ -420,6 +422,56 @@ decisions depend on the partial bindings, which the dumps do not carry, so Lean 
 replay them). 200 files, 4945 decisions, 1591 with several candidates, all agree. Two
 mutations of the transliteration are caught: pricing a `:comm` atom over `lower`'s lookups
 (30 disagreements) and breaking ties toward the highest index (808).
+
+**The static scheduler** (`EMatch/Engine/Schedule.lean`). `scheduleEngine` transcribes
+`schedule_inner` (`schedule.rs:865-954`), the loop behind `schedule_with_stats`,
+`schedule_with_stats_sampled` and `schedule_with_bound`: the eager pass `lower_eager`
+(`:1102-1139`) to a fixpoint (`eagerAt`, `eagerSweep`, `eagerFix`: an `Eq` with a bound side
+is checked or copied, a plain atom whose node is bound is re-joined in its class, which is
+`lower a B` with `a.node ∈ B`), then the cheapest unused scanning atom in index order, a
+later one replacing the best so far only when strictly cheaper (`pickStep`, `pickBest`),
+lowered by `emit_atom` under the bound set in hand (`lower a B`), until no scanning atom is
+left. The price is a parameter `cost : APlan → Finset Var → Nat → κ` over any strictly
+ordered `κ` (the `f64` of `estimate_cost`), read from the plan emitted so far and the bound
+set; the seed `pre` is the bound set `schedule_with_bound` starts from.
+
+```lean
+theorem scheduleEngine_schedA (cost : APlan → Finset Var → Nat → κ) (pre : Finset Var)
+    (atoms : List QAtom) : SchedA atoms ∅ pre (scheduleEngine cost pre atoms)
+
+theorem matcherOK_static_engine (cost : APlan → Finset Var → Nat → κ) (atoms : List QAtom) :
+    MatcherOK atoms (.staticEngine cost atoms)
+
+theorem matchersOK_compiled ... (h : ∀ rule ∈ rules, rule.matcher = .engine rule.atoms ∨
+      ∃ cost : APlan → Finset Var → Nat → κ, rule.matcher = .staticEngine cost rule.atoms) :
+    MatchersOK rules
+```
+
+**Reading.** No hypothesis: whatever the prices, the seed and the atoms, the plan the static
+scheduler emits is in the grammar, so `MatchersOK` is a theorem for the shipped default as it
+is for the adaptive scheduler (`Matcher.staticEngine cost atoms` is `Matcher.static` of the
+plan; `matchersOK_compiled` in `Saturate/Invariant.lean` covers a rule set matched by either).
+`scheduleEngine_planOK`, `scheduleEngine_naive_matches` and `scheduleEngine_eq_runEngine`
+restate `plan_matches` and `runEngine_eq_plan` on the plan. The `done` case needs the eager
+fixpoint: `eagerFix_fixed` says that after the pass no unused atom is free, which is what
+`SchedA.done` asks, and `schedA_matches` then uses `bindable` to see every `Eq` used; the
+`pick` and `eager` cases are the constructors of `SchedA` on the state the loop carries
+(`Prefix`). The fuels are exact: each productive sweep and each iteration use an atom
+(`unusedCount`). Outside: the atoms the model does not have (literals, guards,
+disequalities, global equalities, `Collect`), `:flatten` queries, and the price itself.
+
+The unit test `static_plan_agrees_with_the_model_on_the_rounds_corpus` (`schedule.rs`)
+compares, for every plan `schedule_inner` builds while the `conform-rounds` corpus runs
+naive and semi-naive, the engine's steps with those a Rust transliteration of
+`scheduleEngine` (`model::schedule`) emits from the engine's prices: the same atom order, the
+same binding kind for every variable, the same join lookups (`engineJoinLookups`, as the
+choice test). 200 files, 2999 plans; 2679 compared (1185 with several atoms, 4071 picks),
+all agree; 320 are outside the model, each for a rule with a `(= x g)` atom. Three mutations
+of the transliteration are caught: breaking ties toward the highest index (608
+disagreements), lowering a plain atom whose node is bound as a pick instead of in the eager
+pass (17), and running the eager pass before the first pick only (458). A fourth, one sweep
+in place of the fixpoint, no corpus rule detects; `eager_chain_agrees_with_the_model`
+does, on `(g c)`, `(= a b)`, `(= b c)`.
 
 **The single-pattern corollary.** `engine_plan_sound` and `engine_plan_complete`
 (`EMatch/Engine/Main.lean:66`, `:74`) specialise the chain to one pattern:
@@ -2224,7 +2276,7 @@ removes both.
 | Hypothesis | Meaning | Status |
 |---|---|---|
 | `A₀`, `As` | the rounds, with their applied bindings and action facts | assumed; `Den` is literal (Section 6.3) |
-| `hmatch` | each rule's matcher emits exactly the matches its index settings admit (`MatchersOK`, Section 3.4) | a theorem for the adaptive scheduler (`matcherOK_engine`, commit `26ee4f9e`); for a static plan it reduces to `SchedA` (`matcherOK_static`), which no theorem proves of `schedule_with_stats` |
+| `hmatch` | each rule's matcher emits exactly the matches its index settings admit (`MatchersOK`, Section 3.4) | a theorem for both schedulers: `matcherOK_engine` (commit `26ee4f9e`) for the adaptive one, `matcherOK_static_engine` (`scheduleEngine_schedA`) for the plan `schedule_with_stats` builds; for any other static plan it reduces to `SchedA` (`matcherOK_static`) |
 | `h₀`, `hok` | rule atoms well formed; per round: `WF`, tracking, `PersistFixed`, no subsumption | assumed; the fixed-arity nodes persist literally in every rebuild; n-ary nodes are not constrained here, the routing of `AChain` covers a non-literal rebuild |
 | `hemit₀`, `hchain` | every naive or variant binding was applied | assumed of the engine's matcher |
 | `hfix` | round `A` changed nothing | assumed here; `engine_stop_unchanged` derives it from the stop test, but this theorem does not use it |
@@ -2233,8 +2285,9 @@ removes both.
 | `hG` | the fixpoint snapshot is the represented graph | assumed; the weakest point (Section 7.5); replaced by `SubRep` on the index in `saturation_modulo_complete_store_atoms` (Section 7.7) |
 | `rule.atoms = ...`, `P.head = some f` | the rule's query is one pattern with head `f` | side conditions; no `Eq` atoms, no globals |
 
-The runtime design note checks `hmatch` (as `SchedA` of the static plan) and `h₀` once per
-rule at compilation, assigns `hfix` to tier 2 (the stop test), and replaces the history
+The runtime design note checks `h₀` once per rule at compilation (`hmatch` is a theorem for
+both schedulers and needs no check; the note once checked it as `SchedA` of the static
+plan), assigns `hfix` to tier 2 (the stop test), and replaces the history
 hypotheses `hok`, `hemit₀` and `hchain` by one naive matching round at the final state, which
 checks the conclusion of `saturation_complete` directly. It has no check for `hG`, which no
 engine state satisfies (Section 7.5).
@@ -2556,8 +2609,14 @@ were found for this edition.
    theorems through `runNDA`, `chooseEngine` (`runEngine_matches`) and `Matcher`; the former
    `hplan : PlansOK rules` is `hmatch : MatchersOK rules`, a theorem for the adaptive
    scheduler (`matcherOK_engine`) and `SchedA` of the compiled plan for the static one
-   (`matcherOK_static`), which no theorem proves `schedule_with_stats` emits. The choice
-   function is checked against `choose_atom` by a conformance test (Section 3.4).
+   (`matcherOK_static`), which no theorem proved `schedule_with_stats` emits. The choice
+   function is checked against `choose_atom` by a conformance test (Section 3.4). *Since
+   `scheduleEngine_schedA` (`EMatch/Engine/Schedule.lean`):* the static scheduler is
+   transcribed and its plan proved in the grammar, so `MatchersOK` is a theorem for the
+   static path too (`matcherOK_static_engine`, `matchersOK_compiled`); the transcription is
+   checked against `schedule_with_stats` by `static_plan_agrees_with_the_model_on_the_rounds_corpus`
+   (Section 3.4). What remains outside is the price, a parameter of the model, and the atoms
+   the grammar does not have (item 3).
 3. **Still true.** Guards, literals and globals have per-step theorems only (Section 3.8).
 4. **Resolved** by `19452248` (`rawNodeD_left_iff`, `rawNodeD_right_iff`,
    `EMatch/Flatten/FoldEnum.lean`). The executable fold enumerator is linked to `OTLeft` and
@@ -2990,6 +3049,26 @@ runND(G, atoms, choose, fuel, used, B, σ):            -- runND; ematch.rs adapt
 engine also prices a `:comm` atom over the `byContains` lookups `emit_atom` adds, which
 `engineJoinLookups` copies.
 
+The static scheduler is the same two phases run once, at plan time, on the bound set alone:
+
+```
+scheduleEngine(cost, pre, atoms):                     -- scheduleEngine; schedule.rs schedule_inner
+  used := ∅, B := pre, steps := []
+  repeat at most |atoms| times:                       -- schedLoop
+    repeat:                                           -- eagerFix; lower_eager
+      for i in 0 .. |atoms|, i ∉ used:                -- eagerSweep, eagerAt; try_eager_lower
+        if atoms[i] = (= x y) and (x ∈ B or y ∈ B):   -- SchedA.eager
+          steps ++= eagerLower atoms[i] B; used += i; B ∪= {x, y}
+        if atoms[i] plain with its node in B:         -- SchedA.pick, the re-join in its class
+          steps ++= lower atoms[i] B; used += i; B ∪= binds atoms[i]
+    until a sweep lowered nothing                     -- eagerFix_fixed: no unused atom is free
+    best := none
+    for i in 0 .. |atoms|, i ∉ used, atoms[i] scanning:          -- pickStep, index order
+      if best = none or cost(steps, B, i) < best.cost: best := (i, cost)   -- strictly cheaper replaces
+    if best = none: return steps                      -- SchedA.done
+    steps ++= lower atoms[best.i] B; used += best.i; B ∪= binds atoms[best.i]   -- SchedA.pick; emit_atom
+```
+
 ### 11.9 Semi-naive rounds: variants and routing
 
 ```
@@ -3250,6 +3329,18 @@ run; a match rooted at a retired node is covered by no theorem yet. Evidence: `n
 (`Final/Witness.lean:507`), Section 10, item 18. The proposed fix extends `SubRep` to the
 retired nodes and concludes at the class of an active node the retired one rewrites to (I3,
 `nf_present`).
+
+**Must run the eager pass after the last scanning atom, to its fixpoint, before the plan
+ends.** Otherwise an equality that the last join frees is never checked or copied: the plan
+emits bindings that violate it (soundness of matching; `SchedA.done` asks that no unused atom
+be free), and a variable bound only through that equality is never bound, so the rule's
+actions read an unset variable. A single sweep is not enough: `(= a b)` passed over before
+`(= b c)` is free only on the next sweep. Evidence: the `done` case of `schedLoop_schedA`
+through `eagerFix_fixed` (`EMatch/Engine/Schedule.lean`); the mutation of the transliteration
+that runs the eager pass before the first pick only disagrees with the engine on 458 of 2679
+corpus plans, and the one that sweeps once leaves `(= a b)` unlowered in
+`eager_chain_agrees_with_the_model` (`schedule.rs`). The engine's loop runs `lower_eager`
+at the top of every iteration, including the one that finds no candidate.
 
 **Must not expect regrouping to find a normal form reached only by insertion.** With
 `zero ∋ add{B, D}`, `add{A, C}` equals `add{add{A, B}, add{C, D}}`, but a chain of

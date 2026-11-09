@@ -6,7 +6,8 @@ Lean 4 with Mathlib v4.35.0. `lake build` of the whole project passes;
 Written 2026-11-04 after the second extension; regrouped views added 2026-11-05;
 the engine's regrouping skips and leaf constants 2026-11-06; the final theorem
 over the store with its non-vacuity witness, and the executor's binding kinds
-for nested patterns, 2026-11-06 (branch `feat/real-rules`).
+for nested patterns, 2026-11-06 (branch `feat/real-rules`); the static
+scheduler's plan in the grammar, 2026-11-09.
 
 ## Final theorem (`SemperProofs/Final/Store.lean`, `Final/Main.lean`)
 
@@ -16,8 +17,8 @@ then semi-naive rounds; rebuild's round facts, merge tracking on,
 `StorePersistN` (the fixed-arity nodes persist literally, the AC and ACI
 nodes as the normal forms recanonicalization gives or as the leaf they
 collapse to), `:subsume` allowed, well-formed rules, matchers emitting
-exactly the matches their modes admit (`MatchersOK`: a theorem for the
-adaptive scheduler, `SchedA` of the compiled plan for a static one), every
+exactly the matches their index settings admit (`MatchersOK`: a theorem for
+both schedulers, `matcherOK_engine` and `matcherOK_static_engine`), every
 variant or naive match emitted per round under the round's routing, which
 matches the rules that build an n-ary term in full after a round whose
 rebuild was not literal), at a round that changed nothing,
@@ -235,8 +236,13 @@ collapsed `f`-node (`Final/Witness.lean`, `not_cover`).
   `runNDA_matches`; with the engine's choice function `chooseEngine`, the
   transcription of `choose_atom`, `runEngine_matches`, checked against the
   engine on the `conform-rounds` corpus by
-  `atom_choice_agrees_with_the_model_on_the_rounds_corpus`), the rule's
-  `Matcher` with `matcherOK_static`/`matcherOK_engine`, `byOp_demotion`,
+  `atom_choice_agrees_with_the_model_on_the_rounds_corpus`), the static
+  scheduler `scheduleEngine` (`Engine/Schedule.lean`, the transcription of
+  `schedule_inner`; `scheduleEngine_schedA`: its plan is in the grammar
+  whatever the prices, checked against the engine on the same corpus by
+  `static_plan_agrees_with_the_model_on_the_rounds_corpus`), the rule's
+  `Matcher` with `matcherOK_static`/`matcherOK_engine`/
+  `matcherOK_static_engine` and `matchersOK_compiled`, `byOp_demotion`,
   semi-naive `variant_partition`/`variants_disjoint`/`variants_cover_new`.
 - `Engine/Rounds/`: the cross-round half of semi-naive matching. A
   `Round` is the transition between two frozen snapshots with the deferred
