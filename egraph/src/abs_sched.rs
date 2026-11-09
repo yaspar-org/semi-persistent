@@ -14,6 +14,8 @@
 //! registry (#148): nothing is analysed until an [`AbsDomain`] is installed,
 //! so a program without one pushes nothing on the queues.
 
+use crate::canon::{MSetCanon, VarCanon};
+use crate::containers::DenseId;
 use std::collections::{HashMap, VecDeque};
 
 /// Substring the conflict programs match. Part B reports this text unchanged.
@@ -168,6 +170,7 @@ impl<Cfg, L, const TRACK: bool, const PROOFS: bool> super::EGraph<Cfg, L, TRACK,
 where
     Cfg: crate::config::EGraphConfig,
     L: crate::literal::LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
 {
     pub(crate) fn set_abs_domain(&mut self, domain: Box<dyn AbsDomain>) {
@@ -218,17 +221,21 @@ where
     }
 
     fn abs_analysed(&self, node: Cfg::G) -> bool {
-        let Some(domain) = self.abs.domain.as_ref() else {
+        if self.abs.domain.is_none() {
             return false;
-        };
-        domain.analysed_sort(self.abs_sort_of(node))
+        }
+        let sort = self.abs_sort_of(node);
+        self.abs.domain.as_ref().unwrap().analysed_sort(sort)
     }
 
     /// Make: the fresh class starts at top (a missing table entry) and the node
     /// waits on the forward queue until the drain, which runs after congruence
     /// has spliced use lists.
     pub(crate) fn abs_on_make(&mut self, id: Cfg::G) {
-        if self.abs.conflict.is_some() || !self.abs_analysed(id) {
+        if self.abs.conflict.is_some() {
+            return;
+        }
+        if !self.abs_analysed(id) {
             return;
         }
         self.abs.forward.push_back(id.to_usize());
@@ -236,18 +243,20 @@ where
 
     /// A literal's class starts at the singleton of that literal, not at top.
     pub(crate) fn abs_on_lit(&mut self, id: Cfg::G, lit: Cfg::V) {
-        use crate::containers::DenseId;
         if !self.abs_analysed(id) {
             return;
         }
         let sort = self.abs_sort_of(id);
-        let Some(domain) = self.abs.domain.as_ref() else {
+        let Some(value) = self
+            .abs
+            .domain
+            .as_ref()
+            .and_then(|domain| domain.encode_lit(sort, lit.to_usize()))
+        else {
             return;
         };
-        let Some(value) = domain.encode_lit(sort, lit.to_usize()) else {
-            return;
-        };
-        if let Some(k) = domain.as_constant(value) {
+        let constant = self.abs.domain.as_ref().unwrap().as_constant(value);
+        if let Some(k) = constant {
             self.abs.constants.insert(k, id.to_usize());
         }
         self.abs_meet_node(id, value);
@@ -273,7 +282,10 @@ where
     }
 
     fn abs_meet_node(&mut self, node: Cfg::G, incoming: u64) {
-        if self.abs.conflict.is_some() || !self.abs_analysed(node) {
+        if self.abs.conflict.is_some() {
+            return;
+        }
+        if !self.abs_analysed(node) {
             return;
         }
         let Some(key) = self.abs_class_key(node) else {
@@ -438,8 +450,11 @@ where
         let op = self.node_op(node).to_usize();
         let value = self.abs.domain.as_ref().unwrap().forward(op, &args);
         self.abs_meet_node(node, value);
-        if let Some(cond) = args.first().copied()
-            && let Some(index) = self.abs.domain.as_ref().unwrap().decided_branch(op, cond)
+        let branch = args
+            .first()
+            .copied()
+            .and_then(|cond| self.abs.domain.as_ref().unwrap().decided_branch(op, cond));
+        if let Some(index) = branch
             && let Some(&child) = kids.get(index)
         {
             self.abs.derived.push((node.to_usize(), child.to_usize()));
@@ -591,20 +606,17 @@ mod tests {
         }
     }
 
-    fn eg_with_add() -> (
-        EGraph31<NiraLitVal, false, false>,
-        crate::id::OpId,
-        crate::id::OpId,
-    ) {
-        use crate::containers::DenseId;
-        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+    fn eg_with_add() -> (EGraph31<NiraLitVal>, crate::id::OpId, crate::id::OpId) {
+        // Mark and restore need the semi-persistent columns (`TRACK`).
+        let mut eg = EGraph31::<NiraLitVal>::new();
         let int = eg.intern_sort("Int");
         let add = eg.register_op2("add", int, int, int);
         eg.set_abs_domain(Box::new(Interval {
             sort: int.to_usize(),
             add: add.to_usize(),
         }));
-        (eg, add, eg.register_op0("c", int))
+        let c = eg.register_op0("c", int);
+        (eg, add, c)
     }
 
     #[test]
@@ -626,15 +638,18 @@ mod tests {
         let (mut eg, _add, c) = eg_with_add();
         let x = eg.add(c, &[]);
         let sort = eg.node_sort(x);
-        let y = eg.add(eg.register_op0("d", sort), &[]);
+        let d = eg.register_op0("d", sort);
+        let y = eg.add(d, &[]);
         eg.abs_seed(x, pack(0, 9));
         eg.abs_seed(y, pack(5, 20));
         eg.merge(x, y);
         assert_eq!(eg.abs_value(x), Some(pack(5, 9)));
         assert!(eg.take_abs_conflict().is_none());
 
-        let p = eg.add(eg.register_op0("p", sort), &[]);
-        let q = eg.add(eg.register_op0("q", sort), &[]);
+        let p_op = eg.register_op0("p", sort);
+        let p = eg.add(p_op, &[]);
+        let q_op = eg.register_op0("q", sort);
+        let q = eg.add(q_op, &[]);
         eg.abs_seed(p, pack(0, 4));
         eg.abs_seed(q, pack(10, 20));
         eg.merge(p, q);
@@ -647,7 +662,8 @@ mod tests {
         let (mut eg, add, c) = eg_with_add();
         let x = eg.add(c, &[]);
         let sort = eg.node_sort(x);
-        let one = eg.add(eg.register_op0("one", sort), &[]);
+        let one_op = eg.register_op0("one", sort);
+        let one = eg.add(one_op, &[]);
         let sum = eg.add(add, &[x, one]);
         eg.abs_seed(x, pack(0, 9));
         eg.abs_seed(one, pack(1, 1));
@@ -657,7 +673,8 @@ mod tests {
         let (mut eg, add, c) = eg_with_add();
         let x = eg.add(c, &[]);
         let sort = eg.node_sort(x);
-        let one = eg.add(eg.register_op0("one", sort), &[]);
+        let one_op = eg.register_op0("one", sort);
+        let one = eg.add(one_op, &[]);
         let sum = eg.add(add, &[x, one]);
         eg.abs_seed(one, pack(1, 1));
         eg.abs_seed(sum, pack(1, 5));
@@ -693,7 +710,9 @@ mod tests {
         assert_eq!(eg.abs_pending(), 0);
         assert!(eg.take_abs_conflict().is_none());
 
-        let y = eg.add(eg.register_op0("y", eg.node_sort(x)), &[]);
+        let y_sort = eg.node_sort(x);
+        let y_op = eg.register_op0("y", y_sort);
+        let y = eg.add(y_op, &[]);
         eg.abs_seed(x, pack(0, 4));
         eg.abs_seed(y, pack(10, 20));
         let token = eg.mark(crate::containers::ShrinkPolicy::Never);
@@ -716,8 +735,10 @@ mod tests {
     #[test]
     fn singleton_derives_a_merge_with_its_literal() {
         let (mut eg, _add, c) = eg_with_add();
-        let sort = eg.node_sort(eg.add(c, &[]));
-        let lit = eg.add(eg.register_op0("three", sort), &[]);
+        let seeded = eg.add(c, &[]);
+        let sort = eg.node_sort(seeded);
+        let three = eg.register_op0("three", sort);
+        let lit = eg.add(three, &[]);
         let class = eg.add(c, &[]);
         eg.abs_bind_constant(3, lit);
         eg.abs_seed(class, pack(3, 3));

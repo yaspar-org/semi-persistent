@@ -2173,7 +2173,11 @@ where
                     break;
                 }
                 let abs_merged = self.abs_drain();
-                if self.abs.conflict.is_some() || !(self.canon_repair_round() || abs_merged) {
+                // An empty meet stops the closure before canonization repair.
+                if self.abs_has_conflict() {
+                    break;
+                }
+                if !(self.canon_repair_round() || abs_merged) {
                     break;
                 }
             }
@@ -2228,7 +2232,7 @@ where
             // be what joins the goal pair. A conflict stops the closure; the
             // caller reads `take_abs_conflict`.
             let _ = self.abs_drain();
-            if self.abs.conflict.is_some() {
+            if self.abs_has_conflict() {
                 return;
             }
             // Goal-directed early stop (the lazy-check transaction): the pair
