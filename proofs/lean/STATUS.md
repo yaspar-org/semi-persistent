@@ -30,6 +30,18 @@ commits and the withdrawn claims.
   `not_cover`, `retired_class`: every hypothesis of the store theorems proved
   on two rounds of `(rewrite (+ x y) (g x y))` and `(rewrite (+ x y z) k)`
   over the state of `AtomsWitness`, by hand and `decide` (GUIDE Section 7.7).
+- `Final/Closed.lean`: `theoryClosed_of_complete`, the store's closure under the
+  theory (`TheoryClosed`) derived from the completion state through the
+  correspondence: `readClass`, `readMset` read a store class and a child
+  multiset in the state, `ACStep.readE` and `EqAC.readE` read a normalization
+  chain as an `=_E`-equality (the inverse of `ACStep.mapE`), `ACStep.count_mod`
+  and `eq_of_chain_not_noded` keep a class holding no node out of every chain
+  but the trivial one, `closedAC_of_complete` closes the AC operator of the
+  state; `LawsRead` (the laws read alike), `SummandsAtomic` (the summands'
+  classes hold their atoms), `TheoryClosedRest` the remainder (the other
+  operators, the ACI and A theories). `saturation_complete_closed_of_complete`
+  and `_atoms`: `saturation_complete_closed` with the completion hypotheses in
+  place of `TheoryClosed` (GUIDE Section 6.5).
 - `Final/Main.lean`: the literal forms `saturation_modulo_complete`,
   `saturation_modulo_complete_atoms` (`A.R.after = represents st f act`,
   literal `Den`; vacuous for a rule set with a match whose right-hand side
@@ -40,8 +52,8 @@ commits and the withdrawn claims.
   matching run on the represented graph (not a converse of completeness).
   GUIDE Sections 7.2 to 7.6.
 - Hypotheses no theorem discharges (`SubRep`, `CompleteAtoms` with `hlat`,
-  the per-law conditions `LawSpec.Conds` and the minimal-monomial
-  hypotheses, the round facts, `TheoryClosed`): GUIDE Section 9.
+  the per-law conditions `LawSpec.Conds`, the minimal-monomial
+  hypotheses, the round facts, `TheoryClosedRest`): GUIDE Section 9.
 
 ## CC: AC-congruence closure (`SemperProofs/CC/`)
 
@@ -568,8 +580,13 @@ commits and the withdrawn claims.
   class, so a re-match would merge nothing. `PersistFails.sa_not_closed`:
   the counter-model's after-store is not closed; `PersistFails.completed`:
   its completion is, meets `StorePersistE`, and reaches the instance.
-  Fixture `egraph/tests/egg/semi_recanon_completion_on.egg`. Not derived:
-  `TheoryClosed` from `CompleteHyps` through `SubRep`.
+  Fixture `egraph/tests/egg/semi_recanon_completion_on.egg`. `ClosedAC`,
+  `ClosedACI`, `ClosedA`, `PairsSorted`, `TheoryClosedRest`,
+  `TheoryClosed.ofParts`: the split of `TheoryClosed` into the closure under
+  one AC operator and its remainder, which `Final/Closed.lean` derives from
+  the completion state; `closedAC_of_absent`, `closedACI_of_absent`,
+  `closedA_of_absent` for an operator with no stored node of the kind and no
+  law.
 - `Sound.lean`: `denN_sound`, `firedN_sound`, `union_recorded_sound`: what
   the actions build denotes the right-hand side in every model of the graph
   and the operator laws. The round-level converse of `Saturate.Inv` (with
@@ -591,7 +608,9 @@ commits and the withdrawn claims.
 - The completion settings, which do not re-match after a spelling change,
   join the instances the routing re-fires with completion off:
   `saturation_complete_closed` (`RecanonComplete.lean`), under the store's
-  closure under the theory (`TheoryClosed`); GUIDE Section 6.5.
+  closure under the theory (`TheoryClosed`), derived from the completion
+  state in `Final/Closed.lean` up to the remainder `TheoryClosedRest`
+  (`saturation_complete_closed_of_complete`); GUIDE Section 6.5.
 
 ## Not modelled
 

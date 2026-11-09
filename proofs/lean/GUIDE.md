@@ -2639,7 +2639,9 @@ sequence store (`dedup_of_inv`, `Rounds/SeqSplice.lean:234`), but no theorem bui
   is the fixpoint theorem on `SChainE`, the chain with any routing per round, and
   `saturation_complete_closed` adds `TheoryClosed`, the store reading of the completion
   completeness theorem, under which every value `add` builds for a right-hand side is in the
-  match root's class (`denE_denN_eq`). `PersistFails.sa_not_closed` and
+  match root's class (`denE_denN_eq`). `Final/Closed.lean` derives `TheoryClosed` from the
+  completion state through the correspondence (`theoryClosed_of_complete`), and
+  `saturation_complete_closed_of_complete` takes the completion hypotheses in its place. `PersistFails.sa_not_closed` and
   `PersistFails.completed` place the counter-model: its after-store is not closed under the
   theory; its completion is, and reaches the instance.
 - `Fidelity/Sound.lean`: `denN_sound` (`:123`) states that what the actions build denotes the
@@ -2702,7 +2704,9 @@ routing as a hypothesis of the chain (`SChainN`); the engine's `touched` log, th
 merge-membership delta and the order of the worklist are summarized by `Round.WF`. With
 completion on, the engine does not re-match and completion joins the two spellings:
 `saturation_complete_closed` (`Fidelity/RecanonComplete.lean`) takes the store's closure
-under the theory (`TheoryClosed`) in place of the routing (Section 6.5).
+under the theory (`TheoryClosed`) in place of the routing, and
+`saturation_complete_closed_of_complete` (`Final/Closed.lean`) derives the closure from the
+completion state (statements below).
 
 ```lean
 theorem inv_step_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
@@ -2744,6 +2748,44 @@ theorem saturation_complete_closed {sig : Sym → Kind} {rules : List Rule}
       FiredE A.Sa.graph L σ rule ∧
       ∀ a b, Action.union a b ∈ rule.actions →
         ∀ c₁ c₂, DenN A.Sa.graph L σ a c₁ → DenN A.Sa.graph L σ b c₂ → c₁ = c₂
+
+structure TheoryClosedRest (S : Store) (L : Sym → OpLaws) (f : Sym) : Prop where
+  mset : ∀ g, g ≠ f → ClosedAC S L g
+  set : ∀ g, ClosedACI S L g
+  seq : ∀ g, ClosedA S L g
+
+structure LawsRead (S : Store) (L : Sym → OpLaws) (f : Sym) (st : State n) (Lc : Laws n) : Prop where
+  unit : ∀ u, (L f).unit = some u →
+    ∃ c, ((0 : Monomial n), c) ∈ st.nodes ∧ clsId (st.find c) = S.find u
+  nil : ∀ r, (L f).nilpotent = some r → 2 ≤ r ∧ Lc.HasNil r
+  inv : ∀ g, (L f).invOp = some g → ∀ id x, (id, ⟨g, .tuple [x]⟩) ∈ S.nodes →
+    ∃ x' y', HoldsAtom st x x' ∧ HoldsAtom st (S.find id) y' ∧ Lc.lawRel ({x', y'} : Monomial n) 0
+
+def SummandsAtomic (st : State n) (N : Finset (Monomial n × Fin n)) : Prop :=
+  ∀ p ∈ N, ∀ y ∈ p.1, HoldsAtom st (clsId (st.find y)) y
+
+theorem theoryClosed_of_complete (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st)
+    (h3 : I3 Lc st) (hk : S.graph.KeysNodup) (hN : Stored st N) (hs : SubRep S.graph st f N ι)
+    (hcov : FCover S.graph f N ι) (hsum : SummandsAtomic st N) (hlaws : LawsRead S L f st Lc)
+    (hdedup : ∀ id₁ id₂ nd, (id₁, nd) ∈ S.nodes → (id₂, nd) ∈ S.nodes → S.find id₁ = S.find id₂)
+    (hsorted : PairsSorted S) (hrest : TheoryClosedRest S L f) : TheoryClosed S L
+
+theorem saturation_complete_closed_of_complete {sig : Sym → Kind} {rules : List Rule}
+    {L : Sym → OpLaws} (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKE sig rules A)
+    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainE rules A₀ As)
+    {A : SActRoundN L} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
+    {Lc : Laws n} {St : Set (Monomial n × Monomial n)} {st : State n}
+    (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st) (h3 : I3 Lc st)
+    (hk : A.Sa.graph.KeysNodup) {f : Sym} {N : Finset (Monomial n × Fin n)}
+    {ι : Monomial n × Fin n → NodeId} (hN : Stored st N) (hs : SubRep A.Sa.graph st f N ι)
+    (hcov : FCover A.Sa.graph f N ι) (hsum : SummandsAtomic st N)
+    (hlaws : LawsRead A.Sa L f st Lc) (hsorted : PairsSorted A.Sa)
+    (hrest : TheoryClosedRest A.Sa L f) :
+    ∀ rule ∈ rules, ∀ σ, Matches A.Sa.index rule.atoms σ →
+      FiredE A.Sa.graph L σ rule ∧
+      ∀ a b, Action.union a b ∈ rule.actions →
+        ∀ c₁ c₂, DenN A.Sa.graph L σ a c₁ → DenN A.Sa.graph L σ b c₂ → c₁ = c₂
 ```
 
 **Reading.** `EqAC` is the equational theory of the AC operator `f` modulo the store, on
@@ -2766,8 +2808,37 @@ build (`DenN`) in that class, and `saturation_complete_closed` says that at the 
 every union a rule asks for holds between any values of its two sides: a re-match would
 merge nothing. The conclusion is `FiredE`, not `FiredN`: the new spelling need not be stored
 as a node, since completion materializes the normal form of the old node (`nf_present`), not
-every spelling. `TheoryClosed` is a hypothesis on the store; it is not derived from
-`CompleteHyps` through `SubRep`. The counter-model of `denN_persist_fails` fits:
+every spelling. `theoryClosed_of_complete` (`Final/Closed.lean`) derives `TheoryClosed` from
+the completion state of one AC operator `f`: the store holds the nodes of a set `N` of stored
+nodes of the state, active or retired, under `ι` (`SubRep` on the store, `Stored`) and no
+other `f`-node (`FCover`); the class of each summand holds the summand's one-element monomial
+(`SummandsAtomic`, which the completion view supplies for the atomic classes,
+`summandsAtomic_withAtoms`); the laws the store reads for `f` agree with the state's
+(`LawsRead`: the unit's class holds the empty node, the nilpotent order is at least two and a
+law instance on every atom, an inverse pair is a law instance on the two atoms its classes
+hold); `I2` and `I3` relate a retired node to an active one of its class
+(`node_equal_active`). The proof is the inverse of `ACStep.mapE`. A store class is read as
+the monomial of a node of the state in that class (`readClass`, `0` for a class holding
+none), a child multiset as the sum of the readings (`readMset`), and one normalization step
+on the store is an `=_E`-equality of the readings (`ACStep.readE`): a splice through the node
+of `p` reads as `p.1` against its summands, a unit drop as the empty node, a nilpotent clamp
+and an inverse cancellation as the law instances. A chain between two singletons is then an
+`=_E`-equality between two nodes of the state (`EqAC.readE`), each `=_E`-equal to an active
+node of its class, and `ac_equal_same_class` puts the two classes together. A class holding
+no node ends no chain but the trivial one: its count is invariant modulo the nilpotent
+order, which is `0` or at least `2` (`ACStep.count_mod`, `eq_of_chain_not_noded`). The
+`node` field is the hash-cons dedup (`StoreWF.dedup`) and the `pair` field follows from it on
+sorted pairs (`PairsSorted`). What is not derived is the remainder `TheoryClosedRest`: the
+closure under the theory of every other AC operator (`ClosedAC`; one completion state per
+operator derives each) and under the ACI and A theories of every operator (`ClosedACI`,
+`ClosedA`), which the completion state does not model; `closedAC_of_absent`,
+`closedACI_of_absent` and `closedA_of_absent` discharge it for an operator with no stored
+node of the kind and no law. `saturation_complete_closed_of_complete` is
+`saturation_complete_closed` with these hypotheses in place of `TheoryClosed`, and its
+`_atoms` form takes `CompleteAtoms`, with `I2`, `I3` and the laws read on the completion view
+and the summands in the atomic set. `witness_theoryClosed` and
+`witness_saturation_complete_closed` (`Final/Witness.lean`) prove every hypothesis on the run
+of Section 7.7. The counter-model of `denN_persist_fails` fits:
 `PersistFails.sa_not_closed` shows its after-store is not closed under the theory
 (`f{p, q} = e` makes `d` and `e'` equal), and `PersistFails.completed` exhibits its
 completion, closed and meeting `StorePersistE`, in which `f{x}` has the value `Sc.find e'`
@@ -3094,7 +3165,8 @@ between `st` and the rounds. A match rooted at a retired node is covered by the 
 below. The completion settings in which the engine does not re-match
 after a spelling change are covered at the store level by `saturation_complete_closed`
 (Section 6.5), which takes the store's closure under the theory (`TheoryClosed`) in place of
-the routing of `SChainN`; `TheoryClosed` is not derived from `CompleteHyps` (Section 9).
+the routing of `SChainN`; `saturation_complete_closed_of_complete` derives the closure from
+the completion state, up to the remainder `TheoryClosedRest` (Section 9).
 
 **`saturation_modulo_complete_store_retired`** (`Final/Store.lean`). The
 engine keeps a collapsed node (`FLAG_AC_COLLAPSED`, retired in the model) in the index and
@@ -3201,7 +3273,9 @@ the per-law conditions discharge for the law sets `LawSpec` names (`CompleteAtom
 and `hcancel` is replaced by lattice closure. The engine's completion settings, which do not
 re-match, reach every instance at the class level: `saturation_complete_closed` takes the
 store's closure under the theory (`TheoryClosed`) in place of the routing of `SChainN`, and
-`TheoryClosed` is a hypothesis on the store, not derived from `CompleteHyps`. The covering
+`saturation_complete_closed_of_complete` derives the closure from `CompleteHyps`, `I2`, `I3`
+and the correspondence on the store, leaving the other operators and the ACI and A theories
+as the remainder `TheoryClosedRest`. The covering
 form over `act` alone excludes any index holding a collapsed `f`-node; the retired form takes
 `I2`, `I3` and `SubRepR` as further hypotheses and covers it. Section 9 lists each of these
 as a gap.
@@ -3217,7 +3291,8 @@ hypotheses are those of `CompleteAtoms` (the table of Section 5.9). The bridge a
 | `hs : SubRep A.Sa.index st f act ι` | each `p ∈ act` is stored in the index under `ι p` with the children of `mkNode st f p`, in the class `st` gives it | assumed | the correspondence between the engine's index and the completion state of the model; no theorem relates the two (Section 9) |
 | `hfix : A.Unchanged` | the round changes nothing | derived | `engine_stop_unchanged`, in `saturation_modulo_complete_store_engine` |
 | `FCover` (the `_cover` form) | every `f`-node of the index is the node of some `p ∈ act` | limit | fails on every run in which completion collapsed a node (`not_cover`); the `_retired` form takes `SubRepR`, `I2`, `I3` instead |
-| `TheoryClosed` (`saturation_complete_closed`, completion on) | the store is closed under the theory | assumed | the store reading of `CompleteAtoms.same_class`; not derived from `CompleteHyps` through `SubRep` (Section 9) |
+| `TheoryClosed` (`saturation_complete_closed`, completion on) | the store is closed under the theory | derived | `theoryClosed_of_complete`, from `CompleteHyps`, `I2`, `I3`, `SubRep` and `FCover` on the store, `SummandsAtomic`, `LawsRead`, the dedup and `PairsSorted`, in `saturation_complete_closed_of_complete` (Section 6.5) |
+| `TheoryClosedRest` (`saturation_complete_closed_of_complete`) | the other AC operators and the ACI and A theories are closed | assumed | one completion state per AC operator; the ACI and A theories have no completion state (Section 9) |
 | a theory-equal term absent from the graph; a two-item match whose children classes merge | | limit | `per_node_form_fails`; `proofs/repro/ac_collapse.egg` (`NoCollapse`) |
 
 ## 8. Conformance and mirror tests, and the fixtures
@@ -3343,15 +3418,19 @@ models, and the limits that stay by design.
    of the final state into `State` and decides `SubRep` against the index. Acceptance: a
    theorem `subRep_of_converged` on the modelled rebuild, or the checker run over the
    committed corpora with no failure.
-2. **`TheoryClosed` from `CompleteHyps`.** With completion on the engine does not re-match
+2. **The remainder of `TheoryClosed`.** With completion on the engine does not re-match
    after a spelling change, and `saturation_complete_closed` reaches every instance at the
-   class level under `TheoryClosed`, the store's closure under the theory. `TheoryClosed` is a
-   hypothesis on the store; `CompleteAtoms.same_class` is its reading on the completion state.
-   Closes it: a theorem that derives `TheoryClosed A.Sa ops` from `CompleteHyps L S st` and
-   `SubRep` (the `mset` field from `ac_equal_same_class_sub`, the `set` and `seq` fields from
-   the ACI and A theories, which `CC/` does not model). Acceptance: `theoryClosed_of_complete`
-   in `Fidelity/RecanonComplete.lean`, and `saturation_complete_closed` restated without the
-   hypothesis.
+   class level under `TheoryClosed`, the store's closure under the theory.
+   `theoryClosed_of_complete` (`Final/Closed.lean`) derives it from `CompleteHyps`, `I2`, `I3`
+   and the correspondence on the store (`SubRep`, `FCover`, `SummandsAtomic`, `LawsRead`) for
+   the AC operator of the completion state, and `saturation_complete_closed_of_complete`
+   takes those hypotheses in its place. What stays a hypothesis is `TheoryClosedRest`: the
+   closure under the theory of every other AC operator, and under the ACI and A theories of
+   every operator, which `CC/` does not model (`ClosedACI`, `ClosedA`). Closes it: one
+   completion state per AC operator in `saturation_complete_closed_of_complete` (a family in
+   place of the single state), and a set-node correspondence for the ACI operators under
+   which `ACIStep` reads in a completion state with the idempotent law; the A theory has no
+   completion theorem (gap 10). Acceptance: `TheoryClosedRest` reduced to its `seq` field.
 3. **The per-law conditions and the law sets without a model.** `axiomCP_of_laws` derives
    `AxiomCP` for every law set `LawSpec` names from the fixed round and the per-law
    conditions `LawSpec.Conds` (Section 5.6), and `CompleteHyps.ofLaws`, `CompleteAtoms.ofLaws`

@@ -1,4 +1,5 @@
 import SemperProofs.Final.Store
+import SemperProofs.Final.Closed
 import SemperProofs.CC.AtomsWitness
 
 /-!
@@ -926,5 +927,79 @@ theorem witness_fires_retired :
   subst hp₂
   obtain ⟨hcls, hmc⟩ := hall p₃ (by simp [act]) (E.symm E_abd_cd)
   exact ⟨hf, hcls, hmc, hmn⟩
+
+/-! ## The store closed under the theory, derived -/
+
+/-- `hyp_ok` with the sequence nodes literal (`RoundOKE`): the store
+persists literally in both rounds. -/
+theorem hyp_okE : ∀ A ∈ [A₀, A₁], RoundOKE sig rules A := by
+  intro A hA
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hA
+  rcases hA with rfl | rfl
+  · exact ⟨mkRound_wf S₀ (by rw [S₀_index]; rfl), rfl,
+      (persist S₀ rfl (fun p hp => List.mem_append_left _ hp)).toE ops,
+      by show RulesWF sig S₁.index rules; rw [S₁_index]; exact rulesWF₁⟩
+  · exact ⟨mkRound_wf S₁ (by rw [S₁_index]; rfl), rfl, (persist S₁ rfl (fun p hp => hp)).toE ops,
+      by show RulesWF sig S₁.index rules; rw [S₁_index]; exact rulesWF₁⟩
+
+/-- The three `+`-nodes are nodes of the state. -/
+theorem hyp_stored : Stored wst (act ∪ ret) := fun p hp =>
+  (Finset.mem_union.1 hp).elim (fun h => (hyp_within p h).1) (hyp_ret p)
+
+/-- The correspondence on the store (no node is skipped, so the store is
+the index). -/
+theorem hyp_subG : SubRep A₁.Sa.graph wst 0 (act ∪ ret) ι := by
+  have h := hyp_subR.union
+  rwa [show A₁.Sa.index = G₁ from S₁_index] at h
+
+theorem hyp_coverG : FCover A₁.Sa.graph 0 (act ∪ ret) ι := by
+  have h := hyp_coverR
+  rwa [show A₁.Sa.index = G₁ from S₁_index] at h
+
+/-- Every summand of the three `+`-nodes is a leaf constant. -/
+theorem hyp_summands : ∀ p ∈ act ∪ ret, ∀ y ∈ p.1, y ∈ wA := by
+  intro p hp
+  rcases Finset.mem_union.1 hp with h | h
+  · rcases mem_act h with rfl | rfl <;> decide
+  · rw [mem_ret h]; decide
+
+/-- `+` has no law in the store and none in the state. -/
+theorem hyp_laws : LawsRead A₁.Sa ops 0 wv (Laws.plainAC 5) := LawsRead.of_none rfl rfl rfl
+
+/-- No pair node is stored. -/
+theorem hyp_sorted : PairsSorted A₁.Sa := by
+  intro id f a b h
+  change _ ∈ nodes₁ at h
+  simp [nodes₁, nodes₀, gNodes, kNodes] at h
+
+/-- The remainder: `+` is the only AC operator, and no ACI or A node is
+stored. -/
+theorem hyp_rest : TheoryClosedRest A₁.Sa ops 0 where
+  mset g hg := closedAC_of_absent
+    (fun id m h => by change _ ∈ nodes₁ at h; simp [nodes₁, nodes₀, gNodes, kNodes, hg] at h) rfl rfl rfl
+  set g := closedACI_of_absent (fun id s h => by change _ ∈ nodes₁ at h; simp [nodes₁, nodes₀, gNodes, kNodes] at h) rfl
+  seq g := closedA_of_absent (fun id l h => by change _ ∈ nodes₁ at h; simp [nodes₁, nodes₀, gNodes, kNodes] at h) rfl
+
+/-- **The store of the fixpoint round is closed under the theory**, derived
+from the completion state through the correspondence
+(`theoryClosed_of_complete`). -/
+theorem witness_theoryClosed : TheoryClosed A₁.Sa ops :=
+  theoryClosed_of_complete (CompleteHyps.ofAtoms witness_complete) witness_I2 witness_I3 keys₁
+    (Stored.withAtoms hyp_stored wA none) (hyp_subG.withAtoms wA none) hyp_coverG
+    (summandsAtomic_withAtoms hyp_summands) hyp_laws dedup₁ hyp_sorted hyp_rest
+
+/-- **Saturation with completion on, instantiated.**
+`saturation_complete_closed_of_complete_atoms` on the two rounds of the
+program above, with every hypothesis proved: at the fixpoint every match
+is fired modulo the theory, and every union a rule asks for holds between
+any values of its two sides. -/
+theorem witness_saturation_complete_closed :
+    ∀ r ∈ rules, ∀ σ, Matches A₁.Sa.index r.atoms σ →
+      FiredE A₁.Sa.graph ops σ r ∧
+      ∀ a b, Action.union a b ∈ r.actions →
+        ∀ c₁ c₂, DenN A₁.Sa.graph ops σ a c₁ → DenN A₁.Sa.graph ops σ b c₂ → c₁ = c₂ :=
+  saturation_complete_closed_of_complete_atoms A₀ [A₁] matchersOK hyp_h₀ hyp_okE hyp_emit₀
+    (SChainN.toE hyp_chain) (A := A₁) (by simp) hyp_fix witness_complete witness_I2 witness_I3
+    keys₁ hyp_stored hyp_subG hyp_coverG hyp_summands hyp_laws hyp_sorted hyp_rest
 
 end SemperProofs.Final.Witness

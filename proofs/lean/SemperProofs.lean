@@ -37,6 +37,7 @@ import SemperProofs.CC.Bridge.Modulo
 import SemperProofs.CC.Bridge.Sub
 import SemperProofs.Final.Main
 import SemperProofs.Final.Store
+import SemperProofs.Final.Closed
 import SemperProofs.Final.Witness
 import SemperProofs.Fidelity.Main
 import SemperProofs.Fidelity.StopTest
