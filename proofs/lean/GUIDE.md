@@ -2448,18 +2448,61 @@ index, and the matched node is the represented node of `p'`. `_store`
 `saturation_modulo_complete_store_cover` adds `FCover` (every `f`-node of the index is the
 node of some `p ∈ act`) and concludes for every match, whatever its root. The proof is that
 of Section 7.4 with `saturation_complete_N` in place of `saturation_complete`;
-`matches_at_sub` identifies the matched node through `KeysNodup`. Outside: a match rooted
-at a retired node, which `SubRep` does not cover (item 18 of Section 10), the relation
+`matches_at_sub` identifies the matched node through `KeysNodup`. Outside: the relation
 between `st` and the rounds, and the completion settings in which the engine does not
 re-match after a spelling change.
 
+**`saturation_modulo_complete_store_retired`** (`Final/Store.lean`, commit `e5ed0211`). The
+engine keeps a collapsed node (`FLAG_AC_COLLAPSED`, retired in the model) in the index and
+matchable, so `FCover` over `act` fails on every run in which completion collapsed a node
+(`not_cover`, below). `SubRepR G st f act ret ι` (`CC/Bridge/Sub.lean`) extends the
+correspondence to a set `ret` of stored nodes, the retired ones, each in `G` under `ι` with
+the children of `mkNode` and its class in `st`; `Stored st ret` says they are nodes of
+`st`. With `FCover` over `act ∪ ret`, the theorem concludes for every match of the index:
+
+```lean
+theorem saturation_modulo_complete_store_retired ...
+    (hcomp : CompleteHyps L S st) (h2 : I2 L S st) (h3 : I3 L st)
+    (hw : Within st act) (hret : Stored st ret)
+    (hs : SubRepR A.Sa.index st f act ret ι) (hcov : FCover A.Sa.index f (act ∪ ret) ι) :
+    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
+      P.head = some f →
+      ∀ σ, Matches A.Sa.index rule.atoms σ →
+        FiredN A.Sa.graph ops σ rule ∧
+        ∃ p' ∈ act ∪ ret, σ.node r = some (ι p') ∧ MatchN A.Sa.index P (mkNode st f p') σ ∧
+          ∃ q ∈ st.active, E L S p'.1 q.1 ∧ st.find q.2 = st.find p'.2 ∧
+            σ.cls r = some (clsId (st.find q.2)) ∧
+            MatchC A.Sa.index P (clsId (st.find q.2)) σ ∧
+            ∀ p ∈ act, E L S p.1 p'.1 →
+              σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ
+```
+
+**Reading.** For every match: the instance is fired, the root is the node of some `p'`,
+active or retired, where the pattern matches, and there is an active node `q` of `st`, in
+`p'`'s class and `=_E`-equal to it, whose class the root binds and at which the pattern
+matches at the class level; every active `p ∈ act` `=_E`-equal to `p'` gives the same
+class, read in the index as `A.Sa.find (ι p)`. For an active `p'`, `q` is `p'` itself. For a
+retired `p'`, `node_reduces_active` (`CC/Bridge/Sub.lean`) gives `q`: `I3` rewrites a retired
+node to a node of its class, smaller under `≫`, so well-founded induction on `→_R`
+(`Rw_wf`) reaches an active one, and `I2` (`rules_sound`, `Rw_rtg_sound`) makes the rewrite
+an `=_E`-equality (`node_equal_active`). `I2` and `I3` are hypotheses beside
+`CompleteHyps`; the leaf-constant form `saturation_modulo_complete_store_retired_atoms`
+takes them on the completion view, whose rules include `M → {x}` for an atomic class and
+whose `q` may be an implicit node of a leaf constant. Matching on a retired node is sound
+in the engine because the node is still a member of its class, so a match rooted at it is a
+match at that class, and completeness is unaffected because every match it yields is
+yielded, at the class level, by the active node it rewrites to; what it costs is time: the
+extra matches build nodes `=_E`-equal to the ones the active match builds, which completion
+or hash-consing joins. The match count was not measured.
+
 **The witness.** `Final/Witness.lean` takes the completion state of `CC/AtomsWitness.lean`
-(the program `(union (+ a b) c)`, `t = a + b + d`, `u = c + d`) and adds the rule
-`(rewrite (+ x y) (g x y))` with `g` a plain binary operator. The store holds the four leaf
-constants, the three `+`-nodes `{a, b}`, `{a, b, d}`, `{c, d}`, and after round 0 the four
-`g`-nodes `g(a, b)`, `g(b, a)`, `g(c, d)`, `g(d, c)`; round 1 matches on the result, builds
-nothing new and is the fixpoint. Every hypothesis is proved by hand and `decide`, no
-`native_decide`.
+(the program `(union (+ a b) c)`, `t = a + b + d`, `u = c + d`) and adds the rules
+`(rewrite (+ x y) (g x y))` with `g` a plain binary operator and, since commit `7e579f4f`,
+`(rewrite (+ x y z) k)` with `k` a constant. The store holds the four leaf constants, the
+three `+`-nodes `{a, b}`, `{a, b, d}`, `{c, d}`, and after round 0 the four `g`-nodes
+`g(a, b)`, `g(b, a)`, `g(c, d)`, `g(d, c)` and the `k`-node in the class of `{a, b, d}`;
+round 1 matches on the result, builds nothing new and is the fixpoint. Every hypothesis is
+proved by hand and `decide`, no `native_decide`.
 
 ```lean
 theorem witness_saturation_modulo_complete :
@@ -2473,6 +2516,12 @@ theorem witness_saturation_modulo_complete :
         MatchN A₁.Sa.index P (mkNode wst 0 p') σ
 
 theorem not_cover : ¬ FCover A₁.Sa.index 0 act ι
+
+theorem witness_fires_retired :
+    FiredN A₁.Sa.graph ops σabd rule₂ ∧
+      σabd.cls 3 = some (A₁.Sa.find (ι p₃)) ∧
+      MatchC A₁.Sa.index pat₂ (A₁.Sa.find (ι p₃)) σabd ∧
+      MatchN A₁.Sa.index pat₂ (mkNode wst 0 p₂) σabd
 ```
 
 **Reading.** `witness_saturation_modulo_complete` is `saturation_modulo_complete_store_atoms`
@@ -2482,12 +2531,22 @@ the literal forms could not show. `witness_fires_modulo` reads the conclusion at
 `x ↦ c, y ↦ d` rooted at `{c, d}`. Since commit `2e40098d` the node `{a, b, d}` is retired in
 the completion state (Section 5.9), so `act` holds `{a, b}` and `{c, d}` only, and the
 theorem says nothing about a match rooted at `{a, b, d}`; its class is that of `{c, d}` by
-the store's union-find (`retired_class`), not by the theorem. `not_cover` is the limit: the
-collapsed node stays in the index and is matchable, so `FCover` fails, and
-`saturation_modulo_complete_store_cover` has no witness on any run in which completion
-collapsed a node. The rule is routed naive in both rounds, so the semi-naive branch of
-`SChainN` is not exercised; the matches are characterized on the concrete graphs
-(`match_cases`), not by running the plan. `witness_atomicOf`, `witness_complete_atomic` and
+the store's union-find (`retired_class`), not by the theorem. `not_cover` records the limit
+of the covering form: the collapsed node stays in the index and is matchable, so `FCover`
+over `act` fails, and `saturation_modulo_complete_store_cover` has no witness on any run in
+which completion collapsed a node. `witness_saturation_modulo_complete_retired` is
+`saturation_modulo_complete_store_retired_atoms` on the same run, with `ret = {p₂}`
+(`{a, b, d}`), `Stored`, `SubRepR` and `FCover` over `act ∪ ret` proved (`hyp_ret`,
+`hyp_subR`, `hyp_coverR`), `I2` on the completion view (`witness_I2`: `{a, b}` with `c`,
+`{a, b, d}` with `{c, d}`) and `I3` (`witness_I3`). The second rewrite matches `{a, b, d}`
+only (`match_cases₂`: three distinct elements, which no two-element node holds), and
+`witness_fires_retired` reads the conclusion at the match `x ↦ a, y ↦ b, z ↦ d` rooted at
+it: the instance is fired (`k` is in the root's class), the root binds the class of the
+active `{c, d}`, `=_E`-equal to `{a, b, d}` under `a + b = c` (`E_abd_cd`), the rewrite
+matches at that class, and it matches at the represented node of `{a, b, d}`. Both rules
+are routed naive in both rounds, so the semi-naive branch of `SChainN` is not exercised; the
+matches are characterized on the concrete graphs (`match_cases`, `match_cases₂`), not by
+running the plan. `witness_atomicOf`, `witness_complete_atomic` and
 `witness_saturation_modulo_complete_atomic` repeat the witness with `A := atomicOf wst`.
 
 **What remains.** `SubRep`, `CompleteAtoms` and the round facts are hypotheses: no theorem
@@ -2496,8 +2555,9 @@ nothing about a run whose index does not hold the active nodes of a converged st
 minimal-monomial hypotheses stay in `CompleteAtoms` (Section 10, item 6); `hcp` is reduced
 to `AxiomCP` (item 5) and `hcancel` is replaced by lattice closure (item 3). Whether the
 engine's completion settings, which do not re-match, reach the same instances as the
-routing of `SChainN` is not proved (item 9). The covering form excludes any index holding a
-collapsed `f`-node (item 18).
+routing of `SChainN` is not proved (item 9). The covering form over `act` alone excludes
+any index holding a collapsed `f`-node; the retired form takes `I2`, `I3` and `SubRepR` as
+further hypotheses and covers it (item 18, resolved).
 ## 8. Counterexamples and the engine defects they record
 
 Several theorems are refutations. Each records an engine defect that was fixed, or a
@@ -2829,12 +2889,17 @@ resolution after the original text.
     check (`regroupSkipG_iff`), that the confirmation round checks the rule-rule part through
     `lhs_reduced` and `cp_joinable`, and that `AxiomCP` is the part left to the per-law
     conditions.
-18. **New.** `FCover` requires every `f`-node of the index to be an active node of the
-    completion state, and the engine keeps a collapsed node (`FLAG_AC_COLLAPSED`) in the
-    index and matchable. So `saturation_modulo_complete_store_cover` applies to no run in
-    which completion collapsed a node (`Final/Witness.lean`, `not_cover`). Fix: extend
-    `SubRep` to the retired nodes and conclude, for a match rooted at a retired node, at the
-    class of an active node it rewrites to (I3 and `nf_present` give one).
+18. *Resolved by commits `e5ed0211` and `7e579f4f`.* `FCover` requires every `f`-node of
+    the index to be an active node of the completion state, and the engine keeps a
+    collapsed node (`FLAG_AC_COLLAPSED`) in the index and matchable. So
+    `saturation_modulo_complete_store_cover` applies to no run in which completion
+    collapsed a node (`Final/Witness.lean`, `not_cover`, kept as the record of the limit).
+    Fix applied: `SubRepR` (`CC/Bridge/Sub.lean`) extends `SubRep` to the retired nodes, and
+    `saturation_modulo_complete_store_retired` (`Final/Store.lean`) concludes, for a match
+    rooted at a retired node, at the class of an active node it rewrites to
+    (`node_reduces_active`: I3 and well-founded induction on `→_R`; `I2` makes the rewrite
+    an `=_E`-equality). `witness_fires_retired` reads it at the match rooted at `{a, b, d}`
+    on the witness run (Section 7.7).
 ## 11. Algorithms, as the model states them
 
 Each block is the algorithm as the Lean model states it, in neutral pseudo-code. A trailing
@@ -3322,13 +3387,17 @@ fails, `rebuild_idle` does not apply, and the saturation theorems say nothing. E
 fixture `ac_lazy_budget_inconclusive.egg` (a `check-neq` reported inconclusive after a budget
 stop, commit `4ee0cf45`). The runtime design note asks for `Converged` before any check.
 
-**Must read the covering form of the final theorem as excluding every run in which
-completion collapsed a node.** A collapsed node stays in the index and is matchable, so
-`FCover` fails on it and `saturation_modulo_complete_store_cover` has no witness on such a
-run; a match rooted at a retired node is covered by no theorem yet. Evidence: `not_cover`
-(`Final/Witness.lean:507`), Section 10, item 18. The proposed fix extends `SubRep` to the
-retired nodes and concludes at the class of an active node the retired one rewrites to (I3,
-`nf_present`).
+**Must keep a collapsed node a member of its class, reducible by the rules to an active
+node of that class.** A collapsed node stays in the index and is matchable, so `FCover`
+over the active nodes fails on it and `saturation_modulo_complete_store_cover` has no
+witness on such a run (`not_cover`, `Final/Witness.lean:666`). The match it yields is
+covered by `saturation_modulo_complete_store_retired` because the retired node is still a
+member of its class (`SubRepR`) and rewrites to an active node of it (I3, `I2`): its root
+binds that node's class, so the match is sound, and the active node yields the same match
+at the class level, so completeness is unaffected. What the engine pays is time: the match
+rooted at the collapsed node builds nodes `=_E`-equal to the ones the active match builds,
+which completion or hash-consing joins. Evidence: `witness_fires_retired`
+(`Final/Witness.lean`), Section 10, item 18.
 
 **Must run the eager pass after the last scanning atom, to its fixpoint, before the plan
 ends.** Otherwise an equality that the last join frees is never checked or copied: the plan

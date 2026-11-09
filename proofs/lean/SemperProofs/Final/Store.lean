@@ -28,6 +28,17 @@ unconstrained.
   (`CompleteAtoms`).
 * `saturation_modulo_complete_store_engine`: the leaf-constant form at the
   round where the engine's stop test holds, in place of `Unchanged`.
+* `saturation_modulo_complete_store_cover`: with `FCover` (every `f`-node
+  of the index is the node of an active `p`), for every match whatever its
+  root. The engine keeps a collapsed node (`FLAG_AC_COLLAPSED`, retired in
+  the model) in the index and matchable, so `FCover` fails on every run in
+  which completion collapsed a node (`Final/Witness.lean`, `not_cover`).
+* `saturation_modulo_complete_store_retired`: the correspondence extended
+  to the retired nodes (`SubRepR`), `FCover` over active and retired nodes
+  together, and for every match: the instance is fired, and the root's
+  class is the class of an active node `q` of `st` whose monomial is
+  `=_E`-equal to the matched node's, the retired node rewriting to it
+  (`I3`, `node_reduces_active`) and the rewrite being sound (`I2`).
 
 `Final/Witness.lean` exhibits a run, a completion state with leaf
 constants and a rule `(rewrite (+ x y) (g x y))` that meet every hypothesis
@@ -191,5 +202,100 @@ theorem saturation_modulo_complete_store_cover {ops : Sym → OpLaws} {sig : Sym
   refine ⟨(hmain p' hp' p' hp' (E.refl _) σ hm hid).1, p', hp', hid, fun p hp hE => ?_⟩
   obtain ⟨-, h2, h3, -⟩ := hmain p hp p' hp' hE σ hm hid
   exact ⟨h2, h3⟩
+
+/-- **Saturation is complete modulo the AC theory, on the store, at a
+retired root.** The correspondence `SubRepR` stores the active nodes `act`
+and the stored nodes `ret` (the retired ones) of the sound (`I2`) and
+retirement-disciplined (`I3`) converged state `st` in the index, and
+`FCover` over `act ∪ ret` makes every `f`-node of the index one of them. For
+every match `σ` of a rule whose query is one pattern `P` with head `f`: the
+instance is fired in the store, the root is the node of some `p'`, active or
+retired, where `σ` matches `P`, and there is an active node `q` of `st`, in
+`p'`'s class and `=_E`-equal to it (`p'` itself when active, a reduct of
+`p'` by the rules when retired), whose class the root binds and at which
+`P` matches at the class level. Every active `p ∈ act` `=_E`-equal to `p'`
+gives the same class, read in the index as `A.Sa.find (ι p)`. -/
+theorem saturation_modulo_complete_store_retired {ops : Sym → OpLaws} {sig : Sym → Kind}
+    {naive : Rule → Bool} {rules : List Rule}
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
+    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
+    {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
+    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    {act ret : Finset (Monomial n × Fin n)} (hcomp : CompleteHyps L S st) (h2 : I2 L S st)
+    (h3 : I3 L st) (hw : Within st act) (hret : Stored st ret) {f : Sym}
+    {ι : Monomial n × Fin n → NodeId} (hs : SubRepR A.Sa.index st f act ret ι)
+    (hcov : FCover A.Sa.index f (act ∪ ret) ι) :
+    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
+      P.head = some f →
+      ∀ σ, Matches A.Sa.index rule.atoms σ →
+        FiredN A.Sa.graph ops σ rule ∧
+        ∃ p' ∈ act ∪ ret, σ.node r = some (ι p') ∧ MatchN A.Sa.index P (mkNode st f p') σ ∧
+          ∃ q ∈ st.active, E L S p'.1 q.1 ∧ st.find q.2 = st.find p'.2 ∧
+            σ.cls r = some (clsId (st.find q.2)) ∧
+            MatchC A.Sa.index P (clsId (st.find q.2)) σ ∧
+            ∀ p ∈ act, E L S p.1 p'.1 →
+              σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ := by
+  intro rule hr P r hatoms hhead σ hm
+  have hinv := saturation_complete_N A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
+  have hk : A.Sa.index.KeysNodup := by
+    have := ((hok A hA).atoms rule hr).keys
+    rwa [A.after_eq] at this
+  refine ⟨hinv rule hr σ hm, ?_⟩
+  rw [hatoms] at hm
+  have hP : P.head.isSome = true := by rw [hhead]; rfl
+  obtain ⟨id, nd, hid, hmem, -, hop, -⟩ :=
+    backOk P hP r _ (fun a ha => hm.sat _ (List.mem_map_of_mem ha))
+  obtain ⟨p', hp', rfl⟩ := hcov id nd hmem (by rw [hhead] at hop; exact (Option.some.inj hop).symm)
+  obtain ⟨hcls, hmn⟩ := matches_at_sub hs.union hk hhead hm hp' hid
+  have hfind : A.Sa.index.find (ι p') = clsId (st.find p'.2) := hs.union.find p' hp'
+  have hnode := hs.union.nodes p' hp'
+  obtain ⟨q, hq, hE, hqc⟩ : ∃ q ∈ st.active, E L S p'.1 q.1 ∧ st.find q.2 = st.find p'.2 := by
+    rcases Finset.mem_union.1 hp' with h | h
+    · exact ⟨p', hw p' h, E.refl _, rfl⟩
+    · exact node_equal_active h2 h3 (hret p' h)
+  refine ⟨p', hp', hid, hmn, q, hq, hE, hqc, ?_, ?_, ?_⟩
+  · rw [hcls, hfind, hqc]
+  · rw [hqc, ← hfind]; exact MatchC.app hnode rfl hhead hmn
+  · intro p hp hpE
+    have hpq : st.find p.2 = st.find q.2 := ac_equal_same_class hcomp (hw p hp) hq (hpE.trans hE)
+    have hfp : A.Sa.find (ι p) = clsId (st.find p.2) := hs.active.find p hp
+    refine ⟨?_, ?_⟩
+    · rw [hcls, hfind, hfp, hpq, hqc]
+    · rw [hfp, hpq, hqc, ← hfind]; exact MatchC.app hnode rfl hhead hmn
+
+/-- `saturation_modulo_complete_store_retired` for a completion state with
+leaf constants. `I2` and `I3` are taken on the completion view
+`st.withAtoms X u`: the view's rules include `M → {x}` for an atomic class,
+so the stored `I3` lifts to it (`I3_withAtoms`), and `I2` on the view also
+states that a stored node in an atom's class is `=_E`-equal to the
+constant, which the stored state does not record. The active node `q` is an
+active node of the view: a stored active node or an implicit node of a leaf
+constant (`State.mem_active_withAtoms`). -/
+theorem saturation_modulo_complete_store_retired_atoms {ops : Sym → OpLaws} {sig : Sym → Kind}
+    {naive : Rule → Bool} {rules : List Rule}
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
+    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
+    {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
+    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n} {X : Set (Fin n)}
+    {u : Option (Fin n)} {act ret : Finset (Monomial n × Fin n)}
+    (hcomp : CompleteAtoms L S st X u) (h2 : I2 L S (st.withAtoms X u))
+    (h3 : I3 L (st.withAtoms X u)) (hw : Within st act) (hret : Stored st ret) {f : Sym}
+    {ι : Monomial n × Fin n → NodeId} (hs : SubRepR A.Sa.index st f act ret ι)
+    (hcov : FCover A.Sa.index f (act ∪ ret) ι) :
+    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
+      P.head = some f →
+      ∀ σ, Matches A.Sa.index rule.atoms σ →
+        FiredN A.Sa.graph ops σ rule ∧
+        ∃ p' ∈ act ∪ ret, σ.node r = some (ι p') ∧ MatchN A.Sa.index P (mkNode st f p') σ ∧
+          ∃ q ∈ (st.withAtoms X u).active, E L S p'.1 q.1 ∧ st.find q.2 = st.find p'.2 ∧
+            σ.cls r = some (clsId (st.find q.2)) ∧
+            MatchC A.Sa.index P (clsId (st.find q.2)) σ ∧
+            ∀ p ∈ act, E L S p.1 p'.1 →
+              σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ :=
+  saturation_modulo_complete_store_retired A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
+    (CompleteHyps.ofAtoms hcomp) h2 h3 (fun p hp => State.active_withAtoms (hw p hp))
+    (fun p hp => Or.inl (hret p hp)) (hs.withAtoms X u) hcov
 
 end SemperProofs.Final
