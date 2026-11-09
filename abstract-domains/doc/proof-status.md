@@ -412,3 +412,18 @@ divisors. The Sign runtime suite checks all 7-by-7 abstract category
 pairs against concrete values from `[-12, 12]`, including exact quotient and
 remainder sign categories, lattice exactness, flags, and FactsZ refinement
 no-growth.
+
+## Bool4 lattice
+
+`abstract-domains/src/bool4.rs` is the boolean lattice. The four points are
+`BotOr::Bot` plus `False`, `True`, and `Top`. The enum has no `Bottom`
+variant: every value is nonempty, `wf` is true, and `Canonical::lemma_nonempty`
+holds for every value. `meet` of `False` and `True` returns `BotOr::Bot`.
+
+`not`, `and`, `or`, and `eq` are exact in both directions. Soundness says a
+concrete pair's result is in the abstract result. Exactness says every value
+of the result is produced by some concrete pair (`reach1` / `reach2`).
+
+```text
+cargo verus focus -p semi-persistent-abstract-domains -- --verify-only-module bool4
+```
