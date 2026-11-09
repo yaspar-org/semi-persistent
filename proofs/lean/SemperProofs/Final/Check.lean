@@ -15,7 +15,16 @@ import SemperProofs.Final.Witness
 #print axioms SemperProofs.Final.saturation_modulo_complete_store_atomic
 #print axioms SemperProofs.Final.saturation_modulo_complete_store_engine
 #print axioms SemperProofs.Final.saturation_modulo_complete_store_cover
+#print axioms SemperProofs.CC.Bridge.node_reduces_active
+#print axioms SemperProofs.CC.Bridge.node_equal_active
+#print axioms SemperProofs.Final.saturation_modulo_complete_store_retired
+#print axioms SemperProofs.Final.saturation_modulo_complete_store_retired_atoms
 #print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete
 #print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete_atomic
 #print axioms SemperProofs.Final.Witness.not_cover
 #print axioms SemperProofs.Final.Witness.witness_fires_modulo
+#print axioms SemperProofs.Final.Witness.witness_I2
+#print axioms SemperProofs.Final.Witness.hyp_subR
+#print axioms SemperProofs.Final.Witness.hyp_coverR
+#print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete_retired
+#print axioms SemperProofs.Final.Witness.witness_fires_retired
