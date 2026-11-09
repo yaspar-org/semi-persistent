@@ -172,16 +172,18 @@ have universal containment postconditions.
 
 ## Reduced Product
 
-Unum is combined with other domains through `reduce::Product` and the fact
-record `Facts<W>` (see [`reduced-product.md`](reduced-product.md)), once it
-implements `Domain` and `Refine`. The hand-written `ReducedProduct` of Tnum,
-Anum, Interval and Unum was removed in #123.
+Unum would combine with other domains through `reduce::Product` and the fact
+record `Facts<W>` (see [`reduced-product.md`](reduced-product.md)), but it does
+not implement `Domain` or `Refine` yet. The hand-written `ReducedProduct` of
+Tnum, Anum, Interval and Unum, whose `reduce` rebuilt the Unum from the
+interval, was removed in #123.
 
-`reduce` narrows interval bounds from all components, narrows Tnum and Anum
-using the resulting upper bound, and rebuilds the Unum from the interval. Its
-universal theorem says that no value in the input product intersection is
-removed. Rebuilding from an interval can discard field structure, so reduction
-is not a precision-preservation theorem for any individual component.
+`ExecUnum` cannot implement `Canonical` as it stands: several encodings denote
+the same set. At 4 bits, `walls = 0b0001` and `walls = 0b0101`, both with
+`extent = 0b0011`, denote `{0, 1, 2, 3}`; the second splits off a field whose
+maximum is 0. So `==` on two values does not decide equality of their sets,
+and a Unum cannot be a field of a stored fact record until a canonical form is
+defined and a `normalize` is proved to reach it.
 
 ## Established and Open Claims
 
@@ -190,15 +192,18 @@ Machine-checked:
 - carry-out formula equivalence and prefix-overflow characterization;
 - unbounded addition and multiplication containment;
 - chopped add/mul containment under their explicit no-overflow conditions;
-- executable `top`, `add`, `from_interval`, and `mul` containment at the four
-  enabled widths; and
-- reduced-product `reduce` and `add` containment.
+  and
+- executable containment for every `ExecUnum` operation (`constant`, `top`,
+  `add`, `neg`, `sub`, `mul`, `from_interval`, `from_ean`, `to_ean`,
+  `to_etn`), proved once for every `W: BitWord`.
 
 Not machine-checked:
 
+- a canonical form for Unums, and a `normalize` that reaches it;
 - exactness of addition on a defined canonical representation subset;
 - abstract associativity or commutativity as structural equality;
-- Layer-4 containment for the remaining conversions and Unum operations; and
+- the precision of `add`, measured as the share of sampled results that are
+  the smallest Unum containing the concrete sums; and
 - any claim that TAIU is an optimal reduced product.
 
 The current verification counts and mirror-test command are recorded in
