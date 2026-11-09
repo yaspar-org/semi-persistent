@@ -500,6 +500,9 @@ pub struct MatchPool<Cfg: EGraphConfig> {
     /// Nodes whose regrouping stopped at a bound (`crate::flatten::REGROUP_TRUNCATED`),
     /// for the query just run.
     flatten_regroup_truncated: usize,
+    /// The bounds the `Flatten` steps' enumerators stop at (`crate::flatten::FlattenBounds`),
+    /// the module's constants unless a test lowered them.
+    flatten_bounds: crate::flatten::FlattenBounds,
 }
 
 impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
@@ -531,6 +534,7 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
             flatten_overflowed: 0,
             first_flatten_overflow: None,
             flatten_regroup_truncated: 0,
+            flatten_bounds: crate::flatten::FlattenBounds::DEFAULT,
         }
     }
 
@@ -557,8 +561,20 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
         self.first_flatten_overflow.as_ref()
     }
 
+    /// Lower the bounds the `Flatten` steps' enumerators stop at, for the queries this
+    /// pool runs: a test's way of reaching the stops (`flatten_skipped`,
+    /// `flatten_regroup_truncated`) on a small graph.
+    pub fn set_flatten_bounds(&mut self, bounds: crate::flatten::FlattenBounds) {
+        self.flatten_bounds = bounds;
+        for s in &mut self.flatten_scratch {
+            s.set_bounds(bounds);
+        }
+    }
+
     fn take_flatten_scratch(&mut self) -> crate::flatten::FlattenScratch<Cfg::G, Cfg::M> {
-        self.flatten_scratch.pop().unwrap_or_default()
+        let mut s = self.flatten_scratch.pop().unwrap_or_default();
+        s.set_bounds(self.flatten_bounds);
+        s
     }
 
     fn give_flatten_scratch(&mut self, s: crate::flatten::FlattenScratch<Cfg::G, Cfg::M>) {
