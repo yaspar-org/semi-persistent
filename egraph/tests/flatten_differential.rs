@@ -1529,8 +1529,9 @@ fn a_node_over_the_view_bound_is_skipped_and_counted() {
     assert_eq!(skipped, 0);
     assert_eq!(
         ms.len(),
-        2,
-        "another node still matches (two orders of its two children)"
+        6,
+        "another node still matches: two orders of its two children, and through the \
+         overlap stage its own class beside each child (And of fine and a is fine), two orders each"
     );
 }
 
