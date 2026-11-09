@@ -520,8 +520,9 @@ collapsed `f`-node (`Final/Witness.lean`, `not_cover`).
   `:subsume`, normal forms); `den_misses_single`, the literal `Den` has no
   value for a one-element AC right-hand side.
 - `Recanon.lean` (2026-11-08): recanonicalization as the laws apply it.
-  `StorePersistN`: the fixed-arity nodes persist literally (`LiteralFixed`),
-  an AC or ACI node persists as the normal form of its mapped children under
+  `StorePersistN`: the fixed-arity nodes persist literally (`LiteralFixed`:
+  tuple and pair; the sequence nodes are not covered, `RecanonComplete.lean`
+  adds them as `LiteralSeq`), an AC or ACI node persists as the normal form of its mapped children under
   the recanonicalization steps (`RStep`, `RSetStep`) or collapses to a leaf.
   `DenN.persist_fixed` carries right-hand sides without n-ary application;
   `denN_persist_fails` shows `DenN.persist` does not extend to n-ary ones,

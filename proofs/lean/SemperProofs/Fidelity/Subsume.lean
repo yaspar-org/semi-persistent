@@ -51,9 +51,11 @@ def Literal (Sb Sa : Store) : Prop :=
   ∀ id n, (id, n) ∈ Sb.nodes →
     ∃ n', (id, n') ∈ Sa.nodes ∧ n'.op = n.op ∧ CanonCh Sa.find n.children n'.children
 
-/-- Literal persistence of the tuple, pair and sequence nodes: what
-`recanonize_node` does to them in every rebuild (`PlainCanon`, `CCanon`,
-`OrderedCanon` map the children through `find` and apply no law). -/
+/-- Literal persistence of the tuple and pair nodes: what `recanonize_node`
+does to them in every rebuild (`PlainCanon`, `CCanon` map the children
+through `find` and apply no law). The guard `isVariadic = false` excludes
+the sequence nodes, which `OrderedCanon` treats the same way; `LiteralSeq`
+(`Fidelity/RecanonComplete.lean`) states their case. -/
 def LiteralFixed (Sb Sa : Store) : Prop :=
   ∀ id n, (id, n) ∈ Sb.nodes → n.children.isVariadic = false →
     ∃ n', (id, n') ∈ Sa.nodes ∧ n'.op = n.op ∧ CanonCh Sa.find n.children n'.children

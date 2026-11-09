@@ -1973,8 +1973,9 @@ since `8a84644b`.
 `find`. It also needs no subsumption, because a `:subsume` can remove from the index a node a
 consequence is built of (`tests/egg/subsume.egg`). Since commit `329b25bc` `Persist` is no
 longer a per-round hypothesis. `recanonize_node` maps the children of a tuple, pair or
-sequence node through `find` and nothing else, which `Round.PersistFixed` states and every
-round assumes; for a multiset or set node it also drops the unit's class and clamps the
+sequence node through `find` and nothing else; `Round.PersistFixed` states it for the tuple
+and pair nodes (`isVariadic` is true of a sequence; `LiteralSeq`, `Fidelity/RecanonComplete.lean`,
+states the sequence case) and every round assumes it; for a multiset or set node it also drops the unit's class and clamps the
 counts, and a result of one element or none merges the node's class with a leaf
 (`degeneracy_pair`). The invariant is therefore guarded (`InvLagL`): a rule whose actions
 build an n-ary term (`Rule.buildsNary`) is fired at a round only if that round's rebuild
@@ -2072,8 +2073,9 @@ theorem denN_persist_fails :
 ```
 
 **Reading.** `StorePersistN` states what one rebuild does to the store, as `recanonize_node`
-applies the laws: a tuple, pair or sequence node survives with its children mapped through
-the new `find` and nothing else (`LiteralFixed`); a multiset node survives as the normal form
+applies the laws: a tuple or pair node survives with its children mapped through the new
+`find` and nothing else (`LiteralFixed`; the sequence nodes, which `recanonize_node` treats
+the same way, are stated by `StorePersistE.seq`, `LiteralSeq`); a multiset node survives as the normal form
 of its mapped children under the unit drop and the nilpotent clamp (`RStep`), or collapses to
 a leaf when one element or none is left (`NFMset`, the `degeneracy_pair` merge); a set node
 likewise under the unit drop (`RSetStep`, `NFSet`). Rebuild supplies it. `denN_persist_fails`
@@ -2988,7 +2990,7 @@ into that child); the model states the fixpoint `AddFixed` and derives `AtomColl
 ```
 recanonicalize(Sb) → Sa:                              -- StorePersistN; rebuild_congruence, recanonize_node
   for (id, f(children)) in Sb.nodes:
-    if f is a tuple, pair or sequence:                -- LiteralFixed
+    if f is a tuple, pair or sequence:                -- LiteralFixed (tuple, pair); LiteralSeq (sequence, StorePersistE)
       store f(children mapped through find)           -- recanonize_node (fixed arity)
     if f is a multiset:                               -- NFMset
       m := children mapped through find

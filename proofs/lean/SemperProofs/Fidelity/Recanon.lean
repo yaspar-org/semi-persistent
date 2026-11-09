@@ -80,9 +80,12 @@ def NFSet (Sa : Store) (L : Sym → OpLaws) (f : Sym) (s : Finset C) (c : C) : P
     Final Sa.graph L f (.set s') (fun x => s' = {x}) (s' = ∅) c
 
 /-- What the round guarantees of the store, with recanonicalization as the
-laws apply it: the round facts (`StoreWF`), the fixed-arity and sequence
-nodes persist literally, and every AC or ACI node persists as the normal
-form of its mapped children or collapses to a leaf. -/
+laws apply it: the round facts (`StoreWF`), the fixed-arity nodes (tuple,
+pair) persist literally, and every AC or ACI node persists as the normal
+form of its mapped children or collapses to a leaf. Nothing is said of the
+sequence nodes (`isVariadic` is true of a sequence): `StorePersistE.seq`
+(`LiteralSeq`, `Fidelity/RecanonComplete.lean`) adds their literal
+persistence. -/
 structure StorePersistN (L : Sym → OpLaws) (Sb Sa : Store) : Prop extends StoreWF Sb Sa where
   fixed : LiteralFixed Sb Sa
   mset : ∀ id f m, (id, ⟨f, .mset m⟩) ∈ Sb.nodes → NFMset Sa L f (m.map Sa.find) (Sa.find id)
