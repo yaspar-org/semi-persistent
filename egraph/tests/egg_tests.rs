@@ -572,10 +572,7 @@ egg_test!(
 // The counter-model of `denN_persist_fails` under eager completion: the semi-naive loop does
 // not re-match after the law applied, and completion joins the two spellings
 // (`proofs/lean/SemperProofs/Fidelity/RecanonComplete.lean`).
-egg_test!(
-    semi_recanon_completion_on,
-    "semi_recanon_completion_on.egg"
-);
+egg_test!(semi_recanon_completion_on, "semi_recanon_completion_on.egg");
 egg_test!(semi_eq_global_local, "semi_eq_global_local.egg");
 egg_test!(
     semi_merge_membership_delta,
