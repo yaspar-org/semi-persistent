@@ -2776,6 +2776,19 @@ resolution after the original text.
     which completion collapsed a node (`Final/Witness.lean`, `not_cover`). Fix: extend
     `SubRep` to the retired nodes and conclude, for a match rooted at a retired node, at the
     class of an active node it rewrites to (I3 and `nf_present` give one).
+19. **New, open.** The cursor matcher does not terminate on an exact AC pattern with three
+    free elements: `egraph/tests/cursor_shapes.rs`,
+    `exact_decompositions_backtrack_without_a_rest` (ignored), runs `(F x y z)` against
+    `F{a, b, c}` through `ematch::run_query_iter`; the recursive matcher (`run_query`)
+    returns the six orders at once, the cursor never returns. The path is
+    `MatchIterator::backtrack`, `FrameKind::ACDecompose` with `rest: None`, looping on
+    `ac_advance`; in `ac_advance` the retry after a downstream failure undoes element `e`
+    and advances `ri_at[e]`, then the loop head undoes `e` again at the advanced index,
+    which is the suspected cause, not yet confirmed. The egg fixtures do not reach the
+    cursor (they run the recursive matcher), which is why no fixture shows it. Fix:
+    confirm the double undo, make the retry `continue` to the scan without the second
+    undo, and un-ignore the test.
+
 ## 11. Algorithms, as the model states them
 
 Each block is the algorithm as the Lean model states it, in neutral pseudo-code. A trailing
