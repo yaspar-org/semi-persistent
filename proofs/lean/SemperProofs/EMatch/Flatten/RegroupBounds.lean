@@ -345,8 +345,7 @@ theorem addTarget_stepR (B : Bounds) (t : View) (ds : List RecR) :
     StepR B (fun b => b.addTarget B t ds) (fun b => b.addTarget Bounds.none t ds) := by
   have hrest := (RunR.ite (p := fun b => (b.st.recs t).any RecR.uncond = true) (RunR.id B)
     (StepR.foldl ds (fun d _ => addRec_stepR B t d)).run).guard
-  exact (RunR.ite (p := fun b => b.st.done t = true) (RunR.id B)
-    ((enterTarget_stepR B t).run.comp hrest)).guard
+  exact ((enterTarget_stepR B t).run.comp hrest).guard
 
 theorem fitStep_stepR (B : Bounds) (ix : Ix) (ctx : Ctx) (laws : Laws) (w : View)
     (gg : C × List (C × Nat)) (raw : List (C × Nat)) :
@@ -566,21 +565,18 @@ theorem addTarget_projR (t : View) (ds : List RecR) :
       Bounds.none, pastB_none]
     split <;> rfl
   have hgF := (StepR.foldl ds (fun d _ => addRec_stepR Bounds.none t d)).grow b₁ hh1
-  have e : b.addTarget Bounds.none t ds = if b.st.done t then b else
+  have e : b.addTarget Bounds.none t ds =
       if (b₁.st.recs t).any RecR.uncond then b₁ else ds.foldl (BSt.addRec Bounds.none t) b₁ := by
     rw [hb₁] at hh1
     simp only [BSt.addTarget, hb, Option.isSome_none, Bool.false_eq_true, ↓reduceIte, hh1, hb₁]
   rw [e] at ho ⊢
   unfold SkipSt.addTarget
-  by_cases hd : b.st.done t = true
-  · simp [hd]
-  · simp only [hd, Bool.false_eq_true, ↓reduceIte] at ho ⊢
-    rw [← hst1]
-    by_cases hu : (b₁.st.recs t).any RecR.uncond = true
-    · simp [hu]
-    · simp only [hu, Bool.false_eq_true, ↓reduceIte] at ho ⊢
-      have ho1 : b₁.ovf = b.ovf := le_antisymm (ho ▸ hgF.ovf) hgE.ovf
-      exact hfold b₁ hh1 (ho.trans ho1.symm)
+  rw [← hst1]
+  by_cases hu : (b₁.st.recs t).any RecR.uncond = true
+  · simp [hu]
+  · simp only [hu, Bool.false_eq_true, ↓reduceIte] at ho ⊢
+    have ho1 : b₁.ovf = b.ovf := le_antisymm (ho ▸ hgF.ovf) hgE.ovf
+    exact hfold b₁ hh1 (ho.trans ho1.symm)
 
 theorem fitStep_projR (ix : Ix) (ctx : Ctx) (laws : Laws) (w : View)
     (gg : C × List (C × Nat)) (raw : List (C × Nat)) :
@@ -822,7 +818,6 @@ theorem addTarget_rinv {B : Bounds} {t : View} {ds : List RecR} {b : BSt}
   have he : RInv ctx dir laws base (b.enterTarget B t) := by
     intro w r hr; rw [enterTarget_recs] at hr; exact h w r hr
   unfold BSt.addTarget
-  split; · exact h
   split; · exact h
   dsimp only
   split; · exact he

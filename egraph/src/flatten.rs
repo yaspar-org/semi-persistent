@@ -886,11 +886,19 @@ impl<G: Copy + Ord + std::hash::Hash, M: MultiplicityLike> FlattenScratch<G, M> 
                         continue;
                     }
                     let target = match by_content.get(fresh.as_slice()) {
-                        // A view already regrouped. Every count of every view read exactly
-                        // (above), a regrouped view is strictly smaller than its source
-                        // (`regroupRec_shrink`, `RegroupSkip.lean`), so this does not fire.
-                        Some(&t) if entries[t].3 => continue,
-                        Some(&t) => t,
+                        Some(&t) => {
+                            // A regrouped view is strictly smaller than its source
+                            // (`regroupRec_shrink`, `RegroupSkip.lean`) and views are
+                            // regrouped largest first, so a target is never a view already
+                            // regrouped while every count is read exactly; a count past
+                            // `u64::MAX` saturates the order (`saturated_size`) and is
+                            // counted in `overflows`.
+                            debug_assert!(
+                                !entries[t].3 || self.overflows > 0,
+                                "regroup: a target view was regrouped before its source"
+                            );
+                            t
+                        }
                         None => {
                             let s = self.elems.len();
                             if s.checked_add(fresh.len()).ok_or(OVER_BOUND)? > self.bounds.elems {

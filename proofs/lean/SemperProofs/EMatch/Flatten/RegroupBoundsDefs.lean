@@ -152,7 +152,6 @@ def BSt.enterTarget (B : Bounds) (t : View) (b : BSt) : BSt :=
 /-- One target of a source (`SkipSt.addTarget`, with the bounds). -/
 def BSt.addTarget (B : Bounds) (b : BSt) (t : View) (ds : List RecR) : BSt :=
   if b.halt.isSome then b else
-  if b.st.done t then b else
   let b := b.enterTarget B t
   if b.halt.isSome then b else
   if (b.st.recs t).any RecR.uncond then b else ds.foldl (BSt.addRec B t) b

@@ -17,9 +17,6 @@ view already admits. This file is that loop, step for step:
 * for each candidate group (`groupsOfEngine`: the `f`-members by node id,
   as the engine sorts its candidates), each fit, each normalized target
   (`SkipSt.regroupView`):
-  - a target already regrouped is skipped (`SkipSt.addTarget`; the engine
-    reaches it only when view sizes saturate, and in the model never,
-    `RegroupSkip.lean`);
   - a target with an unconditional record (no leaf, no needed class) gains
     nothing;
   - the source's records are its first unconditional record if it has one,
@@ -116,11 +113,12 @@ def SkipSt.addRec (t : View) (st : SkipSt) (d : RecR) : SkipSt :=
     sigs := Function.update st.sigs t (st.sigs t ++ [recSig d])
     recs := Function.update st.recs t (st.recs t ++ [d]) }
 
-/-- One target of a source: skipped when already regrouped; entered when
-new; given nothing when it has an unconditional record; otherwise given the
-derived records `ds` one by one. -/
+/-- One target of a source: entered when new; given nothing when it has an
+unconditional record; otherwise given the derived records `ds` one by one. A
+target is never a view already regrouped (`addTarget_spec`,
+`RegroupSkip.lean`): the engine asserts it, in debug builds, where it once
+skipped such a target. -/
 def SkipSt.addTarget (st : SkipSt) (t : View) (ds : List RecR) : SkipSt :=
-  if st.done t then st else
   let st := if t ∈ st.order then st else { st with order := st.order ++ [t] }
   if (st.recs t).any RecR.uncond then st else ds.foldl (SkipSt.addRec t) st
 

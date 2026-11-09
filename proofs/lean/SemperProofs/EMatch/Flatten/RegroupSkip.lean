@@ -12,8 +12,8 @@ for any laws, kind and fold direction, it accepts exactly the matches of
 * regrouping makes a view strictly smaller under any laws
   (`regroupRec_shrink`), so the full enumeration's records are the records
   reachable from the walk's by regroupings (`mem_regroupLevels_iff_reach`),
-  and a view the engine regroups never becomes a target again: the
-  engine's skip of a target already regrouped never fires;
+  and a view the engine regroups never becomes a target again
+  (`addTarget_spec`: the engine asserts it);
 * `Cov c b`: the record `c` admits every match `b` admits and needs no more
   classes (`Cov.accepts`, `Cov.length`): each leaf of `c` has a leaf of `b`
   with the same opened class, flag and classes, and `c` needs a subset of
@@ -766,9 +766,10 @@ theorem StepOK.trans {D : View → Bool} {a b c : SkipSt} (h₁ : StepOK D a b)
   ⟨h₁.1.trans h₂.1, fun v hv => (h₂.2 v hv).trans (h₁.2 v hv)⟩
 
 /-- **One target.** Every regrouped view is at least as large as `w`, the
-target is smaller: it is not regrouped, so the derived records `ds` are each
-covered by a record of the target afterwards: its unconditional record, or
-a record of the same signature, or the record itself. -/
+target is smaller: it is not regrouped (the engine's assertion), so the
+derived records `ds` are each covered by a record of the target afterwards:
+its unconditional record, or a record of the same signature, or the record
+itself. -/
 theorem addTarget_spec {w : View} {D : View → Bool} {st : SkipSt}
     (hp : ProcInv ctx dir laws base w D st) (hD : ∀ v, D v = true → viewSize w ≤ viewSize v)
     {t : View} {ds : List RecR} (hds : ∀ d ∈ ds, d.1 = t ∧ Reach ctx dir laws base d)
@@ -782,7 +783,6 @@ theorem addTarget_spec {w : View} {D : View → Bool} {st : SkipSt}
     · have := hD t h; omega
   have hDt : D t = false := hp.done_eq ▸ hnd
   unfold SkipSt.addTarget
-  simp only [hnd, Bool.false_eq_true, ↓reduceIte]
   -- The target entered.
   set st₁ : SkipSt := if t ∈ st.order then st else { st with order := st.order ++ [t] }
     with hst₁
@@ -812,6 +812,7 @@ theorem addTarget_spec {w : View} {D : View → Bool} {st : SkipSt}
   have hm₁ : StepOK D st st₁ :=
     ⟨⟨fun v r h => by rw [h₁recs]; exact h, fun v h => (h₁order v).2 (Or.inl h)⟩,
       fun v _ => by rw [h₁recs]⟩
+  dsimp only
   split
   · -- An unconditional record of the target admits every match.
     rename_i hu

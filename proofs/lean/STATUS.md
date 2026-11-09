@@ -395,12 +395,12 @@ covers such a store at the price of `I2`, `I3` and `SubRepR` as hypotheses.
   The engine's skips (2026-11-06, `RegroupSkipDefs.lean`, `RegroupSkip.lean`):
   `regroupAllSkip` is `FlattenScratch::regroup` step for step (views by entry,
   largest first and the latest entry among equal sizes, candidates by node
-  id; a target already regrouped, a target with an unconditional record, the
-  source's other records when it has one, and a derived record whose
-  signature the target has, all skipped). `regroupRec_shrink`: regrouping
-  shrinks a view under any laws, so `mem_regroupLevels_iff_reach` (the full
-  levels are the reachable records) and the skip of a target already
-  regrouped never fires. `Cov` (same view, an equal leaf for each leaf, a
+  id; a target with an unconditional record, the source's other records when
+  it has one, and a derived record whose signature the target has, all
+  skipped). `regroupRec_shrink`: regrouping shrinks a view under any laws, so
+  `mem_regroupLevels_iff_reach` (the full levels are the reachable records)
+  and a target is never a view already regrouped (`addTarget_spec`; the
+  engine asserts it). `Cov` (same view, an equal leaf for each leaf, a
   subset of the needed classes) with `Cov.accepts`, `Cov.acceptsL`,
   `Cov.length`, `Cov.derive`, `cov_uncond`, `cov_of_same`; the loop
   invariant (`addTarget_spec`, `regroupView_spec`, `step_spec`,
