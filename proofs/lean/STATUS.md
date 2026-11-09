@@ -203,7 +203,13 @@ commits and the withdrawn claims.
   `static_plan_agrees_with_the_model_on_the_rounds_corpus`), the rule's
   `Matcher` with `matcherOK_static`/`matcherOK_engine`/
   `matcherOK_static_engine` and `matchersOK_compiled`, `byOp_demotion`,
-  semi-naive `variant_partition`/`variants_disjoint`/`variants_cover_new`.
+  semi-naive `variant_partition`/`variants_disjoint`/`variants_cover_new`,
+  and the cursor matcher's decomposition frames (`Engine/Cursor.lean`:
+  `findLoop_terminates`, `advance_terminates`, `preFix_diverges`,
+  `drive_eq_enum`, `acFrame_eq_decomposeAC`, `aciFrame_eq_decomposeACI`,
+  `decomposeAC_nodup`, `decomposeACI_nodup`; checked against the engine by
+  `cursor_agrees_with_the_recursive_executor_on_the_rounds_corpus` and
+  `cursor_frames_agree_with_the_lean_model_on_random_residuals`).
 - `Engine/Rounds/`: the cross-round half of semi-naive matching. A
   `Round` is the transition between two frozen snapshots with the deferred
   unions, the added nodes, subsumption, the touched log and the

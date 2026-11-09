@@ -678,6 +678,88 @@ declarative relation for `Collect` reuses most of the assembler's own functions
 (`choicesAt`, `admit`, `matchedA`), so `collect_sound` and `collect_complete` are close to
 restating the code.
 
+### 3.9 The cursor matcher
+
+`run_query_iter` (`egraph/src/ematch.rs`) drives `MatchIterator`, a stack-based matcher that
+yields one match at a time: `next_match` enters the plan's steps in order, a step that binds
+several ways pushes a frame, and `backtrack` advances the top frame or drops it. No production
+path reaches it; `run_query` is what the engine runs. `EMatch/Engine/Cursor.lean` models its
+AC and ACI decomposition frames (`FrameKind::ACDecompose`, `FrameKind::ACIDecompose`) as a
+state machine over a generic entry store, with the search `ac_find_first` as `findStep` and
+`findLoop`, the advance `ac_advance` as `postYield` and `advance`, the yields as `drive`, and
+the store operations `ac_scan` and `ac_undo` as `acAccept`, `acApply` and `acUndo`
+(`aciAccept`, `aciApply`, `aciUndo` for the set twin).
+
+**Theorem A, termination** (`findLoop_terminates`, `advance_terminates`):
+
+```lean
+theorem findLoop_terminates (from_ : Nat) (s : State α) (h : IdxInv ops s) :
+    ∀ k, ops.fuel ≤ ops.pos s + k → ∃ r, ops.findLoop true from_ k s = some r
+
+theorem advance_terminates (s : State α) (h : IdxInv ops s) : ∃ r, ops.advance s = some r
+```
+
+The measure `pos` reads the entry indices `ri_at` as one number in base `len + 1`, most
+significant first, and adds the position `ei`; `findStep_pos_lt` says every move of the fixed
+search increases it, a forward move by taking an entry at or past the start, a backward move
+by advancing the previous element's index and zeroing the later ones, and `pos_lt_fuel`
+bounds it. The search before commit `4e267030` is `findStep false`: `preFix_cycles` exhibits
+two states of three elements over two entries that it maps to each other, and
+`preFix_diverges` says `findLoop false` returns for no fuel from either; `preFix_fixed_ends`
+says the fixed search ends on the same state.
+
+**Theorem B, the yields** (`drive_eq_enum`, `acFrame_eq_decomposeAC`, `aciFrame_eq_decomposeACI`):
+
+```lean
+theorem drive_eq_enum (hl : ops.Laws good) (h₀ : good 0 a₀) (hn : 0 < ops.n) (k : Nat) :
+    ops.drive k (ops.init a₀) = (ops.enum 0 a₀).take k
+
+theorem acFrame_eq_decomposeAC (elems : List (Var × Mult)) (rest : Option Var)
+    (res₀ : List (C × Nat)) (σ₀ : Binding) (hnd : (res₀.map Prod.fst).Nodup)
+    (hpos : ∀ p ∈ elems, MultPos p.2) (hμ : ∀ k ∈ multVars elems, σ₀.mult k = none)
+    (hne : elems ≠ []) :
+    (∀ k, (drive k (init (acInit elems res₀ σ₀))).filterMap (acLeaf rest) =
+        ((enum 0 (acInit elems res₀ σ₀)).take k).filterMap (acLeaf rest)) ∧
+    ∀ k, (enum 0 (acInit elems res₀ σ₀)).length ≤ k →
+      (drive k (init (acInit elems res₀ σ₀))).filterMap (acLeaf rest) = decomposeAC elems rest res₀ σ₀
+
+theorem decomposeAC_nodup (es : List (Var × Mult)) (rest : Option Var) :
+    ∀ res σ, (res.map Prod.fst).Nodup → (decomposeAC es rest res σ).Nodup
+```
+
+**Reading.** `enum e a` is the recursive enumeration of the complete assignments of elements
+`e..n-1` from store `a` in entry order, the executor's search; `drive k s` is what the frame
+yields from `s` with fuel for `k` yields, the first search then one advance per yield.
+`drive_eq_enum` says the frame yields the enumeration element by element, for every store
+whose `undo` reverses `apply` on reachable stores (`Laws`). The proof keeps `remaining a₀ s`,
+what the frame has left to yield: the completions from the position, then for each element
+below it the completions from the entry after the one it holds; every move preserves it
+(`findStep_cont_remaining`), a failed search leaves nothing, and at a complete assignment it
+is the store followed by what `postYield` leaves. `acFrame_eq_decomposeAC` instantiates it
+for the AC store and connects `enum` to the executor's `decomposeAC`
+(`enum_eq_decomposeAC`): the frame's yields after the leaf (the rest pushed, or the exact
+check) are the executor's list, element for element, so the same set with the same order.
+`decomposeAC_nodup` says that list has no duplicates when the entries' classes are distinct,
+as a node's `(class, count)` entries are after rebuild. The hypotheses are the executor's:
+distinct entry classes, no annotation that accepts count 0 (`EnvAtomsWF`), and the elements'
+multiplicity variables unbound at entry. The ACI twin (`aciFrame_eq_decomposeACI`,
+`decomposeACI_nodup`) has distinct set children as its hypothesis.
+
+**Adequacy.** The frame stack above the decompositions (`next_match`, `backtrack` over the
+plan, the join and sliding-window frames) is not modelled: the equality of
+`run_query_iter`'s match multiset with `run_query`'s for a whole plan is checked, not proved,
+by `cursor_agrees_with_the_recursive_executor_on_the_rounds_corpus` (Section 8), and the
+transliteration of the frame is checked against the engine's cursor on random residuals by
+`cursor_frames_agree_with_the_lean_model_on_random_residuals`. The model transcribes the
+engine after the fixes those two checks and the model found: `ac_advance` completed the
+later elements greedily and undid the moved element twice (an assignment with a bound later
+element was missed, and an index past the residual read); a single-shot sequence step left
+its children bound when the join below moved on; an AC node was read through
+`mset_children`, which panics on a commutative pair; and a bound element took any entry of
+its class, so a commutative pair with equal children gave an assignment twice where
+`decompose_ac_elem` gives it once. The cursor reads the full index only, so under semi-naive
+it finds the naive match set; the corpus comparison runs naive.
+
 ## 4. Flattened matching
 
 ### 4.1 Problem
@@ -3089,6 +3171,7 @@ on record.
 | the fold mirror | the conformance oracle `runER` run with the fold directions of the case (`Conform/Flatten/Oracle.lean`, `FCase.dirOf`) against the engine's `:flatten` matching on fold patterns; bindings compared as the number of distinct `Tag` nodes | `rawOptD`, `enumerateR` with `Dir.left` and `Dir.right` (`FoldEnum.lean`, `FoldRegroup.lean`) | 800 samples (the 400 committed `conform` and `conform-flatten` samples and 400 more of seed 3 of the `:flatten` generator), 230 with a fold in the pattern; every check holds and the binding counts agree; the comparison test is not committed |
 | the atom-choice mirror, `atom_choice_agrees_with_the_model_on_the_rounds_corpus` (`ematch.rs`) | at every phase-B decision of the `conform-rounds` corpus run naive and semi-naive under runtime scheduling, the atom `choose_atom` takes against the one a Rust transliteration of `chooseEngine` takes from the same bindings and bucket lengths | `chooseEngine` (`EMatch/Engine/Choose.lean`) | 200 files, 4945 decisions, 1591 with several candidates, all agree; two mutations of the transliteration are caught (30 and 808 disagreements) |
 | the static-plan mirror, `static_plan_agrees_with_the_model_on_the_rounds_corpus` (`schedule.rs`) | every plan `schedule_inner` builds while the `conform-rounds` corpus runs naive and semi-naive, against the steps a Rust transliteration of `scheduleEngine` (`model::schedule`) emits from the engine's prices: atom order, binding kind per variable, join lookups | `scheduleEngine` (`EMatch/Engine/Schedule.lean`), `engineJoinLookups` | 200 files, 2999 plans; 2679 compared (1185 with several atoms, 4071 picks), all agree; 320 outside the model, each for a rule with a `(= x g)` atom; three mutations caught (608, 17 and 458 disagreements), a fourth by `eager_chain_agrees_with_the_model` |
+| the cursor mirror, `cursor_agrees_with_the_recursive_executor_on_the_rounds_corpus` and `cursor_frames_agree_with_the_lean_model_on_random_residuals` (`ematch.rs`) | every static plan `run_query_into` runs while the `conform-rounds` corpus runs naive, against the match multiset `MatchIterator` yields on the same plan and index (`mirror_cursor`); and the engine's cursor on random multiset and set nodes against a Rust transliteration of the Lean frame (`scan`, `findStep`, `findLoop`, `postYield`, `drive` over the AC and ACI stores) | `drive_eq_enum`, `acFrame_eq_decomposeAC`, `aciFrame_eq_decomposeACI` (`EMatch/Engine/Cursor.lean`); the frame stack has no model | 200 files, 1427 plans, 770 with a match, all agree; 720 random patterns compared, all agree, the model's lists without repeat; the corpus mirror found three defects of the cursor (Section 3.9) |
 | the certified completion states (`semper-conform-cc-cert`, `tests/egg/conform-cc-cert/`) | the engine's `check-neq` under eager completion against pairs a concrete countermodel separates, with the certificate in the preceding comment; `check-eq` against the bounded oracle | `not_E_of_separates`, `E_sound` (`CC/Countermodel.lean`); `run_sound` (`CC/BoundedOracle.lean`) | 200 committed programs, seed 1, run by `conform.rs`; a failing `check-neq` is an engine unsoundness, a failing `check-eq` a completeness gap |
 | the soundness waves | the certified generator's programs with their `dump-egraph` line, run through the engine by the soundness runner, which reads the dumped final state and checks every certified `check-neq` | `not_E_of_separates` on the dumped state | 10,200 programs over the waves run; every fixture named `ac_collapsed_recanon.egg`, `cancel_lattice.egg`, `cancel_crit_pair.egg`, `cancel_lattice_lazy.egg`, `nilpotent_group_lattice.egg` and `ac_reactivate_min_monomial.egg` is a reduction of a program of this generator |
 
@@ -3245,12 +3328,15 @@ models, and the limits that stay by design.
    bounds over a set node with overlap views. Acceptance: the test asserts
    `flatten_regroup_truncated > 0` and that every reported match is an overlap view, as
    `regroupBoundedO_plan_sound` states.
-7. **The cursor matcher.** `MatchIterator` and `run_query_iter` (`cursor_shapes.rs`) have no
-   Lean model; `run_query` executes the plans and is the production path. Closes it: a
-   transcription of the cursor with a termination theorem (a lexicographic measure on the
-   entry indices, the property the test `exact_decompositions_backtrack_without_a_rest`
-   checks) and the equality of its match set with `run_query`'s. Acceptance: `cursor_terminates`
-   and `cursor_matches_eq_run` in `EMatch/Engine/`, audited in a `*Check.lean` file.
+7. **The cursor matcher's frame stack.** `EMatch/Engine/Cursor.lean` models the AC and ACI
+   decomposition frames of `MatchIterator` with their termination and the equality of their
+   yields with the executor's decompositions (Section 3.9). The stack above them
+   (`next_match`, `backtrack`, the join and sliding-window frames) has no model, so the
+   equality of `run_query_iter`'s match multiset with `run_query`'s for a whole plan is checked
+   on the rounds corpus and not proved. Closes it: the stack as a step function on a list of
+   frames, with the theorem that its yields over a plan are `run`'s by induction on the plan.
+   Acceptance: `cursor_matches_eq_run` in `EMatch/Engine/Cursor.lean`, audited in
+   `Engine/Check.lean`.
 8. **Unit insertion under completion off (documented limit).** With `zero ∋ add{B, D}` the
    view `add{A, C}` of `add{add{A, B}, add{C, D}}` is reached only by inserting the unit and
    regrouping; a chain opens and contracts and never inserts, and insertions have no bound
