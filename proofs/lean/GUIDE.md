@@ -3,60 +3,73 @@
 This guide explains what the Lean development in `proofs/lean` proves about the Semper
 engine: the notions the proofs use, each headline theorem, and a sketch of its proof, so
 that a reader can judge whether each Lean definition encodes the engine behaviour it is
-named after. `STATUS.md` records the state of the build, and `scripts/check-proofs.sh`
-checks it.
+named after. It describes the development as it stands on branch `feat/completeness-proofs`.
+[`STATUS.md`](STATUS.md) is the per-file index of the same development, and
+`scripts/check-proofs.sh` checks the build: `lake build` passes, no declaration uses `sorry`,
+and every `#print axioms` in the `*Check.lean` files lists only `propext`, `Classical.choice`
+and `Quot.sound`. [`HISTORY.md`](HISTORY.md) records how the development reached this state:
+the engine defects the proofs located, the findings of the earlier editions of this guide
+with the commits that close them, and the claims that have been withdrawn. The guide cites no
+commit; a reader who wants the provenance of a theorem reads HISTORY.md.
 
 Lean checks that each proof follows from its hypotheses, not that a definition describes the
 engine or that the engine satisfies a hypothesis. Those two questions are the subject of this
-guide, so each section carries an adequacy note: where the model departs from the engine,
-and which hypotheses no theorem discharges.
+guide. Each main theorem carries a paragraph marked **Reading** (what it assumes of the
+engine, who supplies each hypothesis, what it concludes, what it leaves outside) and a table
+that places each hypothesis in one of three classes:
 
-The statements are quoted from branch `feat/completeness-proofs` as of 2026-11-06: upstream
-`main` at `6c37120b` plus the regrouping-skip proof (Section 4.7) and the completeness
-theorems with leaf constants (Section 5.9). The first edition (commit `a5cfa2d7`) was written
-against `6c37120b`; Section 9 records which of its findings still hold. File paths are
-relative to `proofs/lean/SemperProofs/` unless they start with `egraph/` or `proofs/`.
-`Flatten/` abbreviates `EMatch/Flatten/`; `Rounds/` and `Saturate/` abbreviate
-`EMatch/Engine/Rounds/` and `EMatch/Engine/Saturate/`. A bare file name refers to the
-directory of the theorem last cited, and a bare `:N` to the Lean file last cited. A fixture
-without a path is in `egraph/tests/egg/`. The build and the axiom audit were not re-run for
-this guide; [`STATUS.md`](STATUS.md) reports that `lake build` passes, that no declaration
-uses `sorry`, and that every `#print axioms` in the `*Check.lean` files lists only
-`propext`, `Classical.choice` and `Quot.sound`.
+- **derived**: a theorem derives it from a check the engine performs or from a definition
+  that transcribes the engine's code; the table names the check and the theorem;
+- **assumed**: it states a correspondence between the Rust state and the model that no
+  theorem derives; Section 9 lists every such hypothesis as a gap;
+- **limit**: a documented limit of the guarantee, with the counter-model theorem that shows
+  the hypothesis cannot be dropped.
 
-Branch `feat/real-rules` resolves items 1, 2 and 4 of Section 10: commit `f1e8be1a` replaces
-the executor's partition of variables by per-step binding kinds (Section 3.7), and commit
-`8932dc12` states the final theorem over the store with the represented graph as a part of
-the index and proves a run that meets all its hypotheses (Section 7.7). Those sections and
-the resolution notes in Sections 7.3, 7.5, 9 and 10 describe that branch; the original
-findings are kept with their statuses. `scripts/check-proofs.sh` passes on it.
+Sections 3 to 7 are Part A, what the development proves, with the pseudo-code of each
+algorithm the model states placed next to the theorems about it. Section 8 is Part B, the
+conformance and mirror tests that compare the executable models with the engine, and the
+fixtures grouped by the theorem or invariant each probes. Section 9 is Part C, the remaining
+gaps, each with what closes it and its acceptance criterion. Section 10 lists the
+constraints the engine keeps, each with the counter-model and fixture that evidence it.
 
-This edition (branch `wip/guide-rewrite`, at `fa6be660`) adds, under each main theorem, a
-paragraph marked **Reading**: what the theorem assumes of the engine, who supplies each
-hypothesis, what it concludes, and what it leaves outside. Section 11 gives pseudo-code for
-every algorithm the model states, each line naming the Lean step and the Rust function.
-Section 12 lists the learnings, one per rule the engine must keep, with the counter-model,
-fixture or commit that showed it. Section 10 is the authoritative list of open and resolved
-items.
+Conventions. File paths are relative to `proofs/lean/SemperProofs/` unless they start with
+`egraph/` or `proofs/`. `Flatten/` abbreviates `EMatch/Flatten/`; `Rounds/` and `Saturate/`
+abbreviate `EMatch/Engine/Rounds/` and `EMatch/Engine/Saturate/`. A bare file name refers to
+the directory of the theorem last cited, and a bare `:N` to the Lean file last cited. A
+fixture without a path is in `egraph/tests/egg/`. Line numbers are those of the sources at
+the time of writing and drift; the names are stable. A pseudo-code block states an algorithm
+as the Lean model does: a trailing comment names the Lean definition or step the line
+corresponds to, then the Rust function (`egraph/src/` unless a path is given), and the
+sentence after the block says where the engine does more or differently.
 
 Several hypotheses are meant to be checked on each run rather than proved of the engine. The
 design note [`runtime-completeness-checks.md`](../../egraph/doc/future/runtime-completeness-checks.md)
-assigns each to a check; the hypothesis tables below cite its tiers. No check is implemented.
+assigns each to a tier (tier 1: every run, one pass over the nodes; tier 2: in CI, by a
+proved Lean checker on a dump of the final state); the hypothesis tables cite its tiers. Two
+of its tier 1 checks exist in the engine as debug checks (`check_min_monomial_invariant`,
+`debug_check_congruent_dup_invariant`); the others are design (Section 9).
 
 ## Contents
 
 1. Layers of the development
 2. Common vocabulary
+
+Part A. What the development proves
+
 3. Matching on one frozen graph (`EMatch/`, `EMatch/Engine/`)
 4. Flattened matching (`EMatch/Flatten/`)
 5. Congruence closure modulo AC (`CC/`)
 6. Rounds and saturation (`EMatch/Engine/Rounds/`, `EMatch/Engine/Saturate/`, `Fidelity/`)
 7. The final theorem (`CC/Bridge/`, `Final/`)
-8. Counterexamples and the engine defects they record
-9. Gaps between the model and the engine, and the status of the first edition's findings
-10. Open findings
-11. Algorithms, as the model states them
-12. Learnings: what the engine must do, and what breaks otherwise
+
+Part B. Conformance
+
+8. Conformance and mirror tests, and the fixtures
+
+Part C. Gaps and constraints
+
+9. Remaining gaps
+10. Constraints on the engine, with their evidence
 
 ## 1. Layers of the development
 
@@ -219,6 +232,7 @@ A class with no node of the operator, a **leaf constant** such as `a` in `(+ a b
 monomial of its own in this encoding and occurs only as a summand. Section 5.9 reads such a
 class `x` as the one-element monomial `{x}`, as the engine does, by adding implicit nodes
 `({x}, x)` to the state.
+
 ## 3. Matching on one frozen graph
 
 This layer proves that the engine's way of running one rule on one frozen index emits
@@ -352,7 +366,7 @@ join (an intersection of buckets in the model), and guards, literals and globals
 *Proof.* `schedA_run` (`SchedRun.lean:587`) is an induction on the grammar with a run
 invariant `Inv` at each decision point. The `pick` case uses `lower_sound` and
 `lower_complete`, the `eager` case `eager_sound` and `eager_complete`, the `done` case
-`bindable` to show every `Eq` was used.
+`bindable` to show every `Eq` is used.
 
 **`runND_matches`** (`EMatch/Engine/Runtime.lean:192`) covers the engine's adaptive
 scheduler, which picks the next atom per branch from the current binding:
@@ -372,7 +386,7 @@ step uses one atom. The proof is an induction on fuel reusing the `pick` and `ea
 of `schedA_run`. Outside: the cost of the choice, and the engine's `choose_atom`, which
 `runEngine_matches` instantiates.
 
-**The engine's choice and the semi-naive settings** (commit `26ee4f9e`). `runNDA`
+**The engine's choice and the semi-naive settings.** `runNDA`
 (`Runtime.lean`) is `runND` with each lowered block run under a per-atom index setting
 (`IndexMode`), as the engine runs its variants through the same adaptive loop;
 `runNDA_matches` gives `Matches ∧ ModeOk`, and `runNDA_eq_runA` equates it with every
@@ -406,16 +420,16 @@ full index less the delta an old one). A `Rule` carries its matching procedure a
 proves it from `SchedA`, `matcherOK_runtime` and `matcherOK_engine` prove it with no
 hypothesis. `MatcherOK.naive_iff` and `MatcherOK.round_complete` are `mem_runNaive_iff` and
 `semi_naive_round_complete` on a matcher, so the saturation theorems (Sections 6 and 7)
-take `hmatch : MatchersOK rules`, a theorem for the adaptive scheduler, in place of the
-former `hplan : PlansOK rules`. Assumed: the correspondence between `chooseEngine` and
+take `hmatch : MatchersOK rules`, a theorem for the adaptive scheduler, in place of a plan
+hypothesis `hplan : PlansOK rules`. Assumed: the correspondence between `chooseEngine` and
 `choose_atom`, which the unit test below checks on 4945 decisions, and between
 `scheduleEngine` and `schedule_with_stats`, which the second test checks on 2679 plans.
 Outside: the pricing of the join (`cursor_len`) and the estimate of the static scheduler
 (`estimate_cost`), which the model takes as parameters, and the `Flatten` step, which the
 adaptive scheduler never runs (Section 4).
 
-The unit test `atom_choice_agrees_with_the_model_on_the_rounds_corpus` (`ematch.rs`, commit
-`e48db120`) compares, at every phase-B decision of the `conform-rounds` corpus run naive and
+The unit test `atom_choice_agrees_with_the_model_on_the_rounds_corpus` (`ematch.rs`)
+compares, at every phase-B decision of the `conform-rounds` corpus run naive and
 semi-naive under runtime scheduling, the atom `choose_atom` takes with the one a Rust
 transliteration of `chooseEngine` takes from the same bindings and bucket lengths (the
 decisions depend on the partial bindings, which the dumps do not carry, so Lean cannot
@@ -472,6 +486,65 @@ disagreements), lowering a plain atom whose node is bound as a pick instead of i
 pass (17), and running the eager pass before the first pick only (458). A fourth, one sweep
 in place of the fixpoint, no corpus rule detects; `eager_chain_agrees_with_the_model`
 does, on `(g c)`, `(= a b)`, `(= b c)`.
+
+**Pseudo-code: the adaptive scheduler and the static scheduler.**
+
+```
+chooseEngine(G, isNew, mode, atoms, σ, S):            -- chooseEngine; ematch.rs choose_atom
+  best := none
+  for i in 0 .. |atoms|, i ∈ S:                       -- chooseStep, index order
+    cost := length of the shortest bucket of the join emit_atom would emit for atom i,
+            under σ's bindings, in the index setting of atom i   -- atomCost, engineJoinLookups; cursor_len, bucket_in
+    if best = none or cost < best.cost: best := (cost, i)         -- strictly cheaper replaces
+  return best.i                                       -- chooseEngine_mem: a member of S
+
+runND(G, atoms, choose, fuel, used, B, σ):            -- runND; ematch.rs adaptive loop
+  if fuel = 0: emit σ
+  if some unused Eq atom has a bound side:            -- eagerCandidate, Sched.eager
+    run its eager lowering under B, then recurse on each result   -- q.eagerLower B
+  else if some scanning atom is unused:               -- Sched.pick
+    i := choose(σ, unused scanning atoms)             -- any choice function; chooseEngine
+    run (lower atoms[i] B) on σ, recurse on each result with i used and B ∪ binds   -- lower
+  else emit σ                                         -- Sched.done
+```
+
+`runNDA` is the same loop with each lowered block run under the per-atom index setting; the
+engine also prices a `:comm` atom over the `byContains` lookups `emit_atom` adds, which
+`engineJoinLookups` copies.
+
+The static scheduler is the same two phases run once, at plan time, on the bound set alone:
+
+```
+scheduleEngine(cost, pre, atoms):                     -- scheduleEngine; schedule.rs schedule_inner
+  used := ∅, B := pre, steps := []
+  repeat at most |atoms| times:                       -- schedLoop
+    repeat:                                           -- eagerFix; lower_eager
+      for i in 0 .. |atoms|, i ∉ used:                -- eagerSweep, eagerAt; try_eager_lower
+        if atoms[i] = (= x y) and (x ∈ B or y ∈ B):   -- SchedA.eager
+          steps ++= eagerLower atoms[i] B; used += i; B ∪= {x, y}
+        if atoms[i] plain with its node in B:         -- SchedA.pick, the re-join in its class
+          steps ++= lower atoms[i] B; used += i; B ∪= binds atoms[i]
+    until a sweep lowered nothing                     -- eagerFix_fixed: no unused atom is free
+    best := none
+    for i in 0 .. |atoms|, i ∉ used, atoms[i] scanning:          -- pickStep, index order
+      if best = none or cost(steps, B, i) < best.cost: best := (i, cost)   -- strictly cheaper replaces
+    if best = none: return steps                      -- SchedA.done
+    steps ++= lower atoms[best.i] B; used += best.i; B ∪= binds atoms[best.i]   -- SchedA.pick; emit_atom
+```
+
+**Hypotheses of the matching theorems, classified.** The theorems of this section share one
+hypothesis on the query and take the rest as parameters.
+
+| Hypothesis | Theorem | Class | Source |
+|---|---|---|---|
+| `hwf : AtomsWF G sig atoms` (well-kinded atoms, distinct node variables, linear rests, every `Eq` operand bound by a scanning atom) | `plan_matches`, `runND_matches`, `runEngine_matches` | assumed, derived for one pattern | the resolver's checks (`resolve.rs`); `atoms_atomsWF` derives it for the atoms of a single pattern |
+| `KeysNodup`, `Conforms sig` (inside `AtomsWF`) | the same | assumed | rebuild and the operator declarations; no theorem reads them off `index.rs` |
+| `h : PlanOK atoms plan`, `SchedA` | `plan_matches`, `variant_partition` | derived | `scheduleEngine_schedA`: the plan `schedule_inner` builds is in the grammar for every price; the correspondence of `scheduleEngine` with `schedule_inner` is checked by the static-plan mirror (Section 8) |
+| `choose` | `runND_matches` | derived | any choice function; `chooseEngine_mem` discharges it for the transcription of `choose_atom`, whose correspondence the atom-choice mirror checks (Section 8) |
+| `cost`, `cursor_len` | `scheduleEngine_schedA`, `runEngine_matches` | parameter | the price is a parameter of the model; no theorem is about its value |
+| `ChildrenCanon`, `FindIdem` | `exec_matches`, `env_refine` | assumed | two invariants rebuild establishes; stated by `Round.WF` (Section 6.1) |
+| `EnvAtomsWF atoms` (the resolver's variable discipline) | `planOK_envWF`, `exec_matches` | assumed | `resolve.rs`; no theorem derives it (Section 9) |
+| multiplicity of emitted bindings | all | limit | the theorems are about sets; `comm_pair_duplicate`, `comm_bound_first_counts` show the counts differ |
 
 **The single-pattern corollary.** `engine_plan_sound` and `engine_plan_complete`
 (`EMatch/Engine/Main.lean:66`, `:74`) specialise the chain to one pattern:
@@ -535,7 +608,7 @@ undoes them on backtrack (`egraph/src/ematch.rs:171`), one cell per variable: a 
 a node variable, a class for a class variable. `abs G κ e` (`EMatch/Env/Model.lean`) reads
 every cell as a class through `find`, and the cells of node kind (`κ v = true`) also as node
 ids. `env_restore` and `env_refine` (`EMatch/Env/Main.lean`) state that the executor returns
-the environment it was given, and that the bindings it emits are, as a set, the bindings
+the environment it receives, and that the bindings it emits are, as a set, the bindings
 `run` emits:
 
 ```lean
@@ -545,8 +618,8 @@ theorem env_refine (G : Graph) (hG : G.ChildrenCanon) (hidem : G.FindIdem)
     σ ∈ (exec G (joinKinds κ plan) plan e).1 ↔ σ ∈ run G plan (abs G κ e)
 ```
 
-The binding kinds are per step (commit `f1e8be1a`). `κ` is the kind of each variable at the
-entry of the plan; a join makes its target a node variable, whatever it was before (unbound,
+The binding kinds are per step. `κ` is the kind of each variable at the
+entry of the plan; a join makes its target a node variable, whatever its kind at entry (unbound,
 or a class variable bound by `ExtractChild`, a decomposition or an earlier atom, which the
 join refines to a node of its class); `joinKinds κ plan` is the kind at the end of the plan,
 with which the emitted environments are read. A lookup or a check reads a cell through
@@ -585,24 +658,11 @@ bound as a node and read as a class (`nestedPlanParent_eq`, `nestedPlanChild_eq`
 `decide`). Outside: the adaptive scheduler (`exec` runs static plans only), the steps of
 Section 3.8, and the multiplicity of emitted bindings.
 
-**Adequacy.** The executor (`exec`) is unchanged; only its well-formedness and the
-abstraction changed. The engine's join saves and restores a bound target
+**Adequacy.** The engine's join saves and restores a bound target
 (`ematch.rs:3012-3023`, "`target` may already be bound"), as `exec` does, and its lookups
 canonicalize the key cell (`bucket_in`). Nothing downstream uses `Env/`: the saturation
 theorems read the emitted bindings through `run` (`runNaive`), which `exec_matches` shows
 the executor agrees with.
-
-The finding of the second edition, resolved by commit `f1e8be1a`: `Env.WF`
-(`EMatch/Env/Model.lean:612`) partitioned the variables by `κ` into node and class
-variables; its `join` clause required the target to be a node variable (`κ t = true`) and
-every variable a lookup reads a class variable (`κ x = false`), and its `extractChild`
-clause required the extracted child to be a class variable. `atoms` gives a nested child
-one variable that is both the parent's child class and the nested atom's node variable
-(Section 3.2), so with the parent lowered first `extractChild` then `join` gave it both
-kinds, and with the nested atom first `join` then the parent's `byChildPos` lookup did; the
-re-join `join a.node [byRepr a.node, byOp a.op]` violated `Env.WF` a second time by reading
-its own target. No theorem derived `Env.WF` from `PlanOK`, so the executor refinement was
-not connected to `plan_matches` for any nested pattern.
 
 ### 3.8 Guards, literals and sequence collection
 
@@ -617,6 +677,7 @@ no theorem covers a whole query that mixes guards or literals with scanning atom
 declarative relation for `Collect` reuses most of the assembler's own functions
 (`choicesAt`, `admit`, `matchedA`), so `collect_sound` and `collect_complete` are close to
 restating the code.
+
 ## 4. Flattened matching
 
 ### 4.1 Problem
@@ -810,8 +871,7 @@ counterexample to opening off the spine. `otLeft_sound` and `otRight_sound` (`:1
 prove that spine-only opening trees preserve the fold's value. Regrouping a fold replaces a
 prefix (left fold) or a suffix (right fold); Section 4.6 covers it.
 
-**The executable enumerator is the spine trees** (`EMatch/Flatten/FoldEnum.lean`, commit
-`19452248`). `rawOptD ctx dir` with `Dir.left` or `Dir.right` is the walk of
+**The executable enumerator is the spine trees** (`EMatch/Flatten/FoldEnum.lean`). `rawOptD ctx dir` with `Dir.left` or `Dir.right` is the walk of
 `flatten::enumerate` with `spine(dir, i, len)`. `rawNodeD_left_iff` and `rawNodeD_right_iff`
 prove that its raw views of a fold node are exactly the views of `OTLeft`, resp. `OTRight`:
 
@@ -823,7 +883,7 @@ theorem rawNodeD_left_iff {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ct
 ```
 
 **Reading.** For a sequence operator whose every `f`-member is a sequence node (`SeqShaped ctx`,
-fixed by the operator declaration), the executable fold enumerator run leftwards produces a
+determined by the operator declaration), the executable fold enumerator run leftwards produces a
 raw view of a fold node exactly when the view is a spine-only opening tree's view (`OTLeft`);
 `withK 1 v` is the class list `v` with count one, and `rawNodeD_right_iff` is the mirror with
 `OTRight`. The soundness direction (`rawNodeD_left_sound`) is by induction on the fuel, the
@@ -857,7 +917,7 @@ monoid-level theorem over `.both` applies to a fold.
 **The fold mirror against the engine.** The conformance oracle runs `runER` with the fold
 directions of the case (`Conform/Flatten/Oracle.lean`, `FCase.dirOf`), so every
 `conform-flatten` sample with a fold compares this enumerator, regrouped, with the engine's.
-On 2026-11-08 the comparison ran over 800 samples (the 400 committed `conform` and
+The comparison covers 800 samples (the 400 committed `conform` and
 `conform-flatten` samples, and 400 more of seed 3 of the `:flatten` generator, not
 committed), 230 with a fold in the pattern: every `check-eq` and `check-neq` holds in the
 engine, and the number of distinct `Tag` nodes the engine builds, one per binding, equals
@@ -969,13 +1029,13 @@ engine behaviour:
   `{a, b, c, d, h, k}` through `{h, k, G1, G2}`, which needs two classes, to `{h, k, G3}` with
   `G3 ∋ F{G1, G2}`, which needs `G3` alone; with a limit of one the view `{h, k, G3}` is
   enumerated and accepts `x = G3`. The fixture `flatten_regroup_nested_needs.egg` records the
-  same match in the engine, which applied the limit per step before `6c37120b`.
+  same match in the engine.
 - **Nested and covering groups are chains.** `G2 ∋ f{G1, c}` is reached by regrouping `G1`
   first. Groups that together cover the view are successive steps, none of which is the whole
   view. `regroup_fold_nested` (`RegroupNested.lean:133`) reaches `(a - b) - c` in the left fold
   `((a - b) - c) - d` through `[a, b, c, d] → [G1, c, d] → [G2, d]`, one needed class at each
   step. The disjoint-group AC form (`regroup_chain_ac`, `regroup_match_complete_ac`,
-  `RegroupComplete.lean:248`, `:435`) predates the chain theorems and bounds the needed
+  `RegroupComplete.lean:248`, `:435`) is a separate statement that bounds the needed
   classes by one per group.
 
 *Proof.* `regroupStep_mem` (`RegroupChain.lean:424`) shows that a declarative step is a
@@ -988,13 +1048,13 @@ the levels the model computes (`regroupChain_mem_levels`, `:437`). The converse 
 
 **Adequacy.**
 
-- `regroup_match_iff_laws` (`RegroupLaws.lean`, commit `ed7d52ea`) lifts the completeness to
+- `regroup_match_iff_laws` (`RegroupLaws.lean`) lifts the completeness to
   any laws, kind and fold direction, with the chains `RegroupChainL`; for a fold its chains
   start from the normal forms of the spine views (`baseRecsR_left_views_iff`,
   `baseRecsR_right_views_iff`) and step by prefix or suffix (`regroupsTo_left_iff`,
   `regroupsTo_right_iff`), so no fold match is excluded. Soundness under laws is
   `regroup_views_sound_{ac,aci,assoc}_laws` (`RegroupLaws.lean`); for folds
-  (`EMatch/Flatten/FoldRegroup.lean`, commit `0d0f051d`) `regroup_views_sound_left`,
+  (`EMatch/Flatten/FoldRegroup.lean`) `regroup_views_sound_left`,
   `regroup_views_sound_right` and the engine-loop versions `regroupSkip_views_sound_left`,
   `regroupSkip_views_sound_right` prove that every view of `enumerateR` and `enumerateRSkip`
   for a laws-free fold denotes the node's fold in the free magma, through
@@ -1013,7 +1073,7 @@ the levels the model computes (`regroupChain_mem_levels`, `:437`). The converse 
   so it characterizes the engine's enumeration, not the unlimited one.
 - The engine's bounds `MAX_REGROUP_VIEWS` (2^14 records) and `MAX_REGROUP_WORK` (2^20
   entries examined), and the count overflow of normalization, are modelled in
-  `EMatch/Flatten/RegroupBounds.lean` (2026-11-06; `BSt.run`, the loop with the engine's
+  `EMatch/Flatten/RegroupBounds.lean` (`BSt.run`, the loop with the engine's
   counters; `regroupBounded_halt_iff`, `regroupBounded_exact`, `regroupBounded_query_exact`,
   Section 4.7). Past a bound the engine stops regrouping the node and sets
   `regroup_truncated`. The design note
@@ -1041,8 +1101,8 @@ theorem regroup_match_iff_laws {c : FCtx} {dir : Sym → Dir} {σ : Binding} {a 
 the chains `RegroupChainL` step by a laws-free regrouping followed by normalization under
 the operator's laws, so a step may drop the unit, clamp a count to zero or cancel an inverse
 pair. The needed classes of a record are those its normalized view still holds
-(`needsAfter`), and a leaf that gains a dropped class is flagged (`addG`); that is the
-engine's behaviour since `flatten_regroup_laws_drop_need.egg`. The theorem says what the
+(`needsAfter`), and a leaf that gains a dropped class is flagged (`addG`); the fixture
+`flatten_regroup_laws_drop_need.egg` records that behaviour in the engine. The theorem says what the
 engine finds under laws, relative to the classes present; it does not say the engine finds
 every match the theory entails. Two kinds of match it excludes are stated as theorems:
 
@@ -1067,14 +1127,13 @@ fixture `flatten_regroup_laws_insert.egg` records the loss in the engine; `(set-
 :completion eager)` proves the equality instead. A documented limit of the regrouping
 guarantee, not a defect. In the second, `S{A, B, C}` equals `S{A, C, sab}` by idempotence,
 but a regrouping replaces the group and never keeps a member beside its class
-(`regroup_idem_overlap_loop_lost`, the second conjunct of the former
-`regroup_idem_overlap_lost`); the view is sound in every join semilattice
+(`regroup_idem_overlap_loop_lost`, the second conjunct of the statement quoted above, which
+the sources hold as two theorems); the view is sound in every join semilattice
 (`regroup_idem_overlap_sound`, its first conjunct). The engine forms it in a stage after the
 loop, below.
 
 **Overlap views under idempotence** (`EMatch/Flatten/RegroupOverlapDefs.lean`,
-`RegroupOverlap.lean`, `RegroupOverlapBounds.lean`; commit `893fc3ac`, engine
-`b932241b`). For an `:assoc-comm-idem` operator, after the regrouping loop, the engine
+`RegroupOverlap.lean`, `RegroupOverlapBounds.lean`). For an `:assoc-comm-idem` operator, after the regrouping loop, the engine
 also matches the *overlap views* of every view the loop ends with: the view with the class
 `g` of an `f`-member added and some members of its group dropped. A dropped member is
 covered by `g`, a kept member is absorbed, so the view denotes the node in every join
@@ -1082,7 +1141,7 @@ semilattice where the members denote their classes (`overlap_step_sound_aci`,
 `overlap_step_sound_aci_laws` under an identity; `regroupO_views_sound_aci_laws`,
 `regroupSkipO_views_sound_aci_laws` for every view of both enumerations). The pattern's item
 count fixes how many members are kept: with `base` the entries of the view plus one when
-`g` is new, the stage drops `k = base - limit` members, so the view has `limit` entries, one
+`g` is not in the view, the stage drops `k = base - limit` members, so the view has `limit` entries, one
 per item, and a rest variable holds nothing (`overlapDrops`, `overlapFits`). The group must
 have at least two classes, all in the view, not `g`; at least one member is kept; a group with
 `g` already in the view and nothing to drop would repeat the view. The candidates are the
@@ -1125,7 +1184,7 @@ the laws, with the derived leaves and needs). The theorem says what the engine f
 idempotent operator, relative to the classes present; `regroupO_match_iff_laws` is the same
 for the full enumeration with the stage, and `regroupSkipO_views_iff_laws`,
 `regroupO_views_iff_laws` the versions at the level of views. The statements without the
-stage (`regroup_match_iff_laws`, `regroupSkip_match_iff_laws`) are untouched and still hold
+stage (`regroup_match_iff_laws`, `regroupSkip_match_iff_laws`) hold
 of the loop alone. `regroup_idem_overlap_found` is the counter-model turned witness: in the
 graph of `regroup_idem_overlap_sound`, the view `{a, c, G}` is enumerated for a pattern of
 three items and accepts the item classes, so `(S x y z)` binds `x = a, y = c, z = G`
@@ -1163,7 +1222,7 @@ the stage (`overlapAll_stepR`, `overlapAll_projR`): `regroupBoundedO_cases`,
 `regroupBoundedO_plan_complete`, `regroupBoundedO_query_exact`, `regroupBoundedO_match_exact`:
 with the three counters zero the bindings emitted are exactly those of
 `Enumerator.regroupSkipO`, and a truncated run reports only matches. No fixture exercises a
-truncation inside the stage yet (Section 10, item 20): a family large enough to pass
+truncation inside the stage (Section 9): a family large enough to pass
 `MAX_REGROUP_VIEWS` needs a set of about fifty children, on which the set decomposition of a
 five-item pattern enumerates `48 · 47 · 46 · 45 · 44` partial assignments per node before the
 stage is reached, hours in a debug build.
@@ -1172,15 +1231,17 @@ stage is reached, hours in a debug build.
 (`SkipSt.overlapAll`'s guard, `kind == FlatKind::Aci && limit > 0` in `flatten.rs`): an AC or
 sequence operator pays nothing. For a set operator it reads the use lists of each loop view
 once more and, per candidate group of `m` classes, enumerates `C(m, k)` combinations, each
-normalized and deduplicated by signature; the budgets bound both. Measured on the
-conformance tests and the bench corpus (Section 12): the suites were not re-timed in this round (the baseline is 155 s for `egg_tests.rs`, 126 s for `flatten_differential.rs` and 51 s for `conform.rs`, debug build, one thread, medians of three); the stage is guarded by the kind, so an operator without idempotence runs the same code as before.
+normalized and deduplicated by signature; the budgets bound both. The suite timings on
+record are 155 s for `egg_tests.rs`, 126 s for `flatten_differential.rs` and 51 s for
+`conform.rs` (debug build, one thread, medians of three), measured without the stage; the
+stage is guarded by the kind, so an operator without idempotence runs the same code.
 
 ### 4.7 The engine's regrouping loop and its skips
 
 `regroupAll` derives every record level by level. The engine regroups view by view instead,
 largest total count first, and skips records whose matches another record of the same view
 already admits. `EMatch/Flatten/RegroupSkipDefs.lean` models that loop step for step
-(Section 11.7 gives the pseudo-code). The state `SkipSt` (`:89`) holds the distinct views in
+(the pseudo-code follows). The state `SkipSt` (`:89`) holds the distinct views in
 order of entry, each view's records in insertion order, the views already regrouped, and the
 signatures of the records regrouping added to each view. The next view (`SkipSt.next`,
 `:139`) is the one not yet regrouped with the largest total count, the latest entry among
@@ -1195,6 +1256,66 @@ and sorted classes, and the needed classes, compared as multisets by `RecSig.sam
 as the engine does by sorting them. `regroupSkipG` (`:180`) runs the loop with a fuel larger
 than the number of reachable views, and `Enumerator.regroupSkip` (`:200`) is
 `Enumerator.regroup` with it in place of `regroupAll`.
+
+**Pseudo-code: the regrouping loop and the overlap stage.**
+
+```
+regroup(node, κ, dir, laws, items):                   -- SkipSt.run; flatten.rs FlattenScratch::regroup
+  records := walk views with demands                  -- baseRecsR; enumerate (spine(dir) for a fold)
+  entries := distinct views in order of entry         -- SkipSt.init, SkipSt.order
+  heap := (size(view), entry) for each entry          -- viewSize; BinaryHeap<(u128, usize)>
+  views := 0; work := 0                               -- BSt counters; MAX_REGROUP_VIEWS, MAX_REGROUP_WORK
+  while heap not empty:
+    w := pop the largest size, latest entry on a tie  -- SkipSt.next
+    if w already regrouped: continue                  -- never fires: regroupRec_shrink
+    mark w regrouped                                  -- SkipSt.mark
+    cands := f-members holding a class of w, by node id   -- groupsOfEngineAt; Members::containing (by_contains)
+    work += use-list lengths; if work > MAX_REGROUP_WORK: truncate; stop
+    for (g, grp) in cands:                            -- SkipSt.groupStep
+      work += |grp|; if work > MAX_REGROUP_WORK: truncate; stop
+      for raw in fits(κ, dir, w, g, grp):             -- fitsR: sub-multiset | subset | run | prefix | suffix, ≥ 2 entries, not all of w, g ∉ grp
+        t := normalize(κ, laws, raw)                  -- normalize; nary_canon::normalize
+        if t is not a node, or a count overflows: count flatten_overflowed; continue   -- Ix.wide, saturated_size
+        assert t not regrouped                        -- addTarget_spec: regroupRec_shrink
+        if t is new: push (size(t), t)                -- SkipSt.addTarget
+        if some record of t is unconditional: continue        -- RecR.uncond
+        for r in srcRecs(records of w):               -- srcRecs: the first unconditional record alone, else all
+          d := (t, leaves of r with g added where they hold a class of grp, needs of r less grp plus g, kept if t holds them)
+                                                      -- deriveRec, addG, needsAfter
+          if signature(d) already at t: continue      -- RecSig.same; sigs
+          views += 1; if views > MAX_REGROUP_VIEWS: truncate; stop
+          add d to t                                  -- SkipSt.addRec
+  if κ = set and |items| > 0:                         -- SkipSt.overlapAll; the overlap stage, idempotence only
+    for w in the loop's views, in entry order:        -- st₀.order; entries[0..n_loop]
+      cands := f-members holding a class of w, by node id   -- groupsOfEngineAt
+      work += use-list lengths; if work > MAX_REGROUP_WORK: truncate; stop
+      for (g, grp) in cands:                          -- SkipSt.overlapGroupStep
+        work += |grp|; if work > MAX_REGROUP_WORK: truncate; stop
+        cs := classes of grp, sorted, distinct        -- groupClasses
+        if g ∈ cs or |cs| < 2 or cs ⊄ w: continue     -- overlapDrops
+        base := |w| + (g ∉ w ? 1 : 0); if base < |items|: continue
+        k := base - |items|; if k ≥ |cs| or (k = 0 and g ∈ w): continue
+        for D in the k-element sublists of cs, in sublists order:   -- dropSets; next_colex
+          work += 1; if work > MAX_REGROUP_WORK: truncate; stop
+          t := normalize(κ, laws, (w less D) ++ [g])  -- overlapFits; normalize
+          if t is not a node, or a count overflows: count flatten_overflowed; continue
+          if t is new: enter t (no heap: the stage regroups nothing)  -- SkipSt.addTargetO
+          if some record of t is unconditional: continue
+          for r in srcRecs(the loop's records of w):  -- st₀.recs w; records with index < n_loop
+            d := (t, leaves of r with g added where they hold a class of grp, needs of r less grp plus g, kept if t holds them)
+            if signature(d) already at t: continue
+            views += 1; if views > MAX_REGROUP_VIEWS: truncate; stop
+            add d to t
+  keep the records needing at most |items| classes    -- withinLimit; Demand::needs
+```
+
+The model's `regroupSkipG` has no bounds and `BSt.run` adds them at the same places; the
+engine also caps the takeable closure at 4,096 classes (`takeableRCap`) and skips regrouping
+altogether when the decomposition has no item and the laws cannot drop a class
+(`laws_drop`, `canDrop`). The overlap stage (`SkipSt.overlapAll`, `BSt.overlapAll`,
+`RegroupOverlapDefs.lean`) runs after the loop, only when the loop is not truncated, and
+derives from the loop's records alone, so an overlap view is one step from a view of the
+loop (Section 4.6, "Overlap views under idempotence").
 
 The proof turns on one relation. `Cov c b` (`EMatch/Flatten/RegroupSkip.lean:369`) says the
 record `c` **covers** `b`: same view, each leaf of `c` has a leaf of `b` with the same opened
@@ -1230,7 +1351,7 @@ loop with its three skips keeps a record within the item limit that passes the e
 demand rule exactly when the full enumeration does, so the skips lose no match and admit
 none. `regroupSkipG_iffL` is the same statement under laws. Outside: the bounds
 (`regroupBounded_query_exact`) and the sizes saturating at `u64::MAX`, which the engine
-counts since `54bea39b`.
+counts in `flatten_overflowed`.
 
 *Proof.* `regroupRec_shrink` (`:259`) shows that a regrouping strictly shrinks a view under
 any laws, so the full enumeration is exactly the set of records reachable from the walk's
@@ -1263,16 +1384,16 @@ specification `regroup_match_iff` states. The laws version is `regroupSkip_match
 **Adequacy.**
 
 - The engine computes a view's size as a `u128` sum of counts read as `u64`
-  (`saturated_size`, `flatten.rs`). A count past `u64::MAX` is read as `u64::MAX`; since
-  commit `54bea39b` such a count is counted in `flatten_overflowed`, and a fit whose normalized
+  (`saturated_size`, `flatten.rs`). A count past `u64::MAX` is read as `u64::MAX`; such a
+  count is counted in `flatten_overflowed`, and a fit whose normalized
   view holds one is skipped as a fit whose normalization overflows the width (`Ix.wide`).
   With the counter zero every size is exact, so a regrouped view is strictly smaller than its
   source (`regroupRec_shrink`), which is what `regroupBounded_query_exact` assumes. No
-  configured width is past 64 bits, so the case is unreachable today.
+  configured width is past 64 bits, so the case is unreachable.
 - The engine counts `MAX_REGROUP_VIEWS` after the skips, and `BSt.run`
   (`RegroupBounds.lean`) counts at the same places; with the three counters zero the bounded
   run is this loop (`regroupBounded_exact`).
-- The conformance generators still use `regroupLevels` (`STATUS.md`): the engine's loop
+- The conformance generators use `regroupLevels` (`STATUS.md`): the engine's loop
   emits the same `check-eq` sets in another order, which changes the sampled `check-neq`
   candidates.
 
@@ -1308,6 +1429,24 @@ which `regroupSkip_match_iff` characterizes. The counters are engine outputs, so
 condition a run can check on itself; the design note assigns it to tier 1. With a counter
 nonzero, only soundness holds (`regroupBounded_plan_sound`): every emitted binding is a
 match, and some matches may be missing.
+
+**Hypotheses of the flattened-matching theorems, classified.**
+
+| Hypothesis | Theorem | Class | Source |
+|---|---|---|---|
+| `hκ : a.shape.flatKind = some κ` | `regroup_match_iff`, `regroupSkipO_match_iff_laws` | derived | the atom's shape, from the resolver's flattening of the pattern |
+| `hlaws : c.laws a.op = Laws.free` | `regroup_match_iff`, `regroupSkip_match_iff` | derived | the operator declaration; `regroup_match_iff_laws` and `regroupSkipO_match_iff_laws` drop it |
+| `BaseGood`, `hgs`, `CandSup`, `hF` | `regroupSkipG_iff` | derived | `baseGood_baseRecsR`, `groupsOfEngine_sub`, `candSup_of_sup`, `viewSize_le_regroupFuel` |
+| `hw : QueryFWF c sig as` | `flatten_plan_*`, `regroupBounded_query_exact` | assumed | the resolver and the index, as `AtomsWF` in Section 3 |
+| `hz`: `flatten_regroup_truncated`, `flatten_skipped`, `flatten_overflowed` sum to zero | `regroupBounded_query_exact`, `regroupBoundedO_query_exact` | derived | the engine's own counters; tier 1 of the design note |
+| `SeqShaped ctx` | `rawNodeD_left_iff`, `regroup_views_sound_left` | derived | the operator declaration: every `f`-member of a sequence operator is a sequence node |
+| `MembersTwoClassesL`, `NodeTwoClassesL` | `demand_engine_complete_aci` (through `twoClassesL_of_members`) | assumed | the collapse invariant of `add` and rebuild on set nodes; `aci1.egg` records it |
+| `ConsistentAC`, `ConsistentACI`, `ConsistentL` | the `regroup_views_sound_*` theorems | assumed | the reading of a congruence-closed store: each filed `f`-member denotes its class |
+| a normal form reached only by inserting the unit | `regroup_match_iff_laws` | limit | `regroup_insert_unit_lost`; `flatten_regroup_laws_insert.egg` |
+| a view with two overlap groups, a kept member in a rest variable | `regroupSkipO_match_iff_laws` | limit | not formed by the stage; no theorem, documented in Section 4.6 and Section 9 |
+| opening or regrouping off a fold's spine | `otLeft_sound`, `regroup_views_sound_left` | limit | `fold_open_off_spine_unsound`, `regroup_off_spine_unsound` |
+| the walk's bounds `MAX_VIEWS`, `MAX_WORK`, `MAX_ELEMS` | `views_complete` | limit | the model enumerates without bound; a skipped node is counted in `flatten_skipped`, which `hz` reads |
+
 ## 5. Congruence closure modulo AC
 
 This layer models AC completion for one operator and proves two properties. Soundness:
@@ -1352,9 +1491,8 @@ The invariants (`CC/Defs.lean:214-236`, `CC/Assemble.lean:94`):
       ∃ c', (st.rhs (st.find c), c') ∈ st.active ∧ st.find c' = st.find c
   ```
 
-  Before commit `7838c767` the quantifier ranged over every class of `Fin n`; that form is
-  now `I0ActiveAll` (`Assemble.lean:100`), and no state with a leaf constant satisfies it
-  (`witness_not_all`, Section 5.9).
+  `I0ActiveAll` (`Assemble.lean:100`) quantifies over every class of `Fin n`; no state with
+  a leaf constant satisfies it (`witness_not_all`, Section 5.9).
 - **I2**: nodes of one class are theory-equal. This is the soundness invariant.
 - **I3**: a retired node rewrites in at least one step to a node of its class.
 - **I5**: each class's `rhs` is the `degLex`-least active node of the class.
@@ -1377,10 +1515,40 @@ structure RoundFixed (L : Laws n) (st : State n) : Prop where
 ```
 
 `RoundFixed.cp_joinable_all` recovers joinability for every overlapping pair of distinct
-rules, since a containing pair does not exist by `lhs_reduced`. Before commit `2e40098d` the
-structure had the unrestricted `cp_joinable` and no `lhs_reduced`, so it asserted
-joinability of the containing pairs, which the engine never superposes. `RoundFixed` is a
+rules, since a containing pair does not exist by `lhs_reduced`; without `lhs_reduced`, an
+unrestricted `cp_joinable` would assert joinability of the containing pairs, which the engine
+never superposes. `RoundFixed` is a
 hypothesis about the final state; no theorem derives it from an engine run.
+
+**Pseudo-code: one AC completion round.**
+
+```
+round(st, L):                                         -- Infer* over one round; egraph.rs cc_round
+  rules := { (M, rhs(find c)) | (M, c) active, M ≫ rhs(find c) }   -- State.rules; completion_node_ids, class_rhs_into, monomial_cmp_key
+  dedup rules by (op, left-hand side), keep the lowest node id            -- hcc; cc_round "Dedup"
+  -- (A') normalize every active node and merge its normal form in
+  for (M, c) in active:                                -- RoundFixed.nf_present
+    N := normal form of M under rules, clamped by L   -- Rw L rules, L.clamp; normalize_ms
+    c' := materialize(N)                              -- Infer.mint or hash-cons hit; 11.2
+    if find c' ≠ find c: merge(c', c)                 -- Infer.joinMerge; do_merge
+  -- reducibility pass with collapse
+  for (M, c) in active, for (A, a) in rules, A ⊊ M:   -- RoundFixed.lhs_reduced
+    red := clamp((M − A) + a); merge(materialize(red), c)   -- Infer.mint, joinMerge; (A') above
+    retire (M, c)                                     -- Infer.retire, I3 "merge before mark"; set_cc_collapsed
+  -- (B) superposition of overlapping, non-containing pairs
+  for (A, a), (B, b) in rules, A ≠ B, both irreducible:    -- RoundFixed.cp_joinable
+    if disjoint(A, B) or A ≤ B or B ≤ A: skip         -- Overlap, ¬ r₁.1 ≤ r₂.1; cc_round partner filter
+    AB := lcm(A, B)                                   -- criticalPair; multiset_lcm_into
+    c1 := nf(clamp((AB − A) + a)); c2 := nf(clamp((AB − B) + b))
+    if find c1 ≠ find c2: merge(materialize(c1), materialize(c2))   -- Infer.joinMerge
+  axiom pairs and cancel-closure per rule             -- AxiomCP, cancelMerge; 11.4
+  return "changed" iff a merge, a mint or a reactivation happened
+```
+
+The engine's (B) loop finds partners through the use lists of the rule's children rather
+than over all pairs, restricts intermediate rounds to pairs with a touched endpoint, and
+meters the round against `completion_work_budget`; the model has no budget and enumerates
+every pair.
 
 ### 5.2 Soundness
 
@@ -1435,7 +1603,7 @@ theorem completion_complete_at_convergence {L : Laws n}
     (hMN : E L S M N) : st.find c = st.find d
 ```
 
-**Reading.** The theorem is about one final state `st` and says nothing about how it was
+**Reading.** The theorem is about one final state `st` and says nothing about how it is
 reached. The table below gives each hypothesis, who supplies it, and the check the runtime
 design note proposes (tier 1: every run, one pass over the nodes; tier 2: in CI, by a proved
 Lean checker on a dump of the final state). The engine-side hypotheses are I5 (`h5₀`,
@@ -1447,27 +1615,28 @@ conclusion is completeness at the fixpoint: two theory-equal active nodes are in
 Outside: retired nodes (in a class with their reduct by I3, not by this theorem), leaf
 constants (Section 5.9), the number of rounds, and any run that stopped on a budget.
 
-Commit `7838c767` weakened two hypotheses: `h0` constrains only the classes that hold an
-active node, and `hcc` only the active nodes; the former statement is the corollary
+`h0` constrains only the classes that hold an active node, and `hcc` only the active
+nodes; the statement over every class of `Fin n` is the corollary
 `completion_complete_at_convergence_of_all` (`CC/Main.lean:125`). The theorem keeps `hcp` as
 stated; the bundles `CompleteHyps` and `CompleteAtoms` take instead
 `hcp_ax : AxiomCP L st.rules` (`CC/Assemble.lean`), and `hcp_of_fixed` rebuilds `hcp` from
 `RoundFixed` and `AxiomCP`: `ruleRuleCP_of_fixed` lifts `RoundFixed.cp_joinable_all` to
 plain rewriting (each plain reduct reaches its clamp in at most one law step,
 `clamp_rtg_RwAx`, and a clamped step embeds, `Rw_rtg_embed`). The law theorems of
-`CC/Laws/Main.lean` discharge their former `hRR` the same way.
+`CC/Laws/Main.lean` discharge their rule-rule condition `RuleRuleCP` the same way.
 
-| Hypothesis | Meaning | Supplied by | Runtime check |
-|---|---|---|---|
-| `h5₀`, `hrun`, `ha` | minimal-monomial maintenance from a good initial state, agreeing with `st` at the end | assumed; equivalent to assuming I5 (see below) | tier 1, as I5 |
-| `h0` | each class holding an active node has an active node as `rhs` | assumed of the engine | tier 1 |
-| `hcanon` | stored right-hand sides are clamp-normal | assumed of the engine (`nary_canon` output) | tier 1 |
-| `hfix` | the round is fixed (`RoundFixed`) | assumed of the engine at convergence | tier 2 (`nf_present`, `lhs_reduced`, `cp_joinable`) |
-| `hlaw`, `hnf_ax` | law instances decrease `degLex`; clamp outputs are law-normal | discharged for every `NFLaw` instance | once per signature |
-| `hcp` | every critical pair of the rules and law instances is joinable under plain rewriting | the rule-rule part is derived from `hfix` (`ruleRuleCP_of_fixed`); the part involving a law instance (`AxiomCP`) is reduced per law in `CC/Laws/` to conditions on left-hand sides, and is a hypothesis (`hcp_ax`) for an abstract law set | none for the rule-rule part beyond `hfix`; `AxiomCP` as the per-law conditions |
-| `hcc` | two active nodes with the same monomial share a class | assumed of the engine (hash-consing) | tier 1 |
-| `hS` | every asserted pair is two active nodes of one class | assumed of the input | none |
-| `hcancel` | joinability cancels a common summand | not an engine fact (Section 5.7); `CompleteHyps` replaces it by `hlat` (lattice closure), which the engine establishes | tier 1, as lattice closure |
+| Hypothesis | Meaning | Class | Source | Runtime check |
+|---|---|---|---|---|
+| `h5₀`, `hrun`, `ha` | minimal-monomial maintenance from a good initial state, agreeing with `st` at the end | assumed | equivalent to assuming I5 (see below); `reachable_I5` is the engine content | tier 1, as I5; `check_min_monomial_invariant` exists as a debug check |
+| `h0` | each class holding an active node has an active node as `rhs` | assumed | `class_rhs_into` | tier 1 |
+| `hcanon` | stored right-hand sides are clamp-normal | assumed | the output of `nary_canon` | tier 1 |
+| `hfix` | the round is a fixpoint (`RoundFixed`) | assumed | the confirmation round of `cc_round` at convergence | tier 2 (`nf_present`, `lhs_reduced`, `cp_joinable`) |
+| `hlaw`, `hnf_ax` | law instances decrease `degLex`; clamp outputs are law-normal | derived | discharged for every `NFLaw` instance in `CC/Laws/` | once per signature |
+| `hcp`, rule-rule part | every critical pair of two rules is joinable under plain rewriting | derived | `ruleRuleCP_of_fixed`, `hcp_of_fixed` from `hfix` | none beyond `hfix` |
+| `hcp`, law part (`AxiomCP`) | every critical pair involving a law instance is joinable | assumed, reduced per law | `CC/Laws/` reduces it to conditions on left-hand sides (`hu`, `hlhs`, `hax`, `hmatch`); `Laws/InvRulesMain.lean` derives the inverse ones from the fixpoints of R1 to R5; a hypothesis `hcp_ax` for an abstract law set | the per-law conditions, one pass over the rules |
+| `hcc` | two active nodes with the same monomial share a class | assumed | hash-consing | tier 1; `debug_check_congruent_dup_invariant` exists as a debug check |
+| `hS` | every asserted pair is two active nodes of one class | assumed | the input | none |
+| `hcancel` | joinability cancels a common summand | limit | not an engine fact (`hcancel_not_derivable`, Section 5.7); `CompleteHyps` takes `hlat` (lattice closure) in its place, which `latticeClosed_of_engineFixed` derives from the fixpoint of `lattice_round` | tier 1, as lattice closure |
 
 *Proof* (`CC/Assemble.lean:184-212`):
 
@@ -1490,7 +1659,7 @@ The proof works with plain rewriting over rules and law instances, not with clam
 over rules alone: the `congr` case of the induction builds monomials that are not
 clamp-normal, and those are not joinable under clamped rewriting (header of
 `Assemble.lean`). `stub_counterexample` (`CC/Proofs/CriticalPairModulo.lean:202`) refutes the
-earlier formulation.
+formulation over clamped rewriting.
 
 **Adequacy.**
 
@@ -1500,8 +1669,7 @@ earlier formulation.
   The engine content is that maintaining the minimal monomial preserves I5 (`reachable_I5`,
   Section 5.5). `AtomsWitness.witness_complete` (Section 5.9) discharges the triple with
   `ss₀ = ss` and the reflexive run, which confirms the reduction.
-- The rule-rule part of `hcp` is derived from `RoundFixed` (`hcp_of_fixed`, commit
-  `2e40098d`). The engine skips disjoint and containing pairs in its critical-pair loop
+- The rule-rule part of `hcp` is derived from `RoundFixed` (`hcp_of_fixed`). The engine skips disjoint and containing pairs in its critical-pair loop
   (`egraph/src/egraph.rs`, `cc_round`): a disjoint pair is outside `Overlap` and is handled
   inside `critical_pair_lemma`; a containing pair does not exist at the fixpoint because the
   reducibility pass retired the containing node (`lhs_reduced`). The fixture
@@ -1510,7 +1678,7 @@ earlier formulation.
   conditions on the stored left-hand sides (`hu`, `hlhs`, `hax`, `hmatch`), and
   `Laws/InvRulesMain.lean` derives the inverse ones from the fixpoints of R1 to R5. The
   reducibility pass itself is the composition mint, joinMerge, retire of `Infer`, so
-  soundness covers it without a new inference step.
+  soundness covers it without a further inference step.
 
 **The critical pairs with a law instance.**
 
@@ -1552,8 +1720,8 @@ theorem kapur_termination (l : ℕ → Monomial n) (alive : ℕ → ℕ → Prop
 **Reading.** `kapur_termination` (`CC/Lemmas.lean:426`) is about an abstract sequence of
 left-hand sides `l i`, one per inference, with `alive i j` meaning rule `i` is still active
 at time `j`. The hypotheses are the discipline of a reduced basis: a rule is alive when it is
-added (`hself`), a new rule's left-hand side is not reducible by any rule alive at that time
-(`hirr`), and a rule is retired only by a new rule whose left-hand side is strictly contained
+added (`hself`), an added rule's left-hand side is not reducible by any rule alive at that
+time (`hirr`), and a rule is retired only by a later rule whose left-hand side is strictly contained
 in it (`hrem`, the collapse). The conclusion is `False`: no infinite such sequence exists, by
 Dickson's lemma, so completion that keeps its basis reduced terminates. The theorem is not
 connected to `Infer`: it says what the reducibility pass buys, not that `cc_round` performs
@@ -1572,14 +1740,14 @@ theorem reachable_I5 {st₀ st : SlotState n} (h₀ : I5 st₀) (hrun : OpsStar 
 ```
 
 **Reading.** `SlotState` is the per-class stored minimal monomial for one operator, together
-with each class's active set. `Op` lists the engine's operations with the fix in place: mint,
+with each class's active set. `Op` lists the engine's operations: mint,
 merge with the two minima folded (`fold_min_monomial`), shrink with refresh
 (`refresh_min_monomial`), retire when a smaller classmate exists, and un-retire with refresh
 (`unretire`). From a good initial state (`h₀`) any run of these operations keeps I5. The
 hypothesis is the operations' preconditions (a shrink goes strictly down, a merge joins
 distinct classes); the engine supplies them. The proof is one case per operation (`op_I5`,
-`:251`). `shrinkNoRefresh_breaks_I5` (`:290`) is the state of the engine bug in which a
-shrink did not refresh the minimal monomial. Outside: that every engine step is one of the
+`:251`). `shrinkNoRefresh_breaks_I5` (`:290`) is a state in which a shrink without the refresh
+breaks I5. Outside: that every engine step is one of the
 operations, which is argued in prose, and the order keys, which `CC/MinMonoKey.lean` adds.
 
 ```lean
@@ -1596,9 +1764,30 @@ class takes `M` when `M` is below its stored right-hand side) keeps I5, with no 
 beyond I5 before. The second is a concrete state in which the same un-retire without the
 refresh breaks I5: the stored minimal monomial stays on a node the next round collapses. It
 is the state of `ac_reactivate_min_monomial.egg`, reduced from case 129 of the
-`conform-cc-cert` corpus, where `materialize` returned a collapsed node that was the normal
+`conform-cc-cert` corpus, in which `materialize` returns a collapsed node that is the normal
 form of the class's own minimal monomial. The engine refreshes after clearing the flag in
-both places since `2da55f68`.
+both places.
+
+**Pseudo-code: materialization, reactivation and the refresh.**
+
+```
+materialize(N):                                       -- cc_round, local `materialize`
+  if N is {x}: return find x                          -- addNF, Normal::Single; add
+  if N is empty and the operator has a unit u: return find u     -- addNF, Normal::Unit
+  id := hash-cons lookup of the node f(N)             -- hcc
+  if id is fresh:
+    register node f(N) in a fresh class d             -- Infer.mint, SlotState.mint; register_if_fresh
+    return d
+  if id carries FLAG_AC_COLLAPSED and no current rule reduces N:   -- Infer.unretire precondition
+    clear the flag                                    -- Infer.unretire, SlotState.unretire
+    rhs(find id) := min(rhs(find id), N)              -- State.refreshRhs; refresh_min_monomial
+    count a change of the round                       -- "reactivation counts as a change"
+  return find id
+```
+
+The engine runs the same refresh in `recanonize_parent` when recanonicalization shrinks a
+collapsed node and clears its flag; the model states both as `unretire` followed by
+`refreshRhs` (`unretire_refresh_reachable`).
 
 The engine orders monomials by per-class order keys, not by representative id
 (`CC/MinMonoKey.lean`). At a merge every node's keyed monomial stays or shrinks
@@ -1611,9 +1800,9 @@ order a node grows past its classmate and I5 fails.
 
 `CC/Laws/Main.lean` instantiates the completeness theorem for each law set. The law
 hypotheses `hlaw` and `hnf_ax` are discharged, and `hcp` is reduced to `RuleRuleCP`, which
-the fixed round supplies (`ruleRuleCP_of_fixed`, so the theorems no longer take `hRR`), and
-conditions on left-hand sides. For `:inverse`, the reduction leaves four conditions the
-engine did not establish: `InvMatching`, `InvUnitFree`, `InverseAxiomCP` and
+the fixed round supplies (`ruleRuleCP_of_fixed`), and conditions on left-hand sides. For
+`:inverse`, the reduction leaves four conditions, which the inverse rules R1 to R5
+establish (below): `InvMatching`, `InvUnitFree`, `InverseAxiomCP` and
 `NilpotentInverseCP`.
 
 ```lean
@@ -1643,7 +1832,7 @@ the nilpotent-inverse pairs join (`NilpotentInverseCP`). The `_engine` forms
 fixpoints of the engine's rules R1 to R5 (`RoundFixedInv`, `RoundFixedInvUnit`,
 `RoundFixedInvNil`; `invMatching_of_fixed`, `invUnitFree_of_fixed`,
 `inverseAxiomCP_of_fixed`, `nilpotentInverseCP_of_fixed`) and the inverse nodes present
-(`InvNodes`), and need I3. Every form still takes `hcancel`; for a cancellative operator the
+(`InvNodes`), and need I3. Every form takes `hcancel`; for a cancellative operator the
 bundles use the lattice theorems of Section 5.7 instead. Outside: a law the development has
 no instance for.
 
@@ -1651,16 +1840,42 @@ The engine applies the five inverse rules R1 to R5 in `inverse_law_repair`
 (`egraph/src/egraph.rs:3361`). `CC/Laws/InvRules.lean` models them as inference steps;
 `inv_rules_sound` (`:379`) extends soundness to them and requires a cancellative operator.
 
-**Adequacy.** `STATUS.md` describes the two `_engine` theorems as having engine-level
-hypotheses only; they still take `hcancel`, `hcc`, `hS`, the minimal-monomial hypotheses,
-`I3`, and conditions on left-hand sides (`hRR` was dropped in commit `2e40098d`), and with
-the cancellative operator `inv_rules_sound` requires, `hcancel` is the hypothesis
-Section 5.7 shows the engine does not establish.
+**Pseudo-code: axiom pairs and the per-law steps.**
+
+```
+axiom_pairs(rule A → B, L):                           -- AxiomCP, reduced per law in CC/Laws/
+  if L idempotent: for a ∈ A: join(B + {a}, A)               -- hax (idempotent)
+  if L nilpotent of order k: for a ∈ A with count m:
+    join(B + a^(k−m), A without a)                          -- hax (nilpotent)
+  if L has an inverse g:
+    for a ∈ A with g(a) in class y: join(B + {y}, A − {a})   -- InverseAxiomCP, RoundFixedInv.r3_left
+    for y ∈ A the class of g(x):    join(B + {x}, A − {y})   -- RoundFixedInv.r3_right
+  if L cancellative:
+    C := A ∩ B; join(A − C, B − C)                           -- Infer.cancelMerge (C1)
+    for every other rule A' → B': cancel-close (A + A', B + B')   -- (C2), disjoint superposition
+inverse_rules(st):                                    -- inverse_law_repair
+  R1: g(a) ~ g(c)  ⇒ merge(a, c);  g(g(x)) ⇒ merge(g(g(x)), x)   -- RoundFixedInv.r1_inj, r1_inv
+  R2: g(x) ~ unit ⇒ merge(x, unit);  x ~ unit ⇒ merge(g(x), unit) -- RoundFixedInvUnit
+  R3: the two rule-inverse pairs above, materialized and merged  -- r3_left, r3_right
+  R4: g(x) in class y ⇒ merge(materialize(x^(k−1)), y)           -- RoundFixedInvNil.r4
+  R5: g(x) in class y ≠ x ⇒ merge(materialize(y^(k−1)), x)       -- RoundFixedInvNil.r5
+```
+
+Each `join(P, Q)` normalizes both sides and merges their classes. The model states the
+fixpoints (`RoundFixedInv`, `RoundFixedInvUnit`, `RoundFixedInvNil`) and derives the four
+inverse conditions from them; the engine generates the pairs for touched rules in
+intermediate rounds and for every rule in the full round.
+
+**Adequacy.** The two `_engine` theorems take `hcancel`, `hcc`, `hS`, the minimal-monomial
+hypotheses, `I3` and conditions on left-hand sides, and with the cancellative operator
+`inv_rules_sound` requires, `hcancel` is the hypothesis Section 5.7 shows the engine does not
+establish; the `_atoms` forms of Section 5.9 and the bundles take lattice closure in its
+place.
 
 ### 5.7 The lattice round
 
-Kapur's inferences alone do not establish `hcancel`. The fixture `cancel_lattice.egg`
-converged without the equation `C5 = c1c3²`, which needs `c1c4² = c0²` and two copies of
+Kapur's inferences alone do not establish `hcancel`. On the fixture `cancel_lattice.egg`
+the inferences alone converge without the equation `C5 = c1c3²`, which needs `c1c4² = c0²` and two copies of
 `c4 = c0c3`. The engine therefore runs `lattice_round` at the completion fixpoint: classes
 whose count vectors differ by a member of the lattice spanned by the equations are merged.
 
@@ -1699,7 +1914,7 @@ per node, one per pair of classmates); `latticeClosed_of_engineFixed` (`:531`) s
 fixpoint gives `LatticeClosed`, with no further hypothesis.
 `completion_complete_cancellative_engine` (`:565`) is the completeness theorem with
 `hcancel` replaced by `hlat`: for a cancellative operator the conclusion comes from lattice
-closure alone (`complete_of_latticeClosed`), and otherwise `hcancel` was vacuous. The engine
+closure alone (`complete_of_latticeClosed`), and otherwise `hcancel` is vacuous. The engine
 supplies `hlat` by running `lattice_round` whenever a full round finds nothing and reopening
 completion after each of its merges. The soundness of those merges is
 `lattice_merge_sound`, under `FlatSound` (every node and classmate equation holds in the
@@ -1729,6 +1944,29 @@ under `FlatSound`, which is not shown invariant under `Infer`. In the cancellati
 `completion_complete_cancellative_engine`, the proof uses only `LatticeClosed` and `hS`. The
 variant with leaf constants, `completion_complete_cancellative_engine_atoms`, is in
 Section 5.9.
+
+**Pseudo-code: the completion loop, the confirmation round and the lattice round.**
+
+```
+rebuild():                                            -- EnginePhase; egraph.rs rebuild
+  full := true                                        -- round 0 inspects every pair
+  loop:
+    rebuild_congruence()                              -- EnginePhase.cong; rebuild_congruence
+    if node growth or work past its budget: outcome := abortedGrowthLimit | abortedWorkLimit; return
+    if a width error: outcome := abortedOverflow; return      -- CompletionOutcome
+    if the lazy goal is met: outcome := goalMet; return
+    changed := cc_round(full) | a_round() | canon_repair_round()   -- Completion.step; 11.1
+    if changed: full := false; continue              -- incremental rounds while progress
+    if not full: full := true; continue              -- confirm with a full round
+    if lattice_round(): full := false; continue      -- EngineFixed, LatticeClosed; lattice_round
+    outcome := converged                              -- CompletionRun.converged: K.step S' = none
+    return
+```
+
+`Converged` is reported only after a full round over every pair, with its reducibility pass,
+finds nothing and `lattice_round` merges nothing. The model's `Completion.step` abstracts
+the whole pass as one step function, so the incremental rounds and the touched delta are not
+modelled, and the fixpoint `K.step S' = none` is the full round's verdict.
 
 ### 5.8 The A-only round and the countermodel
 
@@ -1861,17 +2099,17 @@ class), `atoms`, `unit_class` and `materialized`. Outside: a class that holds an
 another operator's node and is no child, which the engine marks atomic and the model's store
 does not see.
 
-| Hypothesis | Stated on | Supplied by | Runtime check |
-|---|---|---|---|
-| `h5₀`, `hrun`, `ha` | the view | assumed; equivalent to assuming I5 of the view | tier 1, as I5 |
-| `h0` | the view | assumed: an atomic class's `rhs` is `{x}` (`class_rhs_into`) | tier 1, "a class with none is a leaf whose normal form is `{c}`" |
-| `hcanon` | the stored `rhs` | assumed of the engine | tier 1 |
-| `hfix` (`RoundFixedA`) | the view, plus the collapse | assumed of the engine at convergence | tier 2, as `nf_present` and `cp_joinable` |
-| `hcp` | the view's rules, which include `M → {x}` | assumed; not derived from `RoundFixedA` | tier 2 |
-| `hcc` | the stored active nodes | assumed of the engine (hash-consing) | tier 1 |
-| `hS` | the view: an asserted pair may relate a node to a constant | assumed of the input | none |
-| `hcancel` | the view's rules | not an engine fact (Section 5.7); `CompleteAtoms` takes `hlat : L.cancellative → LatticeClosed L (st.withAtoms A u)` in its place since commit `1be51963` | tier 1, as lattice closure |
-| `A` | a parameter; the `_atomic` corollaries take `atomicOf st` (`CC/AtomicOf.lean`), the set the `atomic` bit defines on the store of one operator | derived: a child of a stored node (`add_use`) or a class with no `f`-node (`register_if_fresh`); a class holding an `f`-node and another operator's node, never a child, is outside the model's store | tier 1, "the bit is set iff `atomicOf`" |
+| Hypothesis | Stated on | Class | Source | Runtime check |
+|---|---|---|---|---|
+| `h5₀`, `hrun`, `ha` | the view | assumed | equivalent to assuming I5 of the view | tier 1, as I5 |
+| `h0` | the view | assumed | an atomic class's `rhs` is `{x}` (`class_rhs_into`) | tier 1, "a class with none is a leaf whose normal form is `{c}`" |
+| `hcanon` | the stored `rhs` | assumed | the output of `nary_canon` | tier 1 |
+| `hfix` (`RoundFixedA`) | the view, plus the collapse | assumed; the collapse derived at `A := atomicOf st` | the confirmation round; `atomCollapse_of_addFixed` derives the collapse from `AddFixed`, a hypothesis on the normalize pass | tier 2, as `nf_present` and `cp_joinable` |
+| `hcp` | the view's rules, which include `M → {x}` | assumed | not derived from `RoundFixedA` | tier 2 |
+| `hcc` | the stored active nodes | assumed | hash-consing | tier 1 |
+| `hS` | the view: an asserted pair may relate a node to a constant | assumed | the input | none |
+| `hcancel` | the view's rules | limit | not an engine fact (Section 5.7); `CompleteAtoms` takes `hlat : L.cancellative → LatticeClosed L (st.withAtoms A u)` in its place | tier 1, as lattice closure |
+| `A` | a parameter; the `_atomic` corollaries take `atomicOf st` (`CC/AtomicOf.lean`), the set the `atomic` bit defines on the store of one operator | derived for the model's store, assumed for the bit | a child of a stored node (`add_use`) or a class with no `f`-node (`register_if_fresh`); a class holding an `f`-node and another operator's node, never a child, is outside the model's store | tier 1, "the bit is set iff `atomicOf`"; the five `atomic_bit_*.egg` fixtures probe the transitions |
 
 `CC/AtomsEngine.lean` restates the engine-level theorems on the view:
 `completion_complete_cancellative_engine_atoms` (`:57`, `LatticeClosed` of the view in place
@@ -1913,7 +2151,7 @@ with any `A ⊇ atomicOf st`. `child_mem_atomicOf` is the tier 1 check "no `f`-n
 non-atomic `f`-child", by definition. `addNF st u N` is `add` on a degenerate normal form:
 `some (find x)` for `{x}` (`Normal::Single`), `u.map find` for `∅` (`Normal::Unit`), `none`
 when a node is built. `AddStep L A u` is the normalize step with `add` so modelled: an
-active node of the view whose normal form `addNF` resolves to a class is merged into it
+active node of the view whose normal form `addNF` sends to a class is merged into it
 (`AddStep.find_changed`: the step is not idle under an idempotent `find`). At the fixpoint
 `AddFixed` the collapse holds (`atomCollapse_of_addFixed`), and `roundFixedA_of_addFixed`
 gives `RoundFixedA` from `RoundFixed` of the view. `completion_complete_atomic` restates
@@ -1927,6 +2165,24 @@ a hypothesis on the normalize pass of the same kind as `RoundFixed`, and that th
 engine keeps equals `atomicOf` on every class the store shows; the five fixtures
 `atomic_bit_*.egg` probe the bit's transitions against the bounded oracle.
 
+**Pseudo-code: the one-element collapse in `add`.**
+
+```
+add_step(st, L, A, u):                                -- AddStep.collapse; nary_canon::normalize, add
+  for (M, c) active in the view st.withAtoms A u:
+    N := normal form of M under the view's rules      -- Rw L (withAtoms).rules
+    match addNF(N):                                   -- addNF
+      {x}  ⇒ x' := find x                             -- Normal::Single(x) => find(x)
+      ∅    ⇒ x' := find u                             -- Normal::Unit
+      else ⇒ continue                                 -- a node is built, 11.2
+    if find c ≠ x': merge(c, x')                      -- AddStep → st.merge c x'
+  fixpoint when no step applies                       -- AddFixed
+```
+
+The engine performs the collapse inside `add` (a degenerate normal form returns the class and
+builds no node) and at rebuild (`degeneracy_pair` merges a stored node left with one child
+into that child); the model states the fixpoint `AddFixed` and derives `AtomCollapse` from it.
+
 **Non-vacuity.** `CC/AtomsWitness.lean` takes the program
 
 ```
@@ -1937,10 +2193,9 @@ engine keeps equals `atomicOf` on every class the store shows; the five fixtures
 
 over plain AC at its completion fixpoint: classes `a, b, c, d = 0, …, 3` are leaf constants,
 the stored nodes are `{a, b}` in `c`'s class and `{a, b, d}`, `{c, d}` in class 4, and every
-atom's right-hand side is its one-element monomial. Since commit `2e40098d` the node
-`{a, b, d}` is retired, as the engine's reducibility pass leaves it (its left-hand side
-contains `{a, b}`; the earlier state had an active containing pair, which `lhs_reduced`
-rejects). The view has one rule.
+atom's right-hand side is its one-element monomial. The node `{a, b, d}` is retired, as the
+engine's reducibility pass leaves it (its left-hand side contains `{a, b}`; with it active
+the state would hold a containing pair, which `lhs_reduced` rejects). The view has one rule.
 
 ```lean
 theorem witness_complete : CompleteAtoms (Laws.plainAC 5) wS wst wA none
@@ -1950,8 +2205,8 @@ theorem witness_complete : CompleteAtoms (Laws.plainAC 5) wS wst wA none
 of `CompleteAtoms` at once, with the asserted equation `{a, b} = {c}` between a stored node
 and a leaf constant; the parametric theorems alone do not show the hypotheses jointly
 satisfiable. `witness_I3` checks that the retired node rewrites to a node of its class.
-`witness_not_all` shows that `I0ActiveAll` fails on the stored state: before `7838c767`,
-`completion_complete_at_convergence` did not apply to any state with a leaf constant. The
+`witness_not_all` shows that `I0ActiveAll` fails on the stored state, so a completeness
+theorem over `I0ActiveAll` applies to no state with a leaf constant. The
 witness also establishes the reduction of the minimal-monomial triple to I5: it takes
 `ss₀ = ss` and the reflexive run. What it does not establish is a non-trivial merge: with
 `{a, b, d}` retired, the only active node theory-equal to `{c, d}` is itself.
@@ -1965,6 +2220,7 @@ superposition (two rules whose left-hand sides overlap without containment) and 
 written. No theorem relates `AddStep` to `Infer`, whose `mint` step builds a node for every
 normal form. The docstring of `CC/Atoms.lean` (`:53`) names `completion_complete_atom_class`,
 which does not exist; the theorem is `CompleteAtoms.atom_class`.
+
 ## 6. Rounds and saturation
 
 ### 6.1 Rounds
@@ -2039,12 +2295,12 @@ theorem semi_naive_round_complete {R : Round} (hwf : R.WF) (htr : R.tracking = t
 ```
 
 **Reading.** With the round well formed and tracked, the query well formed on both snapshots
-and a static plan, every naive match of the new snapshot that was not a naive match of the
+and a static plan, every naive match of the new snapshot that is not a naive match of the
 old one is emitted by some variant `k` on the new snapshot, namely the one of its first new
 atom. This is the theorem the saturation invariant uses for a tracked rule;
 `MatcherOK.round_complete` is the same statement on a matcher, so the adaptive scheduler is
 covered too. `semi_naive_complete` extends it to a chain of rounds: a naive match of the
-final snapshot was a match of the first one or was emitted by a variant of some round.
+final snapshot is a match of the first one or is emitted by a variant of some round.
 Outside: the routing decision itself (which rules run tracked), which `route` in Section 6.4
 models as a parameter.
 
@@ -2053,8 +2309,26 @@ Two counter-models show the hypotheses are needed. `delta_incomplete_untracked`
 no new scanning node: a merge whose survivor is the id the parent already stores. That is
 why the merge-membership delta exists. `delta_incomplete_global` (`:98`) is a well-formed
 tracked round in which a rule constrains a class variable to a global's class; the absorbed
-class's members enter the delta, but no atom scans them. The engine fixed this, the sixth
-recorded engine gap, by routing such rules to naive matching.
+class's members enter the delta, but no atom scans them. The engine routes such rules to
+naive matching (`needs_naive_match`).
+
+**Pseudo-code: semi-naive rounds, variants and routing.**
+
+```
+round r (r ≥ 1):                                      -- Round, ActRound; saturate.rs saturate_rules_semi
+  new(id) := id ∈ touched ∨ id ∈ mergeDelta           -- Round.isNew; touched log, merge_in_classes
+  resp := spelling_epoch moved and completion off     -- route; respelled
+  for rule in rules:
+    if naive(rule) or (resp and rule builds an n-ary term):      -- route naive resp
+      run rule on the whole index                     -- runNaive; needs_naive_match, VariantIndex::naive
+    else for k in scanning atoms of rule:             -- variants_cover_new
+      run variant k: atom k in the delta, atoms < k in full minus delta, atoms > k in full   -- variantMode k
+  apply every emitted binding's actions               -- ActRound, Fired; apply.rs
+  rebuild()                                           -- 11.3, 11.6
+```
+
+`naive(rule)` is the engine's static routing (`needs_naive_match`: `:flatten` rules, rules
+with a global, `Eq` against a global); the model takes it as a free parameter.
 
 ### 6.3 Actions and their consequences
 
@@ -2099,7 +2373,7 @@ def InvLag (A : ActRound) (rules : List Rule) : Prop :=
 ```
 
 **`inv_step`** (`Saturate/Invariant.lean:85`) carries `InvLag` from round r-1 to round r. A
-match on `A.R.before = prev.R.after` either was a match before the previous round, so the
+match on `A.R.before = prev.R.after` either holds before the previous round, so the
 previous invariant fired it and `fired_transport'` (`Saturate/Transport.lean:342`) keeps it
 fired across a round without subsumption, or is new, so a naive-routed rule emits it
 directly, a tracked rule emits it from a variant (`semi_naive_round_complete`), and the
@@ -2119,19 +2393,18 @@ theorem inv_step {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule
 **Reading.** Two consecutive rounds. The hypotheses on the engine: both rounds well formed,
 tracking on, the fixed-arity nodes of round `A` persisting literally (`PersistFixed`), no
 subsumption, the rules' atoms well formed, each rule's matcher correct (`hmatch`, a theorem
-for the adaptive scheduler), and the routing: if the previous rebuild was not literal
+for the adaptive scheduler), and the routing: if the previous rebuild is not literal
 (`¬ prev.R.Persist`: a unit drop, a clamp or a collapse happened), the flag `resp` is set and
 `route naive resp` sends the rules that build an n-ary term to the naive matcher. `hemit`
-says every binding the routed matcher emits on the previous snapshot was applied in round
+says every binding the routed matcher emits on the previous snapshot is applied in round
 `A`. The conclusion carries the guarded invariant `InvLagL` one round forward. The routing
-hypothesis is what the engine's `respelled` re-match implements through `spelling_epoch`
-since `8a84644b`.
+hypothesis is what the engine's `respelled` re-match implements through `spelling_epoch`.
 
 `fired_transport` needs `Round.Persist` (`Transport.lean:45`): every non-subsumed node of
 `before` survives in `after` with the same operator and its children mapped through the new
 `find`. It also needs no subsumption, because a `:subsume` can remove from the index a node a
-consequence is built of (`tests/egg/subsume.egg`). Since commit `329b25bc` `Persist` is no
-longer a per-round hypothesis. `recanonize_node` maps the children of a tuple, pair or
+consequence is built of (`tests/egg/subsume.egg`). `Persist` is not a per-round
+hypothesis. `recanonize_node` maps the children of a tuple, pair or
 sequence node through `find` and nothing else; `Round.PersistFixed` states it for the tuple
 and pair nodes (`isVariadic` is true of a sequence; `LiteralSeq`, `Fidelity/RecanonComplete.lean`,
 states the sequence case) and every round assumes it; for a multiset or set node it also drops the unit's class and clamps the
@@ -2171,6 +2444,20 @@ merged. The static routing `naive` is a free parameter, so every routing the eng
 covered. Outside: `:subsume`, literal `Den` (the store forms of Section 6.5 lift both),
 guards and literals in queries, and a run stopped by a budget, about which the theorem says
 nothing.
+
+**Hypotheses of `saturation_complete`, classified.**
+
+| Hypothesis | Meaning | Class | Source |
+|---|---|---|---|
+| `hmatch : MatchersOK rules` | each rule's matcher emits exactly `Matches ∧ ModeOk` | derived | `matcherOK_engine` for the adaptive scheduler, `matcherOK_static_engine` for the plan `schedule_with_stats` builds (Section 3.4) |
+| `h₀ : RulesWF` | the rules' atoms are well formed on the first snapshot | assumed | the resolver; the design note checks it once per rule at compilation |
+| `hok`: `Round.WF` | the round facts of Section 6.1 | assumed | `register_if_fresh`, `recanonize_node`, `merge_in_classes`, the hash-cons; `dedup` is derived for a modelled sequence store (`dedup_of_inv`) |
+| `hok`: `tracking = true` | merge tracking on | assumed | `saturate_rules_semi` turns it on for every entry point |
+| `hok`: `PersistFixed` | the tuple and pair nodes persist literally | assumed | `recanonize_node` maps their children through `find` and nothing else |
+| `hok`: `subsumed = ∅` | no subsumption | limit of this form | `tests/egg/subsume.egg`; the store form `saturation_complete_store` allows `:subsume` |
+| `hemit₀`, `hchain` | every naive or variant binding is applied, under the routing `route naive resp` | assumed | the matcher and `apply.rs`; the routing is the `respelled` re-match through `spelling_epoch` |
+| `hfix : Unchanged` | round `A` changes neither the node set nor `find` | derived | `engine_stop_unchanged` from the stop test, in `saturation_complete_engine` and the `_engine` forms |
+| tracking, no globals, literal persistence | the hypotheses the counter-models need | limit | `delta_incomplete_untracked`, `delta_incomplete_global`, `denN_persist_fails` |
 
 *Proof.* `invLag_chain` (`:153`) by induction with `inv_step`. At an unchanged round, `Den`,
 `Fired` and `Matches` read the graph only through node membership and `find`, so the
@@ -2215,7 +2502,7 @@ sequence store (`dedup_of_inv`, `Rounds/SeqSplice.lean:234`), but no theorem bui
   right-hand side in every model of the graph and the operator laws. Round-level soundness
   with rebuild's merges is open.
 - `Fidelity/StopTest.lean`: `engine_stop_unchanged` derives `Unchanged` from the engine's
-  stop test. Since commit `5d4fc78a` the rebuild is modelled (statements below), and
+  stop test. The rebuild is modelled (statements below), and
   `saturation_complete_engine` and its variants take the stop test in place of `Unchanged`.
 
 **Statements of the fidelity layer.**
@@ -2244,6 +2531,34 @@ has a value before a round in which a nested class merges into the unit and only
 value after it, with the node holding the match untouched. A fired instance of a rule that
 builds an n-ary term therefore need not stay fired across a rebuild that applied a law, and
 `SChainN` routes such rules naive after a non-literal rebuild instead.
+
+**Pseudo-code: rebuild and recanonicalization under the laws, with the spelling-change rule.**
+
+```
+recanonicalize(Sb) → Sa:                              -- StorePersistN; rebuild_congruence, recanonize_node
+  for (id, f(children)) in Sb.nodes:
+    if f is a tuple, pair or sequence:                -- LiteralFixed (tuple, pair); LiteralSeq (sequence, StorePersistE)
+      store f(children mapped through find)           -- recanonize_node (fixed arity)
+    if f is a multiset:                               -- NFMset
+      m := children mapped through find
+      repeat: drop the unit's class; drop k copies under :nilpotent k   -- RStep.unit, RStep.nil
+      if m = {x}: merge(id, x); if m = ∅: merge(id, unit)   -- Final; degeneracy_pair
+      else store f(m), hash-cons, merge on collision  -- WF.dedup
+    if f is a set: the same with the unit drop only   -- RSetStep.unit, NFSet
+  inverse pairs x, g(x) in one multiset: a merge the round records   -- canon_repair_round
+  if any law step applied, or a degenerate collapse happened:
+    spelling_epoch += 1                               -- VarCanon::law_applied; spelling_epoch
+next round:
+  resp := (completion off) and (spelling_epoch moved since the last cut)   -- route naive resp; saturate.rs respelled
+  rules that build an n-ary term match naive this round when resp     -- Rule.buildsNary
+```
+
+The model states what the store looks like after the rebuild (`StorePersistN`) and takes the
+routing as a hypothesis of the chain (`SChainN`); the engine's `touched` log, the
+merge-membership delta and the order of the worklist are summarized by `Round.WF`. With
+completion on, the engine does not re-match and completion joins the two spellings:
+`saturation_complete_closed` (`Fidelity/RecanonComplete.lean`) takes the store's closure
+under the theory (`TheoryClosed`) in place of the routing (Section 6.5).
 
 ```lean
 theorem inv_step_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
@@ -2350,6 +2665,21 @@ change and the size stamp (node count, class count) did not move; `engine_stop_u
 says it implies `Unchanged`. A round after an aborted rebuild matches on a store that is not
 a fixpoint, and the theorem does not apply to it. That is why the runtime check asks for
 `Converged` and why a budget stop reports no completeness.
+
+**Pseudo-code: the stop test.**
+
+```
+stop?(round):                                         -- EnginePhase.Stop; saturate.rs
+  stamp₀ := (node count, class count) at the index build      -- Sb.stamp; size_stamp
+  changes := sum of the actions' reported changes (counts a fresh subsume)   -- EnginePhase.changes
+  stamp₁ := (node count, class count) after the actions       -- E.mid.stamp
+  return changes = 0 ∧ stamp₁ = stamp₀                -- engine_stop_unchanged ⇒ Unchanged
+```
+
+The theorem needs the snapshot the round matched on to be a completion fixpoint
+(`before_fixed`), which only a `converged` rebuild gives; a budget stop in the previous
+rebuild leaves `Unchanged` underived, and the loop reports no fixpoint.
+
 ## 7. The final theorem
 
 ### 7.1 The represented graph
@@ -2374,9 +2704,8 @@ There is one `f`-multiset node per active node of the state, its children the
 representatives of the summand classes and its class the representative of its CC class.
 Class ids are `0` to `n - 1`, and node ids are offset by `n`. The bridge theorems need only
 half of `Enumerates`: `Within st A` (`Represents.lean:69`) says every node of `A` is an
-active node of `st`. Commit `15b5fa2e` restated `ac_equal_same_class_graph`,
-`matches_closed_under_theory` and the engine-match theorems of `CC/Bridge/Modulo.lean` with
-`Within`, because an enumeration of the stored active nodes is `Within` the completion view
+active node of `st`. `ac_equal_same_class_graph`, `matches_closed_under_theory` and the
+engine-match theorems of `CC/Bridge/Modulo.lean` are stated with `Within`, because an enumeration of the stored active nodes is `Within` the completion view
 of Section 5.9 but does not enumerate it.
 
 ### 7.2 Statement
@@ -2404,7 +2733,7 @@ theorem saturation_modulo_complete {sig : Sym → Kind} {naive : Rule → Bool} 
 **Reading.** The hypotheses are those of `saturation_complete` (the run, the matchers, the
 routing, the fixpoint round) plus a completion state `st` with `CompleteHyps`
 (`CC/Bridge/Modulo.lean:36`: the hypotheses of Section 5.3 with `hcancel` replaced by
-`hlat : L.cancellative → LatticeClosed L st` since commit `1be51963`, so that
+`hlat : L.cancellative → LatticeClosed L st`, so that
 `ac_equal_same_class` goes through `completion_complete_cancellative_engine`), an
 enumeration `act` of its active nodes, and `hG`: the fixpoint snapshot is the graph read
 off `st`. The side conditions restrict the rule to one pattern with head `f`. The
@@ -2446,45 +2775,44 @@ removes both.
 
 ### 7.3 Hypotheses
 
-| Hypothesis | Meaning | Status |
-|---|---|---|
-| `A₀`, `As` | the rounds, with their applied bindings and action facts | assumed; `Den` is literal (Section 6.3) |
-| `hmatch` | each rule's matcher emits exactly the matches its index settings admit (`MatchersOK`, Section 3.4) | a theorem for both schedulers: `matcherOK_engine` (commit `26ee4f9e`) for the adaptive one, `matcherOK_static_engine` (`scheduleEngine_schedA`) for the plan `schedule_with_stats` builds; for any other static plan it reduces to `SchedA` (`matcherOK_static`) |
-| `h₀`, `hok` | rule atoms well formed; per round: `WF`, tracking, `PersistFixed`, no subsumption | assumed; the fixed-arity nodes persist literally in every rebuild; n-ary nodes are not constrained here, the routing of `AChain` covers a non-literal rebuild |
-| `hemit₀`, `hchain` | every naive or variant binding was applied | assumed of the engine's matcher |
-| `hfix` | round `A` changed nothing | assumed here; `engine_stop_unchanged` derives it from the stop test, but this theorem does not use it |
-| `hcomp` | completion has converged | assumed; includes `hlat` (lattice closure, in place of `hcancel`); `CompleteAtoms` in the leaf-constant form |
-| `henum` | `act` is the set of stored active nodes | definitional |
-| `hG` | the fixpoint snapshot is the represented graph | assumed; the weakest point (Section 7.5); replaced by `SubRep` on the index in `saturation_modulo_complete_store_atoms` (Section 7.7) |
-| `rule.atoms = ...`, `P.head = some f` | the rule's query is one pattern with head `f` | side conditions; no `Eq` atoms, no globals |
+| Hypothesis | Meaning | Class | Source |
+|---|---|---|---|
+| `A₀`, `As` | the rounds, with their applied bindings and action facts | assumed | `apply.rs` and rebuild; `Den` is literal in this form (Section 6.3), `DenN` in the store form |
+| `hmatch` | each rule's matcher emits exactly the matches its index settings admit (`MatchersOK`, Section 3.4) | derived | `matcherOK_engine` for the adaptive scheduler, `matcherOK_static_engine` (`scheduleEngine_schedA`) for the plan `schedule_with_stats` builds; any other static plan reduces to `SchedA` (`matcherOK_static`) |
+| `h₀`, `hok` | rule atoms well formed; per round: `WF`, tracking, `PersistFixed`, no subsumption | assumed | the fixed-arity nodes persist literally in every rebuild; n-ary nodes are not constrained here, the routing of `AChain` covers a non-literal rebuild |
+| `hemit₀`, `hchain` | every naive or variant binding is applied | assumed | the engine's matcher and `apply.rs` |
+| `hfix` | round `A` changes nothing | derived in the `_engine` forms | `engine_stop_unchanged` derives it from the stop test; this form takes it as stated |
+| `hcomp` | completion has converged (`CompleteHyps`; `CompleteAtoms` in the leaf-constant form) | assumed, with the derived and limit parts of Section 5.3 | includes `hlat` (lattice closure, in place of `hcancel`) and `hcp_ax` (`AxiomCP`) |
+| `henum` | `act` is the set of stored active nodes | definitional | |
+| `hG` | the fixpoint snapshot is the represented graph | limit of this form | no engine index satisfies it (Section 7.5); `SubRep` on the index replaces it in `saturation_modulo_complete_store_atoms` (Section 7.7) |
+| `rule.atoms = ...`, `P.head = some f` | the rule's query is one pattern with head `f` | side condition | no `Eq` atoms, no globals |
 
 The runtime design note checks `h₀` once per rule at compilation (`hmatch` is a theorem for
-both schedulers and needs no check; the note once checked it as `SchedA` of the static
-plan), assigns `hfix` to tier 2 (the stop test), and replaces the history
+both schedulers and needs no check), assigns `hfix` to tier 2 (the stop test), and replaces the history
 hypotheses `hok`, `hemit₀` and `hchain` by one naive matching round at the final state, which
 checks the conclusion of `saturation_complete` directly. It has no check for `hG`, which no
 engine state satisfies (Section 7.5).
 
 ### 7.4 Proof
 
-Since commit `8932dc12` the proof is that of `saturation_modulo_complete_sub`
-(`Final/Main.lean:89`), which takes `SubRep A.R.after st f act ι` in place of `hG`;
-`saturation_modulo_complete_within` (`:119`) applies it with `represents_subRep`, and
-`saturation_modulo_complete` applies that with `henum.within`. Three independent parts,
-described as before that commit, with the changes noted:
+The proof is that of `saturation_modulo_complete_sub` (`Final/Main.lean:89`), which takes
+`SubRep A.R.after st f act ι` in place of `hG`; `saturation_modulo_complete_within` (`:119`)
+applies it with `represents_subRep`, and `saturation_modulo_complete` applies that with
+`henum.within`. Three independent parts:
 
 1. **Fired.** `saturation_complete` gives `Saturate.Inv A.R.after rules`, which applied to the
    match is the first conjunct.
-2. **The root.** After rewriting with `hG`, `matches_at_active` (`Final/Main.lean:36`) applies
-   `backOk` to the atoms. It finds an active `q` with `σ.node r = some (nodeId q)` and `MatchN`
-   at `mkNode st f q`. Injectivity of `nodeId` gives `q = p'`. (Now `matches_at_sub`, `:67`:
-   `backOk` gives a node of `A.R.after` under the id `ι p'`, and `KeysNodup` identifies it
-   with the represented node `mkNode st f p'`.)
-3. **The theory.** `ac_equal_same_class_graph` (`CC/Bridge/Modulo.lean:101`) gives
-   `find (nodeId p') = find (nodeId p)`, by `completion_complete_at_convergence`.
-   `matches_closed_under_theory` (`:144`) lifts the node match at `p'` to a class match at `p`'s
-   class through `MatchC.app`. (Now `ac_equal_same_class_sub` and
-   `matches_closed_under_theory_sub`, `CC/Bridge/Sub.lean`, the same argument on a part.)
+2. **The root.** `matches_at_sub` (`:67`) applies `backOk` to the atoms: it finds a node of
+   `A.R.after` under the id `ι p'` with `MatchN` at it, and `KeysNodup` identifies that node
+   with the represented node `mkNode st f p'`. On the represented graph, `matches_at_active`
+   (`Final/Main.lean:36`) finds an active `q` with `σ.node r = some (nodeId q)` and `MatchN`
+   at `mkNode st f q`, and injectivity of `nodeId` gives `q = p'`.
+3. **The theory.** `ac_equal_same_class_sub` (`CC/Bridge/Sub.lean`) gives
+   `find (ι p') = find (ι p)`, by `completion_complete_at_convergence`, and
+   `matches_closed_under_theory_sub` lifts the node match at `p'` to a class match at `p`'s
+   class through `MatchC.app`. On the represented graph `ac_equal_same_class_graph`
+   (`CC/Bridge/Modulo.lean:101`) gives `find (nodeId p') = find (nodeId p)` and
+   `matches_closed_under_theory` (`:144`) lifts the match.
 
 The theory enters only through "theory-equal active nodes share a class". Lifting a node
 match to a class match is one constructor. Neither `NoCollapse` nor `matches_transport`
@@ -2497,45 +2825,41 @@ it case-splits on whether the match existed before the round.
 node per active node and nothing else: summand classes have no nodes, other operators are
 absent, and retired nodes are dropped. The engine's index holds leaf nodes, other operators,
 and retired `FLAG_AC_COLLAPSED` nodes, which the index does not skip (`index.rs:521-537`). So
-`hG` restricts the theorem to an index that contains only active `f`-multiset nodes. No
-theorem relates `st` to the earlier rounds or to the engine's rebuild. The leaf-constant form
-keeps this restriction: `represents st f act` has no node for a leaf constant either, so the
-leaf constants enter `saturation_modulo_complete_atoms` only through the theory `E L S`. A
-rule whose pattern names a constant, such as `(rewrite (+ a b) c)` with `a`, `b`, `c` nullary
+`hG` restricts `saturation_modulo_complete` to an index that contains only active
+`f`-multiset nodes, and no engine index satisfies it. The leaf-constant form keeps this
+restriction: `represents st f act` has no node for a leaf constant either, so the leaf
+constants enter `saturation_modulo_complete_atoms` only through the theory `E L S`. A rule
+whose pattern names a constant, such as `(rewrite (+ a b) c)` with `a`, `b`, `c` nullary
 operators, has no match on this graph, because `.plain a []` matches only a stored node of
-operator `a`. The theorem covers such a rule only in the empty sense.
+operator `a`; the theorem covers such a rule only in the empty sense. The store form of
+Section 7.7 replaces `hG` by `SubRep A.Sa.index st f act ι`: the represented graph is a part
+of the index, which may hold leaf nodes, other operators, the nodes the right-hand sides
+build and retired nodes. `saturation_modulo_complete_sub` does the same for the literal form.
 
-*Resolved by commit `8932dc12`.* `saturation_modulo_complete_store_atoms` replaces `hG` by
-`SubRep A.Sa.index st f act ι`: the represented graph is a part of the index, which may hold
-leaf nodes, other operators, the nodes the right-hand sides build and retired nodes
-(Section 7.7). `saturation_modulo_complete_sub` does the same for the literal form.
-
-**The hypotheses are contradictory for many rules.** `Fired` requires every application in
-the right-hand side to be a stored node of `A.R.after` (through `Den`), and under `hG` the
-only stored nodes are `f`-multiset nodes with literal children. If a rule has a match at the
-fixpoint and its right-hand side builds any other node, for example
+**The hypotheses of the literal forms are contradictory for many rules.** `Fired` requires
+every application in the right-hand side to be a stored node of `A.R.after` (through `Den`),
+and under `hG` the only stored nodes are `f`-multiset nodes with literal children. If a rule
+has a match at the fixpoint and its right-hand side builds any other node, for example
 `(rewrite (f x y) (g x))`, `saturation_complete` derives `Fired` for that match, `Fired`
-cannot hold, and the theorem holds vacuously for that rule set. The theorem has content for
-rules whose right-hand sides are variables or literal `f`-terms the store holds as written.
-Neither the docstring nor `STATUS.md` states this restriction, and no theorem exhibits
-rounds, a state and rules that satisfy all the hypotheses together. The same holds of
-`saturation_modulo_complete_atoms`, with one more case: a right-hand side that names a leaf
-constant, or that is a one-element `f`-term `(f x)`, needs a stored node the graph does not
-have, because the implicit nodes of the view are not nodes of `represents`.
+cannot hold, and the theorem holds vacuously for that rule set. The literal theorems have
+content for rules whose right-hand sides are variables or literal `f`-terms the store holds
+as written; the hypotheses are joint, so one such rule with a match makes the theorem vacuous
+for every rule of the set, and a rule set whose right-hand sides use a second operator or a
+constant is the common case. `saturation_modulo_complete_atoms` adds one more case: a
+right-hand side that names a leaf constant, or that is a one-element `f`-term `(f x)`, needs
+a stored node the graph does not have, because the implicit nodes of the view are not nodes
+of `represents`. The docstrings of both theorems state the restriction (limit 3).
 `AtomsWitness.witness_complete` establishes `CompleteAtoms` for one state and constructs no
-rounds, so the joint satisfiability with `hG` remains unshown.
+rounds, so the literal forms have no witness of joint satisfiability with `hG`. The store
+form reads right-hand sides as the normal forms `add` builds (`DenN`, `FiredN`) and has one:
+`witness_saturation_modulo_complete` (`Final/Witness.lean`) applies it to two concrete rounds
+of a rule whose right-hand side is a node of another operator, with every hypothesis proved
+(Section 7.7).
 
-*Resolved by commit `8932dc12`.* `saturation_modulo_complete_store_atoms` reads the
-right-hand sides as the normal forms `add` builds (`DenN`, `FiredN`) on the store, and the
-completion state only through the `f`-part of the index. `witness_saturation_modulo_complete`
-(`Final/Witness.lean`) applies it to two concrete rounds of a rule whose right-hand side is a
-node of another operator, with every hypothesis proved (Section 7.7). The old statements are
-kept; their docstrings now state the restriction (limit 3).
-
-**The final theorem uses the least faithful layer.** It uses literal `Den`, no subsumption,
+**The literal forms use the least faithful layer.** They use literal `Den`, no subsumption,
 the graph read as the index, and `Unchanged` assumed. Section 6.5 lists the theorems that
-remove each restriction. None of them is composed with the bridge into a theorem modulo the
-theory.
+remove each restriction, and Section 7.7 composes them with the bridge; the literal forms
+stay as the simplest statement of the argument.
 
 **Two limits are stated in the docstring.** A theory-equal term absent from the graph has no
 node and is matched through its class only. The per-node form, "a binding at `p` yields one
@@ -2574,7 +2898,7 @@ hash-cons hit or a completion-minted node can also account for it.
 
 ### 7.7 The final theorem over the store
 
-Commit `8932dc12` states the final theorem on the store model of `Fidelity/` (Section 6.5),
+The final theorem is stated on the store model of `Fidelity/` (Section 6.5),
 with the completion state entering through the `f`-part of the index only.
 `SubRep G st f act ι` (`CC/Bridge/Sub.lean`) says that each `p ∈ act` is stored in `G` under
 the id `ι p` with the children of `mkNode st f p`, and that `G.find (ι p)` is its class in
@@ -2623,12 +2947,12 @@ node of some `p ∈ act`) and concludes for every match, whatever its root. The 
 of Section 7.4 with `saturation_complete_N` in place of `saturation_complete`;
 `matches_at_sub` identifies the matched node through `KeysNodup`. Outside: the relation
 between `st` and the rounds. A match rooted at a retired node is covered by the retired form
-below (item 18 of Section 10). The completion settings in which the engine does not re-match
+below. The completion settings in which the engine does not re-match
 after a spelling change are covered at the store level by `saturation_complete_closed`
 (Section 6.5), which takes the store's closure under the theory (`TheoryClosed`) in place of
-the routing of `SChainN`; `TheoryClosed` is not derived from `CompleteHyps` (item 9).
+the routing of `SChainN`; `TheoryClosed` is not derived from `CompleteHyps` (Section 9).
 
-**`saturation_modulo_complete_store_retired`** (`Final/Store.lean`, commit `e5ed0211`). The
+**`saturation_modulo_complete_store_retired`** (`Final/Store.lean`). The
 engine keeps a collapsed node (`FLAG_AC_COLLAPSED`, retired in the model) in the index and
 matchable, so `FCover` over `act` fails on every run in which completion collapsed a node
 (`not_cover`, below). `SubRepR G st f act ret ι` (`CC/Bridge/Sub.lean`) extends the
@@ -2669,11 +2993,11 @@ in the engine because the node is still a member of its class, so a match rooted
 match at that class, and completeness is unaffected because every match it yields is
 yielded, at the class level, by the active node it rewrites to; what it costs is time: the
 extra matches build nodes `=_E`-equal to the ones the active match builds, which completion
-or hash-consing joins. The match count was not measured.
+or hash-consing joins. The match count is not measured.
 
 **The witness.** `Final/Witness.lean` takes the completion state of `CC/AtomsWitness.lean`
 (the program `(union (+ a b) c)`, `t = a + b + d`, `u = c + d`) and adds the rules
-`(rewrite (+ x y) (g x y))` with `g` a plain binary operator and, since commit `7e579f4f`,
+`(rewrite (+ x y) (g x y))` with `g` a plain binary operator and
 `(rewrite (+ x y z) k)` with `k` a constant. The store holds the four leaf constants, the
 three `+`-nodes `{a, b}`, `{a, b, d}`, `{c, d}`, and after round 0 the four `g`-nodes
 `g(a, b)`, `g(b, a)`, `g(c, d)`, `g(d, c)` and the `k`-node in the class of `{a, b, d}`;
@@ -2704,7 +3028,7 @@ theorem witness_fires_retired :
 applied to this run with every hypothesis proved: the hypotheses of the final theorem are
 jointly satisfiable on a run whose right-hand side builds a node of another operator, which
 the literal forms could not show. `witness_fires_modulo` reads the conclusion at the match
-`x ↦ c, y ↦ d` rooted at `{c, d}`. Since commit `2e40098d` the node `{a, b, d}` is retired in
+`x ↦ c, y ↦ d` rooted at `{c, d}`. The node `{a, b, d}` is retired in
 the completion state (Section 5.9), so `act` holds `{a, b}` and `{c, d}` only, and the
 theorem says nothing about a match rooted at `{a, b, d}`; its class is that of `{c, d}` by
 the store's union-find (`retired_class`), not by the theorem. `not_cover` records the limit
@@ -2728,701 +3052,274 @@ running the plan. `witness_atomicOf`, `witness_complete_atomic` and
 **What remains.** `SubRep`, `CompleteAtoms` and the round facts are hypotheses: no theorem
 relates the completion state to the rounds or to the engine's rebuild, so the theorem says
 nothing about a run whose index does not hold the active nodes of a converged state. The
-minimal-monomial hypotheses stay in `CompleteAtoms` (Section 10, item 6); `hcp` is reduced
-to `AxiomCP` (item 5) and `hcancel` is replaced by lattice closure (item 3). The engine's
-completion settings, which do not re-match, reach every instance at the class level:
-`saturation_complete_closed` takes the store's closure under the theory (`TheoryClosed`) in
-place of the routing of `SChainN` (item 9); `TheoryClosed` is a hypothesis on the store, not
-derived from `CompleteHyps`. The covering form over `act` alone excludes any index holding a
-collapsed `f`-node; the retired form takes `I2`, `I3` and `SubRepR` as further hypotheses and
-covers it (item 18, resolved).
-## 8. Counterexamples and the engine defects they record
+minimal-monomial hypotheses stay in `CompleteAtoms`; `hcp` is reduced to `AxiomCP`, and
+`hcancel` is replaced by lattice closure. The engine's completion settings, which do not
+re-match, reach every instance at the class level: `saturation_complete_closed` takes the
+store's closure under the theory (`TheoryClosed`) in place of the routing of `SChainN`, and
+`TheoryClosed` is a hypothesis on the store, not derived from `CompleteHyps`. The covering
+form over `act` alone excludes any index holding a collapsed `f`-node; the retired form takes
+`I2`, `I3` and `SubRepR` as further hypotheses and covers it. Section 9 lists each of these
+as a gap.
 
-Several theorems are refutations. Each records an engine defect that was fixed, or a
-hypothesis that cannot be dropped. Those marked "eval" are `#eval` scripts whose expected
-outputs appear only in comments; nothing asserts them.
+**Hypotheses of `saturation_modulo_complete_store_atoms`, classified.** The rounds
+hypotheses are those of `saturation_complete` on the store (the table of Section 6.4, with
+`StorePersistN` in place of `PersistFixed` and `:subsume` allowed); the completion
+hypotheses are those of `CompleteAtoms` (the table of Section 5.9). The bridge adds:
 
-| Lean | File | What it shows | Fixture |
+| Hypothesis | Meaning | Class | Source |
 |---|---|---|---|
-| `shrinkNoRefresh_breaks_I5` | `CC/Slot.lean:290` | a shrink without refreshing the minimal monomial breaks I5 and drops a rule; fixed by `refresh_min_monomial` | |
-| `idOrder_grow_breaks_I5` | `CC/MinMonoKey.lean:250` | under the id order a renamed node grows past its classmate; fixed by per-class order keys | `ac_minmono_grow_wa.egg` |
-| `witness_not_all` | `CC/AtomsWitness.lean:297` | the former `I0Active` (now `I0ActiveAll`) fails on a state with a leaf constant, and on every state with a class that holds no active node; fixed by weakening `I0Active` in `7838c767` | |
-| `hcancel_not_derivable` | `CC/Lattice.lean:725` | lattice closure does not give `hcancel` | `cancel_lattice.egg` |
-| `left_off_spine_unsound`, `right_off_spine_unsound` | `CC/ARound/Basic.lean:390`, `:420` | `a_round` before commit `7beed39f` rewrote off the spine and was unsound | `ac_fold_completion_spine.egg` |
-| `stub_counterexample` | `CC/Proofs/CriticalPairModulo.lean:202` | the earlier local-confluence lemma is false; motivates rules plus law instances in `hcp` | |
-| `invGen_cp_not_joinable` | `CC/Laws/Inverse.lean:512` | without `InvMatching` a generator critical pair is not joinable | |
-| `combined_counterexample` | `CC/Laws/Combined.lean:160` | without `InvUnitFree` the composite clamp has two normal forms | |
-| `delta_incomplete_untracked` | `Rounds/Counter.lean:184` | without the merge delta a new match has no new node | `semi_merge_membership_delta.egg` |
-| `delta_incomplete_global` | `Rounds/Counter.lean:98` | a rule with a global misses a match under tracking; fixed by naive routing | `semi_eq_global_local.egg` |
-| `raw_breaks_dedup` | `Rounds/SeqSplice.lean:292` | `add` spliced a same-operator child with stale children: two equal nodes in two classes | `seq_hashcons_miss_min.egg`, `rounds_r1_0581.egg` |
-| `den_misses_single` | `Fidelity/NormalizeSat.lean:210` | literal `Den` has no value for a one-element AC right-hand side | |
-| `denN_persist_fails` | `Fidelity/Recanon.lean` | a fired instance of a rule that builds an n-ary term need not survive a rebuild that applied a law to a node its right-hand side was built through; the engine counts such a rebuild in `spelling_epoch` since `8a84644b` | `semi_recanon_unit_drop.egg`, `semi_recanon_idem_collapse.egg`, `semi_recanon_inverse_cancel.egg`, `semi_recanon_pending_collapse.egg` |
-| `per_node_form_fails` | `CC/Bridge/Modulo.lean:251` | matching modulo the theory holds at the class level only | |
-| `fold_open_off_spine_unsound` | `Flatten/Fold.lean:138` | the flatten walk opened every position of a fold; fixed by `flatten::spine` | `flatten_fold_spine.egg` |
-| `regroup_off_spine_unsound` | `Flatten/RegroupSound.lean:525` | regrouping off a fold's spine is unsound | |
-| original demand rule on AC (eval) | `Flatten/FixCheck.lean:39-64` | the rule rejected a match that lives on no other view; fixed in commit `d95883f5` | `proofs/repro/demand-gap.egg` |
-| kept-count rule under laws (eval) | `Flatten/LawsCheck.lean` | five cases where the corrected rule loses a match under inverse, identity, nilpotent and unit laws | |
+| `hw : Within st act` | every node of `act` is an active node of `st` | definitional | `act` is chosen as the active nodes |
+| `hs : SubRep A.Sa.index st f act ι` | each `p ∈ act` is stored in the index under `ι p` with the children of `mkNode st f p`, in the class `st` gives it | assumed | the correspondence between the engine's index and the completion state of the model; no theorem relates the two (Section 9) |
+| `hfix : A.Unchanged` | the round changes nothing | derived | `engine_stop_unchanged`, in `saturation_modulo_complete_store_engine` |
+| `FCover` (the `_cover` form) | every `f`-node of the index is the node of some `p ∈ act` | limit | fails on every run in which completion collapsed a node (`not_cover`); the `_retired` form takes `SubRepR`, `I2`, `I3` instead |
+| `TheoryClosed` (`saturation_complete_closed`, completion on) | the store is closed under the theory | assumed | the store reading of `CompleteAtoms.same_class`; not derived from `CompleteHyps` through `SubRep` (Section 9) |
+| a theory-equal term absent from the graph; a two-item match whose children classes merge | | limit | `per_node_form_fails`; `proofs/repro/ac_collapse.egg` (`NoCollapse`) |
 
+## 8. Conformance and mirror tests, and the fixtures
 
-## 9. Gaps between the model and the engine, and the status of the first edition's findings
+No theorem connects a Lean model to the Rust code. The tests below compare the executable
+models with the engine on generated or recorded inputs; each compares one model definition
+with one engine function. The counts are those of the committed corpora and of the last run
+on record.
 
-This section collects the gaps from the adequacy notes above, in the order a reader trying
-to strengthen the final theorem would meet them. The first edition (commit `a5cfa2d7`,
-written against `6c37120b`) recorded each item below. Each carries one of three statuses,
-checked against the sources of this branch: **still true**; **resolved**, with the commit
-and the theorem that resolve it; or **changed**, with what changed. Items marked **new**
-were found for this edition.
+| Test | Compares | Against the model definition | Count |
+|---|---|---|---|
+| `conform.rs` (`egraph/tests/`) | the `check-eq` and `check-neq` results of every `.egg` file under `tests/egg/conform*`, run under both evaluation strategies and both atom-scheduling settings | `semper-conform`: `run (compile P)` (`EMatch/Ref.lean`) over `enumerateX`, `enumerateL` and the regrouped views (`regroupLevels`, `regroupLevelsCapped`, `runERO`); `semper-conform-flatten`: the flattened plan `planF` with `runER`; `semper-conform-cc`: the bounded closure of `CC/BoundedOracle.lean` (`run_sound`); `semper-conform-rounds`: the fired-instance invariant `Saturate.Inv` on the engine's own dumps; `semper-conform-cc-cert`: `not_E_of_separates` | 1,000 committed files: 200 `conform` and 200 `conform-flatten` (the 400 samples of the matching models, seed 1 and seed 2), 200 `conform-cc`, 200 `conform-rounds`, 200 `conform-cc-cert`; the Lean workflow regenerates all but `conform-rounds` and fails on a difference |
+| `flatten_differential.rs` | the matches of `run_query` under `:flatten`, projected onto the pattern's variables and the root, as multisets, against a brute-force Rust reference that enumerates every opened, regrouped and overlap view of a node read back through the public accessors | the view definitions of Section 4.1 (`Views`, `RegroupsTo`, the overlap views), transcribed independently of the engine's enumerator | four tests (`flattened_matches_reference`, `_laws`, `untagged_matches_stored_children`, `_laws`), 60 seeded programs each, every pattern, both scheduling settings |
+| the fold mirror | the conformance oracle `runER` run with the fold directions of the case (`Conform/Flatten/Oracle.lean`, `FCase.dirOf`) against the engine's `:flatten` matching on fold patterns; bindings compared as the number of distinct `Tag` nodes | `rawOptD`, `enumerateR` with `Dir.left` and `Dir.right` (`FoldEnum.lean`, `FoldRegroup.lean`) | 800 samples (the 400 committed `conform` and `conform-flatten` samples and 400 more of seed 3 of the `:flatten` generator), 230 with a fold in the pattern; every check holds and the binding counts agree; the comparison test is not committed |
+| the atom-choice mirror, `atom_choice_agrees_with_the_model_on_the_rounds_corpus` (`ematch.rs`) | at every phase-B decision of the `conform-rounds` corpus run naive and semi-naive under runtime scheduling, the atom `choose_atom` takes against the one a Rust transliteration of `chooseEngine` takes from the same bindings and bucket lengths | `chooseEngine` (`EMatch/Engine/Choose.lean`) | 200 files, 4945 decisions, 1591 with several candidates, all agree; two mutations of the transliteration are caught (30 and 808 disagreements) |
+| the static-plan mirror, `static_plan_agrees_with_the_model_on_the_rounds_corpus` (`schedule.rs`) | every plan `schedule_inner` builds while the `conform-rounds` corpus runs naive and semi-naive, against the steps a Rust transliteration of `scheduleEngine` (`model::schedule`) emits from the engine's prices: atom order, binding kind per variable, join lookups | `scheduleEngine` (`EMatch/Engine/Schedule.lean`), `engineJoinLookups` | 200 files, 2999 plans; 2679 compared (1185 with several atoms, 4071 picks), all agree; 320 outside the model, each for a rule with a `(= x g)` atom; three mutations caught (608, 17 and 458 disagreements), a fourth by `eager_chain_agrees_with_the_model` |
+| the certified completion states (`semper-conform-cc-cert`, `tests/egg/conform-cc-cert/`) | the engine's `check-neq` under eager completion against pairs a concrete countermodel separates, with the certificate in the preceding comment; `check-eq` against the bounded oracle | `not_E_of_separates`, `E_sound` (`CC/Countermodel.lean`); `run_sound` (`CC/BoundedOracle.lean`) | 200 committed programs, seed 1, run by `conform.rs`; a failing `check-neq` is an engine unsoundness, a failing `check-eq` a completeness gap |
+| the soundness waves | the certified generator's programs with their `dump-egraph` line, run through the engine by the soundness runner, which reads the dumped final state and checks every certified `check-neq` | `not_E_of_separates` on the dumped state | 10,200 programs over the waves run; every fixture named `ac_collapsed_recanon.egg`, `cancel_lattice.egg`, `cancel_crit_pair.egg`, `cancel_lattice_lazy.egg`, `nilpotent_group_lattice.egg` and `ac_reactivate_min_monomial.egg` is a reduction of a program of this generator |
 
-**Hypotheses the engine does not discharge.**
+The regrouping counters are checked the same way: every regrouping the engine runs on the
+`conform` and `conform-flatten` samples has the counters of the model's run on a node of the
+case (an instrumented engine against an executable mirror of `BSt.run`, not committed); on
+`c1_0052.egg` both stop at `MAX_REGROUP_VIEWS` (16,385 records). The generators use
+`regroupLevels` rather than the engine's loop, which emits the same `check-eq` sets in another
+order and so changes the sampled `check-neq` candidates; they run the overlap stage
+(`runERO`, `overlapStage` in `Conform.regroupedRecs`), and eight of the 400 matching samples
+carry overlap matches (`conform/c1_0081.egg`, `c1_0101.egg`, `c1_0152.egg`, `c1_0181.egg`,
+`conform-flatten/f2_0026.egg`, `f2_0112.egg`, `f2_0118.egg`, `f2_0135.egg`).
 
-1. **Still true.** `hG`: the final theorem is about an index that contains only active
-   `f`-multiset nodes (Section 7.5). `saturation_modulo_complete_atoms` keeps the same `hG`;
-   its graph has no node for a leaf constant. *Resolved since, by commit `8932dc12`:*
-   `saturation_modulo_complete_store_atoms` takes `SubRep` on the index (Section 7.7).
-2. **Still true, and it extends to the leaf-constant form.** Literal `Den` with `hG` makes
-   `saturation_modulo_complete` hold vacuously for any rule with a match whose right-hand side
-   builds a node other than an active `f`-multiset node, and
-   `saturation_modulo_complete_atoms`, with the same `hG` and `Fired` (Final/Main.lean:183-200),
-   adds the case of a right-hand side naming a leaf constant or a one-element `f`-term
-   (Section 7.5). Neither docstring nor `STATUS.md` states the restriction, and no theorem
-   exhibits rounds, a state and rules satisfying all the hypotheses together. This is the
-   most serious finding of the guide: the hypotheses are joint, so one such rule with a match
-   makes the theorem vacuous for every rule of the set, and a rule set whose right-hand sides
-   use a second operator or a constant is the common case. *Resolved since, by commit `8932dc12`:*
-   `saturation_modulo_complete_store_atoms` reads right-hand sides as normal forms on the
-   store, and `witness_saturation_modulo_complete` proves all its hypotheses on a run of
-   `(rewrite (+ x y) (g x y))` (Section 7.7).
-3. **Resolved, by commit `1be51963`.** `CompleteHyps` and `CompleteAtoms` take
-   `hlat : L.cancellative → LatticeClosed` in place of `hcancel`; `CompleteAtoms.same_class`
-   and `ac_equal_same_class` go through `complete_of_latticeClosed` for a cancellative
-   operator and through the rewriting argument, where `hcancel` is vacuous, otherwise. The
-   final theorems are unchanged in statement. `hcancel` remains only in
-   `completion_complete_at_convergence`, `completion_complete_atoms` and the inverse and
-   combined `_engine` theorems, which the bundles no longer use for a cancellative operator.
-4. **Resolved** by `2e40098d` (`RoundFixed` with `lhs_reduced`, `hcp_of_fixed`,
-   `CC/Assemble.lean`). The first edition recorded that `hcp` was not derived from
-   `RoundFixed`, and that the engine skips disjoint and containment pairs (`cc_round`) and
-   states that the normalize pass handles containment. `RoundFixed` now states the
-   reducibility pass as `lhs_reduced`, `hcp_of_fixed` derives the rule-rule part of `hcp`
-   from it, and the bundles take `AxiomCP` for the pairs involving a law instance (Section
-   5.3). Remainder: `AxiomCP` for an abstract law set, reduced per law in `CC/Laws/`; in the
-   leaf-constant form it ranges over the view's rules `M → {x}`.
-5. **Still true.** The minimal-monomial hypotheses amount to assuming I5:
-   `witness_complete` discharges them with `ss₀ = ss` and the reflexive run.
-6. **Resolved** by `798af6c9` (`twoClassesL_of_members`, `EMatch/Flatten/EngineComplete.lean`).
-   `TwoClassesL` is derived from the collapse invariant `MembersTwoClassesL` and
-   `NodeTwoClassesL`, which `demand_engine_complete_aci` takes (Section 4.3), and the
-   fixture `egraph/tests/egg/aci1.egg` is committed.
-7. **Resolved** by `329b25bc`. `Round.Persist` and `StorePersist` are no longer per-round
-   hypotheses: `Round.PersistFixed`, `LiteralFixed` and `StorePersistN`
-   (`Fidelity/Recanon.lean`) state what `recanonize_node` does, including the unit drop,
-   the nilpotent clamp and the degenerate arity; inverse-pair cancellation
-   (`canon_repair_round`) is a merge the round records. `denN_persist_fails` shows the
-   weakened hypothesis does not transport n-ary right-hand sides, so the chains route the
-   rules that build them naive after a non-literal rebuild, as the engine does since
-   `8a84644b`.
-8. **Resolved** by `5d4fc78a`. `EnginePhase.rebuild_idle` is a theorem of a model of the
-   rebuild with `CompletionOutcome`; the round matches on a completion fixpoint
-   (`before_fixed`), which a converged previous rebuild gives and an aborted one does not.
-9. **Resolved** by `7838c767` (`I0Active`, `CC/Assemble.lean:94`;
-   `completion_complete_at_convergence_of_all`, `CC/Main.lean:125`). The first edition
-   recorded that `I0Active` quantified over every class id of `Fin n`. It now constrains only
-   the classes that hold an active node, and `hcc` only the active nodes;
-   `witness_not_all` shows the former hypothesis failed on a state with leaf constants.
-10. **Resolved** by `c4530325` (`CC/AtomicOf.lean`, Section 5.9). `atomicOf st` is the set the
-    `atomic` bit defines on the store of one operator, and `atomCollapse_of_addFixed`
-    derives the collapse from a fixpoint of the normalize step with `add` modelled by
-    `addNF`. The first edition recorded both as assumed.
+**Fixtures, by the theorem or invariant each probes.** A fixture without a path is in
+`egraph/tests/egg/`; `egg_tests.rs` runs them.
 
-**Model components not connected to each other.**
+The minimal monomial (I5: `reachable_I5`, `keyed_reachable_I5`, `unretire_refresh_I5`):
 
-1. **Still true, and stronger than recorded.** The mutable executor (`Env/`) is not
-   connected to the scheduler theorems. The first edition located the conflict in the re-join
-   `byRepr a.node`; `Env.WF`'s partition of variables into node and class variables excludes
-   every plan of a nested pattern, in either lowering order (Section 3.7). *Resolved since,
-   by commit `f1e8be1a`:* per-step binding kinds, `planOK_envWF` and `exec_matches`
-   (Section 3.7).
-2. **Still true for `exec`.** `runND` models the adaptive scheduler, and `exec` models static
-   plans only. *Since commit `26ee4f9e`:* the adaptive scheduler reaches the saturation
-   theorems through `runNDA`, `chooseEngine` (`runEngine_matches`) and `Matcher`; the former
-   `hplan : PlansOK rules` is `hmatch : MatchersOK rules`, a theorem for the adaptive
-   scheduler (`matcherOK_engine`) and `SchedA` of the compiled plan for the static one
-   (`matcherOK_static`), which no theorem proved `schedule_with_stats` emits. The choice
-   function is checked against `choose_atom` by a conformance test (Section 3.4). *Since
-   `scheduleEngine_schedA` (`EMatch/Engine/Schedule.lean`):* the static scheduler is
-   transcribed and its plan proved in the grammar, so `MatchersOK` is a theorem for the
-   static path too (`matcherOK_static_engine`, `matchersOK_compiled`); the transcription is
-   checked against `schedule_with_stats` by `static_plan_agrees_with_the_model_on_the_rounds_corpus`
-   (Section 3.4). What remains outside is the price, a parameter of the model, and the atoms
-   the grammar does not have (item 3).
-3. **Still true.** Guards, literals and globals have per-step theorems only (Section 3.8).
-4. **Resolved** by `19452248` (`rawNodeD_left_iff`, `rawNodeD_right_iff`,
-   `EMatch/Flatten/FoldEnum.lean`). The executable fold enumerator is linked to `OTLeft` and
-   `OTRight` under `SeqShaped` (Section 4.5).
-5. **Still true.** `Flatten/` feeds nothing above it: no module of `Saturate/`, `Bridge/`,
-   `Final/` or `Fidelity/` imports it; `:flatten` and sequence rules across rounds are not
-   modelled.
-6. **Resolved for the store form** by `8932dc12` (`saturation_modulo_complete_store_atoms`,
-   `Final/Store.lean`, Section 7.7), which composes `saturation_complete_N` with the bridge on
-   a part of the index (`SubRep`), and `_store_engine`, which takes the stop test. The
-   literal forms `saturation_modulo_complete` and `saturation_modulo_complete_atoms` still
-   use `saturation_complete` and `represents`, as recorded.
-7. **Still true.** `ARound/` uses its own state, not `State`; joint termination with AC rounds
-   is not proved.
-8. **Resolved** by `29666b9a` and `992d9205` (`regroupSkipG_iff`,
-   `EMatch/Flatten/RegroupSkip.lean:1222`; `regroupSkip_match_iff`, `:1410`). The first
-   edition recorded that the engine's regrouping skips were not modelled and were argued
-   acceptance-preserving in comments only. `RegroupSkipDefs.lean` models the loop with its
-   skips, and the match set equals that of the full enumeration for any laws (Section 4.7).
-   `212d3bc6` points the engine's comment at the proof.
+- `ac_min_slot_refresh.egg`, `proofs/repro/min-slot-gap.egg`: the refresh when recanonicalization shrinks a node (`shrinkNoRefresh_breaks_I5`).
+- `ac_minmono_grow_wa.egg`, `ac_minmono_grow_aw.egg`, `ac_key_survivor_lowered.egg`: the per-class order keys (`idOrder_grow_breaks_I5`).
+- `ac_reactivate_min_monomial.egg` (reduced from `conform-cc-cert/cs1_0129.egg`): the refresh after re-activating a collapsed node (`unretireNoRefresh_breaks_I5`).
+- `ac_collapsed_recanon.egg`: clearing the collapsed flag when a node becomes irreducible (`Infer.unretire`, `RoundFixed.nf_present`).
 
-**Engine behaviour not modelled.**
+The fixed round and the reduced basis (`RoundFixed`, `hcp_of_fixed`, `kapur_termination`):
 
-1. **Resolved** (Section 10 item 10). The engine re-activates collapsed nodes after a
-   recanonicalization and when completion materializes their monomial again. `Infer.unretire`
-   models the step, `refresh_min_monomial` runs after the flag is cleared in both places,
-   and `unretire_refresh_I5` and `SlotState.unretire_I5` show the refresh keeps I5. The
-   unrefreshed re-activation did break I5 (`ac_reactivate_min_monomial.egg`,
-   `unretireNoRefresh_breaks_I5`).
-2. **Still true.** The engine's `Comm` atom joins through `by_contains`, as AC does
-   (`egraph/src/schedule.rs:749`). The model's `byContains` ignores pairs and adds a
-   `decomposeComm` step with no Rust counterpart.
-3. **Changed.** The walk's bounds `MAX_VIEWS`, `MAX_WORK` and `MAX_ELEMS` and the
-   multiplicity widths appear as hypotheses or not at all. The regrouping bounds
-   `MAX_REGROUP_VIEWS` and `MAX_REGROUP_WORK` are modelled (`RegroupBounds.lean`, Section
-   4.7), and the regrouping skips are modelled (item 8 above). The saturated view size of the
-   engine's loop is counted in `flatten_overflowed` since `54bea39b`, so
-   `regroupBounded_query_exact` covers it.
-4. **Still true.** Emitted lists are compared as sets; `Nodup` is not modelled beyond single
-   steps.
-5. **Still true.** The build-time spelling of an AC right-hand side (`flatten_mset_children`,
-   which reads each argument class's `atomic` bit and minimal monomial) is outside
-   `saturation_complete`. The engine covers it with `spelling_epoch`.
-6. **Resolved** by `636ea372` (`regroupAllSkipAt_eq`, `groupsOfEngineAt_candSupAt`,
-   `EMatch/Flatten/RegroupBounds.lean`; `CandSup`, `RegroupSkipDefs.lean`). The engine's
-   regrouping candidates come from the use lists of the view's classes; the model's loop over
-   every filed `f`-member ends with the same records, and `hgs'` asks only for the members
-   with a fit (Section 4.7).
+- `cc_containment_chain.egg`: two containing pairs that join only through the reducibility pass (`lhs_reduced`).
+- `conform-cc/cc1_0143.egg`: a disjoint partner reached through the use lists under the clamp, which the superposition loop skips.
 
-**Stale statements in the sources.** These do not affect the proofs, but they mislead a
-reader who checks the Rust.
+Lattice closure (`LatticeClosed`, `latticeClosed_of_engineFixed`, `hcancel_not_derivable`):
 
-1. **Changed.** `Rounds/Round.lean:65-67` and `Rounds/Counter.lean:21-22` still say tracking
-   is off in `saturate_semi`; `saturate_rules_semi` turns it on for every entry point
-   (`egraph/src/saturate.rs:946-950`). The first edition also listed
-   `Saturate/Invariant.lean:27-28`; that docstring says tracking is required, which is
-   accurate, and the citation was an error of the first edition.
-2. **Still true.** `InverseAxiomCP` (`CC/Laws/CriticalPairs.lean:146-149`) and
-   `completion_complete_inverse` (`CC/Laws/Main.lean:96-101`) say the engine generates no
-   rule-inverse pairs, citing `egraph.rs:3068`, which is now inside `a_round`. The engine
-   generates them (`egraph/src/egraph.rs:3799-3829`).
-3. **Still true.** The final theorem's docstring (`Final/Main.lean:131-132`) equates
-   `Unchanged` with the loop's `changes == 0`. `Fidelity/StopTest.lean` shows that test was
-   insufficient before the size-stamp fix.
-4. **Still true.** `Flatten/RegroupFits.lean:17-19` says the chain theorems are proved for AC
-   only; `Flatten/RegroupChain.lean` proves them for every kind.
-5. **Still true.** Most line numbers cited in docstrings for `egraph.rs`, `saturate.rs`,
-   `ematch.rs` and `flatten.rs` have drifted; the functions exist under the same names. The
-   citations `egraph.rs:4291-4305` (`EMatch/Env/Exec.lean:39`) and `apply.rs:1401-1411`
-   (`EMatch/Env/Snapshot.lean:46`) point at unrelated code. `Fidelity/StopTest.lean:14`
-   cites `s11_self_union.egg` and `s11_assoc.egg`, which appear to have been renamed to
-   `stop_self_union_mints.egg` and `stop_assoc_flatten_mints.egg`. `ac_collapse.egg` is in
-   `proofs/repro/`. `spec-flatten.md`, cited by `EMatch/Flatten/Views.lean:6`, `Laws.lean:12`
-   and `Main.lean:10`, is not in the repository; neither is
-   `doc/goal-canonical-flatten-views.md`, which the Rust sources cite
-   (`egraph/src/nary_canon.rs:4`, `seq_collect.rs:252`).
-6. **New.** `CC/Atoms.lean:53` names `completion_complete_atom_class`, which does not exist
-   (the theorem is `CompleteAtoms.atom_class`). `EMatch/Flatten/RegroupSkip.lean:10` names
-   `regroupSkip_iff`, which does not exist (the theorem is `regroupSkipG_iff`).
-7. **New.** `CC/MinMonoKey.lean:11`, `:215` and `STATUS.md` cite `grow_wa.egg`; the fixture
-   is `egraph/tests/egg/ac_minmono_grow_wa.egg`.
-8. **Resolved.** The first edition recorded that the runtime design note
-   ([`runtime-completeness-checks.md`](../../egraph/doc/future/runtime-completeness-checks.md))
-   said in Section 6 that the regrouping skips are not modelled and have no check, and in
-   Section 4 that the confirmation round checks `hcp`. The note now says that the skips need
-   no check (`regroupSkipG_iff`) and that the confirmation round checks the rule-rule part
-   through `lhs_reduced` and `cp_joinable`, with `AxiomCP` left to the per-law conditions.
+- `cancel_lattice.egg`, `cancel_crit_pair.egg`, `cancel_lattice_lazy.egg`, `nilpotent_group_lattice.egg`: equalities that need several copies of an equation.
 
-**Errors of the first edition, corrected here.** It cited `QAtom` and `Sched` one line early
-(they are at `EMatch/Engine/Sched.lean:32` and `:74`), and `Round.Persist` at a line inside a
-later proof (it is at `Saturate/Transport.lean:45`). It named the fixture of
-`idOrder_grow_breaks_I5` `grow_wa.egg`; the fixture is `ac_minmono_grow_wa.egg`. It gave the
-A-only round's file without its `CC/` prefix (`CC/ARound/Basic.lean`). It cited the chain
-lemmas `regroupStep_mem`, `regroupChain_mem_levels` and `regroupChain_of_mem_levels` by bare
-line numbers after a citation of `Flatten/RegroupNested.lean`, which its own convention read
-as that file; they are in `Flatten/RegroupChain.lean`. The citation of
-`Saturate/Invariant.lean` among the stale tracking statements was wrong (item 1 above).
+The inverse rules R1 to R5 (`completion_complete_inverse_engine`, `inv_rules_sound`):
 
-## 10. Open findings
+- `proofs/repro/inv-into-unit.egg`, `proofs/repro/unit-inverse.egg`, `proofs/repro/rule-inverse-cp.egg`, `proofs/repro/z3-inverse.egg`: the four consequences pair cancellation inside one monomial misses.
 
-Each real finding with a proposed fix, most serious first. None is fixed in this edition:
-the guide records them, and the fixes belong to the Lean sources, `STATUS.md` and the design
-note. Items 1, 2 and 4 have since been resolved on branch `feat/real-rules`; each carries its
-resolution after the original text.
+The A-only round (`rewrite_left_sound`, `rewrite_right_sound`, `aRound_sound`):
 
-1. Literal `Den` with `hG` makes both final theorems vacuous for any rule with a match whose
-   right-hand side builds a node other than a stored active `f`-multiset node. Fix: state the
-   final theorem over `DenN` and the store (`saturation_complete_N` with the bridge), and
-   prove a witness with rounds, a state and one rewrite rule meeting every hypothesis.
-   **Resolved** by commit `8932dc12`: `saturation_modulo_complete_store`,
-   `saturation_modulo_complete_store_atoms` (and `_store_engine`, `_store_cover`) over
-   `SActRoundN`, `DenN` and the index, with `witness_saturation_modulo_complete` and
-   `witness_fires_modulo` (Section 7.7). The old theorems are kept, with the restriction in
-   their docstrings.
-2. `hG` restricts the final theorems to a graph of active `f`-multiset nodes, with no leaf,
-   retired or other-operator nodes. Fix: read the graph as the index filtered by
-   `Fidelity/Index.lean`, with `represents` a subgraph of it, and prove the bridge for the
-   subgraph. **Resolved** by commit `8932dc12`: `SubRep` and `FCover` (`CC/Bridge/Sub.lean`),
-   `ac_equal_same_class_sub`, `matches_closed_under_theory_sub`; the store theorems take
-   `SubRep A.Sa.index st f act ι`, and `saturation_modulo_complete_sub` restates the literal
-   form with it.
-3. *Resolved, commit `1be51963`.* `hcancel` stayed in `CompleteHyps` and `CompleteAtoms`, and
-   the engine does not establish it. Fix applied: the bundles take `LatticeClosed` in place of
-   `hcancel`.
-4. `Env.WF` excludes every nested pattern, so `env_refine` does not cover the plans the
-   scheduler emits. Fix: replace the `κ` partition by per-variable binding kinds that allow a
-   variable to be both a child class and a joined node, and prove `PlanOK → Env.WF`.
-   **Resolved** by commit `f1e8be1a`: `Env.WF κ B plan` with per-step kinds (`joinKinds`,
-   `KindOk`), `env_refine` re-proved, `planOK_envWF` under `EnvAtomsWF`, `exec_matches`, and
-   the worked plans of `(f (g x) y)` (`nested_plans_wf`, `nested_exec_matches`; Section 3.7).
-5. *Resolved, commit `2e40098d`.* `hcp` was not derived from `RoundFixed`, and the engine
-   skips containment pairs. Fix applied: `RoundFixed` states the engine's three checks
-   (`nf_present`, `lhs_reduced`, `cp_joinable` over non-containing pairs);
-   `RoundFixed.cp_joinable_all`, `ruleRuleCP_of_fixed` and `hcp_of_fixed` derive the rule-rule
-   part of `hcp`; the bundles take `AxiomCP` (the pairs involving a law instance) in its
-   place, and the law theorems drop `hRR`. Remainder: `AxiomCP` for an abstract law set, which
-   `CC/Laws/` reduces per law to conditions on the stored left-hand sides.
-6. The minimal-monomial hypotheses amount to assuming I5. Fix: replace `h5₀`, `hrun`, `ha`
-   by `I5 st` in the statements, or link `OpsStar` to the inference run.
-7. `AtomCollapse` and the atomic set `A` are assumed. Fix: derive `AtomCollapse` from a model
-   of `add` returning `x`'s class, and `A` from a model of the `atomic` bit.
-   **Resolved** by commit `c4530325`: `atomicOf st` (`CC/AtomicOf.lean`; a child of a stored
-   node, or a class with no `f`-node) and `addNF`, `AddStep`, `AddFixed`,
-   `atomCollapse_of_addFixed`, `roundFixedA_of_addFixed`; `CompleteAtomic`,
-   `completion_complete_atomic`, `saturation_modulo_complete_store_atomic`; the witnesses
-   `witness_atomicOf`, `witness_complete_atomic`, `witness_saturation_modulo_complete_atomic`.
-   The five fixtures `egraph/tests/egg/atomic_bit_*.egg` (commit `68814795`) probe the bit's
-   transitions against the bounded oracle; the engine passes them. What remains: `AddFixed`
-   is a hypothesis on the normalize pass, and a class that holds an `f`-node and another
-   operator's node without being a child is atomic in the engine and not in `atomicOf st`,
-   because the model's store holds `f`-nodes only.
-8. *Resolved, commit `798af6c9`.* `TwoClassesL` was assumed, and the cited `aci1.egg` was
-   missing. Fix applied: `twoClassesL_of_members` derives it from the collapse invariant
-   (`MembersTwoClassesL`, `NodeTwoClassesL`), which `demand_engine_complete_aci` takes in its
-   place; `egraph/tests/egg/aci1.egg` is committed and cited from the docstring.
-9. **Resolved** by `329b25bc` (persistence) and `5d4fc78a` (`CompletionOutcome`), with the
-   engine change `8a84644b`. Remainder: `DenN.persist` under normal-form recanonicalization
-   is false (`denN_persist_fails`), so the theorems rely on the routing hypothesis of the
-   chains instead; the engine meets it with completion off (`respelled`), and with completion
-   on, where it does not re-match, the instances are expected to be joined by completion,
-   which is not proved. **Resolved** (completion on) by commit `989409fc`
-   (`Fidelity/RecanonComplete.lean`) and the fixture `semi_recanon_completion_on.egg`
-   (commit `f9eae3b5`): a right-hand side is read modulo the theory of its operator (`DenE`),
-   which persists across any rebuild (`DenE.persist`, through `ACStep.mapE`: a splice through
-   a recanonicalized node is a splice through its normal form); `saturation_complete_E`
-   drops the routing, and `saturation_complete_closed` concludes, at a store closed under the
-   theory (`TheoryClosed`, the store reading of `ac_equal_same_class`), that every value
-   `add` builds for a right-hand side is in the match root's class (`denE_denN_eq`): a
-   re-match would merge nothing. The counter-model's after-store is not closed
-   (`PersistFails.sa_not_closed`); its completion is and reaches the instance
-   (`PersistFails.completed`). The engine passes the fixture under both strategies; the
-   `respelled` re-match stays off with completion on. Remainder: `TheoryClosed` is a
-   hypothesis on the store, not derived from `CompleteHyps` through `SubRep`; the conclusion
-   is `FiredE`, not `FiredN`, since the new spelling need not be stored as a node.
-10. *Resolved, commit `2da55f68`.* The re-activation of collapsed nodes may break I5. Fix: add
-    an un-retire step to `Infer` and prove I5 is preserved, or change the engine to refresh
-    after clearing the flag. Both applied. A debug check of I5 after every congruence
-    rebuild of the completion loop (`check_min_monomial_invariant`, recomputing the least
-    active monomial of every class and operator) found one case in the 400 committed
-    conformance files, `conform-cc-cert/cs1_0129.egg`, reduced to
-    `ac_reactivate_min_monomial.egg` (Section 5.5). The engine now refreshes the class's
-    minimal monomial when the flag is cleared, in `materialize` and in the recanonization
-    path (where the refresh ran before the flag was cleared). Lean: `Infer.unretire` with the
-    side condition that no current rule reduces the node, `State.refreshRhs`, `unretire_I0`,
-    `refreshRhs_I0`, `unretire_refresh_I5`, `unretire_refresh_reachable` (`CC/Lemmas.lean`);
-    `SlotState.unretire` as an `Op`, `unretire_I5`, and the repro
-    `unretireNoRefresh_breaks_I5` (`CC/Slot.lean`).
-11. *Resolved, commit `54bea39b`.* The engine's regrouping loop saturated view sizes at
-    `u64::MAX` without counting it, where the skip of a regrouped target could fire. Fix
-    applied: a count past `u64::MAX` is counted in `flatten_overflowed` (`saturated_size`,
-    `flatten.rs`, with a unit test on the conversion), and a fit whose normalized view holds
-    one is skipped as `Ix.wide` models; `regroupBounded_query_exact` covers the case with no
-    new proof.
-12. *Resolved, commit `636ea372`.* The engine's regrouping candidates were a subset of the
-    model's. Fix applied: `fitsR_nil_of_not_cand` (a member with no class in the view has no
-    fit, every kind), `hgs'` restated as `CandSup` (members with a fit), and
-    `regroupAllSkipAt_eq` (the loop with the engine's per-view candidates `groupsOfEngineAt`
-    ends with the model's records).
-13. *Resolved, commits `ed7d52ea` (laws) and `0d0f051d` (folds).* Soundness of regrouping
-    under laws and for fold chains, and completeness under laws, were unproved. Fix applied:
-    `regroup_views_sound_{ac,aci,assoc}_laws` and `regroup_match_iff_laws`
-    (`RegroupLaws.lean`), `regroup_views_sound_left/right`,
-    `regroupSkip_views_sound_left/right`, `regroup_chain_left/right_sound` and
-    `regroup_views_sound_assoc_laws_dir` (`FoldRegroup.lean`); `regroup_match_iff_laws`
-    covers the fold kinds as stated, with `baseRecsR_left/right_views_iff` for its base.
-    Remainder: the fold soundness is laws-free, as the engine's folds are (Section 4.5).
-14. *Resolved, commit `19452248`.* The executable fold enumerator was not linked to
-    `OTLeft` and `OTRight`. Fix applied: `rawNodeD_left_iff`, `rawNodeD_right_iff`,
-    `enumerateLD_left/right_iff`, `enumerateLD_left/right_sound` (`FoldEnum.lean`), under
-    `SeqShaped`; the fold mirror agrees with the engine on 230 fold samples (Section 4.5).
-15. Stale docstrings: tracking in `Rounds/Round.lean:65-67` and `Rounds/Counter.lean:21-22`;
-    `egraph.rs:3068` in `CC/Laws/CriticalPairs.lean:146-149` and `CC/Laws/Main.lean:96-101`;
-    `changes == 0` in `Final/Main.lean:131-132`; AC only in `Flatten/RegroupFits.lean:17-19`;
-    `completion_complete_atom_class` in `CC/Atoms.lean:53`; `regroupSkip_iff` in
-    `Flatten/RegroupSkip.lean:10`; `grow_wa.egg` in `CC/MinMonoKey.lean` and `STATUS.md`;
-    drifted Rust line numbers and the renamed or missing files of Section 9. Fix: one pass
-    over the docstrings replacing line numbers by function names.
-16. `STATUS.md` calls the `_engine` theorems engine-level and `saturation_modulo_sound` the
-    converse of completeness, and does not state the vacuity of item 1. Fix: state the
-    remaining hypotheses and the restriction to right-hand sides the graph holds.
-17. *Resolved, with item 5.* The runtime design note claimed the skips have no check and
-    the confirmation round checks `hcp`. Fix applied: the note states that the skips need no
-    check (`regroupSkipG_iff`), that the confirmation round checks the rule-rule part through
-    `lhs_reduced` and `cp_joinable`, and that `AxiomCP` is the part left to the per-law
-    conditions.
-18. *Resolved by commits `e5ed0211` and `7e579f4f`.* `FCover` requires every `f`-node of
-    the index to be an active node of the completion state, and the engine keeps a
-    collapsed node (`FLAG_AC_COLLAPSED`) in the index and matchable. So
-    `saturation_modulo_complete_store_cover` applies to no run in which completion
-    collapsed a node (`Final/Witness.lean`, `not_cover`, kept as the record of the limit).
-    Fix applied: `SubRepR` (`CC/Bridge/Sub.lean`) extends `SubRep` to the retired nodes, and
-    `saturation_modulo_complete_store_retired` (`Final/Store.lean`) concludes, for a match
-    rooted at a retired node, at the class of an active node it rewrites to
-    (`node_reduces_active`: I3 and well-founded induction on `→_R`; `I2` makes the rewrite
-    an `=_E`-equality). `witness_fires_retired` reads it at the match rooted at `{a, b, d}`
-    on the witness run (Section 7.7).
-19. *Resolved, commit `4e267030`.* The cursor matcher (`MatchIterator`, `run_query_iter`,
-    reached by no production path; `run_query` executes the plans) did not terminate on an
-    exact AC pattern with more elements than the node has entries: after a backtrack,
-    `ac_find_first` and `aci_find_first` scanned every element but the first from entry 0,
-    re-took the entry just undone and looped (`cursor_shapes.rs`,
-    `exact_decompositions_backtrack_without_a_rest`). Fix applied: the search resumes from
-    the advanced entry. The cursor has no Lean model; transcribing it with a termination
-    theorem (a lexicographic measure on the entry indices, the property the defect broke) and
-    the equality of its match set with `run_query`'s is the next modelling item.
-20. *Resolved, commits `893fc3ac` (model) and `b932241b` (engine).* Regrouped
-    matching under idempotence never kept a member of a set group beside its class, so with
-    `sab = S{A, B}` and `s = S{A, B, C}` the pattern `(S x y z)` never bound
-    `x = sab, y = A, z = C`, although `S{sab, A, C} = s` in every ACI model
-    (`regroup_idem_overlap_lost`, `flatten_regroup_laws_idem.egg`). Fix applied: an overlap
-    stage after the regrouping loop, for `:assoc-comm-idem` operators only, forms the views
-    that add the class of a group and drop as many of its members as the pattern's item count
-    fixes, counted against the regrouping budgets (`FlattenScratch::regroup`, `flatten.rs`);
-    the model has it in all three forms (`RegroupOverlapDefs.lean`), with soundness
-    (`overlap_step_sound_aci_laws`, `regroupSkipO_views_sound_aci_laws`), the
-    characterization (`regroupSkipO_match_iff_laws`, `RegroupChainO`), the step-for-step
-    theorems (`regroupSkipO_iff`, `regroupAllSkipOAt_eq`) and the bounds
-    (`regroupBoundedO_query_exact`); `regroup_idem_overlap_lost` became
-    `regroup_idem_overlap_sound`, `regroup_idem_overlap_loop_lost` and
-    `regroup_idem_overlap_found` (Section 4.6). Eight of the 400 conformance samples changed
-    (`conform/c1_0081.egg`, `c1_0101.egg`, `c1_0152.egg`, `c1_0181.egg`,
-    `conform-flatten/f2_0026.egg`, `f2_0112.egg`, `f2_0118.egg`, `f2_0135.egg`) and were
-    regenerated; the engine agrees with all 400. Remainder: a view with two overlap groups,
-    and a kept member in a rest variable, are not formed (Section 12).
-21. **New.** Truncation of overlap views is not exercised by a fixture. The bounds are
-    constants (`MAX_REGROUP_VIEWS` 2^14, `MAX_REGROUP_WORK` 2^20), and a family of overlap
-    views past them needs a set of about fifty children, on which the set decomposition of
-    the pattern enumerates `48 · 47 · 46 · 45 · 44` partial assignments per node before the
-    stage is reached (hours in a debug build; the fixture drafted for this round ran for
-    seven hours in the matcher's `decompose_aci_elem` and was dropped). The bounds are now settable from a test
-    (`FlattenBounds`, `MatchPool::set_flatten_bounds`, `flatten_bounds.rs`), which is the
-    lever; the Lean bounds model takes them as values (`Bounds` in `RegroupBoundsDefs.lean`).
-    Fix: a small test lowering them over a set node with overlap views, and assert the truncation counter and that only overlap views
-    are reported, as `regroupBoundedO_plan_sound` states.
-## 11. Algorithms, as the model states them
+- `ac_fold_completion_spine.egg`: a fold's spelling rewritten on its spine only.
 
-Each block is the algorithm as the Lean model states it, in neutral pseudo-code. A trailing
-comment names the Lean definition or step the line corresponds to, then the Rust function
-(`egraph/src/` unless a path is given). A sentence after each block says where the engine
-does more or differently. The Lean definitions cited are the statements, and Sections 3 to 7
-give their theorems.
+Leaf constants and the `atomic` bit (`atomicOf`, `atomCollapse_of_addFixed`):
 
-### 11.1 One AC completion round
+- `atomic_bit_child_before_and_after_node.egg`, `atomic_bit_inverse_after_splice.egg`, `atomic_bit_last_node_collapses.egg`, `atomic_bit_leaf_gains_node.egg`, `atomic_bit_merge_spliced_side.egg`: the bit's five transitions against the bounded oracle.
 
-```
-round(st, L):                                         -- Infer* over one round; egraph.rs cc_round
-  rules := { (M, rhs(find c)) | (M, c) active, M ≫ rhs(find c) }   -- State.rules; completion_node_ids, class_rhs_into, monomial_cmp_key
-  dedup rules by (op, left-hand side), keep the lowest node id            -- hcc; cc_round "Dedup"
-  -- (A') normalize every active node and merge its normal form in
-  for (M, c) in active:                                -- RoundFixed.nf_present
-    N := normal form of M under rules, clamped by L   -- Rw L rules, L.clamp; normalize_ms
-    c' := materialize(N)                              -- Infer.mint or hash-cons hit; 11.2
-    if find c' ≠ find c: merge(c', c)                 -- Infer.joinMerge; do_merge
-  -- reducibility pass with collapse
-  for (M, c) in active, for (A, a) in rules, A ⊊ M:   -- RoundFixed.lhs_reduced
-    red := clamp((M − A) + a); merge(materialize(red), c)   -- Infer.mint, joinMerge; (A') above
-    retire (M, c)                                     -- Infer.retire, I3 "merge before mark"; set_cc_collapsed
-  -- (B) superposition of overlapping, non-containing pairs
-  for (A, a), (B, b) in rules, A ≠ B, both irreducible:    -- RoundFixed.cp_joinable
-    if disjoint(A, B) or A ≤ B or B ≤ A: skip         -- Overlap, ¬ r₁.1 ≤ r₂.1; cc_round partner filter
-    AB := lcm(A, B)                                   -- criticalPair; multiset_lcm_into
-    c1 := nf(clamp((AB − A) + a)); c2 := nf(clamp((AB − B) + b))
-    if find c1 ≠ find c2: merge(materialize(c1), materialize(c2))   -- Infer.joinMerge
-  axiom pairs and cancel-closure per rule             -- AxiomCP, cancelMerge; 11.4
-  return "changed" iff a merge, a mint or a reactivation happened
-```
+Outcomes and budgets (`CompletionRun`, `CompletionOutcome`):
 
-The engine's (B) loop finds partners through the use lists of the rule's children rather
-than over all pairs, restricts intermediate rounds to pairs with a touched endpoint, and
-meters the round against `completion_work_budget`; the model has no budget and enumerates
-every pair.
+- `ac_lazy_budget_inconclusive.egg`: a `check-neq` reported inconclusive after a budget stop.
 
-### 11.2 Materialization, reactivation and the refresh
+Maximum partition (`MatchN`, `NoCollapse`):
 
-```
-materialize(N):                                       -- cc_round, local `materialize`
-  if N is {x}: return find x                          -- addNF, Normal::Single; add
-  if N is empty and the operator has a unit u: return find u     -- addNF, Normal::Unit
-  id := hash-cons lookup of the node f(N)             -- hcc
-  if id is fresh:
-    register node f(N) in a fresh class d             -- Infer.mint, SlotState.mint; register_if_fresh
-    return d
-  if id carries FLAG_AC_COLLAPSED and no current rule reduces N:   -- Infer.unretire precondition
-    clear the flag                                    -- Infer.unretire, SlotState.unretire
-    rhs(find id) := min(rhs(find id), N)              -- State.refreshRhs; refresh_min_monomial
-    count a change of the round                       -- "reactivation counts as a change"
-  return find id
-```
+- `proofs/repro/ac_collapse.egg`: a two-item match lost when its two children classes merge, a documented limit.
 
-The engine runs the same refresh in `recanonize_parent` when recanonicalization shrinks a
-collapsed node and clears its flag; the model states both as `unretire` followed by
-`refreshRhs` (`unretire_refresh_reachable`).
+The demand rule (`demand_engine_complete_ac`, `demand_engine_complete_aci`, `nonInertEng_eq`):
 
-### 11.3 The completion loop, the confirmation round and the lattice round
+- `proofs/repro/demand-gap.egg`, `flatten_demand_refold.egg`: a match whose unsatisfied leaf opened a class an item takes (`acceptsFix`).
+- `flatten_laws_nilpotent.egg`, `flatten_laws_inverse.egg`, `flatten_laws_inverse_leaf.egg`, `flatten_laws_identity.egg`, `flatten_laws_assoc_unit.egg`: leaves that are not inert under the laws (`nonInertB`).
+- `proofs/repro/aci-overaccept.egg`: a redundant set match the rule admits, a documented over-acceptance.
+- `aci1.egg`: the collapse invariant on set nodes (`twoClassesL_of_members`).
 
-```
-rebuild():                                            -- EnginePhase; egraph.rs rebuild
-  full := true                                        -- round 0 inspects every pair
-  loop:
-    rebuild_congruence()                              -- EnginePhase.cong; rebuild_congruence
-    if node growth or work past its budget: outcome := abortedGrowthLimit | abortedWorkLimit; return
-    if a width error: outcome := abortedOverflow; return      -- CompletionOutcome
-    if the lazy goal is met: outcome := goalMet; return
-    changed := cc_round(full) | a_round() | canon_repair_round()   -- Completion.step; 11.1
-    if changed: full := false; continue              -- incremental rounds while progress
-    if not full: full := true; continue              -- confirm with a full round
-    if lattice_round(): full := false; continue      -- EngineFixed, LatticeClosed; lattice_round
-    outcome := converged                              -- CompletionRun.converged: K.step S' = none
-    return
-```
+Folds (`otLeft_sound`, `otRight_sound`, `rawNodeD_left_iff`):
 
-`Converged` is reported only after a full round over every pair, with its reducibility pass,
-finds nothing and `lattice_round` merges nothing. The model's `Completion.step` abstracts
-the whole pass as one step function, so the incremental rounds and the touched delta are not
-modelled, and the fixpoint `K.step S' = none` is the full round's verdict.
+- `flatten_fold_spine.egg`: a fold opened on its spine only.
 
-### 11.4 Axiom pairs and the per-law steps
+Regrouping (`regroup_match_iff`, `regroup_match_iff_laws`, `regroupSkipO_match_iff_laws`, `regroupBounded_query_exact`):
 
-```
-axiom_pairs(rule A → B, L):                           -- AxiomCP, reduced per law in CC/Laws/
-  if L idempotent: for a ∈ A: join(B + {a}, A)               -- hax (idempotent)
-  if L nilpotent of order k: for a ∈ A with count m:
-    join(B + a^(k−m), A without a)                          -- hax (nilpotent)
-  if L has an inverse g:
-    for a ∈ A with g(a) in class y: join(B + {y}, A − {a})   -- InverseAxiomCP, RoundFixedInv.r3_left
-    for y ∈ A the class of g(x):    join(B + {x}, A − {y})   -- RoundFixedInv.r3_right
-  if L cancellative:
-    C := A ∩ B; join(A − C, B − C)                           -- Infer.cancelMerge (C1)
-    for every other rule A' → B': cancel-close (A + A', B + B')   -- (C2), disjoint superposition
-inverse_rules(st):                                    -- inverse_law_repair
-  R1: g(a) ~ g(c)  ⇒ merge(a, c);  g(g(x)) ⇒ merge(g(g(x)), x)   -- RoundFixedInv.r1_inj, r1_inv
-  R2: g(x) ~ unit ⇒ merge(x, unit);  x ~ unit ⇒ merge(g(x), unit) -- RoundFixedInvUnit
-  R3: the two rule-inverse pairs above, materialized and merged  -- r3_left, r3_right
-  R4: g(x) in class y ⇒ merge(materialize(x^(k−1)), y)           -- RoundFixedInvNil.r4
-  R5: g(x) in class y ≠ x ⇒ merge(materialize(y^(k−1)), x)       -- RoundFixedInvNil.r5
-```
+- `flatten_regroup_nested_needs.egg`: the item limit on the final record only (`regroup_nested_matches`).
+- `flatten_regroup_laws_drop_need.egg`: needed classes the laws drop (`regroup_drop_need_unit`, `_nilpotent`, `_inverse`, `_leaf`).
+- `flatten_regroup_laws_no_item.egg`: an item-less pattern regrouped when the laws can drop a class (`mem_base_of_reach`).
+- `flatten_regroup_laws_insert.egg`: a normal form reached only by insertion, the documented limit (`regroup_insert_unit_lost`).
+- `flatten_regroup_laws_idem.egg`: the overlap view a set group keeps beside its class (`regroup_idem_overlap_found`).
+- `conform/c1_0101.egg`: a pattern with one item more than the node has children binds the node's own class (`S{s, A, B} = s`).
+- `c1_0052.egg`: a node past `MAX_REGROUP_VIEWS` in both the engine and the model's bounded run.
 
-Each `join(P, Q)` normalizes both sides and merges their classes. The model states the
-fixpoints (`RoundFixedInv`, `RoundFixedInvUnit`, `RoundFixedInvNil`) and derives the four
-inverse conditions from them; the engine generates the pairs for touched rules in
-intermediate rounds and for every rule in the full round.
+Semi-naive rounds (`delta_complete`, `semi_naive_round_complete`, `Round.WF`):
 
-### 11.5 The one-element collapse in `add`
+- `semi_merge_membership_delta.egg`: the merge-membership delta (`delta_incomplete_untracked`).
+- `semi_eq_global_local.egg`, `proofs/repro/semi-eq-global-local.egg`: naive routing of a rule with an equality to a global (`delta_incomplete_global`).
+- `seq_hashcons_miss_min.egg`, `rounds_r1_0581.egg`: splicing with canonical children (`raw_breaks_dedup`, `dedup_of_inv`).
+- `semi_naive_atomic_semi.egg`, `semi_naive_minmono.egg`: the build-time spelling of an AC right-hand side, outside `saturation_complete`, covered by `spelling_epoch`.
 
-```
-add_step(st, L, A, u):                                -- AddStep.collapse; nary_canon::normalize, add
-  for (M, c) active in the view st.withAtoms A u:
-    N := normal form of M under the view's rules      -- Rw L (withAtoms).rules
-    match addNF(N):                                   -- addNF
-      {x}  ⇒ x' := find x                             -- Normal::Single(x) => find(x)
-      ∅    ⇒ x' := find u                             -- Normal::Unit
-      else ⇒ continue                                 -- a node is built, 11.2
-    if find c ≠ x': merge(c, x')                      -- AddStep → st.merge c x'
-  fixpoint when no step applies                       -- AddFixed
-```
+Recanonicalization under the laws (`StorePersistN`, `denN_persist_fails`, `saturation_complete_closed`):
 
-The engine performs the collapse inside `add` (a degenerate normal form returns the class and
-builds no node) and at rebuild (`degeneracy_pair` merges a stored node left with one child
-into that child); the model states the fixpoint `AddFixed` and derives `AtomCollapse` from it.
+- `semi_recanon_unit_drop.egg`, `semi_recanon_idem_collapse.egg`, `semi_recanon_inverse_cancel.egg`, `semi_recanon_pending_collapse.egg`: the `respelled` re-match with completion off.
+- `semi_recanon_completion_on.egg`: the same counter-model with completion on, joined at the fixpoint (`PersistFails.completed`).
 
-### 11.6 Rebuild and recanonicalization under the laws, with the spelling-change rule
+The stop test and transport (`engine_stop_unchanged`, `fired_transport`):
 
-```
-recanonicalize(Sb) → Sa:                              -- StorePersistN; rebuild_congruence, recanonize_node
-  for (id, f(children)) in Sb.nodes:
-    if f is a tuple, pair or sequence:                -- LiteralFixed (tuple, pair); LiteralSeq (sequence, StorePersistE)
-      store f(children mapped through find)           -- recanonize_node (fixed arity)
-    if f is a multiset:                               -- NFMset
-      m := children mapped through find
-      repeat: drop the unit's class; drop k copies under :nilpotent k   -- RStep.unit, RStep.nil
-      if m = {x}: merge(id, x); if m = ∅: merge(id, unit)   -- Final; degeneracy_pair
-      else store f(m), hash-cons, merge on collision  -- WF.dedup
-    if f is a set: the same with the unit drop only   -- RSetStep.unit, NFSet
-  inverse pairs x, g(x) in one multiset: a merge the round records   -- canon_repair_round
-  if any law step applied, or a degenerate collapse happened:
-    spelling_epoch += 1                               -- VarCanon::law_applied; spelling_epoch
-next round:
-  resp := (completion off) and (spelling_epoch moved since the last cut)   -- route naive resp; saturate.rs respelled
-  rules that build an n-ary term match naive this round when resp     -- Rule.buildsNary
-```
+- `stop_self_union_mints.egg`, `stop_assoc_flatten_mints.egg`: a union that mints nodes and reports zero changes (`Phase.stamp_ne`).
+- `tests/egg/subsume.egg`: a `:subsume` that removes a node a consequence is built of, why `fired_transport` needs no subsumption.
 
-The model states what the store looks like after the rebuild (`StorePersistN`) and takes the
-routing as a hypothesis of the chain (`SChainN`); the engine's `touched` log, the
-merge-membership delta and the order of the worklist are summarized by `Round.WF`. With
-completion on, the engine does not re-match and completion joins the two spellings:
-`saturation_complete_closed` (`Fidelity/RecanonComplete.lean`) takes the store's closure
-under the theory (`TheoryClosed`) in place of the routing (Section 10, item 9).
+## 9. Remaining gaps
 
-### 11.7 The regrouping loop
+Each entry names the gap, what closes it, and the check that shows it closed. The first five
+are the hypotheses of the final theorem that state a correspondence between the engine and
+the model (the class "assumed" of the tables above); the others are missing fixtures, missing
+models, and the limits that stay by design.
 
-```
-regroup(node, κ, dir, laws, items):                   -- SkipSt.run; flatten.rs FlattenScratch::regroup
-  records := walk views with demands                  -- baseRecsR; enumerate (spine(dir) for a fold)
-  entries := distinct views in order of entry         -- SkipSt.init, SkipSt.order
-  heap := (size(view), entry) for each entry          -- viewSize; BinaryHeap<(u128, usize)>
-  views := 0; work := 0                               -- BSt counters; MAX_REGROUP_VIEWS, MAX_REGROUP_WORK
-  while heap not empty:
-    w := pop the largest size, latest entry on a tie  -- SkipSt.next
-    if w already regrouped: continue                  -- never fires: regroupRec_shrink
-    mark w regrouped                                  -- SkipSt.mark
-    cands := f-members holding a class of w, by node id   -- groupsOfEngineAt; Members::containing (by_contains)
-    work += use-list lengths; if work > MAX_REGROUP_WORK: truncate; stop
-    for (g, grp) in cands:                            -- SkipSt.groupStep
-      work += |grp|; if work > MAX_REGROUP_WORK: truncate; stop
-      for raw in fits(κ, dir, w, g, grp):             -- fitsR: sub-multiset | subset | run | prefix | suffix, ≥ 2 entries, not all of w, g ∉ grp
-        t := normalize(κ, laws, raw)                  -- normalize; nary_canon::normalize
-        if t is not a node, or a count overflows: count flatten_overflowed; continue   -- Ix.wide, saturated_size
-        assert t not regrouped                        -- addTarget_spec: regroupRec_shrink
-        if t is new: push (size(t), t)                -- SkipSt.addTarget
-        if some record of t is unconditional: continue        -- RecR.uncond
-        for r in srcRecs(records of w):               -- srcRecs: the first unconditional record alone, else all
-          d := (t, leaves of r with g added where they hold a class of grp, needs of r less grp plus g, kept if t holds them)
-                                                      -- deriveRec, addG, needsAfter
-          if signature(d) already at t: continue      -- RecSig.same; sigs
-          views += 1; if views > MAX_REGROUP_VIEWS: truncate; stop
-          add d to t                                  -- SkipSt.addRec
-  if κ = set and |items| > 0:                         -- SkipSt.overlapAll; the overlap stage, idempotence only
-    for w in the loop's views, in entry order:        -- st₀.order; entries[0..n_loop]
-      cands := f-members holding a class of w, by node id   -- groupsOfEngineAt
-      work += use-list lengths; if work > MAX_REGROUP_WORK: truncate; stop
-      for (g, grp) in cands:                          -- SkipSt.overlapGroupStep
-        work += |grp|; if work > MAX_REGROUP_WORK: truncate; stop
-        cs := classes of grp, sorted, distinct        -- groupClasses
-        if g ∈ cs or |cs| < 2 or cs ⊄ w: continue     -- overlapDrops
-        base := |w| + (g ∉ w ? 1 : 0); if base < |items|: continue
-        k := base - |items|; if k ≥ |cs| or (k = 0 and g ∈ w): continue
-        for D in the k-element sublists of cs, in sublists order:   -- dropSets; next_colex
-          work += 1; if work > MAX_REGROUP_WORK: truncate; stop
-          t := normalize(κ, laws, (w less D) ++ [g])  -- overlapFits; normalize
-          if t is not a node, or a count overflows: count flatten_overflowed; continue
-          if t is new: enter t (no heap: the stage regroups nothing)  -- SkipSt.addTargetO
-          if some record of t is unconditional: continue
-          for r in srcRecs(the loop's records of w):  -- st₀.recs w; records with index < n_loop
-            d := (t, leaves of r with g added where they hold a class of grp, needs of r less grp plus g, kept if t holds them)
-            if signature(d) already at t: continue
-            views += 1; if views > MAX_REGROUP_VIEWS: truncate; stop
-            add d to t
-  keep the records needing at most |items| classes    -- withinLimit; Demand::needs
-```
+1. **`SubRep` (the correspondence).** `saturation_modulo_complete_store_atoms` takes
+   `SubRep A.Sa.index st f act ι`: the active `f`-nodes of the completion state are stored in
+   the index under `ι` with the children `mkNode` gives them and in the classes `st` gives
+   them. No theorem relates the completion state to the rounds or to the engine's rebuild, so
+   the theorem says nothing about a run whose index does not hold the active nodes of a
+   converged state. Closes it: a model of the rebuild's completion pass on the store
+   (`Fidelity/StopTest.lean` has `CompletionRun` as a step function) whose converged store
+   satisfies `SubRep` against a `State` read off it, or the tier 2 checker, which reads a dump
+   of the final state into `State` and decides `SubRep` against the index. Acceptance: a
+   theorem `subRep_of_converged` on the modelled rebuild, or the checker run over the
+   committed corpora with no failure.
+2. **`TheoryClosed` from `CompleteHyps`.** With completion on the engine does not re-match
+   after a spelling change, and `saturation_complete_closed` reaches every instance at the
+   class level under `TheoryClosed`, the store's closure under the theory. `TheoryClosed` is a
+   hypothesis on the store; `CompleteAtoms.same_class` is its reading on the completion state.
+   Closes it: a theorem that derives `TheoryClosed A.Sa ops` from `CompleteHyps L S st` and
+   `SubRep` (the `mset` field from `ac_equal_same_class_sub`, the `set` and `seq` fields from
+   the ACI and A theories, which `CC/` does not model). Acceptance: `theoryClosed_of_complete`
+   in `Fidelity/RecanonComplete.lean`, and `saturation_complete_closed` restated without the
+   hypothesis.
+3. **`AxiomCP` for an abstract law set.** `CompleteHyps` and `CompleteAtoms` take
+   `hcp_ax : AxiomCP L st.rules`, the joinability of the critical pairs that involve a law
+   instance. `CC/Laws/` reduces it, law by law, to conditions on the stored left-hand sides,
+   and `Laws/InvRulesMain.lean` derives the inverse ones from the fixpoints of R1 to R5; for
+   the leaf-constant form it ranges over the view's rules `M → {x}`. Closes it: a theorem per
+   law set that derives `AxiomCP` of the view's rules from `RoundFixedA` and the per-law
+   fixpoints, so that the bundles take only engine facts. Acceptance: `CompleteAtoms` for
+   each of `identity`, `nilpotent`, `idempotent`, `inverse`, `combined` with `hcp_ax`
+   discharged, audited in `CC/LawsCheck.lean`.
+4. **The minimal-monomial history and the round facts.** The triple `h5₀`, `hrun`, `ha` is
+   equivalent to assuming I5 of the final state (`OpsStar` is never linked to the inference
+   run; `witness_complete` discharges it with `ss₀ = ss`). The round facts `Round.WF`,
+   `ActRound` and `StorePersistN` are assumptions about `register_if_fresh`, `recanonize_node`,
+   `merge_in_classes`, the hash-cons and `apply.rs`. Closes it: for I5, either `I5 st` in the
+   statements in place of the triple, or `OpsStar` linked to `Reachable` by a theorem that
+   every `Infer` step is an `Op`; for the round facts, the tier 1 and tier 2 checks of the
+   design note (I5 by `check_min_monomial_invariant`, congruence by
+   `debug_check_congruent_dup_invariant`, both existing as debug checks; the others design).
+   Acceptance: `completion_complete_at_convergence` with `h5 : I5 st` as its only
+   minimal-monomial hypothesis, and the tier 1 checker of the design note returning
+   `Complete` on every committed corpus.
+5. **The resolver's variable discipline.** `AtomsWF` and `EnvAtomsWF` (well-kinded atoms,
+   distinct node variables, linear rest variables, every `Eq` operand bound by a scanning
+   atom, a class variable no multiplicity or rest variable, no `exact 0` annotation) are
+   supplied by `resolve.rs` and derived only for the atoms of a single pattern
+   (`atoms_atomsWF`). Closes it: a transcription of the resolver's checks as a decision
+   procedure on `List QAtom` with a theorem that it returns true exactly when `AtomsWF` and
+   `EnvAtomsWF` hold, and a mirror test against `resolve.rs` on the corpora. Acceptance: the
+   theorem and a mirror test with zero disagreements on the five corpora.
+6. **The overlap-truncation fixture.** No fixture exercises a truncation inside the overlap
+   stage: with the default bounds a family of overlap views past `MAX_REGROUP_VIEWS` needs a
+   set of about fifty children, on which the set decomposition of a five-item pattern
+   enumerates `48 · 47 · 46 · 45 · 44` partial assignments per node before the stage is
+   reached (hours in a debug build). The bounds are settable from a test (`FlattenBounds`,
+   `MatchPool::set_flatten_bounds`, `flatten_bounds.rs`), and the Lean bounds model takes
+   them as values (`Bounds` in `RegroupBoundsDefs.lean`). Closes it: a test that lowers the
+   bounds over a set node with overlap views. Acceptance: the test asserts
+   `flatten_regroup_truncated > 0` and that every reported match is an overlap view, as
+   `regroupBoundedO_plan_sound` states.
+7. **The cursor matcher.** `MatchIterator` and `run_query_iter` (`cursor_shapes.rs`) have no
+   Lean model; `run_query` executes the plans and is the production path. Closes it: a
+   transcription of the cursor with a termination theorem (a lexicographic measure on the
+   entry indices, the property the test `exact_decompositions_backtrack_without_a_rest`
+   checks) and the equality of its match set with `run_query`'s. Acceptance: `cursor_terminates`
+   and `cursor_matches_eq_run` in `EMatch/Engine/`, audited in a `*Check.lean` file.
+8. **Unit insertion under completion off (documented limit).** With `zero ∋ add{B, D}` the
+   view `add{A, C}` of `add{add{A, B}, add{C, D}}` is reached only by inserting the unit and
+   regrouping; a chain opens and contracts and never inserts, and insertions have no bound
+   (`regroup_insert_unit_lost`, `flatten_regroup_laws_insert.egg`). Nothing closes it in the
+   matcher; `(set-option :completion eager)` proves the equality instead. Acceptance: none
+   sought; the fixture records the loss and the theorem states it.
+9. **The two limits of the overlap stage.** The stage forms neither a view with two overlap
+   groups (`{A, C, sab, scd}` of `S{A, B, C, D}`) nor a kept member in a rest variable.
+   Closes it: a second overlap step in `RegroupChainO` and a stage that iterates once more,
+   counted against the same budgets, with `regroupSkipO_match_iff_laws` restated. Acceptance:
+   a fixture with two overlap groups whose `check-eq` holds, and the restated theorem.
+10. **Completion modulo associativity alone.** `ARound/` has no completeness theorem and none
+    is sought: ground completion modulo associativity alone is completion of a string
+    rewriting system, a presentation of a finitely presented monoid, whose word problem is
+    undecidable (Markov, Post). `a_round` closes one gap (two spellings of a merged class
+    inside other sequence nodes) and chases no critical pairs; the development proves
+    soundness of the step (`aRound_sound`, `aRoundH_sound`), uniqueness and reachability of
+    the least spelling (`isLeastSpelling_unique`, `firstRule_complete`) and termination of
+    one round over a finite node set (`aRoundH_wf`). For `:assoc` operators the runtime
+    checks establish matching completeness relative to the classes present and nothing about
+    completion. Acceptance: none.
+11. **The runtime completeness checks.** The design note assigns each hypothesis to a tier;
+    of its tier 1 checks two exist in the engine as debug checks (`check_min_monomial_invariant`
+    for I5, `debug_check_congruent_dup_invariant` for `hcc`), and the atomic bit, `hcanon`,
+    `I0Active`, lattice closure, the `Converged` outcome and the three flatten counters have
+    no checker; tier 2 (a proved Lean checker over `dump-egraph` output) is design. Closes it:
+    the tier 1 checker behind `:check-complete`, the static checks of `hlaw`, `hnf_ax` and
+    `RulesWF`, and the tier 2 checker with its correctness theorems. Acceptance: the note's
+    Section 7: each fixture of its tier 1 table fails the corresponding check when its fix is
+    reverted, the full suite passes with the option on, and CI runs the tier 2 checker over
+    the committed corpora.
+12. **Docstrings in the Lean sources that cite drifted lines or renamed files.**
+    `Rounds/Round.lean:65-67` and `Rounds/Counter.lean:21-22` say tracking is off in
+    `saturate_semi` (`saturate_rules_semi` turns it on for every entry point,
+    `egraph/src/saturate.rs:946-950`); `InverseAxiomCP` (`CC/Laws/CriticalPairs.lean:146-149`)
+    and `completion_complete_inverse` (`CC/Laws/Main.lean:96-101`) say the engine generates no
+    rule-inverse pairs, citing `egraph.rs:3068`, which is inside `a_round` (the engine
+    generates them, `egraph/src/egraph.rs:3799-3829`); `Final/Main.lean:131-132` equates
+    `Unchanged` with `changes == 0`, which `Fidelity/StopTest.lean` shows insufficient;
+    `Flatten/RegroupFits.lean:17-19` says the chain theorems are proved for AC only
+    (`Flatten/RegroupChain.lean` proves them for every kind); `CC/Atoms.lean:53` names
+    `completion_complete_atom_class` (the theorem is `CompleteAtoms.atom_class`);
+    `EMatch/Flatten/RegroupSkip.lean:10` names `regroupSkip_iff` (the theorem is
+    `regroupSkipG_iff`); `CC/MinMonoKey.lean:11`, `:215` cite `grow_wa.egg` (the fixture is
+    `ac_minmono_grow_wa.egg`); `Fidelity/StopTest.lean:14` cites `s11_self_union.egg` and
+    `s11_assoc.egg` (the fixtures are `stop_self_union_mints.egg` and
+    `stop_assoc_flatten_mints.egg`); the citations `egraph.rs:4291-4305`
+    (`EMatch/Env/Exec.lean:39`) and `apply.rs:1401-1411` (`EMatch/Env/Snapshot.lean:46`) point
+    at unrelated code; `spec-flatten.md` (`EMatch/Flatten/Views.lean:6`, `Laws.lean:12`,
+    `Main.lean:10`) and `doc/goal-canonical-flatten-views.md` (`egraph/src/nary_canon.rs:4`,
+    `seq_collect.rs:252`) are not in the repository. Closes it: one pass over the docstrings
+    replacing line numbers by function names. Acceptance: no docstring cites a Rust line
+    number, and every fixture a docstring names exists.
 
-The model's `regroupSkipG` has no bounds and `BSt.run` adds them at the same places; the
-engine also caps the takeable closure at 4,096 classes (`takeableRCap`) and skips regrouping
-altogether when the decomposition has no item and the laws cannot drop a class
-(`laws_drop`, `canDrop`). The overlap stage (`SkipSt.overlapAll`, `BSt.overlapAll`,
-`RegroupOverlapDefs.lean`) runs after the loop, only when the loop was not truncated, and
-derives from the loop's records alone, so an overlap view is one step from a view of the
-loop (Section 4.6, "Overlap views under idempotence").
+Outside the model by design, and not listed as gaps: the engine's `Comm` atom joins through
+`by_contains` as AC does (`egraph/src/schedule.rs:749`), where the model's `byContains`
+ignores pairs and adds a `decomposeComm` step with no Rust counterpart; guards, literals and
+globals have per-step theorems only (Section 3.8); `Flatten/` feeds nothing above it, so
+`:flatten` and sequence rules across rounds are not modelled; `ARound/` uses its own state,
+not `State`, and joint termination with AC rounds is not proved; emitted lists are compared
+as sets (`Nodup` is not modelled beyond single steps); the build-time spelling of an AC
+right-hand side (`flatten_mset_children`, which reads each argument class's `atomic` bit and
+minimal monomial) is outside `saturation_complete` and covered by `spelling_epoch`; the
+galloping cursor is verified separately in Verus (`containers-verus`).
 
-### 11.8 The adaptive scheduler
+## 10. Constraints on the engine, with their evidence
 
-```
-chooseEngine(G, isNew, mode, atoms, σ, S):            -- chooseEngine; ematch.rs choose_atom
-  best := none
-  for i in 0 .. |atoms|, i ∈ S:                       -- chooseStep, index order
-    cost := length of the shortest bucket of the join emit_atom would emit for atom i,
-            under σ's bindings, in the index setting of atom i   -- atomCost, engineJoinLookups; cursor_len, bucket_in
-    if best = none or cost < best.cost: best := (cost, i)         -- strictly cheaper replaces
-  return best.i                                       -- chooseEngine_mem: a member of S
-
-runND(G, atoms, choose, fuel, used, B, σ):            -- runND; ematch.rs adaptive loop
-  if fuel = 0: emit σ
-  if some unused Eq atom has a bound side:            -- eagerCandidate, Sched.eager
-    run its eager lowering under B, then recurse on each result   -- q.eagerLower B
-  else if some scanning atom is unused:               -- Sched.pick
-    i := choose(σ, unused scanning atoms)             -- any choice function; chooseEngine
-    run (lower atoms[i] B) on σ, recurse on each result with i used and B ∪ binds   -- lower
-  else emit σ                                         -- Sched.done
-```
-
-`runNDA` is the same loop with each lowered block run under the per-atom index setting; the
-engine also prices a `:comm` atom over the `byContains` lookups `emit_atom` adds, which
-`engineJoinLookups` copies.
-
-The static scheduler is the same two phases run once, at plan time, on the bound set alone:
-
-```
-scheduleEngine(cost, pre, atoms):                     -- scheduleEngine; schedule.rs schedule_inner
-  used := ∅, B := pre, steps := []
-  repeat at most |atoms| times:                       -- schedLoop
-    repeat:                                           -- eagerFix; lower_eager
-      for i in 0 .. |atoms|, i ∉ used:                -- eagerSweep, eagerAt; try_eager_lower
-        if atoms[i] = (= x y) and (x ∈ B or y ∈ B):   -- SchedA.eager
-          steps ++= eagerLower atoms[i] B; used += i; B ∪= {x, y}
-        if atoms[i] plain with its node in B:         -- SchedA.pick, the re-join in its class
-          steps ++= lower atoms[i] B; used += i; B ∪= binds atoms[i]
-    until a sweep lowered nothing                     -- eagerFix_fixed: no unused atom is free
-    best := none
-    for i in 0 .. |atoms|, i ∉ used, atoms[i] scanning:          -- pickStep, index order
-      if best = none or cost(steps, B, i) < best.cost: best := (i, cost)   -- strictly cheaper replaces
-    if best = none: return steps                      -- SchedA.done
-    steps ++= lower atoms[best.i] B; used += best.i; B ∪= binds atoms[best.i]   -- SchedA.pick; emit_atom
-```
-
-### 11.9 Semi-naive rounds: variants and routing
-
-```
-round r (r ≥ 1):                                      -- Round, ActRound; saturate.rs saturate_rules_semi
-  new(id) := id ∈ touched ∨ id ∈ mergeDelta           -- Round.isNew; touched log, merge_in_classes
-  resp := spelling_epoch moved and completion off     -- route; respelled
-  for rule in rules:
-    if naive(rule) or (resp and rule builds an n-ary term):      -- route naive resp
-      run rule on the whole index                     -- runNaive; needs_naive_match, VariantIndex::naive
-    else for k in scanning atoms of rule:             -- variants_cover_new
-      run variant k: atom k in the delta, atoms < k in full minus delta, atoms > k in full   -- variantMode k
-  apply every emitted binding's actions               -- ActRound, Fired; apply.rs
-  rebuild()                                           -- 11.3, 11.6
-```
-
-`naive(rule)` is the engine's static routing (`needs_naive_match`: `:flatten` rules, rules
-with a global, `Eq` against a global); the model takes it as a free parameter.
-
-### 11.10 The stop test
-
-```
-stop?(round):                                         -- EnginePhase.Stop; saturate.rs
-  stamp₀ := (node count, class count) at the index build      -- Sb.stamp; size_stamp
-  changes := sum of the actions' reported changes (counts a fresh subsume)   -- EnginePhase.changes
-  stamp₁ := (node count, class count) after the actions       -- E.mid.stamp
-  return changes = 0 ∧ stamp₁ = stamp₀                -- engine_stop_unchanged ⇒ Unchanged
-```
-
-The theorem needs the snapshot the round matched on to be a completion fixpoint
-(`before_fixed`), which only a `converged` rebuild gives; a budget stop in the previous
-rebuild leaves `Unchanged` underived, and the loop reports no fixpoint.
-## 12. Learnings: what the engine must do, and what breaks otherwise
-
-Each entry is a rule the engine keeps, the failure without it, and the evidence that showed
-it. "Completeness" means a theory-equal pair left in two classes or a match left unfired;
+Each entry is a rule the engine keeps, the failure without it, and the evidence for it: the
+counter-model theorem, the fixture, or both. "Completeness" means a theory-equal pair left in two classes or a match left unfired;
 "soundness" means a merge of two terms the theory keeps apart.
 
 **Must refresh the stored minimal monomial when recanonicalization shrinks a node.**
@@ -3430,39 +3327,38 @@ Otherwise the stored minimal monomial is no longer the class's least active mono
 orientation check drops the class's rule, and a theory-equal pair stays in two classes (I5
 fails; completeness). Evidence: counter-model `shrinkNoRefresh_breaks_I5`
 (`CC/Slot.lean:327`), the reproducer `proofs/repro/min-slot-gap.egg`, fixture
-`ac_min_slot_refresh.egg`, commit `bb961302` (PR #153, `00f9d46f`). The fix is
-`refresh_min_monomial`; `reachable_I5` proves the operations with it keep I5.
+`ac_min_slot_refresh.egg`. The engine's refresh is `refresh_min_monomial`; `reachable_I5`
+proves the operations with it keep I5.
 
 **Must order monomials by a per-class key that a merge only lowers, not by representative
 id.** Otherwise a merge that keeps the larger id renames a child upward, a stored node grows
 past its classmate, and the class's rule is mis-oriented or lost (completeness). Evidence:
 counter-model `idOrder_grow_breaks_I5` (`CC/MinMonoKey.lean:250`), fixtures
-`ac_minmono_grow_wa.egg`, `ac_minmono_grow_aw.egg`, `ac_key_survivor_lowered.egg`, commit
-`ab214e9c`. `keyed_reachable_I5` proves that under the keys each recanonicalization is a
+`ac_minmono_grow_wa.egg`, `ac_minmono_grow_aw.egg`, `ac_key_survivor_lowered.egg`.
+`keyed_reachable_I5` proves that under the keys each recanonicalization is a
 no-op or a shrink (`merge_recanon_op`).
 
 **Must refresh the minimal monomial after re-activating a collapsed node.** Otherwise the
 stored minimal monomial stays on a node the next round collapses, I5 fails and the class's
 rule is lost (completeness). Evidence: counter-model `unretireNoRefresh_breaks_I5`
 (`CC/Slot.lean:364`), fixture `ac_reactivate_min_monomial.egg` (reduced from
-`conform-cc-cert/cs1_0129.egg`, found by `check_min_monomial_invariant`), commit `2da55f68`.
+`conform-cc-cert/cs1_0129.egg`, located by `check_min_monomial_invariant`).
 `unretire_refresh_I5` proves the refreshed re-activation keeps I5.
 
 **Must clear the collapsed flag when a node becomes irreducible, at materialization and at
-recanonicalization.** Otherwise a node that is now a normal form is never a superposition
+recanonicalization.** Otherwise a node that has become a normal form is never a superposition
 source and its consequences are not generated (completeness; `RoundFixed.nf_present` asks
 the normal form to be an active node). Evidence: fixture `ac_collapsed_recanon.egg` (reduced
-from `conform-cc-cert` seed 1004, case 655: `C5 = C5·C5` was not derived after `C2 = C3`),
-commit `e06360e5`. The model's step is `Infer.unretire`, with the side condition that no
+from `conform-cc-cert` seed 1004, case 655, in which `C5 = C5·C5` is derived after
+`C2 = C3` only with the flag cleared). The model's step is `Infer.unretire`, with the side condition that no
 current rule reduces the node.
 
 **Must merge a node's normal form into its class before flagging the node collapsed.**
 Otherwise a retired node's reduct is in no class with it and the equality it carried is lost
 (I3 fails; `completion_complete_at_convergence` and `nodes_reduce_all` in
-`CC/Laws/InvRulesMain.lean` need I3). Evidence: no reproducer, because `cc_round` has always
-called `do_merge` before `set_cc_collapsed`; the rule is recorded in
-`06-ac-congruence-closure.md`, Section 9c, so that the order is not changed as a
-refactoring. `witness_I3` checks I3 on the atoms witness.
+`CC/Laws/InvRulesMain.lean` need I3). Evidence: no reproducer, because `cc_round` calls
+`do_merge` before `set_cc_collapsed`; the rule is recorded in
+`06-ac-congruence-closure.md`, Section 9c, so that a refactoring keeps the order. `witness_I3` checks I3 on the atoms witness.
 
 **Must keep the active rules a reduced basis: retire every rule whose left-hand side
 contains another's.** Otherwise reducible rules become superposition sources, breed rules
@@ -3479,17 +3375,17 @@ Otherwise the reported fixpoint is not `RoundFixed`, `hcp_of_fixed` does not app
 completeness at convergence is not established. A disjoint pair has a critical pair that
 joins by one step of each rule, and a containing pair is retired by the reducibility pass;
 skipping any other pair loses a critical pair. Evidence: `RoundFixed` with `lhs_reduced` and
-`cp_joinable` over non-containing pairs, `ruleRuleCP_of_fixed`, commit `2e40098d`; the
-disjoint partner found through the use lists under the clamp, which a `debug_assert`
-rejected on `conform-cc/cc1_0143.egg` before commit `e97b80e0`.
+`cp_joinable` over non-containing pairs, `ruleRuleCP_of_fixed`; `conform-cc/cc1_0143.egg`,
+on which the use lists yield a disjoint partner under the clamp, which the loop skips rather
+than rejects with a `debug_assert`.
 
 **Must close a cancellative operator with `lattice_round` at the completion fixpoint, and
 not rely on the cancel inferences.** Otherwise theory-equal pairs whose derivation needs
 several copies of an equation stay in two classes (completeness), and the hypothesis
-`hcancel` the first proof asked for is not an engine fact. Evidence: fixture
-`cancel_lattice.egg` (converged without `C5 = c1c3²`, which needs `c1c4² = c0²` and two
-copies of `c4 = c0c3`), `cancel_crit_pair.egg`, `cancel_lattice_lazy.egg`,
-`nilpotent_group_lattice.egg`, commit `cdcb2186`; counter-model `hcancel_not_derivable`
+`hcancel` is not an engine fact. Evidence: fixture `cancel_lattice.egg` (the inferences alone
+converge without `C5 = c1c3²`, which needs `c1c4² = c0²` and two copies of `c4 = c0c3`),
+`cancel_crit_pair.egg`, `cancel_lattice_lazy.egg`, `nilpotent_group_lattice.egg`;
+counter-model `hcancel_not_derivable`
 (`CC/Lattice.lean:725`). `completion_complete_cancellative_engine` takes lattice closure in
 place of `hcancel`, and `latticeClosed_of_engineFixed` gives it from the step's fixpoint.
 
@@ -3500,23 +3396,23 @@ consequences such as `d + neg(a) = c` from `a + c = d` are missed (completeness)
 counter-models `invGen_cp_not_joinable` (`CC/Laws/Inverse.lean:512`) and
 `combined_counterexample` (`CC/Laws/Combined.lean:160`), the four reproducers
 `proofs/repro/inv-into-unit.egg`, `unit-inverse.egg`, `rule-inverse-cp.egg`,
-`z3-inverse.egg`, commit `c98d7fc`. `completion_complete_inverse_engine` derives the four
+`z3-inverse.egg`. `completion_complete_inverse_engine` derives the four
 conditions from the rules' fixpoints (`invMatching_of_fixed` and the three others).
 
 **Must rewrite a fold's spelling in `a_round` only at a prefix of a left fold and a suffix
 of a right fold.** Otherwise the rewrite spells a different term and merges two terms the
 fold keeps apart (`(X - A) - B = (X - C) - D` from `A - B = C - D`; soundness). Evidence:
 counter-models `left_off_spine_unsound`, `right_off_spine_unsound`
-(`CC/ARound/Basic.lean:390`, `:420`), fixture `ac_fold_completion_spine.egg`, commit
-`7beed39f`. `rewrite_left_sound` and `rewrite_right_sound` prove the spine rewrite sound in
+(`CC/ARound/Basic.lean:390`, `:420`), fixture `ac_fold_completion_spine.egg`.
+`rewrite_left_sound` and `rewrite_right_sound` prove the spine rewrite sound in
 every magma, and `aRound_sound` that it keeps I2.
 
 **Must open and regroup a fold's views on its spine only.** Otherwise a `:flatten` view
 spells a different term and a rewrite on it merges unequal terms (soundness). Evidence:
 counter-models `fold_open_off_spine_unsound` (`Flatten/Fold.lean:138`) and
 `regroup_off_spine_unsound` (`Flatten/RegroupSound.lean:525`), fixture
-`flatten_fold_spine.egg` (`(check-neq (Sub (A) (Sub (B) (C))) (Tri (A) (B) (C)))` failed
-with "terms are equal"), commit `f995e5d6`. `otLeft_sound`, `otRight_sound`,
+`flatten_fold_spine.egg` (its `(check-neq (Sub (A) (Sub (B) (C))) (Tri (A) (B) (C)))` fails
+with "terms are equal" when a view opens off the spine). `otLeft_sound`, `otRight_sound`,
 `regroup_views_sound_left` and `regroup_views_sound_right` prove the spine views sound.
 
 **Must keep a `:flatten` match whose unsatisfied leaf opened a class an item takes.**
@@ -3524,7 +3420,7 @@ Otherwise the demand rule rejects a match that lives on no less-opened view, bec
 closing the leaf coalesces the opened class with the taken one into an entry of count two,
 which no unannotated item takes (completeness of flattened matching). Evidence: the eval
 counter-model in `Flatten/FixCheck.lean:39-64`, reproducer `proofs/repro/demand-gap.egg`,
-fixture `flatten_demand_refold.egg`, commits `844bcba` and `d95883f5`.
+fixture `flatten_demand_refold.egg`.
 `demand_fix_complete_ac` proves the corrected rule complete up to refolding.
 
 **Must keep a `:flatten` match whose unsatisfied leaf is not inert under the laws.**
@@ -3533,7 +3429,7 @@ inverse cancellation is rejected although the refolded view is smaller or is no 
 (completeness under `:identity`, `:nilpotent` and `:inverse`). Evidence: the five eval
 counter-models in `Flatten/LawsCheck.lean`, fixtures `flatten_laws_nilpotent.egg`,
 `flatten_laws_inverse.egg`, `flatten_laws_inverse_leaf.egg`, `flatten_laws_identity.egg`,
-`flatten_laws_assoc_unit.egg`, commits `10c9065` and `96279a6f`.
+`flatten_laws_assoc_unit.egg`.
 `demand_laws_complete_ac` proves the rule complete under any laws, and `nonInertEng_eq` that
 the engine's flag is the model's.
 
@@ -3550,8 +3446,8 @@ clamped to zero, a cancelled inverse), no item can take it, and the match is los
 (completeness under laws). Evidence: fixture `flatten_regroup_laws_drop_need.egg`
 (`(add x y)` binds `x = C, y = D` in `add{A, B, C, D}` with `zero ∋ add{A, B}`), theorems
 `regroup_drop_need_unit`, `regroup_drop_need_nilpotent`, `regroup_drop_need_inverse`,
-`reach_needs_held` (`Flatten/RegroupLaws.lean`); fixed the same day in the engine
-(`needsAfter`) and the model.
+`reach_needs_held` (`Flatten/RegroupLaws.lean`); the engine and the model compute the
+needed classes the same way (`needsAfter`).
 
 **Must regroup an item-less n-ary pattern when the laws can drop a class.** Otherwise
 `(f ..r)` misses the view `{C, D}` of `add{A, B, C, D}` with `zero ∋ add{A, B}`, a record that
@@ -3565,17 +3461,16 @@ Otherwise a chain through a record that needs more classes than the pattern has 
 cut, although a later regrouping absorbs the needed classes, and the match through the
 nested group is lost (completeness). Evidence: `regroup_nested_matches`
 (`Flatten/RegroupNested.lean:81`: `{a, b, c, d, h, k}` through `{h, k, G1, G2}`, which needs
-two classes, to `{h, k, G3}`), fixture `flatten_regroup_nested_needs.egg`, PR #155
-(`6c37120b`). `regroup_match_iff` bounds the final record only (`r.2.2.length ≤
+two classes, to `{h, k, G3}`), fixture `flatten_regroup_nested_needs.egg`.
+`regroup_match_iff` bounds the final record only (`r.2.2.length ≤
 a.elems.length`), and the cost is not measurable (`07-rules-and-pattern-matching.md`, §7.5).
 
 **Must count a saturated view size, a truncation and a skipped node as a loss of
 exactness.** Otherwise a count read as `u64::MAX` can make a regrouped view appear no
 smaller than its source and let the skip of a regrouped target fire, and a truncated or
 skipped node silently loses matches; in both cases the match set is no longer
-`regroupSkip_match_iff`'s, and nothing reports it. Evidence: commit `54bea39b`
-(`saturated_size` counts a count past `u64::MAX` in `flatten_overflowed`, with a unit test),
-the hypothesis `hz` of `regroupBounded_query_exact` (the three counters zero), and the model's
+`regroupSkip_match_iff`'s, and nothing reports it. Evidence: `saturated_size`
+counts a count past `u64::MAX` in `flatten_overflowed`, with a unit test; the hypothesis `hz` of `regroupBounded_query_exact` (the three counters zero), and the model's
 `Ix.wide`. The design note assigns the three counters to tier 1.
 
 **Must never store a set node whose normal form is one class, and merge a stored one into
@@ -3583,7 +3478,7 @@ that class at rebuild.** Otherwise a raw view collapses to a single class after 
 drop, `TwoClassesL` fails, and the demand rule for sets loses a match (completeness of
 `:flatten` matching on ACI operators). Evidence: fixture `aci1.egg` (`z = And{x, s}`,
 `n = And{x, z}`, `s ∪ Tru` merges `z` and then `n` with `x`), theorem `twoClassesL_of_members`
-(`Flatten/EngineComplete.lean:314`), commit `798af6c9`. `demand_engine_complete_aci` takes
+(`Flatten/EngineComplete.lean:314`). `demand_engine_complete_aci` takes
 the invariant as a hypothesis.
 
 **Must collapse a one-element normal form into its class, and keep the `atomic` bit equal
@@ -3593,8 +3488,7 @@ its rule should rewrite (completeness on graphs with leaf constants). Evidence:
 `AtomCollapse` derived from `AddFixed` (`atomCollapse_of_addFixed`, `CC/AtomicOf.lean`),
 `atomicOf`, the five fixtures `atomic_bit_child_before_and_after_node.egg`,
 `atomic_bit_inverse_after_splice.egg`, `atomic_bit_last_node_collapses.egg`,
-`atomic_bit_leaf_gains_node.egg`, `atomic_bit_merge_spliced_side.egg` (commit `68814795`),
-commit `c4530325`; `witness_atomicOf` checks the bit on the atoms witness.
+`atomic_bit_leaf_gains_node.egg`, `atomic_bit_merge_spliced_side.egg`; `witness_atomicOf` checks the bit on the atoms witness.
 
 **Must track merge members in the delta (`merge_in_classes`) under semi-naive matching.**
 Otherwise a merge whose survivor is the id the parent already stores recanonicalizes no node,
@@ -3605,20 +3499,20 @@ point.
 
 **Must route a rule that constrains a class variable to a global's class to the naive
 matcher.** Otherwise the absorbed class's members enter the delta but no atom scans them,
-and the new match is never emitted (completeness; the sixth recorded engine gap). Evidence:
-counter-model `delta_incomplete_global` (`Rounds/Counter.lean:98`), fixture
-`semi_eq_global_local.egg`, commit `e937653`, the engine's `needs_naive_match`.
+and the new match is never emitted (completeness). Evidence: counter-model
+`delta_incomplete_global` (`Rounds/Counter.lean:98`), fixture `semi_eq_global_local.egg`,
+the engine's `needs_naive_match`.
 
 **Must re-match the rules that build an n-ary term in full after a rebuild applied a law to
 a stored node or changed a build-time spelling, when completion is off.** Otherwise a fired
-instance whose right-hand side was built through a node the unit drop, the clamp or a
+instance whose right-hand side is built through a node the unit drop, the clamp or a
 collapse rewrote is no longer present, no delta records the change, and the fixpoint is
 reached with an unfired match (completeness). Evidence: counter-model `denN_persist_fails`
 (`Fidelity/Recanon.lean:410`), fixtures `semi_recanon_unit_drop.egg`,
 `semi_recanon_idem_collapse.egg`, `semi_recanon_inverse_cancel.egg`,
 `semi_recanon_pending_collapse.egg`, `semi_naive_atomic_semi.egg`, `semi_naive_minmono.egg`,
-commit `8a84644b` (`VarCanon::law_applied` counted in `spelling_epoch`, the `respelled`
-re-match). The chains `AChain` and `SChainN` take the routing as a hypothesis. With
+the engine's `VarCanon::law_applied` counted in `spelling_epoch`, and the `respelled`
+re-match. The chains `AChain` and `SChainN` take the routing as a hypothesis. With
 completion on no re-match is needed: the old node and the new spelling are equal in the
 theory and the completion fixpoint joins them (`saturation_complete_closed`,
 `Fidelity/RecanonComplete.lean`; fixture `semi_recanon_completion_on.egg`).
@@ -3628,7 +3522,7 @@ sequence node from the stale stored children of the spliced child, two nodes of 
 content end in two classes, `Round.WF.dedup` fails, and congruence misses an equality.
 Evidence: counter-model `raw_breaks_dedup` (`Rounds/SeqSplice.lean:292`), fixtures
 `seq_hashcons_miss_min.egg`, `rounds_r1_0581.egg`; `dedup_of_inv` derives `dedup` for the
-fixed store.
+store that splices canonical children.
 
 **Must stop saturation only when no action reported a change and the size stamp did not
 move.** Otherwise a union that minted nodes and reported zero changes stops the loop before
@@ -3640,9 +3534,9 @@ the fixpoint, with matches unfired (completeness). Evidence: fixtures
 **Must report completeness only on a `Converged` outcome, never on a budget stop.**
 Otherwise the round matches on a store that is not a completion fixpoint, `before_fixed`
 fails, `rebuild_idle` does not apply, and the saturation theorems say nothing. Evidence:
-`CompletionRun` and `CompletionOutcome` (`Fidelity/StopTest.lean`, commit `5d4fc78a`),
+`CompletionRun` and `CompletionOutcome` (`Fidelity/StopTest.lean`),
 fixture `ac_lazy_budget_inconclusive.egg` (a `check-neq` reported inconclusive after a budget
-stop, commit `4ee0cf45`). The runtime design note asks for `Converged` before any check.
+stop). The runtime design note asks for `Converged` before any check.
 
 **Must keep a collapsed node a member of its class, reducible by the rules to an active
 node of that class.** A collapsed node stays in the index and is matchable, so `FCover`
@@ -3654,7 +3548,7 @@ binds that node's class, so the match is sound, and the active node yields the s
 at the class level, so completeness is unaffected. What the engine pays is time: the match
 rooted at the collapsed node builds nodes `=_E`-equal to the ones the active match builds,
 which completion or hash-consing joins. Evidence: `witness_fires_retired`
-(`Final/Witness.lean`), Section 10, item 18.
+(`Final/Witness.lean`).
 
 **Must run the eager pass after the last scanning atom, to its fixpoint, before the plan
 ends.** Otherwise an equality that the last join frees is never checked or copied: the plan
@@ -3687,11 +3581,10 @@ views per group, and counts each raw fit and each record against `MAX_REGROUP_WO
 enumerating `2^|group|` views. Evidence: `regroup_idem_overlap_found`,
 `regroupSkipO_match_iff_laws`, `regroupBoundedO_query_exact`
 (`Flatten/RegroupOverlap.lean`, `RegroupOverlapBounds.lean`), the fixture
-`flatten_regroup_laws_idem.egg` (the match found), the regenerated conformance samples
-(Section 10, item 19). Cost: nothing for an
-operator without idempotence, since the stage is guarded by the kind; for a set operator one
-more read of the use lists per view of the loop and the binomial families, both bounded
-(the suites were not re-timed in this round (the baseline is 155 s for `egg_tests.rs`, 126 s for `flatten_differential.rs` and 51 s for `conform.rs`, debug build, one thread, medians of three); the stage is guarded by the kind, so an operator without idempotence runs the same code as before).
+`flatten_regroup_laws_idem.egg` (the match the stage forms), the regenerated conformance
+samples (Section 8). Cost: nothing for an operator without idempotence, since the stage is
+guarded by the kind; for a set operator one more read of the use lists per view of the loop
+and the binomial families, both bounded.
 
 **Must not seek a completeness theorem for completion modulo associativity alone.** The
 problem is completion of a string rewriting system, and the word problem for finitely
