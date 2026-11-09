@@ -425,5 +425,5 @@ concrete pair's result is in the abstract result. Exactness says every value
 of the result is produced by some concrete pair (`reach1` / `reach2`).
 
 ```text
-cargo verus focus -p semi-persistent-abstract-domains -- --verify-only-module bool4 --rlimit 50
+cargo verus focus -p semi-persistent-abstract-domains -- --verify-only-module bool4
 ```
