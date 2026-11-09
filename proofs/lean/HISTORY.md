@@ -71,6 +71,7 @@ change to `proofs/lean/`.
 | 2026-11-09 | `bf025ce8`, `4abacd2d`, `1eea5659` | proofs | the cursor's AC and ACI decomposition frames: termination by the index measure, the yields are `decomposeAC` and `decomposeACI` |
 | 2026-11-09 | `b08afa5b` | engine | the cursor's single-shot sequence steps hold a frame, AC nodes read through `ac_children`, a bound element takes the first matching entry of its class (item 22) |
 | 2026-11-09 | `85077252` | engine | `MatchIterator` mirrored against `run_query` on the rounds corpus and against the Lean frame on random residuals |
+| 2026-11-09 | `f5d1ed97` | proofs | `TheoryClosed` derived from the completion state through the correspondence (`theoryClosed_of_complete`); the remainder `TheoryClosedRest` |
 
 ## 2. The findings of the second edition and their resolutions
 
@@ -147,9 +148,12 @@ the rewrite of `STATUS.md` that accompanies the present-state guide.
    re-match would merge nothing. The counter-model's after-store is not closed
    (`PersistFails.sa_not_closed`); its completion is and reaches the instance
    (`PersistFails.completed`). The engine passes the fixture under both strategies; the
-   `respelled` re-match stays off with completion on. Remainder: `TheoryClosed` is a
-   hypothesis on the store, not derived from `CompleteHyps` through `SubRep`; the conclusion
-   is `FiredE`, not `FiredN`, since the new spelling need not be stored as a node.
+   `respelled` re-match stays off with completion on. Commit `f5d1ed97` derives
+   `TheoryClosed` from the completion state through the correspondence
+   (`theoryClosed_of_complete`, `Final/Closed.lean`; `saturation_complete_closed_of_complete`
+   takes the completion hypotheses in its place), up to the remainder `TheoryClosedRest`: the
+   other AC operators and the ACI and A theories. Remainder: `TheoryClosedRest`, and the
+   conclusion is `FiredE`, not `FiredN`, since the new spelling need not be stored as a node.
 10. *Resolved, commit `2da55f68`.* The re-activation of collapsed nodes may break I5. Fix: add
     an un-retire step to `Infer` and prove I5 is preserved, or change the engine to refresh
     after clearing the flag. Both applied. A debug check of I5 after every congruence
