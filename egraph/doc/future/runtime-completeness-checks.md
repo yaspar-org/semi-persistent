@@ -45,7 +45,7 @@ costs.
 | `Converged` outcome, truncation and overflow counters | the run's outcome; `Converged` also gives `EnginePhase.before_fixed`, from which `Fidelity/StopTest.lean` derives `rebuild_idle` | every run | constant |
 | `nf_present`, `lhs_reduced`, `cp_joinable`, `A.R.Unchanged` | the final state, across pairs of rules or every match | CI only | one completion round, one naive matching round |
 | `hcp_ax` (`AxiomCP`) | the stored left-hand sides against the law instances | per law, as the conditions `CC/Laws/` reduces it to (`hu`, `hlhs`, `hax`, `hmatch`); for `:inverse`, the fixpoints of R1 to R5 | one pass over the rules |
-| `slots`, `RoundOK`, `EmitsAll`, `AChain` (with its routing after a non-literal rebuild, which `spelling_epoch` implements) | the history of the run | replaced by final-state checks | none |
+| `slots`, `RoundOK`, `EmitsAll`, `AChain` (with its routing after a non-literal rebuild, which `spelling_epoch` implements; with completion on `SChainE` takes any routing and `TheoryClosed`, the store's closure under the theory, is the final-state fact) | the history of the run | replaced by final-state checks | none |
 
 The history hypotheses need no check. The audit (`13-soundness.md` §4, item H3) found that
 `slots` is met by an initial state equal to the final one, so it reduces to `I5` at the
