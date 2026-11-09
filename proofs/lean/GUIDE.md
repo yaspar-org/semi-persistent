@@ -3262,6 +3262,15 @@ models, and the limits that stay by design.
    Closes it: a second overlap step in `RegroupChainO` and a stage that iterates once more,
    counted against the same budgets, with `regroupSkipO_match_iff_laws` restated. Acceptance:
    a fixture with two overlap groups whose `check-eq` holds, and the restated theorem.
+   The stage also has a cost the fixtures expose: on a set operator matched by a pattern
+   with a rest variable, every node matches with an item bound to one of its own sub-nodes,
+   so a right-hand side that grows the set fires many more instances per round
+   (`ac_lazy_budget_inconclusive.egg` reaches its budget stop in milliseconds at a 200-node
+   budget and in minutes at the default). Whether overlap views should be formed for
+   patterns with a rest variable is a design decision to take with the model: restricting
+   them is one condition in the stage and the same condition on `overlapStage`, with the
+   characterization restated under it. Acceptance: the decision recorded here, the
+   conformance samples agreeing, and the fixture at its default budget under a minute.
 10. **Completion modulo associativity alone.** `ARound/` has no completeness theorem and none
     is sought: ground completion modulo associativity alone is completion of a string
     rewriting system, a presentation of a finitely presented monoid, whose word problem is
