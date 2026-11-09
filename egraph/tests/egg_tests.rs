@@ -16,6 +16,9 @@
 //!                                                         per expected warning), or none is raised
 //!   ;; CHECK_AC_BASIS: on                                 enable + assert the reduced-basis
 //!                                                         invariants post-run (default off)
+//!   ;; NODE_BUDGET: N                                     completion node-growth budget
+//!                                                         (`EGraph::set_completion_node_budget`,
+//!                                                         default 50,000)
 //!
 //! EVAL `both` runs the file under naive AND semi-naive, asserting the same EXPECT outcome.
 //! CHECK_AC_BASIS turns on `set_basis_checks` and, after a successful run, asserts the active
@@ -38,6 +41,8 @@ struct Directives {
     union_by: semi_persistent_egraph::UnionBy,
     /// `;; MESSAGE:`: text the outcome's message must contain.
     message: Option<String>,
+    /// `;; NODE_BUDGET:`: the completion node-growth budget, in nodes.
+    node_budget: Option<usize>,
     /// `;; WARNING:`: texts that each some warning must contain; `none` asks for no
     /// warning at all, recorded as `Some(vec![])`.
     warnings: Option<Vec<String>>,
@@ -52,6 +57,7 @@ fn parse_directives(src: &str) -> Directives {
         union_by: semi_persistent_egraph::UnionBy::Rank,
         message: None,
         warnings: None,
+        node_budget: None,
     };
     for line in src.lines().take(8) {
         let line = line.trim();
@@ -86,6 +92,13 @@ fn parse_directives(src: &str) -> Directives {
         }
         if let Some(rest) = line.strip_prefix(";; CHECK_AC_BASIS:") {
             d.check_ac_basis = rest.trim() == "on";
+        }
+        if let Some(rest) = line.strip_prefix(";; NODE_BUDGET:") {
+            d.node_budget = Some(
+                rest.trim()
+                    .parse()
+                    .unwrap_or_else(|e| panic!("NODE_BUDGET: {e}: {line}")),
+            );
         }
         if let Some(rest) = line.strip_prefix(";; UNION_BY:") {
             use semi_persistent_egraph::UnionBy;
@@ -140,6 +153,9 @@ fn run_with<
     interp.set_strategy(strategy);
     interp.set_union_by(d.union_by);
     interp.set_basis_checks(d.check_ac_basis);
+    if let Some(n) = d.node_budget {
+        interp.eg.set_completion_node_budget(n);
+    }
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         surface_cmds,
@@ -294,6 +310,7 @@ egg_test!(comm_match_nested, "comm_match_nested.egg");
 egg_test!(comm_match_no_false, "comm_match_no_false.egg");
 egg_test!(mult_rhs_max_width, "mult_rhs_max_width.egg");
 egg_test!(mult_rhs_sum_overflow, "mult_rhs_sum_overflow.egg");
+egg_test!(mult_recanon_sum_overflow, "mult_recanon_sum_overflow.egg");
 egg_test!(mult_rhs_splice_rest, "mult_rhs_splice_rest.egg");
 egg_test!(mult_rhs_splice_overflow, "mult_rhs_splice_overflow.egg");
 egg_test!(mult_rhs_computed_too_wide, "mult_rhs_computed_too_wide.egg");
@@ -558,6 +575,12 @@ egg_test!(
     ac_lazy_budget_inconclusive,
     "ac_lazy_budget_inconclusive.egg"
 );
+// Two ways a lazy decision reads the node budget: spent by its rule round, which the
+// rebuild that follows reads before its first completion round, and spent by the check's
+// own rebuild before the decision opened, which the decision reads before any rule round.
+// Both report the stop as inconclusive.
+egg_test!(lazy_budget_rules_growth, "lazy_budget_rules_growth.egg");
+egg_test!(lazy_budget_prior_abort, "lazy_budget_prior_abort.egg");
 egg_test!(semi_recanon_parent_delta, "semi_recanon_parent_delta.egg");
 egg_test!(semi_recanon_unit_drop, "semi_recanon_unit_drop.egg");
 egg_test!(semi_recanon_idem_collapse, "semi_recanon_idem_collapse.egg");
@@ -680,6 +703,9 @@ egg_test!(semi_naive_minmono, "semi_naive_minmono.egg");
 egg_test!(cancel_lattice, "cancel_lattice.egg");
 egg_test!(cancel_crit_pair, "cancel_crit_pair.egg");
 egg_test!(cancel_lattice_lazy, "cancel_lattice_lazy.egg");
+// Cancelative closure without an identity (Kapur §5.2(iii)(b)): an equation whose
+// cancelation empties one side closes against the op's whole summand pool.
+egg_test!(ac_cancel_pool_no_unit, "ac_cancel_pool_no_unit.egg");
 egg_test!(nilpotent_group_lattice, "nilpotent_group_lattice.egg");
 egg_test!(ac_collapsed_recanon, "ac_collapsed_recanon.egg");
 egg_test!(cc_disjoint_partner, "cc_disjoint_partner.egg");
@@ -728,6 +754,9 @@ egg_test!(a_singleton_collapse, "a_singleton_collapse.egg");
 // `ematch.rs`'s `expand_a_checks_a_prebound_fixed_child` and its two decomposition
 // counterparts assert the match set directly.
 egg_test!(a_prebound_fixed_child, "a_prebound_fixed_child.egg");
+// The windows of a sequence pattern against a node shorter than its fixed children, and
+// against one where no window binds, in each of the four pre/suffix shapes.
+egg_test!(a_window_short_node, "a_window_short_node.egg");
 egg_test!(a_matrix_kron_fusion, "a_matrix_kron_fusion.egg");
 
 // ── AC congruence completeness (superposition + inter-reduction) ──

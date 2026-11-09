@@ -1,0 +1,41 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; The sequence expansion (`enter_expand_a`) against a node shorter than the pattern's
+;; fixed children, and against a node where no window binds (a fixed child is a constant
+;; absent from the node), in each pre/suffix shape: `..p x y z ..s`, `x y z`, `..p x y z`,
+;; `x y z ..s`, and the constant forms `..p (k) ..s`, `x (k)`, `..p (k)`, `(k) ..s`.
+;; The two-element sequence matches none; the three-element one matches the shapes
+;; whose fixed children fit it, and only those.
+(sort E)
+(function S (E) E :assoc)
+(function a () E) (function b () E) (function c () E) (function k () E)
+(function W1 () E) (function W2 () E) (function W3 () E) (function W4 () E)
+(function K1 () E) (function K2 () E) (function K3 () E) (function K4 () E)
+(function Hit1 (E) E) (function Hit2 (E) E) (function Hit3 (E) E) (function Hit4 (E) E)
+(let short (S (a) (b)))
+(let long (S (a) (b) (c)))
+(rule ((S ..p x y z ..s)) ((union (Hit1 x) (W1))))
+(rule ((S x y z)) ((union (Hit2 x) (W2))))
+(rule ((S ..p x y z)) ((union (Hit3 x) (W3))))
+(rule ((S x y z ..s)) ((union (Hit4 x) (W4))))
+(rule ((S ..p (k) ..s)) ((union (K1) (W1))))
+(rule ((S x (k))) ((union (K2) (W2))))
+(rule ((S ..p (k))) ((union (K3) (W3))))
+(rule ((S (k) ..s)) ((union (K4) (W4))))
+(run 2)
+;; The three-element sequence fits every variable shape, at its one window.
+(check-eq (Hit1 (a)) (W1))
+(check-eq (Hit2 (a)) (W2))
+(check-eq (Hit3 (a)) (W3))
+(check-eq (Hit4 (a)) (W4))
+;; The two-element sequence is shorter than three fixed children: no window.
+(check-neq (Hit1 (b)) (W1))
+(check-neq (Hit2 (b)) (W2))
+(check-neq (Hit3 (b)) (W3))
+(check-neq (Hit4 (b)) (W4))
+;; No node holds (k): the constant shapes bind nowhere.
+(check-neq (K1) (W1))
+(check-neq (K2) (W2))
+(check-neq (K3) (W3))
+(check-neq (K4) (W4))
