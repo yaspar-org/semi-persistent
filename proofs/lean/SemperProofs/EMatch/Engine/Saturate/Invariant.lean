@@ -1,4 +1,5 @@
 import SemperProofs.EMatch.Engine.Saturate.ActRound
+import SemperProofs.EMatch.Engine.Schedule
 
 /-!
 # The saturation invariant and the fixpoint theorem (spec-actions §F)
@@ -69,10 +70,25 @@ def RulesWF (sig : Sym → Kind) (G : Graph) (rules : List Rule) : Prop :=
   ∀ rule ∈ rules, AtomsWF G sig rule.atoms
 
 /-- Every rule's matcher emits exactly the matches its modes admit
-(`MatcherOK`): a theorem for the adaptive scheduler (`matcherOK_engine`),
-and for a static plan in the scheduler grammar (`matcherOK_static`). -/
+(`MatcherOK`): a theorem for the adaptive scheduler (`matcherOK_engine`)
+and for the static scheduler's plan (`matcherOK_static_engine`,
+`Schedule.lean`); for any static plan in the scheduler grammar it is
+`matcherOK_static`. -/
 def MatchersOK (rules : List Rule) : Prop :=
   ∀ rule ∈ rules, MatcherOK rule.atoms rule.matcher
+
+/-- `MatchersOK` of compiled rules: each rule matches through the adaptive
+scheduler or through the plan `schedule_with_stats` builds for its atoms
+(`matcherOK_engine`, `matcherOK_static_engine`), with no hypothesis on the
+atoms or on the prices. -/
+theorem matchersOK_compiled {κ : Type} [LT κ] [DecidableRel (α := κ) (· < ·)] {rules : List Rule}
+    (h : ∀ rule ∈ rules, rule.matcher = .engine rule.atoms ∨
+      ∃ cost : APlan → Finset Var → Nat → κ, rule.matcher = .staticEngine cost rule.atoms) :
+    MatchersOK rules := by
+  intro rule hr
+  rcases h rule hr with h | ⟨cost, h⟩
+  · rw [h]; exact matcherOK_engine _
+  · rw [h]; exact matcherOK_static_engine cost _
 
 /-- Round 0: `InvLag` holds outright. -/
 theorem invLag_zero {sig : Sym → Kind} {rules : List Rule} (A : ActRound) (hwf : A.R.WF)

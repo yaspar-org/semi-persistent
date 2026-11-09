@@ -3,6 +3,7 @@ import SemperProofs.EMatch.Engine.Main
 import SemperProofs.EMatch.Engine.Runtime
 import SemperProofs.EMatch.Engine.Choose
 import SemperProofs.EMatch.Engine.Matcher
+import SemperProofs.EMatch.Engine.Schedule
 import SemperProofs.EMatch.Engine.SemiNaive
 import SemperProofs.EMatch.Engine.WF
 import SemperProofs.EMatch.Engine.ByOp
@@ -29,6 +30,12 @@ import SemperProofs.EMatch.Engine.ByOp
 #print axioms Semper.EMatch.matcherOK_static
 #print axioms Semper.EMatch.matcherOK_runtime
 #print axioms Semper.EMatch.matcherOK_engine
+#print axioms Semper.EMatch.eagerFix_fixed
+#print axioms Semper.EMatch.scheduleEngine_schedA
+#print axioms Semper.EMatch.scheduleEngine_planOK
+#print axioms Semper.EMatch.matcherOK_static_engine
+#print axioms Semper.EMatch.scheduleEngine_naive_matches
+#print axioms Semper.EMatch.scheduleEngine_eq_runEngine
 #print axioms Semper.EMatch.MatcherOK.naive_iff
 #print axioms Semper.EMatch.MatcherOK.variant_iff
 #print axioms Semper.EMatch.MatcherOK.round_complete

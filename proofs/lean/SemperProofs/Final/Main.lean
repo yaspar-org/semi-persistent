@@ -166,8 +166,8 @@ distinct, rest variables linear).
 
 (b) The scheduler: every rule's matcher emits exactly the matches its
 modes admit (`MatchersOK`: a theorem for the adaptive scheduler,
-`matcherOK_engine`, and `SchedA` of the plan for a static one,
-`matcherOK_static`), and the rule's atoms are the flattening of its
+`matcherOK_engine`, and for the static scheduler's plan,
+`matcherOK_static_engine`), and the rule's atoms are the flattening of its
 pattern `P` at the root node variable `r`
 (`rule.atoms = (atoms P r).map QAtom.scan`) with `P.head = some f`.
 

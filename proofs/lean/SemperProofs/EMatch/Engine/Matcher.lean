@@ -17,9 +17,11 @@ snapshot for a new-node predicate and a per-atom mode. `MatcherOK atoms m`
 is what the saturation theorems need of it: on a graph where the atoms are
 well formed, `m` emits exactly the matches the modes admit. The static plan
 satisfies it when the plan is in the scheduler grammar (`matcherOK_static`,
-from `schedA_matches`); the adaptive scheduler satisfies it for every
-choice function (`matcherOK_runtime`, from `runNDA_matches`), in particular
-for the engine's (`matcherOK_engine`). The semi-naive facts the saturation
+from `schedA_matches`), which the plan `schedule_with_stats` builds is
+(`scheduleEngine_schedA`, `matcherOK_static_engine`, `Schedule.lean`); the
+adaptive scheduler satisfies it for every choice function
+(`matcherOK_runtime`, from `runNDA_matches`), in particular for the
+engine's (`matcherOK_engine`). The semi-naive facts the saturation
 invariant uses, `MatcherOK.naive_iff` and `MatcherOK.round_complete`, are
 `mem_runNaive_iff` and `semi_naive_round_complete` restated on a matcher.
 -/
