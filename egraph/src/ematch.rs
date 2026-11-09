@@ -3294,6 +3294,15 @@ enum FrameKind<'a, Cfg: EGraphConfig> {
         /// ones this frame unbinds when it advances or is dropped.
         bound: BoundHere,
     },
+    /// A sequence pattern with at most one rest, which binds once per node: the frame
+    /// exists so that `backtrack` unbinds the children and pops the rest before the
+    /// join below moves to its next node (a single-shot step that left them bound made
+    /// `bind_fixed` check the next node's children against the previous node's).
+    Once {
+        pre: Option<SeqVarId>,
+        suf: Option<SeqVarId>,
+        bound: BoundHere,
+    },
     ACDecompose {
         elems: Vec<(PatVar, RMult)>,
         rest: Option<MsetVarId>,
@@ -3548,7 +3557,9 @@ where
             } => {
                 let node_id = self.env.get(*node);
                 let mut residual = Vec::new();
-                self.eg.mset_children(node_id, &mut residual);
+                // As `run_step`: `ac_children`, not `mset_children`, which panics on an
+                // AC node the store keeps in another shape.
+                self.eg.ac_children(node_id, &mut residual);
                 for e in &mut residual {
                     e.0 = canon(self.index, self.eg, e.0);
                 }
@@ -3690,7 +3701,8 @@ where
                 Enter::Pushed(true)
             }
             _ => {
-                // Single-shot cases: no generator needed.
+                // Single-shot cases: one window per node, held by a `Once` frame so
+                // that the bindings are undone when the search leaves the node.
                 let mut bound = BoundHere::new();
                 if pre.is_none() && suf.is_none() {
                     if seq.len() != nfixed {
@@ -3699,8 +3711,6 @@ where
                     if !self.bind_fixed(children, &seq, 0, &mut bound) {
                         return Enter::Failed;
                     }
-                    self.cursor += 1;
-                    Enter::Advanced
                 } else if let (Some(p), None) = (pre, suf) {
                     if seq.len() < nfixed {
                         return Enter::Failed;
@@ -3711,8 +3721,6 @@ where
                         self.env.pop_seq(p);
                         return Enter::Failed;
                     }
-                    self.cursor += 1;
-                    Enter::Advanced
                 } else {
                     // (None, Some(s))
                     let s = suf.unwrap();
@@ -3724,9 +3732,12 @@ where
                         self.env.pop_seq(s);
                         return Enter::Failed;
                     }
-                    self.cursor += 1;
-                    Enter::Advanced
                 }
+                self.frames.push(Frame {
+                    kind: FrameKind::Once { pre, suf, bound },
+                    step_idx: self.cursor,
+                });
+                Enter::Pushed(true)
             }
         }
     }
@@ -3922,6 +3933,16 @@ where
                     }
                     // exhausted, frame dropped
                 }
+                FrameKind::Once { pre, suf, bound } => {
+                    unbind(&mut self.env, bound);
+                    if let Some(s) = *suf {
+                        self.env.pop_seq(s);
+                    }
+                    if let Some(p) = *pre {
+                        self.env.pop_seq(p);
+                    }
+                    // exhausted, frame dropped
+                }
                 FrameKind::SlidingWindow {
                     children,
                     pre,
@@ -4094,22 +4115,27 @@ where
         };
 
         if let Some(repr) = bound_repr {
-            for ri in start..residual.len() {
-                if residual[ri].0 == repr
-                    && mult_matches(mult, residual[ri].1, bound_mult_val(mult, &self.env))
-                {
-                    let take: Cfg::M = match mult {
-                        // Matched at the surface width, so the literal equals
-                        // this entry's multiplicity; reuse it.
-                        RMult::Exact(_) => residual[ri].1,
-                        RMult::Var { var: mv, .. } => {
-                            self.env.set_mult(*mv, residual[ri].1);
-                            residual[ri].1
-                        }
-                    };
-                    residual[ri].1 = residual[ri].1.saturating_sub(take);
-                    return Some(ri);
-                }
+            // The one entry a bound element can take is the first of its class that
+            // matches, as in `decompose_ac_elem`; a later entry of the same class (a
+            // commutative pair's equal children) is not a second assignment. The scan
+            // from `start` therefore finds it only when it is at or past `start`.
+            let found = residual
+                .iter()
+                .position(|&(r, m)| r == repr && mult_matches(mult, m, bound_mult_val(mult, &self.env)));
+            if let Some(ri) = found
+                && ri >= start
+            {
+                let take: Cfg::M = match mult {
+                    // Matched at the surface width, so the literal equals
+                    // this entry's multiplicity; reuse it.
+                    RMult::Exact(_) => residual[ri].1,
+                    RMult::Var { var: mv, .. } => {
+                        self.env.set_mult(*mv, residual[ri].1);
+                        residual[ri].1
+                    }
+                };
+                residual[ri].1 = residual[ri].1.saturating_sub(take);
+                return Some(ri);
             }
             return None;
         }
@@ -7077,4 +7103,5 @@ mod tests {
         }
         set_op_filter_policy(OpFilterPolicy::Adaptive);
     }
+
 }
