@@ -32,6 +32,7 @@ const PROGRAM: &str = "\
 (function F (E) E :assoc-comm)
 (function G (E) E :assoc-comm-idem)
 (let short (S (a) (b)))
+(let short2 (S (b) (c)))
 (let long (S (a) (b) (c)))
 (let fab (F (a) (b)))
 (let fabc (F (a) (b) (c)))
@@ -142,11 +143,25 @@ fn sequence_windows_short_node_and_no_binding() {
         ("(S x (k))", 0),
         ("(S ..p (k))", 0),
         ("(S (k) ..s)", 0),
-        // A window exists in each sequence; the two-element one gives one, the other two.
-        ("(S ..p x y ..s)", 3),
+        // A window exists in each sequence; the two-element ones give one, the other two.
+        ("(S ..p x y ..s)", 4),
     ] {
         assert_eq!(agree(&eg, pattern).len(), n, "{pattern}");
     }
+}
+
+/// Sequence patterns with at most one rest bind once per node (`enter_expand_a`'s
+/// single-shot cases): over the two two-element nodes, `(S x y)` matches each, and the
+/// prefix and suffix forms match every node. The cursor left the children bound and the
+/// rest pushed when the join below moved to the next node, so the next node's children
+/// were checked against the previous node's and the later nodes were missed.
+#[test]
+fn single_shot_sequence_steps_unbind_on_backtrack() {
+    let eg = build();
+    assert_eq!(agree(&eg, "(S x y)").len(), 2);
+    assert_eq!(agree(&eg, "(S ..p x)").len(), 3);
+    assert_eq!(agree(&eg, "(S x ..s)").len(), 3);
+    assert_eq!(agree(&eg, "(S ..p x y)").len(), 3);
 }
 
 /// Exact AC and ACI patterns with three free elements over the entries `{a, b}` and
@@ -172,4 +187,25 @@ fn exact_and_rest_only_patterns() {
     assert_eq!(agree(&eg, "(G x y)").len(), 0);
     assert_eq!(agree(&eg, "(F ..r)").len(), 2);
     assert_eq!(agree(&eg, "(G ..r)").len(), 1);
+}
+
+/// Exact and rest patterns whose last element is bound before the decomposition (a
+/// constant child, joined first): the cursor's `ac_advance` must backtrack into the
+/// earlier elements and re-run the full search, not a greedy completion.
+#[test]
+fn decompositions_with_a_bound_element() {
+    let eg = build();
+    for (pattern, n) in [
+        ("(F x y (a))", 2),
+        ("(F x y (b))", 2),
+        ("(F x y (c))", 2),
+        ("(F x (a) ..r)", 3),
+        ("(F x y (c) ..r)", 2),
+        ("(G x y (a))", 2),
+        ("(G x y (b))", 2),
+        ("(G x y (c))", 2),
+        ("(G x (a) ..r)", 2),
+    ] {
+        assert_eq!(agree(&eg, pattern).len(), n, "{pattern}");
+    }
 }

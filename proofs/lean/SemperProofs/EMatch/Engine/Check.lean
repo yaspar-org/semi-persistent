@@ -7,6 +7,7 @@ import SemperProofs.EMatch.Engine.Schedule
 import SemperProofs.EMatch.Engine.SemiNaive
 import SemperProofs.EMatch.Engine.WF
 import SemperProofs.EMatch.Engine.ByOp
+import SemperProofs.EMatch.Engine.Cursor
 
 /-! Axiom audit for the engine development. Expected: only `propext`,
 `Classical.choice`, `Quot.sound`. -/
@@ -55,3 +56,15 @@ import SemperProofs.EMatch.Engine.ByOp
 #print axioms Semper.EMatch.runND_eq_plan
 #print axioms Semper.EMatch.ematch_sound
 #print axioms Semper.EMatch.ematch_complete
+#print axioms Semper.EMatch.Cursor.Ops.findLoop_terminates
+#print axioms Semper.EMatch.Cursor.Ops.findFirst_terminates
+#print axioms Semper.EMatch.Cursor.Ops.advance_terminates
+#print axioms Semper.EMatch.Cursor.preFix_cycles
+#print axioms Semper.EMatch.Cursor.preFix_diverges
+#print axioms Semper.EMatch.Cursor.Ops.drive_eq_enum
+#print axioms Semper.EMatch.Cursor.acLaws
+#print axioms Semper.EMatch.Cursor.acFrame_eq_decomposeAC
+#print axioms Semper.EMatch.Cursor.decomposeAC_nodup
+#print axioms Semper.EMatch.Cursor.aciLaws
+#print axioms Semper.EMatch.Cursor.aciFrame_eq_decomposeACI
+#print axioms Semper.EMatch.Cursor.decomposeACI_nodup

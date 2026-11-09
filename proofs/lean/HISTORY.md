@@ -67,6 +67,10 @@ change to `proofs/lean/`.
 | 2026-11-09 | `989409fc` | proofs | completion-on saturation: right-hand sides present modulo the theory |
 | 2026-11-09 | `f9eae3b5` | engine | `semi_recanon_completion_on.egg` |
 | 2026-11-09 | `4e267030` | engine | the cursor's AC and ACI search resumes from the advanced entry after a backtrack (Section 5) |
+| 2026-11-09 | `70b0d77c` | engine | the cursor's `ac_advance` and `aci_advance` resume through `find_first` (item 22) |
+| 2026-11-09 | `bf025ce8`, `4abacd2d`, `1eea5659` | proofs | the cursor's AC and ACI decomposition frames: termination by the index measure, the yields are `decomposeAC` and `decomposeACI` |
+| 2026-11-09 | `b08afa5b` | engine | the cursor's single-shot sequence steps hold a frame, AC nodes read through `ac_children`, a bound element takes the first matching entry of its class (item 22) |
+| 2026-11-09 | `85077252` | engine | `MatchIterator` mirrored against `run_query` on the rounds corpus and against the Lean frame on random residuals |
 
 ## 2. The findings of the second edition and their resolutions
 
@@ -214,9 +218,10 @@ the rewrite of `STATUS.md` that accompanies the present-state guide.
     `ac_find_first` and `aci_find_first` scanned every element but the first from entry 0,
     re-took the entry just undone and looped (`cursor_shapes.rs`,
     `exact_decompositions_backtrack_without_a_rest`). Fix applied: the search resumes from
-    the advanced entry. The cursor has no Lean model; transcribing it with a termination
-    theorem (a lexicographic measure on the entry indices, the property the defect broke) and
-    the equality of its match set with `run_query`'s is the next modelling item.
+    the advanced entry. `EMatch/Engine/Cursor.lean` (commits `bf025ce8`, `4abacd2d`) now
+    models the decomposition frames: `findLoop_terminates` by the measure `pos` on the entry
+    indices, and `preFix_diverges` for the search before the fix, which returns for no fuel
+    on three elements over two entries.
 20. *Resolved, commits `893fc3ac` (model) and `b932241b` (engine).* Regrouped
     matching under idempotence never kept a member of a set group beside its class, so with
     `sab = S{A, B}` and `s = S{A, B, C}` the pattern `(S x y z)` never bound
@@ -247,6 +252,21 @@ the rewrite of `STATUS.md` that accompanies the present-state guide.
     Fix: a small test lowering them over a set node with overlap views, and assert the truncation counter and that only overlap views
     are reported, as `regroupBoundedO_plan_sound` states.
 
+22. *Resolved, commits `70b0d77c` and `b08afa5b`.* Four more defects of the cursor matcher,
+    found by the model of its decomposition frames and by the mirror of `run_query_iter`
+    against `run_query` on the rounds corpus (`85077252`): `ac_advance` and `aci_advance`
+    completed the elements after the moved one greedily, so an assignment with a bound later
+    element was missed, and their retry path undid the moved element a second time at an
+    index it never took, which read past the residual (`(F x y (c))` over `F{a, b, c}`); a
+    sequence pattern with at most one rest bound its children with no frame, so the join
+    below moved to its next node with the previous node's children still bound; an AC
+    decomposition read its node through `mset_children`, which panics on a commutative pair;
+    and a bound element took any entry of its class, so a commutative pair with equal children
+    gave an assignment twice where `decompose_ac_elem` gives it once. Fixes applied: the
+    advance resumes through `find_first` from the last element; a `Once` frame holds the
+    single-shot bindings; `ac_children`; the first matching entry of the class. After them the
+    corpus mirror agrees on every plan (1427 plans, 770 with a match) and
+    `cursor_shapes.rs` holds the failing shapes.
 ## 3. The first edition's findings and their status
 
 The first edition of the guide (commit `a5cfa2d7`, written against `6c37120b`) collected the
@@ -462,6 +482,7 @@ outputs appear only in comments; nothing asserts them.
 | `per_node_form_fails` | `CC/Bridge/Modulo.lean:251` | matching modulo the theory holds at the class level only | |
 | `fold_open_off_spine_unsound` | `Flatten/Fold.lean:138` | the flatten walk opened every position of a fold; fixed by `flatten::spine` | `flatten_fold_spine.egg` |
 | `regroup_off_spine_unsound` | `Flatten/RegroupSound.lean:525` | regrouping off a fold's spine is unsound | |
+| `preFix_cycles`, `preFix_diverges` | `Engine/Cursor.lean` | the cursor's search before commit `4e267030` cycles on three elements over two entries and returns for no fuel | `cursor_shapes.rs` |
 | original demand rule on AC (eval) | `Flatten/FixCheck.lean:39-64` | the rule rejected a match that lives on no other view; fixed in commit `d95883f5` | `proofs/repro/demand-gap.egg` |
 | kept-count rule under laws (eval) | `Flatten/LawsCheck.lean` | five cases where the corrected rule loses a match under inverse, identity, nilpotent and unit laws | |
 
