@@ -3,11 +3,14 @@ import SemperProofs.EMatch.Flatten.RegroupSkip
 import SemperProofs.EMatch.Flatten.RegroupBounds
 import SemperProofs.EMatch.Flatten.RegroupLaws
 import SemperProofs.EMatch.Flatten.FoldRegroup
+import SemperProofs.EMatch.Flatten.RegroupOverlapBounds
 
 /-! Axiom audit for regrouped views (`RegroupDefs.lean`, `Regroup.lean`,
 `RegroupSound.lean`, `RegroupComplete.lean`, `RegroupFits.lean`, `RegroupChain.lean`,
 `RegroupNested.lean`), the engine's regrouping with its skips
-(`RegroupSkipDefs.lean`, `RegroupSkip.lean`) and the plan theorems over any
+(`RegroupSkipDefs.lean`, `RegroupSkip.lean`), the overlap stage under
+idempotence (`RegroupOverlapDefs.lean`, `RegroupOverlap.lean`,
+`RegroupOverlapBounds.lean`) and the plan theorems over any
 enumeration (`Plan.lean`). Expected: only `propext`, `Classical.choice`,
 `Quot.sound`. -/
 
@@ -224,7 +227,8 @@ counter-models of the matches chains miss. -/
 #print axioms Semper.EMatch.Flatten.regroup_drop_need_inverse
 #print axioms Semper.EMatch.Flatten.regroup_drop_need_leaf
 #print axioms Semper.EMatch.Flatten.regroup_insert_unit_lost
-#print axioms Semper.EMatch.Flatten.regroup_idem_overlap_lost
+#print axioms Semper.EMatch.Flatten.regroup_idem_overlap_sound
+#print axioms Semper.EMatch.Flatten.regroup_idem_overlap_loop_lost
 
 namespace Semper.EMatch.Flatten
 
@@ -318,3 +322,39 @@ it opens it into `[b, c, c]`. -/
 #eval (rawNodeD exFold .left (fuelOf exFold.G) ⟨7, .seq [4, 3]⟩ 1 ∅).map Prod.fst
 
 end Semper.EMatch.Flatten
+#print axioms Semper.EMatch.Flatten.overlap_step_sound_aci
+#print axioms Semper.EMatch.Flatten.overlap_step_sound_aci_laws
+#print axioms Semper.EMatch.Flatten.regroupO_views_sound_aci_laws
+#print axioms Semper.EMatch.Flatten.regroupSkipO_views_sound_aci_laws
+#print axioms Semper.EMatch.Flatten.enumerateRO_eq_of_not_aci
+#print axioms Semper.EMatch.Flatten.enumerateRSkipO_eq_of_not_aci
+#print axioms Semper.EMatch.Flatten.overlapAll_spec
+#print axioms Semper.EMatch.Flatten.regroupSkipO_spec
+#print axioms Semper.EMatch.Flatten.regroupSkipO_iff
+#print axioms Semper.EMatch.Flatten.enumerateRSkipO_iff
+#print axioms Semper.EMatch.Flatten.regroupAllSkipOAt_eq
+#print axioms Semper.EMatch.Flatten.prune_regroupO
+#print axioms Semper.EMatch.Flatten.regroupO_spec
+#print axioms Semper.EMatch.Flatten.regroupSkipO_specE
+#print axioms Semper.EMatch.Flatten.atomSat_regroupSkipO_iff
+#print axioms Semper.EMatch.Flatten.regroupSkipO_plan_sound
+#print axioms Semper.EMatch.Flatten.regroupSkipO_plan_complete
+#print axioms Semper.EMatch.Flatten.overlapStepL_iff
+#print axioms Semper.EMatch.Flatten.regroupO_views_iff_laws
+#print axioms Semper.EMatch.Flatten.regroupO_match_iff_laws
+#print axioms Semper.EMatch.Flatten.regroupSkipO_views_iff_laws
+#print axioms Semper.EMatch.Flatten.regroupSkipO_match_iff_laws
+#print axioms Semper.EMatch.Flatten.regroupSkipO_plan_complete_laws
+#print axioms Semper.EMatch.Flatten.regroupChainO_iff_of_not_aci
+#print axioms Semper.EMatch.Flatten.regroup_idem_overlap_found
+#print axioms Semper.EMatch.Flatten.regroupBoundedO_cases
+#print axioms Semper.EMatch.Flatten.regroupBoundedO_halt_iff
+#print axioms Semper.EMatch.Flatten.regroupBoundedO_exact
+#print axioms Semper.EMatch.Flatten.regroupBoundedO_sub
+#print axioms Semper.EMatch.Flatten.regroupBoundedO_reach
+#print axioms Semper.EMatch.Flatten.enumerateRDBoundedO_le
+#print axioms Semper.EMatch.Flatten.enumerateRDBoundedO_ge
+#print axioms Semper.EMatch.Flatten.regroupBoundedO_plan_sound
+#print axioms Semper.EMatch.Flatten.regroupBoundedO_plan_complete
+#print axioms Semper.EMatch.Flatten.regroupBoundedO_query_exact
+#print axioms Semper.EMatch.Flatten.regroupBoundedO_match_exact
