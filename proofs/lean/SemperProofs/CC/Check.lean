@@ -1,4 +1,5 @@
 import SemperProofs.CC.Main
+import SemperProofs.CC.EngineSteps
 
 /-! Axiom audit for the AC-congruence-closure development. The only axioms
 expected are `propext`, `Classical.choice` and `Quot.sound`. -/
@@ -27,3 +28,17 @@ expected are `propext`, `Classical.choice` and `Quot.sound`. -/
 #print axioms SemperProofs.CC.kapur_termination
 #print axioms SemperProofs.CC.run_stabilizes
 #print axioms SemperProofs.CC.confluent_modulo
+#print axioms SemperProofs.CC.Infer_I2
+#print axioms SemperProofs.CC.Infer_I4
+#print axioms SemperProofs.CC.E_eqs_sound
+#print axioms SemperProofs.CC.Infer.joinMerge_of_steps
+#print axioms SemperProofs.CC.Infer.cancelMerge
+#print axioms SemperProofs.CC.run_stabilizes'
+#print axioms SemperProofs.CC.materialize_merge_infer
+#print axioms SemperProofs.CC.pair_infer
+#print axioms SemperProofs.CC.superpose_infer
+#print axioms SemperProofs.CC.axiomPair_infer
+#print axioms SemperProofs.CC.cancelClose_infer
+#print axioms SemperProofs.CC.inverseRepair_infer
+#print axioms SemperProofs.CC.exSt_criticalPair
+#print axioms SemperProofs.CC.superpose_example

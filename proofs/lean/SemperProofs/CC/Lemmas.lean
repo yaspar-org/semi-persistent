@@ -194,11 +194,78 @@ theorem merge_I2 {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n
     exact E.trans h₁ (E.trans (E.symm hMN) h₂)
   · exact h P a Q b hP hQ hab
 
+/-- `E` is monotone in the asserted equalities. -/
+theorem E.mono {L : Laws n} {S S' : Set (Monomial n × Monomial n)} (hS : S ⊆ S')
+    {M N : Monomial n} (h : E L S M N) : E L S' M N := by
+  induction h with
+  | ax h => exact E.ax (hS h)
+  | refl M => exact E.refl M
+  | symm _ ih => exact E.symm ih
+  | trans _ _ ih₁ ih₂ => exact E.trans ih₁ ih₂
+  | congr X _ ih => exact E.congr X ih
+  | law h => exact E.law h
+  | cancel hc _ ih => exact E.cancel hc ih
+
+/-- Under I2 the theory of the state's own classes is contained in `=_E`:
+every equality the state asserts is an `=_E`-consequence. -/
+theorem E_eqs_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (h : I2 L S st) {M N : Monomial n} (hMN : E L st.eqs M N) : E L S M N := by
+  induction hMN with
+  | ax h' => obtain ⟨c, c', hc, hc', hcc⟩ := h'; exact h _ c _ c' hc hc' hcc
+  | refl M => exact E.refl M
+  | symm _ ih => exact E.symm ih
+  | trans _ _ ih₁ ih₂ => exact E.trans ih₁ ih₂
+  | congr X _ ih => exact E.congr X ih
+  | law h' => exact E.law h'
+  | cancel hc _ ih => exact E.cancel hc ih
+
+/-- A rule of a state is an equality the state asserts. -/
+theorem rules_eqs {st : State n} {A B : Monomial n} (h : (A, B) ∈ st.rules) :
+    (A, B) ∈ st.eqs := by
+  obtain ⟨c, c', hA, hB, -, hBn, hcc⟩ := h
+  have hB' : B = st.rhs (st.find c) := hB
+  subst hB'
+  exact ⟨c, c', hA.1, hBn, hcc.symm⟩
+
+/-- Every step the loop takes is derivable from the state's own classes. -/
+theorem Step_eqs {L : Laws n} {st : State n} {a b : Monomial n} (hs : st.Step L a b) :
+    E L st.eqs a b := by
+  rcases hs with hs | hs | hs | ⟨c, c', ha, hb, hcc⟩
+  · exact Rw_sound (fun A B h => E.ax (rules_eqs h)) hs
+  · exact E.law hs
+  · exact E.symm (E.law hs)
+  · exact E.ax ⟨c, c', ha, hb, hcc⟩
+
+/-- A chain of steps, in either direction, is derivable from the state's own
+classes. -/
+theorem Step_eqvGen_eqs {L : Laws n} {st : State n} {a b : Monomial n}
+    (hs : EqvGen (st.Step L) a b) : E L st.eqs a b := by
+  induction hs with
+  | rel _ _ h => exact Step_eqs h
+  | refl a => exact E.refl a
+  | symm _ _ _ ih => exact E.symm ih
+  | trans _ _ _ _ _ ih₁ ih₂ => exact E.trans ih₁ ih₂
+
+/-- A merge of two nodes joined by a chain of steps in either direction is a
+`joinMerge`. -/
+theorem Infer.joinMerge_of_steps {L : Laws n} {st : State n} {M N : Monomial n} {c d : Fin n}
+    (hM : (M, c) ∈ st.nodes) (hN : (N, d) ∈ st.nodes) (hs : EqvGen (st.Step L) M N) :
+    Infer L st (st.merge c d) :=
+  Infer.joinMerge hM hN (Step_eqvGen_eqs hs)
+
+/-- Cancel-close of two present nodes is a `joinMerge`: `M + X` and `N + X`
+share a class, the operator is cancellative, so `M` and `N` are merged. -/
+theorem Infer.cancelMerge {L : Laws n} {st : State n} {M N X : Monomial n} {c d c' d' : Fin n}
+    (hc : L.cancellative) (hMX : (M + X, c) ∈ st.nodes) (hNX : (N + X, d) ∈ st.nodes)
+    (hcd : st.find c = st.find d) (hM : (M, c') ∈ st.nodes) (hN : (N, d') ∈ st.nodes) :
+    Infer L st (st.merge c' d') :=
+  Infer.joinMerge hM hN (E.cancel hc (E.ax ⟨c, d, hMX, hNX, hcd⟩))
+
 /-- L6: each inference maps a state satisfying I2 to one satisfying I2. -/
 theorem Infer_I2 {L : Laws n} {S : Set (Monomial n × Monomial n)} {st st' : State n}
     (hinf : Infer L st st') (h : I2 L S st) : I2 L S st' := by
   cases hinf with
-  | mint hM hMN hfresh =>
+  | mint _ hfresh =>
     intro P a Q b hP hQ hab
     simp only [State.addNode, Set.mem_insert_iff, Prod.mk.injEq] at hP hQ
     rcases hP with ⟨rfl, rfl⟩ | hP <;> rcases hQ with ⟨rfl, rfl⟩ | hQ
@@ -206,11 +273,9 @@ theorem Infer_I2 {L : Laws n} {S : Set (Monomial n × Monomial n)} {st st' : Sta
     · exact absurd hab.symm (hfresh Q b hQ)
     · exact absurd hab (hfresh P a hP)
     · exact h P a Q b hP hQ hab
-  | joinMerge hM hN hsteps => exact merge_I2 h hM hN (Step_rtg_sound h hsteps)
-  | cancelMerge hc hMX hNX hcd hM hN =>
-    exact merge_I2 h hM hN (E.cancel hc (h _ _ _ _ hMX hNX hcd))
+  | joinMerge hM hN hMN => exact merge_I2 h hM hN (E_eqs_sound h hMN)
   | retire _ => exact h
-  | unretire _ _ => exact h
+  | unretire _ => exact h
   | setRhs _ => exact h
 
 /-! ## L7: soundness -/
@@ -472,20 +537,21 @@ theorem Rw_rtg_mem {L : Laws n} {st : State n} {pool : Finset (Fin n)} (h : I4 p
   | tail _ hstep ih => exact Rw_mem h ih hstep
 
 /-- L15: the fixed summand pool I4 is preserved by every inference, since a
-minted monomial is built from the children of existing nodes. -/
+minted monomial is built from classes that already occur as children. -/
 theorem Infer_I4 {L : Laws n} {st st' : State n} {pool : Finset (Fin n)}
     (hinf : Infer L st st') (h : I4 pool st) : I4 pool st' := by
   cases hinf with
-  | mint hM hMN _ =>
+  | mint hN _ =>
     intro P a hP
     simp only [State.addNode, Set.mem_insert_iff, Prod.mk.injEq] at hP
     rcases hP with ⟨rfl, rfl⟩ | hP
-    · exact Rw_rtg_mem h (h _ _ hM) hMN
+    · intro x hx
+      obtain ⟨M, c, hM, hxM⟩ := hN x hx
+      exact h M c hM x hxM
     · exact h P a hP
   | joinMerge _ _ _ => exact h
-  | cancelMerge _ _ _ _ _ _ => exact h
   | retire _ => exact h
-  | unretire _ _ => exact h
+  | unretire _ => exact h
   | setRhs _ => exact h
 
 /-! ## Un-retirement
@@ -551,9 +617,9 @@ theorem unretire_refresh_I5 {st : State n} (h5 : I5 st) (M : Monomial n) (c : Fi
 
 /-- The engine's un-retire is two inference steps. -/
 theorem unretire_refresh_reachable {L : Laws n} {st : State n} {M : Monomial n} {c : Fin n}
-    (hret : (M, c) ∈ st.retired) (hnf : ∀ P, ¬ Rw L st.rules M P) :
+    (hret : (M, c) ∈ st.retired) :
     Reachable L st { st.unretire M c with rhs := st.refreshRhs M c } :=
-  Relation.ReflTransGen.tail (Relation.ReflTransGen.single (Infer.unretire hret hnf))
+  Relation.ReflTransGen.tail (Relation.ReflTransGen.single (Infer.unretire hret))
     (Infer.setRhs (st.refreshRhs M c))
 
 /-! L16 (round termination) is proved in `Proofs/RunStabilizes.lean`
