@@ -15,18 +15,19 @@ The pinned `vstd` dependency contains admitted specifications; global
 dependency specifications, Verus, and the solver remain part of the trust
 boundary.
 
-Enabled legacy macro-domain widths:
+Enabled executable widths:
 
 - `d8` (`u8`)
 - `d16` (`u16`)
 - `d32` (`u32`)
 - `d64` (`u64`)
-The `d128` macro invocation remains disabled because its bitvector obligations
-exceed the current solver capacity. Only generic code covers `u128`: `Word`, the
-shared GCD/CRT helpers, `Interval<W>`, `Wrapped<W>` and `Congruence<W>`; do not
-describe `ExecTnum`, `ExecAnum`, or `ExecUnum` as verified executable `u128`
-instances. The arithmetic helpers compute in `W`; they do not use widened
-intermediates.
+
+`ExecTnum<W>`, `ExecAnum<W>` and `ExecUnum<W>` are proved once for every
+`W: BitWord`, and `u128` is a `BitWord`, but no `d128` alias or test exercises
+them at u128.
+Only generic code over `W: Word` exercises `u128`: `Word`, the shared
+GCD/CRT helpers, `Interval<W>`, `Wrapped<W>` and `Congruence<W>`. The
+arithmetic helpers compute in `W`; they do not use widened intermediates.
 
 The separate Rust mirror suite can be run with:
 
@@ -89,7 +90,8 @@ cargo test -p semi-persistent-abstract-domains --test reduced_product
 | L1 | bit primitives and infinite-bitstring natural operations | proved |
 | L2 | Tnum, Anum, Unum, and division theory | proved |
 | L3 | chopped bounded-width domains | every stated contract verifies; containment covers the explicit operation inventory in `design.md`, not every defined operation |
-| L4 | `ExecTnum`, `ExecAnum`, `ExecUnum`, `Interval` at four enabled widths | every method verifies its stated contract; containment scope is listed below |
+| L4 | `ExecTnum<W>`, `ExecAnum<W>`, `ExecUnum<W>` for every `W: BitWord`; `Interval<W>` for every `W: Word` | every method verifies its stated contract; containment scope is listed below |
+| L4 | `ExecTnum<W>` as a domain | `Domain` (sound `leq`; `meet` returns `BotOr` and holds exactly the common members), `Canonical` (`lemma_nonempty`, `lemma_canonical` proved) and `Refine` with `Facts<W>`; reduces in a `Product` |
 | L4 | Shared GCD/CRT helpers | shared mathematical proofs, deterministic GCD, modular inverse, exact finite CRT and machine-modulus GCD verified |
 | L4 | `Congruence<W>` | generic canonical `Domain`; exact refinement/meet, LUB join, join-based widen, and sound unsigned add/sub/neg |
 | L4 | `StridedInterval<W>` (`strided.rs`), ported onto the shared `Domain`/`Word` traits from `doc/domain-traits.md` | `wf` is canonical (`lemma_canonical` proved); `leq`/`join`/`meet`/`widen` implemented; not yet in a `Product` |
@@ -99,36 +101,32 @@ The current **universal containment** contracts are:
 
 | Type | Operations with universal containment contracts |
 | --- | --- |
-| `ExecTnum` | `bw_or`, `bw_and`, `bw_xor`, `add`, `join`, `meet` |
-| `ExecAnum` | `add`, `div_const` |
-| `ExecUnum` | `top`, `add`, `from_interval`, `mul` |
-| `Interval` | `add`, `meet`, `join`, `div_const` |
+| `ExecTnum` | `constant`, `bw_or`, `bw_and`, `bw_xor`, `bw_not`, `bw_and_not`, `add`, `neg`, `sub`, `mul`, `divrem_g`, `divrem`, `join`, `meet`, `rsh`, `lsh`, `rshi`, `lshi` |
+| `ExecAnum` | `constant`, `top`, `add`, `sub`, `neg`, `mul`, `mul_precise`, `div_const`, `bw_and`, `bw_or`, `bw_xor`, `bw_not`, `lshi`, `rshi`, `join`, `meet`, `from_etn`, `to_etn` |
+| `ExecUnum` | `constant`, `top`, `add`, `neg`, `sub`, `mul`, `from_interval`, `from_ean`, `to_ean`, `to_etn` |
+| `Interval<W>` | every operation: `Domain`, `meet_exact`, `add`, `sub`, `neg`, `mul`, `div`, `rem`, `and`, `or`, `xor`, `not`, `shl`, `shr` |
 | `Congruence<W>` | exact `refines`/`leq`/`meet`, LUB `join`, `widen`, unsigned `add`/`sub`/`neg` |
 | `StridedInterval<W>` | `new`, `constant`, `leq` (sound and complete), `join`, `meet`, `widen`; precision caveats below |
 
-The `ExecUnum` proofs use native/spec bridge lemmas, the L3 `ChoppedUnum`
+The `ExecUnum` proofs use the `BitWord` bridge lemmas, the L3 `ChoppedUnum`
 soundness theorems, explicit overflow-to-top cases, and interval-to-Unum range
-lemmas. #123 removed `ReducedProduct`, whose `reduce` and `add` carried
+lemmas. `neg` reflects through 2^W with the same fields, by the L2
+`Unum::complement_admitted`; the conversions use `Unum::to_anum_sound` and
+`Unum::submask_admitted`, and `to_etn` goes through `ExecAnum::to_etn`. #123 removed `ReducedProduct`, whose `reduce` and `add` carried
 containment theorems; `reduce::Product` replaces it.
 
-Other executable methods currently prove well-formedness only. In particular,
-this includes Tnum multiplication, shifts, negation and subtraction, most
-and Unum conversions/arithmetic helpers.
-Their implementations and finite mirror tests are evidence, but not universal
-containment theorems. Adding those postconditions and proofs is the remaining
-L4 soundness work.
+The other executable methods of `ExecTnum`, `ExecAnum` and `ExecUnum` are
+helpers (`min_val`, `max_val`, `is_const`, `meet_m`, `range_tn`, `chop_to`,
+`ones_mask`) whose postconditions state their exact result.
 
 ### StridedInterval
 
 `StridedInterval<W>` (`src/strided.rs`) is ported onto the shared
 `Domain`/`Word`/`lattice::BotOr` interface fixed by `doc/domain-traits.md`
 (added in #116), whose reference ports are `Interval<W>` and `IntervalZ`
-(`interval.rs`, `interval_z.rs`). Until every domain is migrated, the crate
-has two coexisting shapes for machine-word domains: the legacy per-width macro
-stamping in `domains.rs` (`ExecTnum`, `ExecAnum`, `ExecUnum`, the old
-`Interval`) and the new generic-over-`W` shape. The two
-are independent; nothing here claims anything about the legacy macro
-types' status beyond what the Layer table already says.
+(`interval.rs`, `interval_z.rs`). Every machine-word domain, including
+`ExecTnum`, `ExecAnum` and `ExecUnum`, is now generic over `W`; `domains.rs`
+only names them at each width.
 
 `wf` is canonical: `stride == 0 <==> lo == hi`, and when `stride > 0`,
 `(hi - lo) % stride == 0`. Unlike the pre-port representation, `(0,7,7)`,

@@ -108,7 +108,7 @@ sums only. They do not prove equality of abstract results.
 
 ## Fixed-Width Addition
 
-`ExecUnum::add` is generated for `u8`, `u16`, `u32`, and `u64`. It uses the
+`ExecUnum::add` is proved once for every `W: BitWord`. It uses the
 field formula only when the bases, extents, represented upper bounds, and
 their sum do not wrap. Otherwise it returns `top`.
 
@@ -116,10 +116,10 @@ Its Verus postcondition universally quantifies over machine values:
 
 ```text
 self.has(x) && other.has(y)
-    ==> result.has(x.wrapping_add(y))
+    ==> result.has(W::from_int(x.view() + y.view()))
 ```
 
-The proof connects the native operations to `ChoppedUnum` and the unbounded
+The proof connects the word operations to `ChoppedUnum` and the unbounded
 containment theorem. This is a soundness result; overflow-to-top and
 noncanonical wall masks prevent an unconditional fixed-width precision claim.
 
@@ -151,29 +151,39 @@ The implemented conversions have different proof status:
 
 - `ExecUnum::from_interval` creates one field and has a universal containment
   postcondition.
-- `ExecUnum::from_ean` gives every bit its own field. It has mirror-test
-  coverage but no Layer-4 containment postcondition.
-- `ExecUnum::to_ean` widens the whole extent to the next all-ones mask. It has
-  mirror-test coverage but no Layer-4 containment postcondition.
-- `ExecUnum::to_etn` goes through that Anum and guarantees only Tnum
-  well-formedness at Layer 4.
-- The unbounded `Unum::to_anum_sound` theorem applies only when `walls == 0`.
+- `ExecUnum::from_ean` gives every bit its own field. Its containment
+  postcondition follows from `Unum::submask_admitted`: an offset whose bits are
+  bits of the extent is admitted whatever the walls.
+- `ExecUnum::to_ean` widens the whole extent to the next all-ones mask. Its
+  containment postcondition follows from `Unum::to_anum_sound`, which holds for
+  any walls, since every admitted offset is at most the extent.
+- `ExecUnum::to_etn` is `ExecAnum::to_etn` of that Anum, and inherits its
+  containment postcondition.
 
-Consequently, conversion soundness must not be generalized beyond this
-inventory until the missing executable postconditions are added.
+## Negation and Subtraction
+
+`ExecUnum::neg` maps `v + d` to `(-v - x) + (x - d)`. Within each field the
+complement `x_f - d_f` stays in `[0, x_f]`, and the subtraction `x - d` borrows
+at the same bits as `d`'s admission, so `Unum::complement_admitted` proves that
+`x - d` is admitted with the same walls and extent. The result keeps the walls
+when `0 < v` and `v + x < 2^W`; it is `{0}` for `{0}`, and top when the range
+wraps or holds 0 with something else. `ExecUnum::sub` adds the negation; both
+have universal containment postconditions.
 
 ## Reduced Product
 
-Unum is combined with other domains through `reduce::Product` and the fact
-record `Facts<W>` (see [`reduced-product.md`](reduced-product.md)), once it
-implements `Domain` and `Refine`. The hand-written `ReducedProduct` of Tnum,
-Anum, Interval and Unum was removed in #123.
+Unum would combine with other domains through `reduce::Product` and the fact
+record `Facts<W>` (see [`reduced-product.md`](reduced-product.md)), but it does
+not implement `Domain` or `Refine` yet. The hand-written `ReducedProduct` of
+Tnum, Anum, Interval and Unum, whose `reduce` rebuilt the Unum from the
+interval, was removed in #123.
 
-`reduce` narrows interval bounds from all components, narrows Tnum and Anum
-using the resulting upper bound, and rebuilds the Unum from the interval. Its
-universal theorem says that no value in the input product intersection is
-removed. Rebuilding from an interval can discard field structure, so reduction
-is not a precision-preservation theorem for any individual component.
+`ExecUnum` cannot implement `Canonical` as it stands: several encodings denote
+the same set. At 4 bits, `walls = 0b0001` and `walls = 0b0101`, both with
+`extent = 0b0011`, denote `{0, 1, 2, 3}`; the second splits off a field whose
+maximum is 0. So `==` on two values does not decide equality of their sets,
+and a Unum cannot be a field of a stored fact record until a canonical form is
+defined and a `normalize` is proved to reach it.
 
 ## Established and Open Claims
 
@@ -182,15 +192,18 @@ Machine-checked:
 - carry-out formula equivalence and prefix-overflow characterization;
 - unbounded addition and multiplication containment;
 - chopped add/mul containment under their explicit no-overflow conditions;
-- executable `top`, `add`, `from_interval`, and `mul` containment at the four
-  enabled widths; and
-- reduced-product `reduce` and `add` containment.
+  and
+- executable containment for every `ExecUnum` operation (`constant`, `top`,
+  `add`, `neg`, `sub`, `mul`, `from_interval`, `from_ean`, `to_ean`,
+  `to_etn`), proved once for every `W: BitWord`.
 
 Not machine-checked:
 
+- a canonical form for Unums, and a `normalize` that reaches it;
 - exactness of addition on a defined canonical representation subset;
 - abstract associativity or commutativity as structural equality;
-- Layer-4 containment for the remaining conversions and Unum operations; and
+- the precision of `add`, measured as the share of sampled results that are
+  the smallest Unum containing the concrete sums; and
 - any claim that TAIU is an optimal reduced product.
 
 The current verification counts and mirror-test command are recorded in

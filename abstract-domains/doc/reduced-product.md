@@ -335,7 +335,10 @@ implemented the `Domain` traits or had a u128 instance, and nothing outside
 the crate used them. Tnum, Anum and Unum stay, but join `Product` only after
 they are ported to the shared interface: a `Word` type parameter, `BotOr` as
 the only bottom (no empty representation of their own), `Canonical`, and
-`Refine` against `Facts<W>`; the Tnum port is listed under planned work.
+`Refine` against `Facts<W>`. `ExecTnum<W>` is ported (#108): its `meet`
+returns `BotOr`, `to_channel` writes `[val, val | mask]` to `u`, and `refine`
+meets with the Tnum of `u`'s range, so `Product<Interval<W>, ExecTnum<W>>`
+reduces. Anum and Unum are not ported yet.
 
 ## How to extend
 
