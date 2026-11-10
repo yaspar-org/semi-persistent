@@ -6,10 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 
 [← 20 Hot-Path Discipline](20-hot-path-discipline.md) · [Table of contents](00-table-of-contents.md)
 
-Status: task specification for the branch `abs-class-storage`, PR 2 of 4.
-Nothing in this chapter is implemented yet. Signatures marked "proposed" are
-starting points, and the student may change them under the constraints stated
-here.
+Status: implemented on the branch `abs-class-storage`, PR 2 of 4. The
+decisions are recorded in §8.1. Signatures marked "proposed" below are the
+hand-off proposals; §8.2 lists where the implementation departs from them.
 
 ## 1. What the PR delivers
 
@@ -360,6 +359,18 @@ leaves draft.
 5. `set_abs_value` returns nothing. A caller that needs the old value reads
    it with `abs_value` first; the saturation engine reads both inputs of the
    meet before it writes, so it has the old value already.
+
+### 8.2 Departures from the proposals
+
+- `abs_value_spec` is defined through the free function
+  `abs_value_of(dense, sparse, abs_pool, id)`, so the restore theorem can
+  name a value in an archived frame. The meaning is the one proposed in §2.3.
+- The restore theorem is an ensures of both `reset_frames` and
+  `restore_frames`, and holds for every key, not only the keys live at the
+  mark: the restored repr columns and pool are the archived ones.
+- The live-length bound on archived pool snapshots sits in `EClasses::wf`,
+  outside the opaque `eg_archive_agrees`, as for `min_pool`; the per-frame
+  count and the monotone lengths sit inside it, as §4 proposes.
 
 ## 9. Acceptance criteria
 

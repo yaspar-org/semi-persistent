@@ -3127,17 +3127,18 @@ where
             h matches Some(i) ==> r == Some(self.abs_pool_view()[i.as_nat() as int]),
             h is None ==> r is None,
     {
-        let handle = match h {
-            None => return None,
-            Some(handle) => handle,
-        };
-        proof { <T::Index as IndexLike>::lemma_max_nat_fits_usize(); }
-        let index = handle.as_usize();
-        let len = self.abs_pool.len();
-        if !(index < len) {
-            crate::guard::refuse("EClasses::abs_value_at: handle is not allocated");
+        match h {
+            None => None,
+            Some(handle) => {
+                proof { <T::Index as IndexLike>::lemma_max_nat_fits_usize(); }
+                let index = handle.as_usize();
+                let len = self.abs_pool.len();
+                if !(index < len) {
+                    crate::guard::refuse("EClasses::abs_value_at: handle is not allocated");
+                }
+                Some(self.abs_pool.get_index(index))
+            }
         }
-        Some(self.abs_pool.get_index(index))
     }
 
     /// Read live class `key`'s abstract value, or None without a handle.

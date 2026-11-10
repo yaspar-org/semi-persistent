@@ -25,18 +25,18 @@ The kernel provides:
 - class size, atomicity, minimum-width, and per-operator minimum monomials;
 - class merge and use-list splice;
 - proof explanation into `ProofBuf`; and
-- compositional `mark`/`restore`.
-
-<!-- TODO(abs-class-storage): list the per-class abstract-value handle and pool in this surface, see containers-verus/doc/design/21-abstract-value-pool.md §2 -->
+- compositional `mark`/`restore`; and
+- a per-class abstract-value handle into a semi-persistent pool of opaque
+  entries: `set_abs_value`, `abs_value`, `abs_handle`, and `abs_value_at` for
+  the absorbed handle a merge reports in `MergeInfo::absorbed_abs`
+  ([Chapter 21](21-abstract-value-pool.md)).
 
 Operationally fallible forms return `ContainerError`; panic-shaped compatibility
 wrappers preserve the engine's internal invariant checks.
 
 ## Invariants
 
-<!-- TODO(abs-class-storage): change "W1 through W7" to "W1 through W8" and add the abstract-value handle clause, see containers-verus/doc/design/21-abstract-value-pool.md §3 -->
-
-`EClasses::wf()` contains W1 through W7, listed in the `eclasses.rs` module
+`EClasses::wf()` contains W1 through W8, listed in the `eclasses.rs` module
 header:
 
 - row/key/ring agreement;
@@ -44,8 +44,9 @@ header:
 - class-member partitioning;
 - use-list ownership and parent validity;
 - archived-state agreement for outstanding marks;
-- proof-column lockstep when `PROOFS = true`; and
-- cached class-size agreement.
+- proof-column lockstep when `PROOFS = true`;
+- cached class-size agreement; and
+- abstract-value handles allocated and pairwise distinct among live classes.
 
 Every verified mutator preserves these clauses. Aggregate restore validates the
 component tokens before mutating any column and then restores all columns in
