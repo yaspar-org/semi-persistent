@@ -783,7 +783,7 @@ exercise these generators.
 `min_pool` is an `SpVec` inside the shared `EClasses` aggregate, its store chosen by the
 configuration's `Policy`. The e-graph's group `History` drives `EClasses::push_frames` and
 `restore_frames`, which open and restore one frame of the union-find, representations,
-use-list arena, class ring, and pool together. The Verus aggregate proves its structural W1-W7
+use-list arena, class ring, and pool together. The Verus aggregate proves its structural W1-W8
 invariant, including whole-row pool layout and live-row bounds. That proof does not establish
 the egraph-level semantic property that a candidate belongs to the op denoted by its column.
 

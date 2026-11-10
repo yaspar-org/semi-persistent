@@ -110,19 +110,18 @@ listing's order.
     check once at the public boundary, `requires` on internal cores; const
     generics tested before any read; one executable write path); the list
     append peel; the second-pass review table; the validation protocol.
-21. **[The Abstract-Value Pool](21-abstract-value-pool.md)**: task
-    specification for the `abs-class-storage` branch. A per-class handle
-    into a semi-persistent pool of opaque abstract values, invariant W8,
-    the restore obligation, and the 16-byte payload decision. Not yet
-    implemented.
+21. **[The Abstract-Value Pool](21-abstract-value-pool.md)**: the
+    `abs-class-storage` design, implemented. A per-class handle into a
+    semi-persistent pool of opaque abstract values, invariant W8, the
+    restore theorem, and the payload-size decision with its measurement.
 
 ## The class layer
 
 The verified aggregate `EClasses` (rings, union-find, class keys, use-lists,
-min-monomial pool) carries invariants W1..W7 as its `wf()`; the invariant
-table is the `eclasses.rs` module header. Three documents cover it (where
-a filename keeps a number, the number is a stable id, not a position in
-the reading sequence above):
+min-monomial pool, abstract-value pool) carries invariants W1..W8 as its
+`wf()`; the invariant table is the `eclasses.rs` module header. Three
+documents cover it (where a filename keeps a number, the number is a stable
+id, not a position in the reading sequence above):
 
 - **[E-Graph Class-Layer Integration](egraph-class-layer.md)**: the
   engine's `EClasses`/`UnionFind` are type aliases of the verified kernel; the

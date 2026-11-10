@@ -241,6 +241,12 @@ their comments with the measured result. Option B1 or B2 keeps both asserts
 unchanged; the student states which pool allocations become shared or which
 bits are reused.
 
+Outcome: option A was chosen (§8.1) and measured against `f8276da` on the
+corpus programs. Peak RSS changes by at most +4.1% at 31-bit ids and +8.6%
+at 63-bit ids (math-microbenchmark), under 0.2% on the largest program
+(acgen), and wall time stays within run-to-run spread. Both asserts in
+`egraph/src/classes.rs` carry the full numbers.
+
 A further option drops the handle and indexes the pool by class key. The key
 is unique per live class and survives a merge as the survivor's key. This
 option keeps 16 bytes and makes W8c hold by construction. It departs from the
