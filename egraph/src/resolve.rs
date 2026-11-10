@@ -2520,6 +2520,33 @@ where
         Action::Union(a, b) => {
             let ra = resolve_rhs(a, None, ops, sorts, model, ctx, globals)?;
             let rb = resolve_rhs(b, None, ops, sorts, model, ctx, globals)?;
+            
+            // Extract sorts gracefully, returning None if unconstrained or unhandled
+            let get_sort = |t: &RRhsTerm<O, S, L>| -> Option<S> {
+                match t {
+                    RRhsTerm::Var(RhsNodeRef::Query(id)) => ctx.query_node_sorts[id.idx()],
+                    RRhsTerm::Var(RhsNodeRef::Local(id)) => ctx.local_node_sorts[id.idx()],
+                    RRhsTerm::Lit { sort, .. } => Some(*sort),
+                    RRhsTerm::PrimApp { ret_sort, .. } => Some(*ret_sort),
+                    RRhsTerm::LitVar { op, .. } | RRhsTerm::App { op, .. } => Some(ops.info(*op).return_sort),
+                    _ => None, 
+                }
+            };
+
+            // Only enforce the check if both sides have a known, resolved sort
+            if let (Some(sort_a), Some(sort_b)) = (get_sort(&ra), get_sort(&rb)) {
+                if sort_a != sort_b {
+                    return Err(err(
+                        format!(
+                            "Type mismatch in union: cannot union sort '{}' with sort '{}'",
+                            sorts.name(sort_a),
+                            sorts.name(sort_b)
+                        ),
+                        Span::Dummy,
+                    ));
+                }
+            }
+            
             Ok(ResolvedAction::Union(ra, rb))
         }
         Action::Insert(t) => {
