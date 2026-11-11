@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Scheduling state for the abstract-value saturation engine.
 //!
-//! Part A of `egraph/doc/future/abstract-engine-task.md`: the queues, the
-//! per-class change budget, the sticky conflict, and the value table the
-//! drain reads. Part B (the saturation drivers, guards, and commands) calls
-//! [`AbsSched::begin_epoch`] and [`EGraph::take_abs_conflict`]; it does not
-//! live here.
+//! The queues, the per-class change budget, the sticky conflict, and the
+//! value table the drain reads. The saturation drivers call
+//! [`AbsSched::begin_epoch`] and [`EGraph::take_abs_conflict`].
 //!
 //! Class values belong in the class-layer pool (#146). Until that pool
 //! exists they sit in [`AbsSched::values`], keyed by class-key index, and
@@ -18,12 +16,12 @@ use crate::canon::{MSetCanon, VarCanon};
 use crate::containers::DenseId;
 use std::collections::{HashMap, VecDeque};
 
-/// Substring the conflict programs match. Part B reports this text unchanged.
+/// Substring the conflict programs match. The interpreter reports this text unchanged.
 pub(crate) const ABS_CONFLICT: &str = "abstract conflict";
 
 /// Default per-class change budget for one epoch. A class past this keeps its
-/// current value, which stays sound and only loses precision. Part B may
-/// replace the constant with a `set-option`.
+/// current value, which stays sound and only loses precision. A `set-option`
+/// may replace the constant.
 pub(crate) const ABS_CHANGE_BUDGET: u32 = 64;
 
 /// Fuel passed to [`AbsDomain::reduce`] for one write. It costs precision only.
@@ -181,8 +179,8 @@ where
         self.abs.set_budget(budget);
     }
 
-    /// One budget epoch. Part B calls this at the start of each saturation
-    /// iteration and of each top-level command outside a run.
+    /// One budget epoch. Called at the start of each saturation iteration and
+    /// of each top-level command outside a run.
     pub(crate) fn abs_begin_epoch(&mut self) {
         self.abs.begin_epoch();
     }
