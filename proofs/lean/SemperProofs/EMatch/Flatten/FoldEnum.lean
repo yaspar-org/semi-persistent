@@ -506,7 +506,7 @@ theorem enumerateLD_right_iff {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShape
 left fold** (`otLeft_sound` for `rawOptD`): laws-free, as the engine declares
 no law on a fold. -/
 theorem enumerateLD_left_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentL ctx den) {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentL ctx den) {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {w : List (C × Nat)} {d : DemandL}
     (h : (w, d) ∈ enumerateLD ctx .left Laws.free n) :
     lfold ((w.map Prod.fst).map den) = lfold (cs.map den) := by
@@ -516,7 +516,7 @@ theorem enumerateLD_left_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShap
   exact otLeft_sound hc ht
 
 theorem enumerateLD_right_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentR ctx den) {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentR ctx den) {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {w : List (C × Nat)} {d : DemandL}
     (h : (w, d) ∈ enumerateLD ctx .right Laws.free n) :
     rfold ((w.map Prod.fst).map den) = rfold (cs.map den) := by

@@ -948,10 +948,31 @@ and `regroup_views_sound_*` for regrouping (the views are views of the node),
 
 `:assoc-left` and `:assoc-right` are fold notations over an operator that is not associative.
 Only the spine (the first child for a left fold, the last for a right fold) may be opened or
-regrouped. `fold_open_off_spine_unsound` (`EMatch/Flatten/Fold.lean:138`) is a formal
-counterexample to opening off the spine. `otLeft_sound` and `otRight_sound` (`:164`, `:177`)
-prove that spine-only opening trees preserve the fold's value. Regrouping a fold replaces a
-prefix (left fold) or a suffix (right fold); Section 4.6 covers it.
+regrouped. A fold reads in any magma: `lfold` and `rfold` (`EMatch/Flatten/Fold.lean`) are
+over a type `M` with a binary operation (`[Mul M]`, no law), and `ConsistentL ctx den`,
+`ConsistentR ctx den` take a denotation `den : C → M` into any such type. The free terms
+`BTm` are one instance, used by the counter-models, where two groupings of the same leaves
+denote different terms. `fold_open_off_spine_unsound` (`:219`) is a formal counterexample to
+opening off the spine. `otLeft_sound` and `otRight_sound` (`:245`, `:258`) prove that
+spine-only opening trees preserve the fold's value in every magma. Regrouping a fold
+replaces a prefix (left fold) or a suffix (right fold); Section 4.6 covers it.
+
+```lean
+theorem consistentL_cyclic_satisfiable :
+    ∃ (ctx : Ctx) (X c : C) (den : C → ℕ), ctx.κ = .assoc ∧
+      (∃ id m, ctx.IsMember id m X ∧ m.children = .seq [X, c]) ∧
+      (∃ a b id₁ m₁ id₂ m₂, ctx.IsMember id₁ m₁ X ∧ m₁.children = .seq [a, b] ∧
+        ctx.IsMember id₂ m₂ X ∧ m₂.children = .seq [a, b, c]) ∧
+      ConsistentL ctx den
+```
+
+**Reading.** A class can hold a fold over itself: `x - 0 = x` puts `Sub[X, c]` into `X`,
+and a class can hold two spellings `Sub[a, b]` and `Sub[a, b, c]`. No denotation into the
+free terms is consistent with such a class (`consistentL_cyclic_free_unsat`: `den X` would be
+a proper subterm of itself), but one into `ℕ` with multiplication is (`c ↦ 1`, `a ↦ 2`,
+`b ↦ 3`, `X ↦ 6`). Since every fold soundness theorem takes the magma as a parameter, its
+consistency hypothesis is satisfiable on graphs with such classes, and the theorems are not
+vacuous there.
 
 **The executable enumerator is the spine trees** (`EMatch/Flatten/FoldEnum.lean`). `rawOptD ctx dir` with `Dir.left` or `Dir.right` is the walk of
 `flatten::enumerate` with `spine(dir, i, len)`. `rawNodeD_left_iff` and `rawNodeD_right_iff`
@@ -975,20 +996,24 @@ which `regroup_views_sound_left` covers below.
 
 ```lean
 theorem regroup_views_sound_left {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentL ctx den) {limit : Nat} {n : Node} {cs : List C}
-    (hn : n.children = .seq cs) {w : List (C × Nat)} {d : DemandL}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentL ctx den) {limit : Nat} {n : Node}
+    {cs : List C} (hn : n.children = .seq cs) {w : List (C × Nat)} {d : DemandL}
     (h : (w, d) ∈ enumerateR ctx .left Laws.free limit n) :
     lfold ((w.map Prod.fst).map den) = lfold (cs.map den)
 ```
 
-**Reading.** In the free magma `BTm`, where every `f`-member denotes its class as a left fold
+**Reading.** In every interpretation of the operator as a binary operation on a type `M`,
+with a denotation of the classes under which every `f`-member denotes its class as a left fold
 (`ConsistentL`, the reading of the store), every view the regrouping enumerator produces for
-a left fold, opened or regrouped, denotes the same term as the node's own children. The
-right version is `regroup_views_sound_right`; `regroupSkip_views_sound_left` and
-`regroupSkip_views_sound_right` say the same of the engine's loop with its skips. The free
-magma is the strongest model: an equality that holds there holds in every interpretation, so
-a rewrite on such a view merges only terms the fold already identifies. Outside: laws, and a
-fold combined with any law, which the sort checker rejects.
+a left fold, opened or regrouped, denotes the same element as the node's own children. The
+free terms `BTm` are one of these interpretations, so on a graph that has a consistent
+denotation into them the view and the node are the same term; a graph with a cyclic class has
+none, and there the theorem applies through any interpretation in which the class's equations
+hold (`consistentL_cyclic_satisfiable`). The right version is `regroup_views_sound_right`;
+`regroupSkip_views_sound_left` and `regroupSkip_views_sound_right` say the same of the
+engine's loop with its skips. The proofs use only `lfold_splice` and `rfold_splice`, never
+the freeness of the terms. Outside: laws, and a fold combined with any law, which the sort
+checker rejects.
 
 At the level of distinct views, `enumerateLD_left_iff` and `enumerateLD_right_iff` read the
 fold enumerator's views as the normal forms of the spine views, and `enumerateLD_left_sound`,
@@ -1007,10 +1032,10 @@ the number of distinct `Tag` terms the model checks, so the binding sets agree. 
 samples without a fold the node count is not comparable (several roots share a `Tag` term,
 so the roots merge and the engine omits the congruent duplicates); their checks hold.
 
-**Adequacy.** Demand completeness for folds is argued in a docstring (`Fold.lean:27-30`). The
+**Adequacy.** Demand completeness for folds is argued in a docstring (`Fold.lean:33-36`). The
 fold theorems are laws-free: the engine declares no law on a fold (laws need `:comm`,
-`sortcheck.rs`), and the model's only `:assoc` law, an identity, has no reading in the free
-magma `BTm`; under an identity the monoid theorems for any direction
+`sortcheck.rs`), and the model's only `:assoc` law, an identity, has no reading in an
+arbitrary magma; under an identity the monoid theorems for any direction
 (`regroup_views_sound_assoc_laws_dir`) apply, in which a fold reads as an associative
 product.
 
@@ -1065,7 +1090,7 @@ any number of regroupings and for any item limit, denotes the node's value, so a
 matched on a regrouped view merges only theory-equal terms. `regroup_views_sound_aci` and
 `regroup_views_sound_assoc` (`:365`, `:443`) are the versions for a join semilattice and a
 monoid; the laws versions (`regroup_views_sound_ac_laws`, adequacy below) add a model of the
-laws. Outside: regrouping off a fold's spine, which `regroup_off_spine_unsound` (`:525`)
+laws. Outside: regrouping off a fold's spine, which `regroup_off_spine_unsound` (`:527`)
 refutes.
 
 **Chains.** `EMatch/Flatten/RegroupChain.lean` states regrouping declaratively.
@@ -1139,7 +1164,7 @@ the levels the model computes (`regroupChain_mem_levels`, `:437`). The converse 
   (`EMatch/Flatten/FoldRegroup.lean`) `regroup_views_sound_left`,
   `regroup_views_sound_right` and the engine-loop versions `regroupSkip_views_sound_left`,
   `regroupSkip_views_sound_right` prove that every view of `enumerateR` and `enumerateRSkip`
-  for a laws-free fold denotes the node's fold in the free magma, through
+  for a laws-free fold denotes the node's fold in every magma, through
   `reach_lfold_left`/`reach_rfold_right` (the walk's records by `rawNodeD_left_sound` and
   `otLeft_sound`, each regrouping by `regroup_step_sound_left`). The declarative chains keep
   the fold too (`regroupsTo_left_sound`, `regroupStep_left_sound`, `regroupChain_left_sound`,
@@ -1523,7 +1548,7 @@ match, and some matches may be missing.
 | `hz`: `flatten_regroup_truncated`, `flatten_skipped`, `flatten_overflowed` sum to zero | `regroupBounded_query_exact`, `regroupBoundedO_query_exact` | derived | the engine's own counters; tier 1 of the design note |
 | `SeqShaped ctx` | `rawNodeD_left_iff`, `regroup_views_sound_left` | derived | the operator declaration: every `f`-member of a sequence operator is a sequence node |
 | `MembersTwoClassesL`, `NodeTwoClassesL` | `demand_engine_complete_aci` (through `twoClassesL_of_members`) | assumed | the collapse invariant of `add` and rebuild on set nodes; `aci1.egg` records it |
-| `ConsistentAC`, `ConsistentACI`, `ConsistentL` | the `regroup_views_sound_*` theorems | assumed | the reading of a congruence-closed store: each filed `f`-member denotes its class |
+| `ConsistentAC`, `ConsistentACI`, `ConsistentL` | the `regroup_views_sound_*` theorems | assumed | the reading of a congruence-closed store: each filed `f`-member denotes its class; for a fold, in any magma, so cyclic classes are covered (`consistentL_cyclic_satisfiable`) |
 | a normal form reached only by inserting the unit | `regroup_match_iff_laws` | limit | `regroup_insert_unit_lost`; `flatten_regroup_laws_insert.egg` |
 | a view with two overlap groups, a kept member in a rest variable | `regroupSkipO_match_iff_laws` | limit | not formed by the stage; no theorem, documented in Section 4.6 and Section 9 |
 | opening or regrouping off a fold's spine | `otLeft_sound`, `regroup_views_sound_left` | limit | `fold_open_off_spine_unsound`, `regroup_off_spine_unsound` |
@@ -3744,11 +3769,12 @@ every magma, and `aRound_sound` that it keeps I2.
 
 **Must open and regroup a fold's views on its spine only.** Otherwise a `:flatten` view
 spells a different term and a rewrite on it merges unequal terms (soundness). Evidence:
-counter-models `fold_open_off_spine_unsound` (`Flatten/Fold.lean:138`) and
-`regroup_off_spine_unsound` (`Flatten/RegroupSound.lean:525`), fixture
+counter-models `fold_open_off_spine_unsound` (`Flatten/Fold.lean:219`) and
+`regroup_off_spine_unsound` (`Flatten/RegroupSound.lean:527`), fixture
 `flatten_fold_spine.egg` (its `(check-neq (Sub (A) (Sub (B) (C))) (Tri (A) (B) (C)))` fails
 with "terms are equal" when a view opens off the spine). `otLeft_sound`, `otRight_sound`,
-`regroup_views_sound_left` and `regroup_views_sound_right` prove the spine views sound.
+`regroup_views_sound_left` and `regroup_views_sound_right` prove the spine views sound in
+every magma.
 
 **Must keep a `:flatten` match whose unsatisfied leaf opened a class an item takes.**
 Otherwise the demand rule rejects a match that lives on no less-opened view, because

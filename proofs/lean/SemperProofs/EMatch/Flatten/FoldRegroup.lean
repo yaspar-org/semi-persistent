@@ -20,8 +20,8 @@ records for a fold, and to the declarative chains of `RegroupChain.lean`:
   the step soundness;
 * `regroup_views_sound_left`, `regroupSkip_views_sound_left` (and `_right`):
   every view of `enumerateR` and of the engine's `enumerateRSkip` for a
-  laws-free fold denotes the node's fold, in the free magma `BTm` with a
-  consistent denotation; `regroup_chain_left_sound`, `regroup_chain_right_sound`
+  laws-free fold denotes the node's fold, in every magma with a consistent
+  denotation; `regroup_chain_left_sound`, `regroup_chain_right_sound`
   are the same for the chains `regroup_match_iff` characterizes the matches by;
 * `reach_den_assoc_dir`, `regroup_views_sound_assoc_laws_dir`,
   `regroupSkip_views_sound_assoc_laws_dir`: the monoid soundness of
@@ -36,7 +36,7 @@ records for a fold, and to the declarative chains of `RegroupChain.lean`:
 
 The fold soundness is laws-free: the engine declares no law on a fold (laws
 need `:comm`, `sortcheck.rs`), and the model's only `:assoc` law, an
-identity, has no reading in the free magma. Under an identity the monoid
+identity, has no reading in an arbitrary magma. Under an identity the monoid
 theorems (`_dir`) apply, in which a fold reads as an associative product.
 -/
 
@@ -47,7 +47,8 @@ open Semper.EMatch
 /-! ## The declarative steps keep the fold -/
 
 /-- **Regrouping a prefix of a left fold keeps the left fold**, declaratively. -/
-theorem regroupsTo_left_sound {ctx : Ctx} {den : C → BTm} (hc : ConsistentL ctx den)
+theorem regroupsTo_left_sound {M : Type*} [Mul M] {ctx : Ctx}
+    {den : C → M} (hc : ConsistentL ctx den)
     {id : NodeId} {m : Node} {g : C} {cs : List C} (hm : ctx.IsMember id m g)
     (hcs : m.children = .seq cs) {w w' : List (C × Nat)}
     (h : RegroupsTo .assoc .left w g (kids .assoc m.children) w') :
@@ -67,7 +68,8 @@ theorem regroupsTo_left_sound {ctx : Ctx} {den : C → BTm} (hc : ConsistentL ct
           rw [← List.map_append, ← List.map_append, List.take_append_drop]
 
 /-- **Regrouping a suffix of a right fold keeps the right fold**, declaratively. -/
-theorem regroupsTo_right_sound {ctx : Ctx} {den : C → BTm} (hc : ConsistentR ctx den)
+theorem regroupsTo_right_sound {M : Type*} [Mul M] {ctx : Ctx}
+    {den : C → M} (hc : ConsistentR ctx den)
     {id : NodeId} {m : Node} {g : C} {cs : List C} (hm : ctx.IsMember id m g)
     (hcs : m.children = .seq cs) {w w' : List (C × Nat)}
     (h : RegroupsTo .assoc .right w g (kids .assoc m.children) w') :
@@ -88,7 +90,7 @@ theorem regroupsTo_right_sound {ctx : Ctx} {den : C → BTm} (hc : ConsistentR c
 
 /-- A record step of a left fold keeps the left fold. -/
 theorem regroupStep_left_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentL ctx den) {r r' : RecR} (h : RegroupStep ctx .left r r') :
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentL ctx den) {r r' : RecR} (h : RegroupStep ctx .left r r') :
     lfold ((r'.1.map Prod.fst).map den) = lfold ((r.1.map Prod.fst).map den) := by
   cases h with
   | mk hm _ hto =>
@@ -97,7 +99,7 @@ theorem regroupStep_left_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShap
       exact regroupsTo_left_sound hc hm hcs hto
 
 theorem regroupStep_right_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentR ctx den) {r r' : RecR} (h : RegroupStep ctx .right r r') :
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentR ctx den) {r r' : RecR} (h : RegroupStep ctx .right r r') :
     rfold ((r'.1.map Prod.fst).map den) = rfold ((r.1.map Prod.fst).map den) := by
   cases h with
   | mk hm _ hto =>
@@ -107,14 +109,14 @@ theorem regroupStep_right_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqSha
 
 /-- **A chain of regroupings of a left fold keeps the left fold.** -/
 theorem regroupChain_left_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentL ctx den) {r₀ r : RecR} (h : RegroupChain ctx .left r₀ r) :
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentL ctx den) {r₀ r : RecR} (h : RegroupChain ctx .left r₀ r) :
     lfold ((r.1.map Prod.fst).map den) = lfold ((r₀.1.map Prod.fst).map den) := by
   induction h with
   | refl => rfl
   | tail _ hs' ih => rw [regroupStep_left_sound hκ hs hc hs', ih]
 
 theorem regroupChain_right_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentR ctx den) {r₀ r : RecR} (h : RegroupChain ctx .right r₀ r) :
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentR ctx den) {r₀ r : RecR} (h : RegroupChain ctx .right r₀ r) :
     rfold ((r.1.map Prod.fst).map den) = rfold ((r₀.1.map Prod.fst).map den) := by
   induction h with
   | refl => rfl
@@ -152,7 +154,7 @@ theorem baseRecsR_right_views_iff {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqS
 
 /-- A walk record of a laws-free left fold denotes the node's left fold. -/
 theorem baseRecsR_left_lfold {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentL ctx den) {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentL ctx den) {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {r : RecR} (h : r ∈ baseRecsR ctx .left Laws.free n) :
     lfold ((r.1.map Prod.fst).map den) = lfold (cs.map den) := by
   obtain ⟨v, ht, hnorm⟩ := (baseRecsR_left_views_iff hκ hs hn).1 ⟨r, h, rfl⟩
@@ -160,7 +162,7 @@ theorem baseRecsR_left_lfold {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped
   exact otLeft_sound hc ht
 
 theorem baseRecsR_right_rfold {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentR ctx den) {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentR ctx den) {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {r : RecR} (h : r ∈ baseRecsR ctx .right Laws.free n) :
     rfold ((r.1.map Prod.fst).map den) = rfold (cs.map den) := by
   obtain ⟨v, ht, hnorm⟩ := (baseRecsR_right_views_iff hκ hs hn).1 ⟨r, h, rfl⟩
@@ -172,7 +174,7 @@ theorem baseRecsR_right_rfold {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShape
 /-- **Every record reachable from the walk's records of a left fold denotes
 the node's left fold.** -/
 theorem reach_lfold_left {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentL ctx den) {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentL ctx den) {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {r : RecR}
     (h : Reach ctx .left Laws.free (baseRecsR ctx .left Laws.free n) r) :
     lfold ((r.1.map Prod.fst).map den) = lfold (cs.map den) := by
@@ -185,7 +187,7 @@ theorem reach_lfold_left {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx
   rw [normalize_free_assoc hnorm, regroup_step_sound_left hc hm hraw, hr]
 
 theorem reach_rfold_right {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentR ctx den) {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentR ctx den) {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {r : RecR}
     (h : Reach ctx .right Laws.free (baseRecsR ctx .right Laws.free n) r) :
     rfold ((r.1.map Prod.fst).map den) = rfold (cs.map den) := by
@@ -198,9 +200,9 @@ theorem reach_rfold_right {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ct
   rw [normalize_free_assoc hnorm, regroup_step_sound_right hc hm hraw, hr]
 
 /-- **The views with regrouping of a left fold denote the node's left fold**
-(`regroup_views_sound_assoc` for a fold, in the free magma). -/
+(`regroup_views_sound_assoc` for a fold, in every magma). -/
 theorem regroup_views_sound_left {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentL ctx den) {limit : Nat} {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentL ctx den) {limit : Nat} {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {w : List (C × Nat)} {d : DemandL}
     (h : (w, d) ∈ enumerateR ctx .left Laws.free limit n) :
     lfold ((w.map Prod.fst).map den) = lfold (cs.map den) := by
@@ -209,7 +211,7 @@ theorem regroup_views_sound_left {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqSh
 
 /-- The same for the engine's regrouping loop. -/
 theorem regroupSkip_views_sound_left {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentL ctx den) {limit : Nat} {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentL ctx den) {limit : Nat} {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {w : List (C × Nat)} {d : DemandL}
     (h : (w, d) ∈ enumerateRSkip ctx .left Laws.free limit n) :
     lfold ((w.map Prod.fst).map den) = lfold (cs.map den) := by
@@ -218,7 +220,7 @@ theorem regroupSkip_views_sound_left {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : S
 
 /-- **The views with regrouping of a right fold denote the node's right fold.** -/
 theorem regroup_views_sound_right {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentR ctx den) {limit : Nat} {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentR ctx den) {limit : Nat} {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {w : List (C × Nat)} {d : DemandL}
     (h : (w, d) ∈ enumerateR ctx .right Laws.free limit n) :
     rfold ((w.map Prod.fst).map den) = rfold (cs.map den) := by
@@ -226,7 +228,7 @@ theorem regroup_views_sound_right {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqS
   exact reach_rfold_right hκ hs hc hn hr
 
 theorem regroupSkip_views_sound_right {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentR ctx den) {limit : Nat} {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentR ctx den) {limit : Nat} {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {w : List (C × Nat)} {d : DemandL}
     (h : (w, d) ∈ enumerateRSkip ctx .right Laws.free limit n) :
     rfold ((w.map Prod.fst).map den) = rfold (cs.map den) := by
@@ -236,7 +238,7 @@ theorem regroupSkip_views_sound_right {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : 
 /-- **The chains of `regroup_match_iff` for a left fold end on views of the
 node's left fold.** -/
 theorem regroup_chain_left_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentL ctx den) {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentL ctx den) {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {r₀ r : RecR} (h₀ : r₀ ∈ baseRecsR ctx .left Laws.free n)
     (h : RegroupChain ctx .left r₀ r) :
     lfold ((r.1.map Prod.fst).map den) = lfold (cs.map den) := by
@@ -244,7 +246,7 @@ theorem regroup_chain_left_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqSh
   exact baseRecsR_left_lfold hκ hs hc hn h₀
 
 theorem regroup_chain_right_sound {ctx : Ctx} (hκ : ctx.κ = .assoc) (hs : SeqShaped ctx)
-    {den : C → BTm} (hc : ConsistentR ctx den) {n : Node} {cs : List C}
+    {M : Type*} [Mul M] {den : C → M} (hc : ConsistentR ctx den) {n : Node} {cs : List C}
     (hn : n.children = .seq cs) {r₀ r : RecR} (h₀ : r₀ ∈ baseRecsR ctx .right Laws.free n)
     (h : RegroupChain ctx .right r₀ r) :
     rfold ((r.1.map Prod.fst).map den) = rfold (cs.map den) := by

@@ -285,6 +285,14 @@ regrouped views of folds (`FoldRegroup.lean`). -/
 #print axioms Semper.EMatch.Flatten.rawViews_right_iff
 #print axioms Semper.EMatch.Flatten.enumerateLD_left_iff
 #print axioms Semper.EMatch.Flatten.enumerateLD_right_iff
+#print axioms Semper.EMatch.Flatten.lfold_splice
+#print axioms Semper.EMatch.Flatten.rfold_splice
+#print axioms Semper.EMatch.Flatten.otLeft_sound
+#print axioms Semper.EMatch.Flatten.otRight_sound
+#print axioms Semper.EMatch.Flatten.consistentL_cyclic_satisfiable
+#print axioms Semper.EMatch.Flatten.consistentL_cyclic_free_unsat
+#print axioms Semper.EMatch.Flatten.baseRecsR_left_lfold
+#print axioms Semper.EMatch.Flatten.baseRecsR_right_rfold
 #print axioms Semper.EMatch.Flatten.enumerateLD_left_sound
 #print axioms Semper.EMatch.Flatten.enumerateLD_right_sound
 #print axioms Semper.EMatch.Flatten.regroupsTo_left_sound
