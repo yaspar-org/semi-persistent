@@ -330,7 +330,7 @@ theorem Infer_I2 {L : Laws n} {S : Set (Monomial n × Monomial n)} {st st' : Sta
     · exact absurd hab (hfresh P a hP)
     · exact h P a Q b hP hQ hab
   | joinMerge hM hN hMN => exact merge_I2 h hM hN (E_eqs_sound h hMN)
-  | retire _ => exact h
+  | retire _ _ => exact h
   | unretire _ => exact h
   | setRhs _ => exact h
 
@@ -606,7 +606,7 @@ theorem Infer_I4 {L : Laws n} {st st' : State n} {pool : Finset (Fin n)}
       exact h M c hM x hxM
     · exact h P a hP
   | joinMerge _ _ _ => exact h
-  | retire _ => exact h
+  | retire _ _ => exact h
   | unretire _ => exact h
   | setRhs _ => exact h
 
@@ -677,6 +677,77 @@ theorem unretire_refresh_reachable {L : Laws n} {st : State n} {M : Monomial n} 
     Reachable L st { st.unretire M c with rhs := st.refreshRhs M c } :=
   Relation.ReflTransGen.tail (Relation.ReflTransGen.single (Infer.unretire hret))
     (Infer.setRhs (st.refreshRhs M c))
+
+/-! ## Retired nodes stay covered
+
+`RetiredCovered` holds of every reachable state from one with no retired
+node: `retire` brings its own active classmate, a merge only joins
+classes, `mint` and `unretire` only add active nodes, and a node retired
+later that was some retired node's witness leaves the smaller classmate
+`retire` required in its place. -/
+
+theorem retiredCovered_of_empty {st : State n} (h : st.retired = ∅) : RetiredCovered st := by
+  intro M c hM
+  rw [h] at hM
+  exact absurd hM (Set.notMem_empty _)
+
+/-- Each inference keeps `RetiredCovered`. -/
+theorem Infer_retiredCovered {L : Laws n} {st st' : State n} (hinf : Infer L st st')
+    (h : RetiredCovered st) : RetiredCovered st' := by
+  cases hinf with
+  | mint _ hfresh =>
+    intro M c hM
+    obtain ⟨hn, K, c', hK, hc⟩ := h M c hM
+    exact ⟨Set.mem_insert_of_mem _ hn, K, c', ⟨Set.mem_insert_of_mem _ hK.1, hK.2⟩, hc⟩
+  | joinMerge _ _ _ =>
+    intro M c hM
+    obtain ⟨hn, K, c', hK, hc⟩ := h M c hM
+    refine ⟨hn, K, c', hK, ?_⟩
+    simp only [State.merge, hc]
+  | @retire M₀ c₀ hM₀ hK₀ =>
+    obtain ⟨K₀, d₀, hK₀a, hd₀, hlt₀⟩ := hK₀
+    have hne₀ : (K₀, d₀) ≠ (M₀, c₀) := fun e => degLex_irrefl _ ((Prod.mk.inj e).1 ▸ hlt₀)
+    have hK₀' : (K₀, d₀) ∈ (st.retire M₀ c₀).active :=
+      ⟨hK₀a.1, fun h' => (Set.mem_insert_iff.1 h').elim hne₀ hK₀a.2⟩
+    intro M c hM
+    rcases Set.mem_insert_iff.1 hM with e | hM
+    · obtain ⟨rfl, rfl⟩ := Prod.mk.inj e
+      exact ⟨hM₀, K₀, d₀, hK₀', hd₀⟩
+    · obtain ⟨hn, K, c', hK, hc⟩ := h M c hM
+      by_cases e : (K, c') = (M₀, c₀)
+      · obtain ⟨rfl, rfl⟩ := Prod.mk.inj e
+        exact ⟨hn, K₀, d₀, hK₀', hd₀.trans hc⟩
+      · exact ⟨hn, K, c', ⟨hK.1, fun h' => (Set.mem_insert_iff.1 h').elim e hK.2⟩, hc⟩
+  | unretire _ =>
+    intro M c hM
+    obtain ⟨hn, K, c', hK, hc⟩ := h M c hM.1
+    exact ⟨hn, K, c', ⟨hK.1, fun h' => hK.2 h'.1⟩, hc⟩
+  | setRhs _ => exact h
+
+/-- **`RetiredCovered` along a run.** -/
+theorem reachable_retiredCovered {L : Laws n} {st₀ st : State n} (hrun : Reachable L st₀ st)
+    (h₀ : RetiredCovered st₀) : RetiredCovered st := by
+  induction hrun with
+  | refl => exact h₀
+  | tail _ hstep ih => exact Infer_retiredCovered hstep ih
+
+/-- From a state with no retired node, every reachable state's retired nodes
+are covered. -/
+theorem retiredCovered_of_reachable {L : Laws n} {st₀ st : State n}
+    (hrun : Reachable L st₀ st) (h₀ : st₀.retired = ∅) : RetiredCovered st :=
+  reachable_retiredCovered hrun (retiredCovered_of_empty h₀)
+
+/-- On a sound state, a covered stored node is `=_E`-equal to an active
+node of its class: an active node is itself, a retired one is in one class
+with the active node `RetiredCovered` names, and `I2` relates the two. No
+reduction and no confluence. -/
+theorem node_equal_active_covered {L : Laws n} {S : Set (Monomial n × Monomial n)}
+    {st : State n} (h2 : I2 L S st) (hcov : RetiredCovered st) {M : Monomial n} {c : Fin n}
+    (hM : (M, c) ∈ st.nodes) : ∃ q ∈ st.active, E L S M q.1 ∧ st.find q.2 = st.find c := by
+  by_cases hr : (M, c) ∈ st.retired
+  · obtain ⟨-, K, c', hK, hc⟩ := hcov M c hr
+    exact ⟨(K, c'), hK, h2 M c K c' hM hK.1 hc.symm, hc⟩
+  · exact ⟨(M, c), ⟨hM, hr⟩, E.refl _, rfl⟩
 
 /-! L16 (round termination) is proved in `Proofs/RunStabilizes.lean`
 (`run_stabilizes'`) and re-exported from `Main.lean`. -/

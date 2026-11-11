@@ -1593,7 +1593,9 @@ inductive Infer (L : Laws n) : State n → State n → Prop
   | joinMerge {st : State n} {M : Monomial n} {c : Fin n} {N : Monomial n} {d : Fin n} :
       (M, c) ∈ st.nodes → (N, d) ∈ st.nodes → E L st.eqs M N → Infer L st (st.merge c d)
   | retire {st : State n} {M : Monomial n} {c : Fin n} :
-      (M, c) ∈ st.nodes → Infer L st (st.retire M c)
+      (M, c) ∈ st.nodes →
+      (∃ K c', (K, c') ∈ st.active ∧ st.find c' = st.find c ∧ degLex M K) →
+      Infer L st (st.retire M c)
   | unretire {st : State n} {M : Monomial n} {c : Fin n} :
       (M, c) ∈ st.retired → Infer L st (st.unretire M c)
   | setRhs {st : State n} (rhs' : Fin n → Monomial n) :
@@ -1609,7 +1611,13 @@ two nodes of one class) together with congruence, the law instances and cancella
 premise is a derivation from the state, not an assumption about the asserted equalities `S`:
 a chain of rule, law and same-class steps in either direction (`Infer.joinMerge_of_steps`)
 and the cancel-close of two present nodes (`Infer.cancelMerge`) are instances. **retire**
-retires a node; **unretire** re-activates a retired node (the engine's `materialize` and
+retires a node whose class holds a smaller active node: `cc_round` merges the node's
+materialized normal form into its class before it sets `FLAG_AC_COLLAPSED` (`do_merge` before
+`set_cc_collapsed`), as `SlotState.retire` requires. `RetiredCovered` (every retired node is
+a stored node whose class holds an active node) is an `Infer` invariant
+(`Infer_retiredCovered`): a node retired later that was another retired node's witness
+leaves the smaller classmate `retire` required in its place. `retiredCovered_of_reachable`
+gives it for every state reachable from one with no retired node; **unretire** re-activates a retired node (the engine's `materialize` and
 recanonization paths clearing `FLAG_AC_COLLAPSED`); **setRhs** overwrites the stored
 right-hand sides. These three change neither the nodes nor `find`. The engine's
 re-activation is `unretire` followed by `setRhs (st.refreshRhs M c)`
@@ -2024,8 +2032,7 @@ pass runs after the last rebuild.
 put a reduct in the node's class: `ReactivateCE.reactivate_fixed_not_I3` is a state the pass
 leaves unchanged, whose retired `{a, a, a}` is reduced by `{a, a} → {b}` to `{a, b}`, which
 is no node. The theorem places the class through confluence, with these hypotheses:
-`RetiredCovered` (a retired node is a stored node whose class holds an active node; the
-engine collapses a node after merging it with its active normal form), `I2` (the retired
+`RetiredCovered` (derived along any run, `retiredCovered_of_reachable`), `I2` (the retired
 node is `=_E`-equal to that active node), `I0Active`, `I5`, `hcanon` and `RoundFixed`
 (every active node reduces to its class's right-hand side and that right-hand side is
 normal, `rhs_normal`), `hlaw`, `hnf_ax` and `hcp` (rewriting by the rules and the law
@@ -3004,9 +3011,10 @@ other `f`-node (`FCover`); the class of each summand holds the summand's one-ele
 (`LawsRead`: the unit's class holds the empty node, the nilpotent order is at least two and a
 law instance on every atom, an inverse pair is a law instance on the two atoms its classes
 hold); `I2` and `I3` relate a retired node to an active one of its class
-(`node_equal_active`). The `_reactivate` forms (`closedAC_of_complete_reactivate`,
-`theoryClosed_of_complete_reactivate`) take `st.reactivate Lc = st`, `RetiredCovered` and
-`hcancel` in place of `I3`. The proof is the inverse of `ACStep.mapE`. A store class is read as
+(`node_equal_active`). That relation needs no reduction: the `_covered` forms
+(`closedAC_of_complete_covered`, `theoryClosed_of_complete_covered`) take `RetiredCovered`
+in place of `I3`, and `node_equal_active_covered` gives the active classmate from it and
+`I2` alone. The proof is the inverse of `ACStep.mapE`. A store class is read as
 the monomial of a node of the state in that class (`readClass`, `0` for a class holding
 none), a child multiset as the sum of the readings (`readMset`), and one normalization step
 on the store is an `=_E`-equality of the readings (`ACStep.readE`): a splice through the node
@@ -3025,8 +3033,8 @@ operator derives each) and under the ACI and A theories of every operator (`Clos
 node of the kind and no law. `saturation_complete_closed_of_complete` is
 `saturation_complete_closed` with these hypotheses in place of `TheoryClosed`, and its
 `_atoms` form takes `CompleteAtoms`, with `I2`, `I3` and the laws read on the completion view
-and the summands in the atomic set. `saturation_complete_closed_of_complete_reactivate` and
-its `_atoms` form derive `I3` from the reactivation pass. `witness_theoryClosed` and
+and the summands in the atomic set. `saturation_complete_closed_of_complete_covered` and its
+`_atoms` form take `RetiredCovered` of the stored state in place of `I3`. `witness_theoryClosed` and
 `witness_saturation_complete_closed` (`Final/Witness.lean`) prove every hypothesis on the run
 of Section 7.7. The counter-model of `denN_persist_fails` fits:
 `PersistFails.sa_not_closed` shows its after-store is not closed under the theory
@@ -3392,9 +3400,10 @@ retired `p'`, `node_reduces_active` (`CC/Bridge/Sub.lean`) gives `q`: `I3` reduc
 node, by the rules and the laws, to a node of its class, smaller under `≫`, so well-founded
 induction on the step relation (`RwL_wf`) reaches an active one, and `I2` (`RwL_rtg_sound`)
 makes the reduction an `=_E`-equality (`node_equal_active`). `I2` is a hypothesis beside
-`CompleteHyps`; `I3` is a hypothesis of the `_retired` forms and is derived in the
-`_retired_reactivate` forms from `st.reactivate L = st`, `RetiredCovered` and `hcancel`
-(`I3_of_reactivate_fixed_complete`, Section 5.5); the leaf-constant form `saturation_modulo_complete_store_retired_atoms`
+`CompleteHyps`. The conclusion needs only an active classmate `=_E`-equal to `p'`, not a
+reduction: the `_retired_covered` forms take `RetiredCovered` in place of `I3`, and
+`node_equal_active_covered` gives `q` from it and `I2`, with no confluence and no `hcancel`.
+`RetiredCovered` is an `Infer` invariant (Section 5.1); the leaf-constant form `saturation_modulo_complete_store_retired_atoms`
 takes them on the completion view, whose rules include `M → {x}` for an atomic class and
 whose `q` may be an implicit node of a leaf constant. Matching on a retired node is sound
 in the engine because the node is still a member of its class, so a match rooted at it is a
@@ -3443,12 +3452,11 @@ the store's union-find (`retired_class`), not by the theorem. `not_cover` record
 of the covering form: the collapsed node stays in the index and is matchable, so `FCover`
 over `act` fails, and `saturation_modulo_complete_store_cover` has no witness on any run in
 which completion collapsed a node. `witness_saturation_modulo_complete_retired` is
-`saturation_modulo_complete_store_retired_atoms_reactivate` on the same run, with `ret = {p₂}`
+`saturation_modulo_complete_store_retired_atoms_covered` on the same run, with `ret = {p₂}`
 (`{a, b, d}`), `Stored`, `SubRepR` and `FCover` over `act ∪ ret` proved (`hyp_ret`,
 `hyp_subR`, `hyp_coverR`), `I2` on the completion view (`witness_I2`: `{a, b}` with `c`,
-`{a, b, d}` with `{c, d}`) and the reactivation pass leaving the view unchanged
-(`witness_reactivate`, `witness_covered`) in place of `I3`, through
-`saturation_modulo_complete_store_retired_atoms_reactivate`. The second rewrite matches `{a, b, d}`
+`{a, b, d}` with `{c, d}`) and `RetiredCovered` of the stored state in place of `I3`
+(`witness_covered_stored`, derived from the one-`retire` run `wst_reachable`). The second rewrite matches `{a, b, d}`
 only (`match_cases₂`: three distinct elements, which no two-element node holds), and
 `witness_fires_retired` reads the conclusion at the match `x ↦ a, y ↦ b, z ↦ d` rooted at
 it: the instance is fired (`k` is in the root's class), the root binds the class of the
@@ -3471,8 +3479,8 @@ store's closure under the theory (`TheoryClosed`) in place of the routing of `SC
 and the correspondence on the store, leaving the other operators and the ACI and A theories
 as the remainder `TheoryClosedRest`. The covering
 form over `act` alone excludes any index holding a collapsed `f`-node; the retired form takes
-`I2`, the reactivation fixpoint (from which `I3` is derived) and `SubRepR` as further
-hypotheses and covers it. Section 9 lists each of these
+`I2`, `RetiredCovered` (an `Infer` invariant) and `SubRepR` as further hypotheses and
+covers it. Section 9 lists each of these
 as a gap.
 
 **Hypotheses of `saturation_modulo_complete_store_atoms`, classified.** The rounds
@@ -3485,8 +3493,8 @@ hypotheses are those of `CompleteAtoms` (the table of Section 5.9). The bridge a
 | `hw : Within st act` | every node of `act` is an active node of `st` | definitional | `act` is chosen as the active nodes |
 | `hs : SubRep A.Sa.index st f act ι` | each `p ∈ act` is stored in the index under `ι p` with the children of `mkNode st f p`, in the class `st` gives it | assumed | the correspondence between the engine's index and the completion state of the model; no theorem relates the two (Section 9) |
 | `hfix : A.Unchanged` | the round changes nothing | derived | `engine_stop_unchanged`, in `saturation_modulo_complete_store_engine` |
-| `FCover` (the `_cover` form) | every `f`-node of the index is the node of some `p ∈ act` | limit | fails on every run in which completion collapsed a node (`not_cover`); the `_retired` form takes `SubRepR`, `I2`, `I3` instead, and `_retired_reactivate` derives `I3` from `st.reactivate L = st` |
-| `TheoryClosed` (`saturation_complete_closed`, completion on) | the store is closed under the theory | derived | `theoryClosed_of_complete`, from `CompleteHyps`, `I2`, `I3` (derived from `st.reactivate Lc = st` in `theoryClosed_of_complete_reactivate`), `SubRep` and `FCover` on the store, `SummandsAtomic`, `LawsRead`, the dedup and `PairsSorted`, in `saturation_complete_closed_of_complete` (Section 6.5) |
+| `FCover` (the `_cover` form) | every `f`-node of the index is the node of some `p ∈ act` | limit | fails on every run in which completion collapsed a node (`not_cover`); the `_retired` form takes `SubRepR`, `I2`, `I3` instead, and `_retired_covered` takes `RetiredCovered` (derived along a run) in place of `I3` |
+| `TheoryClosed` (`saturation_complete_closed`, completion on) | the store is closed under the theory | derived | `theoryClosed_of_complete`, from `CompleteHyps`, `I2`, `I3` (`RetiredCovered` in its place in `theoryClosed_of_complete_covered`), `SubRep` and `FCover` on the store, `SummandsAtomic`, `LawsRead`, the dedup and `PairsSorted`, in `saturation_complete_closed_of_complete` (Section 6.5) |
 | `TheoryClosedRest` (`saturation_complete_closed_of_complete`) | the other AC operators and the ACI and A theories are closed | assumed | one completion state per AC operator; the ACI and A theories have no completion state (Section 9) |
 | a theory-equal term absent from the graph; a two-item match whose children classes merge | | limit | `per_node_form_fails`; `proofs/repro/ac_collapse.egg` (`NoCollapse`) |
 
@@ -3617,7 +3625,7 @@ models, and the limits that stay by design.
    after a spelling change, and `saturation_complete_closed` reaches every instance at the
    class level under `TheoryClosed`, the store's closure under the theory.
    `theoryClosed_of_complete` (`Final/Closed.lean`) derives it from `CompleteHyps`, `I2`, `I3`
-   (derived from the reactivation fixpoint in `theoryClosed_of_complete_reactivate`)
+   (or `RetiredCovered` in its place, `theoryClosed_of_complete_covered`)
    and the correspondence on the store (`SubRep`, `FCover`, `SummandsAtomic`, `LawsRead`) for
    the AC operator of the completion state, and `saturation_complete_closed_of_complete`
    takes those hypotheses in its place. What stays a hypothesis is `TheoryClosedRest`: the
@@ -3740,16 +3748,22 @@ models, and the limits that stay by design.
     `seq_collect.rs:252`) are not in the repository. Closes it: one pass over the docstrings
     replacing line numbers by function names. Acceptance: no docstring cites a Rust line
     number, and every fixture a docstring names exists.
-13. **I3 for the inverse laws, and the cover of retired nodes.** `I3_of_reactivate_fixed`
-    derives I3 through confluence of rewriting by the rules and the law instances. The three
-    `_engine` theorems of Section 5.6 and the `LawSpec.conds_*_of_fixed` constructors use I3
-    to obtain the critical pairs of a rule with an inverse pair, which confluence needs, so
-    they keep I3 as a hypothesis (restated over `State.RwL`). `RetiredCovered` (a retired
-    node is a stored node whose class holds an active node) is a hypothesis of every
-    `_reactivate` form, and `hcancel` of the forms for a cancellative operator. Closes it: an
-    induction on `≫` that derives I3 and the inverse critical pairs below a bound together,
-    and `RetiredCovered` from the merge-before-mark order of `cc_round` on the modelled run.
-    Acceptance: `_engine` forms that take `st.reactivate L = st` in place of `I3`.
+13. **I3 for the inverse laws.** The final theorems need of a retired node only an active
+    classmate `=_E`-equal to it, which `RetiredCovered` and `I2` give; `RetiredCovered` is an
+    `Infer` invariant. The three `_engine` theorems of Section 5.6 and the
+    `LawSpec.conds_*_of_fixed` constructors need more: a node asserted by R3 to R5, possibly
+    retired since, joinable with its class's right-hand side, which closes the critical
+    pairs of a rule with an inverse pair. They keep I3 (restated over `State.RwL`).
+    `I3_of_reactivate_fixed` derives I3 through confluence, which needs those pairs. An
+    induction on `≫` that derives both below a bound does not close: the step "a retired
+    node `P` below the bound reduces to its class's right-hand side, given confluence below
+    the bound" needs `P` joinable with an active classmate, and the state gives only the
+    `=_E`-equality of the two (`I2`), whose derivation passes through monomials above the
+    bound (the `congr` and `trans` cases of `E_joinable_RwAx`); the static facts without
+    `I2` and `hS` do not suffice (`ReactivateCE.reactivate_fixed_not_I3`). Closes it: an
+    invariant carried along the run that keeps each retired node joinable with its class as
+    the rules change (a proof-ordering argument), or a bounded `=_E`. Acceptance: `_engine`
+    forms that take `st.reactivate L = st` in place of `I3`.
 
 Outside the model by design, and not listed as gaps: the engine's `Comm` atom joins through
 `by_contains` as AC does (`egraph/src/schedule.rs:749`), where the model's `byContains`
@@ -3824,7 +3838,8 @@ needs it.
 **Must merge a node's normal form into its class before flagging the node collapsed.**
 Otherwise a retired node's reduct is in no class with it and the equality it carried is lost
 (I3 fails; `nodes_reduce_all` in `CC/Laws/InvRulesMain.lean` and `node_reduces_active`
-need I3, and `RetiredCovered`, a hypothesis of `I3_of_reactivate_fixed`, fails). Evidence: no reproducer, because `cc_round` calls
+need I3, and `RetiredCovered` fails; the model's `Infer.retire` requires a smaller active
+classmate, so `Infer_retiredCovered` keeps it along every run). Evidence: no reproducer, because `cc_round` calls
 `do_merge` before `set_cc_collapsed`; the rule is recorded in
 `06-ac-congruence-closure.md`, Section 9c, so that a refactoring keeps the order. `witness_I3` checks I3 on the atoms witness.
 

@@ -19,8 +19,8 @@ import SemperProofs.Final.Witness
 #print axioms SemperProofs.CC.Bridge.node_equal_active
 #print axioms SemperProofs.Final.saturation_modulo_complete_store_retired
 #print axioms SemperProofs.Final.saturation_modulo_complete_store_retired_atoms
-#print axioms SemperProofs.Final.saturation_modulo_complete_store_retired_reactivate
-#print axioms SemperProofs.Final.saturation_modulo_complete_store_retired_atoms_reactivate
+#print axioms SemperProofs.Final.saturation_modulo_complete_store_retired_covered
+#print axioms SemperProofs.Final.saturation_modulo_complete_store_retired_atoms_covered
 #print axioms SemperProofs.Final.Witness.witness_I3
 #print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete
 #print axioms SemperProofs.Final.Witness.witness_saturation_modulo_complete_atomic
@@ -39,9 +39,11 @@ import SemperProofs.Final.Witness
 #print axioms SemperProofs.Final.theoryClosed_of_complete
 #print axioms SemperProofs.Final.saturation_complete_closed_of_complete
 #print axioms SemperProofs.Final.saturation_complete_closed_of_complete_atoms
-#print axioms SemperProofs.Final.closedAC_of_complete_reactivate
-#print axioms SemperProofs.Final.theoryClosed_of_complete_reactivate
-#print axioms SemperProofs.Final.saturation_complete_closed_of_complete_reactivate
-#print axioms SemperProofs.Final.saturation_complete_closed_of_complete_atoms_reactivate
+#print axioms SemperProofs.Final.closedAC_of_complete_covered
+#print axioms SemperProofs.Final.theoryClosed_of_complete_covered
+#print axioms SemperProofs.Final.saturation_complete_closed_of_complete_covered
+#print axioms SemperProofs.Final.saturation_complete_closed_of_complete_atoms_covered
+#print axioms SemperProofs.Final.saturation_modulo_complete_store_retired_of
+#print axioms SemperProofs.Final.closedAC_of_complete_of
 #print axioms SemperProofs.Final.Witness.witness_theoryClosed
 #print axioms SemperProofs.Final.Witness.witness_saturation_complete_closed

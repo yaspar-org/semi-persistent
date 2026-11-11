@@ -428,6 +428,14 @@ theorem reactivate_I5 {L : Laws n} {st : State n} (hfin : st.retired.Finite) (h5
   rw [← reactivateOn_eq hl]
   exact foldl_reactivateStep_I5 l h5
 
+/-- The pass keeps `RetiredCovered`: it only shrinks the retired set and so
+only grows the active one. -/
+theorem reactivate_retiredCovered {L : Laws n} {st : State n} (h : RetiredCovered st) :
+    RetiredCovered (st.reactivate L) := by
+  intro M c hM
+  obtain ⟨hn, K, c', hK, hc⟩ := h M c hM.1
+  exact ⟨hn, K, c', ⟨hK.1, fun h' => hK.2 h'.1⟩, hc⟩
+
 /-! ## The state the pass returns is a fixpoint of the pass -/
 
 /-- A rule of the state at entry keeps its left-hand side as a rule after
@@ -467,17 +475,6 @@ theorem reactivate_idem {L : Laws n} {st : State n} (hsub : st.retired ⊆ st.no
   exact hred.imp (ruleReducible_reactivate hsub) id
 
 /-! ## `I3` at a fixpoint of the pass -/
-
-/-- Every retired node is a stored node whose class holds an active node.
-The engine collapses a node after merging its class with that of its
-materialized normal form, which is active; the flag is set on a stored
-node. On the completion view the active node may be the implicit node of a
-leaf constant or of the unit. `I3` implies it (a retired node reduces to a
-node of its class, and so on down to an active one); it says nothing of
-how the retired node reduces. -/
-def RetiredCovered (st : State n) : Prop :=
-  ∀ M c, (M, c) ∈ st.retired →
-    (M, c) ∈ st.nodes ∧ ∃ K c', (K, c') ∈ st.active ∧ st.find c' = st.find c
 
 /-- `I3` from reducibility of the retired nodes and confluence. A retired
 node `M` is `=_E`-equal to an active node `K` of its class (`hcov`, `h2`),
@@ -530,7 +527,8 @@ those of completeness at convergence (`completion_complete_at_convergence'`),
 without congruence, and with I5 itself in place of the slot run:
 
 * `hcov`: a retired node is a stored node whose class holds an active node,
-  the only node the retired one is known equal to;
+  the only node the retired one is known equal to (an `Infer` invariant,
+  `retiredCovered_of_reachable`);
 * `h2`: that equality is an `=_E`-consequence;
 * `h0`, `h5`, `hcanon`, `hfix`: the fixed round, which makes every active
   node reduce to its class's right-hand side and that right-hand side

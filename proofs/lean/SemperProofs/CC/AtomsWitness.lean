@@ -319,15 +319,31 @@ theorem witness_reactivate : wv.reactivate (Laws.plainAC 5) = wv := by
   obtain ⟨rfl, rfl⟩ := hM
   exact Or.inl ⟨_, _, r₁_mem, by decide⟩
 
-/-- The retired node is a stored node, and its class holds the active node
-`{c, d}`. -/
-theorem witness_covered : RetiredCovered wv := by
-  intro M c hM
-  obtain ⟨hM, -⟩ := hM
-  simp only [wst, Set.mem_singleton_iff, Prod.mk.injEq] at hM
-  obtain ⟨rfl, rfl⟩ := hM
-  exact ⟨Or.inl (Or.inr (Or.inl rfl)), {2, 3}, 4,
-    State.active_withAtoms (stored_active (Or.inr ⟨rfl, rfl⟩)), rfl⟩
+/-- The stored state before completion retired `{a, b, d}`. -/
+def wst₀ : State 5 := { wst with retired := ∅ }
+
+/-- **`wst` is reached by one `retire`** from a state with no retired node:
+the class of `{a, b, d}` holds the smaller active `{c, d}`, the normal form
+`cc_round` merged in before marking the node. -/
+theorem wst_reachable : Reachable (Laws.plainAC 5) wst₀ wst := by
+  have hstep : Infer (Laws.plainAC 5) wst₀ (wst₀.retire {0, 1, 3} 4) :=
+    Infer.retire (Or.inr (Or.inl rfl))
+      ⟨{2, 3}, 4, ⟨Or.inr (Or.inr rfl), fun h => absurd h (Set.notMem_empty _)⟩, rfl, by decide⟩
+  have he : wst₀.retire {0, 1, 3} 4 = wst := by
+    simp only [State.retire, wst₀, wst, State.mk.injEq, true_and]
+    refine ⟨?_, trivial⟩
+    ext p
+    simp
+  exact he ▸ ReflTransGen.single hstep
+
+/-- `RetiredCovered` of the stored state, derived from the run
+(`retiredCovered_of_reachable`). -/
+theorem witness_covered_stored : RetiredCovered wst :=
+  retiredCovered_of_reachable wst_reachable rfl
+
+/-- `RetiredCovered` of the view: the retired node is a stored node, and its
+class holds the active node `{c, d}`. -/
+theorem witness_covered : RetiredCovered wv := witness_covered_stored.withAtoms wA none
 
 /-- The former hypothesis `I0ActiveAll` fails on the stored state: the leaf
 constant `a` holds no node. -/

@@ -22,7 +22,7 @@ commits and the withdrawn claims.
   `_store_atomic` (with `CompleteAtomic`), and
   `saturation_modulo_complete_store_retired` and `_retired_atoms` (with
   `SubRepR` over active and retired nodes, `FCover` over both, `I2`, `I3`, or
-  in the `_reactivate` forms the reactivation fixpoint in place of `I3`:
+  in the `_covered` forms `RetiredCovered` in place of `I3`:
   every match of the index, a match rooted at a retired node included). The
   statement, its reading and its hypotheses: GUIDE Section 7.7.
 - `Final/Witness.lean`: `witness_saturation_modulo_complete`,
@@ -137,9 +137,14 @@ commits and the withdrawn claims.
   `State.RwL`, a rule step or a law step) from `st.reactivate L = st`,
   `RetiredCovered`, I2 and the hypotheses of completeness at convergence;
   `ReactivateCE.reactivate_fixed_not_I3` shows the pass alone does not
-  give it. The `_reactivate` forms of `node_reduces_active`,
-  `node_equal_active`, the retired store theorems and `Final/Closed.lean`
-  take the fixpoint in place of I3 (GUIDE Section 5.5).
+  give it. `Bridge.I3_of_reactivate_fixed_complete` and
+  `node_reduces_active_reactivate` read it on `CompleteHyps`. The retired
+  store theorems and `Final/Closed.lean` need no I3: their `_covered`
+  forms take `RetiredCovered`, an `Infer` invariant (`Infer.retire` requires
+  a smaller active classmate; `Infer_retiredCovered`,
+  `retiredCovered_of_reachable`, `node_equal_active_covered` in
+  `Lemmas.lean`). The inverse `_engine` theorems keep I3 (GUIDE Section 9,
+  item 13). GUIDE Section 5.5.
 - `MinMonoKey.lean`: completion orders monomials by per-class order
   keys (`keyDegLex`; a merged class takes the lesser key, `key_merge`), not by
   representative id. `rename_key_le`, `survivor_key_le`: at a merge every

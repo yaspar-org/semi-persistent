@@ -219,7 +219,12 @@ end State
   This covers the (A′) merge, the (B) close of a critical pair, the axiom
   pairs, the cancel-closure (C1/C2), `inverse_cancel_repair` and plain
   congruence; each is justified by a derivation from the state.
-* `retire` sets `FLAG_AC_COLLAPSED`; `unretire` clears it (a normal form
+* `retire` sets `FLAG_AC_COLLAPSED` on a node whose class holds a smaller
+  active node: `cc_round` merges the node's materialized normal form, an
+  active node below it, into its class before it marks the node
+  (`do_merge` before `set_cc_collapsed`), as `SlotState.retire` requires.
+  A degenerate normal form (`materialize` returning the unit's or a
+  summand's class) is outside, as it is for `mint`. `unretire` clears it (a normal form
   materialized again, or a recanonized node); `setRhs` refreshes the stored
   minima. These three change neither the nodes nor the partition. -/
 inductive Infer (L : Laws n) : State n → State n → Prop
@@ -228,7 +233,9 @@ inductive Infer (L : Laws n) : State n → State n → Prop
   | joinMerge {st : State n} {M : Monomial n} {c : Fin n} {N : Monomial n} {d : Fin n} :
       (M, c) ∈ st.nodes → (N, d) ∈ st.nodes → E L st.eqs M N → Infer L st (st.merge c d)
   | retire {st : State n} {M : Monomial n} {c : Fin n} :
-      (M, c) ∈ st.nodes → Infer L st (st.retire M c)
+      (M, c) ∈ st.nodes →
+      (∃ K c', (K, c') ∈ st.active ∧ st.find c' = st.find c ∧ degLex M K) →
+      Infer L st (st.retire M c)
   | unretire {st : State n} {M : Monomial n} {c : Fin n} :
       (M, c) ∈ st.retired → Infer L st (st.unretire M c)
   | setRhs {st : State n} (rhs' : Fin n → Monomial n) :
@@ -266,6 +273,15 @@ def I3 (L : Laws n) (st : State n) : Prop :=
   ∀ M c, (M, c) ∈ st.retired →
     ∃ M' c', Relation.TransGen (st.RwL L) M M' ∧ (M', c') ∈ st.nodes ∧
       st.find c' = st.find c
+
+/-- Every retired node is a stored node whose class holds an active node.
+An `Infer` invariant (`Infer_retiredCovered`): `retire` requires a smaller
+active classmate, the engine's merge before mark. On the completion view
+the active node may be the implicit node of a leaf constant or of the
+unit (`RetiredCovered.withAtoms`). -/
+def RetiredCovered (st : State n) : Prop :=
+  ∀ M c, (M, c) ∈ st.retired →
+    (M, c) ∈ st.nodes ∧ ∃ K c', (K, c') ∈ st.active ∧ st.find c' = st.find c
 
 /-- I4: fixed summand pool. Every class occurring as a child is in `pool`. -/
 def I4 (pool : Finset (Fin n)) (st : State n) : Prop :=

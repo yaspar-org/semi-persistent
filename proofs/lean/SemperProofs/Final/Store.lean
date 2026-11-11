@@ -203,6 +203,57 @@ theorem saturation_modulo_complete_store_cover {ops : Sym → OpLaws} {sig : Sym
   obtain ⟨-, h2, h3, -⟩ := hmain p hp p' hp' hE σ hm hid
   exact ⟨h2, h3⟩
 
+/-- The retired-root theorem from any proof that each node of `ret` is
+`=_E`-equal to an active node of its class (`heq`). -/
+theorem saturation_modulo_complete_store_retired_of {ops : Sym → OpLaws} {sig : Sym → Kind}
+    {naive : Rule → Bool} {rules : List Rule}
+    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
+    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
+    {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
+    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    {act ret : Finset (Monomial n × Fin n)} (hcomp : CompleteHyps L S st) (hw : Within st act)
+    (heq : ∀ p ∈ ret, ∃ q ∈ st.active, E L S p.1 q.1 ∧ st.find q.2 = st.find p.2) {f : Sym}
+    {ι : Monomial n × Fin n → NodeId} (hs : SubRepR A.Sa.index st f act ret ι)
+    (hcov : FCover A.Sa.index f (act ∪ ret) ι) :
+    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
+      P.head = some f →
+      ∀ σ, Matches A.Sa.index rule.atoms σ →
+        FiredN A.Sa.graph ops σ rule ∧
+        ∃ p' ∈ act ∪ ret, σ.node r = some (ι p') ∧ MatchN A.Sa.index P (mkNode st f p') σ ∧
+          ∃ q ∈ st.active, E L S p'.1 q.1 ∧ st.find q.2 = st.find p'.2 ∧
+            σ.cls r = some (clsId (st.find q.2)) ∧
+            MatchC A.Sa.index P (clsId (st.find q.2)) σ ∧
+            ∀ p ∈ act, E L S p.1 p'.1 →
+              σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ := by
+  intro rule hr P r hatoms hhead σ hm
+  have hinv := saturation_complete_N A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
+  have hk : A.Sa.index.KeysNodup := by
+    have := ((hok A hA).atoms rule hr).keys
+    rwa [A.after_eq] at this
+  refine ⟨hinv rule hr σ hm, ?_⟩
+  rw [hatoms] at hm
+  have hP : P.head.isSome = true := by rw [hhead]; rfl
+  obtain ⟨id, nd, hid, hmem, -, hop, -⟩ :=
+    backOk P hP r _ (fun a ha => hm.sat _ (List.mem_map_of_mem ha))
+  obtain ⟨p', hp', rfl⟩ := hcov id nd hmem (by rw [hhead] at hop; exact (Option.some.inj hop).symm)
+  obtain ⟨hcls, hmn⟩ := matches_at_sub hs.union hk hhead hm hp' hid
+  have hfind : A.Sa.index.find (ι p') = clsId (st.find p'.2) := hs.union.find p' hp'
+  have hnode := hs.union.nodes p' hp'
+  obtain ⟨q, hq, hE, hqc⟩ : ∃ q ∈ st.active, E L S p'.1 q.1 ∧ st.find q.2 = st.find p'.2 := by
+    rcases Finset.mem_union.1 hp' with h | h
+    · exact ⟨p', hw p' h, E.refl _, rfl⟩
+    · exact heq p' h
+  refine ⟨p', hp', hid, hmn, q, hq, hE, hqc, ?_, ?_, ?_⟩
+  · rw [hcls, hfind, hqc]
+  · rw [hqc, ← hfind]; exact MatchC.app hnode rfl hhead hmn
+  · intro p hp hpE
+    have hpq : st.find p.2 = st.find q.2 := ac_equal_same_class hcomp (hw p hp) hq (hpE.trans hE)
+    have hfp : A.Sa.find (ι p) = clsId (st.find p.2) := hs.active.find p hp
+    refine ⟨?_, ?_⟩
+    · rw [hcls, hfind, hfp, hpq, hqc]
+    · rw [hfp, hpq, hqc, ← hfind]; exact MatchC.app hnode rfl hhead hmn
+
 /-- **Saturation is complete modulo the AC theory, on the store, at a
 retired root.** The correspondence `SubRepR` stores the active nodes `act`
 and the stored nodes `ret` (the retired ones) of the sound (`I2`) and
@@ -235,42 +286,16 @@ theorem saturation_modulo_complete_store_retired {ops : Sym → OpLaws} {sig : S
             σ.cls r = some (clsId (st.find q.2)) ∧
             MatchC A.Sa.index P (clsId (st.find q.2)) σ ∧
             ∀ p ∈ act, E L S p.1 p'.1 →
-              σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ := by
-  intro rule hr P r hatoms hhead σ hm
-  have hinv := saturation_complete_N A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
-  have hk : A.Sa.index.KeysNodup := by
-    have := ((hok A hA).atoms rule hr).keys
-    rwa [A.after_eq] at this
-  refine ⟨hinv rule hr σ hm, ?_⟩
-  rw [hatoms] at hm
-  have hP : P.head.isSome = true := by rw [hhead]; rfl
-  obtain ⟨id, nd, hid, hmem, -, hop, -⟩ :=
-    backOk P hP r _ (fun a ha => hm.sat _ (List.mem_map_of_mem ha))
-  obtain ⟨p', hp', rfl⟩ := hcov id nd hmem (by rw [hhead] at hop; exact (Option.some.inj hop).symm)
-  obtain ⟨hcls, hmn⟩ := matches_at_sub hs.union hk hhead hm hp' hid
-  have hfind : A.Sa.index.find (ι p') = clsId (st.find p'.2) := hs.union.find p' hp'
-  have hnode := hs.union.nodes p' hp'
-  obtain ⟨q, hq, hE, hqc⟩ : ∃ q ∈ st.active, E L S p'.1 q.1 ∧ st.find q.2 = st.find p'.2 := by
-    rcases Finset.mem_union.1 hp' with h | h
-    · exact ⟨p', hw p' h, E.refl _, rfl⟩
-    · exact node_equal_active h2 h3 (hret p' h)
-  refine ⟨p', hp', hid, hmn, q, hq, hE, hqc, ?_, ?_, ?_⟩
-  · rw [hcls, hfind, hqc]
-  · rw [hqc, ← hfind]; exact MatchC.app hnode rfl hhead hmn
-  · intro p hp hpE
-    have hpq : st.find p.2 = st.find q.2 := ac_equal_same_class hcomp (hw p hp) hq (hpE.trans hE)
-    have hfp : A.Sa.find (ι p) = clsId (st.find p.2) := hs.active.find p hp
-    refine ⟨?_, ?_⟩
-    · rw [hcls, hfind, hfp, hpq, hqc]
-    · rw [hfp, hpq, hqc, ← hfind]; exact MatchC.app hnode rfl hhead hmn
+              σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ :=
+  saturation_modulo_complete_store_retired_of A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp hw
+    (fun p hp => node_equal_active h2 h3 (hret p hp)) hs hcov
 
-/-- **`saturation_modulo_complete_store_retired` with `I3` derived from the
-reactivation pass.** In place of `I3`: the pass leaves the state unchanged
-(`hreact`, what the engine holds when the completion loop reports a
-fixpoint), every retired node is a stored node whose class holds an active
-node (`hcov`), and joinability cancels when the operator is cancellative
-(`hcancel`, vacuous otherwise). `I3` is `I3_of_reactivate_fixed_complete`. -/
-theorem saturation_modulo_complete_store_retired_reactivate {ops : Sym → OpLaws} {sig : Sym → Kind}
+/-- **`saturation_modulo_complete_store_retired` without `I3`.** A retired
+root needs only an active node of its class `=_E`-equal to it, which
+`RetiredCovered` and `I2` give (`node_equal_active_covered`); no reduction,
+no confluence, no `hcancel`. `RetiredCovered` holds of every state reachable
+from one with no retired node (`retiredCovered_of_reachable`). -/
+theorem saturation_modulo_complete_store_retired_covered {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
     (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
@@ -278,13 +303,9 @@ theorem saturation_modulo_complete_store_retired_reactivate {ops : Sym → OpLaw
     {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
     {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
     {act ret : Finset (Monomial n × Fin n)} (hcomp : CompleteHyps L S st) (h2 : I2 L S st)
-    (hreact : st.reactivate L = st) (hcov : RetiredCovered st)
-    (hcancel : L.cancellative → ∀ P Q Y,
-      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) (P + Y) (Q + Y) →
-      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) P Q)
-    (hw : Within st act) (hret : Stored st ret) {f : Sym}
+    (hrc : RetiredCovered st) (hw : Within st act) (hret : Stored st ret) {f : Sym}
     {ι : Monomial n × Fin n → NodeId} (hs : SubRepR A.Sa.index st f act ret ι)
-    (hcov' : FCover A.Sa.index f (act ∪ ret) ι) :
+    (hcov : FCover A.Sa.index f (act ∪ ret) ι) :
     ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
       P.head = some f →
       ∀ σ, Matches A.Sa.index rule.atoms σ →
@@ -295,8 +316,8 @@ theorem saturation_modulo_complete_store_retired_reactivate {ops : Sym → OpLaw
             MatchC A.Sa.index P (clsId (st.find q.2)) σ ∧
             ∀ p ∈ act, E L S p.1 p'.1 →
               σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ :=
-  saturation_modulo_complete_store_retired A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp h2
-    (I3_of_reactivate_fixed_complete hcomp h2 hreact hcov hcancel) hw hret hs hcov'
+  saturation_modulo_complete_store_retired_of A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp hw
+    (fun p hp => node_equal_active_covered h2 hrc (hret p hp)) hs hcov
 
 /-- `saturation_modulo_complete_store_retired` for a completion state with
 leaf constants. `I2` and `I3` are taken on the completion view
@@ -332,13 +353,10 @@ theorem saturation_modulo_complete_store_retired_atoms {ops : Sym → OpLaws} {s
     (CompleteHyps.ofAtoms hcomp) h2 h3 (fun p hp => State.active_withAtoms (hw p hp))
     (fun p hp => Or.inl (hret p hp)) (hs.withAtoms X u) hcov
 
-/-- **`saturation_modulo_complete_store_retired_atoms` with `I3` derived
-from the reactivation pass.** The pass is read on the completion view, whose
-rules are the ones the engine reads (`class_rhs_into`: `{x}` for an atomic
-class): `hreact` says it leaves the view unchanged, `hcov` that every
-retired node is a stored node whose class holds an active node of the view,
-a stored one or the implicit node of a leaf constant. -/
-theorem saturation_modulo_complete_store_retired_atoms_reactivate {ops : Sym → OpLaws} {sig : Sym → Kind}
+/-- **`saturation_modulo_complete_store_retired_atoms` without `I3`**:
+`RetiredCovered` of the stored state, carried to the view
+(`RetiredCovered.withAtoms`), and `I2` on the view. -/
+theorem saturation_modulo_complete_store_retired_atoms_covered {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
     (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
@@ -347,14 +365,9 @@ theorem saturation_modulo_complete_store_retired_atoms_reactivate {ops : Sym →
     {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n} {X : Set (Fin n)}
     {u : Option (Fin n)} {act ret : Finset (Monomial n × Fin n)}
     (hcomp : CompleteAtoms L S st X u) (h2 : I2 L S (st.withAtoms X u))
-    (hreact : (st.withAtoms X u).reactivate L = st.withAtoms X u)
-    (hcov : RetiredCovered (st.withAtoms X u))
-    (hcancel : L.cancellative → ∀ P Q Y,
-      Joinable (Rw (plain n) ((st.withAtoms X u).rules ∪ L.axRules)) (P + Y) (Q + Y) →
-      Joinable (Rw (plain n) ((st.withAtoms X u).rules ∪ L.axRules)) P Q)
-    (hw : Within st act) (hret : Stored st ret) {f : Sym}
+    (hrc : RetiredCovered st) (hw : Within st act) (hret : Stored st ret) {f : Sym}
     {ι : Monomial n × Fin n → NodeId} (hs : SubRepR A.Sa.index st f act ret ι)
-    (hcov' : FCover A.Sa.index f (act ∪ ret) ι) :
+    (hcov : FCover A.Sa.index f (act ∪ ret) ι) :
     ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
       P.head = some f →
       ∀ σ, Matches A.Sa.index rule.atoms σ →
@@ -365,8 +378,8 @@ theorem saturation_modulo_complete_store_retired_atoms_reactivate {ops : Sym →
             MatchC A.Sa.index P (clsId (st.find q.2)) σ ∧
             ∀ p ∈ act, E L S p.1 p'.1 →
               σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ :=
-  saturation_modulo_complete_store_retired_atoms A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp h2
-    (I3_of_reactivate_fixed_complete (CompleteHyps.ofAtoms hcomp) h2 hreact hcov hcancel)
-    hw hret hs hcov'
+  saturation_modulo_complete_store_retired_covered A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
+    (CompleteHyps.ofAtoms hcomp) h2 (RetiredCovered.withAtoms hrc X u) (fun p hp => State.active_withAtoms (hw p hp))
+    (fun p hp => Or.inl (hret p hp)) (hs.withAtoms X u) hcov
 
 end SemperProofs.Final

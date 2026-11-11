@@ -184,15 +184,4 @@ theorem node_reduces_active_reactivate {L : Laws n} {S : Set (Monomial n × Mono
         st.find c' = st.find c :=
   node_reduces_active (I3_of_reactivate_fixed_complete hcomp h2 hreact hcov hcancel)
 
-/-- `node_equal_active` with `I3` derived from the reactivation pass. -/
-theorem node_equal_active_reactivate {L : Laws n} {S : Set (Monomial n × Monomial n)}
-    {st : State n} (hcomp : CompleteHyps L S st) (h2 : I2 L S st)
-    (hreact : st.reactivate L = st) (hcov : RetiredCovered st)
-    (hcancel : L.cancellative → ∀ M N X,
-      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) (M + X) (N + X) →
-      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) M N)
-    {M : Monomial n} {c : Fin n} (hM : (M, c) ∈ st.nodes) :
-    ∃ q ∈ st.active, E L S M q.1 ∧ st.find q.2 = st.find c :=
-  node_equal_active h2 (I3_of_reactivate_fixed_complete hcomp h2 hreact hcov hcancel) hM
-
 end SemperProofs.CC.Bridge

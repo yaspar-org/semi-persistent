@@ -23,4 +23,3 @@ import SemperProofs.CC.Bridge.Sub
 #print axioms SemperProofs.CC.Bridge.matches_closed_under_theory_sub
 #print axioms SemperProofs.CC.Bridge.I3_of_reactivate_fixed_complete
 #print axioms SemperProofs.CC.Bridge.node_reduces_active_reactivate
-#print axioms SemperProofs.CC.Bridge.node_equal_active_reactivate

@@ -19,3 +19,8 @@ only `propext`, `Classical.choice`, `Quot.sound`. -/
 #print axioms SemperProofs.CC.RwL_rtg_sound
 #print axioms SemperProofs.CC.RwL_rtg_embed
 #print axioms SemperProofs.CC.I3_of_rw
+#print axioms SemperProofs.CC.reactivate_retiredCovered
+#print axioms SemperProofs.CC.Infer_retiredCovered
+#print axioms SemperProofs.CC.reachable_retiredCovered
+#print axioms SemperProofs.CC.retiredCovered_of_reachable
+#print axioms SemperProofs.CC.node_equal_active_covered
