@@ -7,7 +7,8 @@ import SemperProofs.EMatch.Ref
 whose AC and ACI decompositions are resumable frames (`FrameKind::ACDecompose`,
 `FrameKind::ACIDecompose`). A frame holds the residual entries of the node, one entry
 index per element (`ri_at`), one flag per element saying whether its scan bound the
-element variable (`bound`), and the position `ei` of the search. The search is a
+element variable (`bound`), one saying whether it bound the multiplicity variable
+(`mult_bound`, AC only), and the position `ei` of the search. The search is a
 depth-first walk over the entries in index order: `ac_find_first` moves forward through
 the elements, taking for each the first entry from `ri_at[ei]` its scan accepts
 (`ac_scan`), and on a failure undoes the previous element (`ac_undo`), advances its index
@@ -39,7 +40,11 @@ The transcription is of the engine after the fixes the model and its mirrors fou
 (`cursor_shapes.rs`, `decompositions_with_a_bound_element`), and now resumes through
 `ac_find_first`; a bound element took any entry of its class from the scan's start, and
 now takes the first matching entry of its class, as `decompose_ac_elem` does, so that a
-commutative pair with equal children gives an assignment once. The frame stack above the
+commutative pair with equal children gives an assignment once; `ac_undo` cleared a
+multiplicity variable unless an earlier element of the frame carried it, which reset a
+count an earlier atom of the query bound (`cursor_shapes.rs`,
+`multiplicity_variable_bound_by_an_earlier_atom`), and now clears it only where the
+element's scan bound it, as `decompose_ac_elem` does with `was_unbound`. The frame stack above the
 decompositions (`next_match`, `backtrack` over the plan) is not modelled; the test
 `cursor_agrees_with_the_recursive_executor_on_the_rounds_corpus` (`ematch.rs`) compares
 the two executors' match multisets on the rounds corpus.
@@ -50,10 +55,10 @@ namespace Semper.EMatch.Cursor
 /-! ## The generic frame
 
 The entry store `α` is the frame's mutable data other than the indices: for AC, the
-environment, the residual counts and the `bound` flags; for ACI, the environment, the
-`used` bits and the `bound` flags. `accept a e ri` says element `e` can take entry `ri`
-in store `a`, `apply a e ri` is the store after it does (`ac_scan`'s body at a hit), and
-`undo a e ri` restores the store (`ac_undo`). -/
+environment, the residual counts, the `bound` flags and the `mult_bound` flags; for ACI,
+the environment, the `used` bits and the `bound` flags. `accept a e ri` says element `e`
+can take entry `ri` in store `a`, `apply a e ri` is the store after it does (`ac_scan`'s
+body at a hit), and `undo a e ri` restores the store (`ac_undo`). -/
 
 structure Ops (α : Type) where
   /-- `elems.len()`. -/
@@ -600,8 +605,7 @@ def remaining (a₀ : α) (s : State α) : List α :=
 
 /-- The store laws the correctness proof needs: on a good store, `undo` reverses `apply`
 and `apply` keeps the store good. `good e a` is the AC frame's reachability condition
-(the `bound` flags from `e` on are clear, a multiplicity variable is bound only by an
-earlier element). -/
+(the `bound` and `mult_bound` flags from `e` on are clear). -/
 structure Laws (good : Nat → α → Prop) : Prop where
   undo_apply : ∀ a e ri, good e a → ops.accept a e ri = true → ops.undo (ops.apply a e ri) e ri = a
   good_apply : ∀ a e ri, good e a → ops.accept a e ri = true → good (e + 1) (ops.apply a e ri)
@@ -848,15 +852,18 @@ end Ops
 
 /-! ## The AC frame (`FrameKind::ACDecompose`)
 
-The store is the environment, the residual `(class, count)` entries and the `bound`
-flags. The engine's environment keeps a multiplicity cell at `ZERO` for unbound
-(`bound_mult_val`), which the model's `Option` reads as `none`: `set_mult(mv, ZERO)` is
-`clearMult`. -/
+The store is the environment, the residual `(class, count)` entries, the `bound` flags
+and the `mult_bound` flags. The engine's environment keeps a multiplicity cell at `ZERO`
+for unbound (`bound_mult_val`), which the model's `Option` reads as `none`:
+`set_mult(mv, ZERO)` is `clearMult`. A multiplicity variable is interned per query, so the
+environment the frame starts from may already bind it (an earlier atom carries it); the
+frame clears it on an undo only where its own scan bound it (`mult_bound`). -/
 
 structure ACStore where
   σ : Binding
   res : List (C × Nat)
   bound : List Bool
+  mbound : List Bool
 
 /-- `self.env.clear(vid)`. -/
 def clearCls (σ : Binding) (x : Var) : Binding := { σ with cls := Function.update σ.cls x none }
@@ -866,11 +873,6 @@ def clearMult (σ : Binding) (k : Var) : Binding := { σ with mult := Function.u
 
 /-- The default element, never read for an index below `elems.len()`. -/
 def defElem : Var × Mult := (0, .exact 1)
-
-/-- Whether an element below `e` carries the multiplicity variable `k`
-(`elems[..ei].iter().any(...)` in `ac_undo`). -/
-def usesMult (elems : List (Var × Mult)) (e : Nat) (k : Var) : Bool :=
-  (elems.take e).any fun p => match p.2 with | .var k' _ _ => k' == k | .exact _ => false
 
 /-- `ac_scan`'s test of one entry. On the bound-repr path the entry is the first of the
 class that matches (`residual.iter().position(|(r, m)| r == repr && mult_matches(..))`,
@@ -888,8 +890,9 @@ def acAccept (elems : List (Var × Mult)) (a : ACStore) (e ri : Nat) : Bool :=
 
 /-- `ac_scan`'s body at a hit: on the bound-repr path the variable is left alone and
 `bound[ei]` stays `false`; otherwise `self.env.set(vid, repr); bound[ei] = true`. Then
-`RMult::Var { var: mv, .. } => self.env.set_mult(*mv, residual[ri].1)` and
-`residual[ri].1 = avail.saturating_sub(take)` with `take = avail`. -/
+`RMult::Var { var: mv, .. } => { mult_bound[ei] = self.env.get_mult(*mv) == ZERO;
+self.env.set_mult(*mv, residual[ri].1) }` (`mult_bound[ei]` stays `false` for an exact
+annotation) and `residual[ri].1 = avail.saturating_sub(take)` with `take = avail`. -/
 def acApply (elems : List (Var × Mult)) (a : ACStore) (e ri : Nat) : ACStore :=
   let x := (elems.getD e defElem).1
   let μ := (elems.getD e defElem).2
@@ -904,12 +907,15 @@ def acApply (elems : List (Var × Mult)) (a : ACStore) (e ri : Nat) : ACStore :=
   let σ₂ := match μ with
     | .exact _ => σ₁
     | .var k _ _ => σ₁.setMult k m
-  ⟨σ₂, a.res.set ri (c, 0), a.bound.set e b⟩
+  let mb := match μ with
+    | .exact _ => false
+    | .var k _ _ => (a.σ.mult k).isNone
+  ⟨σ₂, a.res.set ri (c, 0), a.bound.set e b, a.mbound.set e mb⟩
 
 /-- `ac_undo(elems, residual, ei, ri, bound)`: `residual[ri].1 += restore`, where
 `restore` is the literal of an exact annotation or `env.get_mult(mv)`; `env.clear(vid)` if
-`bound[ei]`; `bound[ei] = false`; and `set_mult(mv, ZERO)` unless an earlier element uses
-the same multiplicity variable. -/
+`bound[ei]`; `bound[ei] = false`; `set_mult(mv, ZERO)` if `mult_bound[ei]`; and
+`mult_bound[ei] = false`. -/
 def acUndo (elems : List (Var × Mult)) (a : ACStore) (e ri : Nat) : ACStore :=
   let x := (elems.getD e defElem).1
   let μ := (elems.getD e defElem).2
@@ -921,8 +927,8 @@ def acUndo (elems : List (Var × Mult)) (a : ACStore) (e ri : Nat) : ACStore :=
   let σ₁ := if a.bound.getD e false then clearCls a.σ x else a.σ
   let σ₂ := match μ with
     | .exact _ => σ₁
-    | .var k _ _ => if usesMult elems e k then σ₁ else clearMult σ₁ k
-  ⟨σ₂, a.res.set ri (c, m + restore), a.bound.set e false⟩
+    | .var k _ _ => if a.mbound.getD e false then clearMult σ₁ k else σ₁
+  ⟨σ₂, a.res.set ri (c, m + restore), a.bound.set e false, a.mbound.set e false⟩
 
 /-- The AC frame over `elems`, on a node with `len` residual entries. -/
 def acOps (elems : List (Var × Mult)) (len : Nat) : Ops ACStore :=
@@ -944,20 +950,16 @@ def MultPos : Mult → Prop
   | .exact m => m ≠ 0
   | .var _ lo _ => 1 ≤ lo
 
-/-- The multiplicity variables of the elements. -/
-def multVars (elems : List (Var × Mult)) : List Var :=
-  elems.filterMap fun p => match p.2 with | .var k _ _ => some k | .exact _ => none
-
-/-- The reachable stores at element `e`: `bound` is clear from `e` on, the residual keeps
-its length and its classes, and a multiplicity variable of the elements is bound exactly
-when an earlier element carries it. -/
+/-- The reachable stores at element `e`: `bound` and `mbound` are clear from `e` on, and
+the residual keeps its length and its classes. Nothing is assumed of the multiplicity
+cells: each element records whether it bound its variable. -/
 structure ACGood (elems : List (Var × Mult)) (res₀ : List (C × Nat)) (e : Nat) (a : ACStore) : Prop where
   bound_len : a.bound.length = elems.length
   bound_clear : ∀ j, e ≤ j → a.bound.getD j false = false
+  mbound_len : a.mbound.length = elems.length
+  mbound_clear : ∀ j, e ≤ j → a.mbound.getD j false = false
   res_len : a.res.length = res₀.length
   res_cls : a.res.map Prod.fst = res₀.map Prod.fst
-  mult_free : ∀ k ∈ multVars elems, usesMult elems e k = false → a.σ.mult k = none
-  mult_bound : ∀ k, usesMult elems e k = true → (a.σ.mult k).isSome
 
 theorem multMatches_zero {σ : Binding} {μ : Mult} (h : MultPos μ) : multMatches σ μ 0 = none := by
   cases μ with
@@ -1027,19 +1029,6 @@ theorem clearMult_setMult {σ : Binding} {k : Var} {m : Nat} (h : σ.mult k = no
 theorem clearCls_setMult (σ : Binding) (x k : Var) (m : Nat) : clearCls (σ.setMult k m) x = (clearCls σ x).setMult k m := rfl
 theorem clearMult_setCls (σ : Binding) (x k : Var) (c : C) : clearMult (σ.setCls x c) k = (clearMult σ k).setCls x c := rfl
 
-theorem usesMult_succ (elems : List (Var × Mult)) (e : Nat) (k : Var) (he : e < elems.length) :
-    usesMult elems (e + 1) k =
-      (usesMult elems e k || match (elems[e]'he).2 with | .var k' _ _ => k' == k | .exact _ => false) := by
-  unfold usesMult
-  rw [List.take_add_one, List.getElem?_eq_getElem he]
-  simp only [Option.toList_some, List.any_append, List.any_cons, List.any_nil, Bool.or_false]
-
-theorem mem_multVars {elems : List (Var × Mult)} {e : Nat} {x k : Var} {lo : Nat} {hi : Option Nat}
-    (h : elems[e]? = some (x, .var k lo hi)) : k ∈ multVars elems := by
-  unfold multVars
-  rw [List.mem_filterMap]
-  exact ⟨(x, .var k lo hi), List.mem_of_getElem? h, rfl⟩
-
 /-- A hit names an element and a live entry. -/
 theorem acAccept_some {elems : List (Var × Mult)} {a : ACStore} {e ri : Nat}
     (hpos : ∀ p ∈ elems, MultPos p.2) (h : acAccept elems a e ri = true) :
@@ -1083,61 +1072,57 @@ theorem acLaws (elems : List (Var × Mult)) (res₀ : List (C × Nat)) (hpos : �
     simp only [hres] at hmm hcls
     have hres' : a.res[ri] = (c, m) := by
       rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hri] at hres; exact hres
-    have hbe : e < a.bound.length := by rw [hg.bound_len]; exact he
-    have hb : a.bound[e] = false := by
-      have := hg.bound_clear e le_rfl
-      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hbe] at this; exact this
+    -- a flag list clear at `e`: setting it and clearing it again is the identity
+    have hflag : ∀ l : List Bool, l.length = elems.length → (∀ j, e ≤ j → l.getD j false = false) →
+        (∀ b, (l.set e b).set e false = l) ∧ ∀ b, (l.set e b)[e]? = some b := by
+      intro l hl hc
+      have hle : e < l.length := by rw [hl]; exact he
+      have h0 : l[e] = false := by
+        have := hc e le_rfl
+        rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hle] at this; exact this
+      exact ⟨fun b => by rw [List.set_set, ← h0, List.set_getElem_self hle],
+        fun b => List.getElem?_set_self hle⟩
+    obtain ⟨hbset, hbget⟩ := hflag a.bound hg.bound_len hg.bound_clear
+    obtain ⟨hmbset, hmbget⟩ := hflag a.mbound hg.mbound_len hg.mbound_clear
     -- the residual: the entry is set to 0 and restored to `m`
     have hget : (a.res.set ri (c, 0))[ri]? = some (c, 0) := List.getElem?_set_self hri
     have hrestore : ∀ restore : Nat, restore = m →
         (a.res.set ri (c, 0)).set ri (c, 0 + restore) = a.res := by
       intro restore hr
       rw [hr, List.set_set, Nat.zero_add, ← hres', List.set_getElem_self hri]
-    have hbset : ∀ b, (a.bound.set e b).set e false = a.bound := by
-      intro b
-      rw [List.set_set, ← hb, List.set_getElem_self hbe]
-    have hbt : (a.bound.set e true)[e]? = some true := List.getElem?_set_self hbe
-    have hbf : (a.bound.set e false)[e]? = some false := List.getElem?_set_self hbe
     simp only [acOps, acApply, acUndo, hxg, hres, List.getD_eq_getElem?_getD, hget, Option.getD_some]
-    rcases hcx : a.σ.cls x with _ | c₀
-    · -- unbound: the variable is bound and `bound[e]` set; the undo clears both
-      cases μ with
-      | exact k =>
-          have hk : m = k := by
-            simp only [multMatches] at hmm; split at hmm <;> simp_all
-          simp only [hbt, Option.getD_some, ite_true, hbset, clearCls_setCls hcx, hrestore k hk.symm]
-      | var k lo hi =>
-          have hk : k ∈ multVars elems := mem_multVars hx
-          simp only [hbt, Option.getD_some, ite_true, hbset, setMult_mult_self, clearCls_setMult,
-            clearCls_setCls hcx, hrestore m rfl]
-          rcases hu : usesMult elems e k with _ | _
-          · have hnone := hg.mult_free k hk hu
-            simp only [Bool.false_eq_true, ite_false, clearMult_setMult hnone]
-          · obtain ⟨m', hm'⟩ := Option.isSome_iff_exists.1 (hg.mult_bound k hu)
-            have := multMatches_bound hmm hm'
+    cases μ with
+    | exact k =>
+        have hk : m = k := by
+          simp only [multMatches] at hmm; split at hmm <;> simp_all
+        rcases hcx : a.σ.cls x with _ | c₀
+        · -- unbound: the variable is bound and `bound[e]` set; the undo clears both
+          simp only [hbget, Option.getD_some, ite_true, hbset, hmbset, clearCls_setCls hcx,
+            hrestore k hk.symm]
+        · -- bound: the variable is checked and left alone
+          simp only [hbget, Option.getD_some, Bool.false_eq_true, ite_false, hbset, hmbset,
+            hrestore k hk.symm]
+    | var k lo hi =>
+        -- the cell `k` is cleared exactly when the scan found it unbound
+        have hσ : ∀ σ₁ : Binding, σ₁.mult k = a.σ.mult k →
+            (if (a.σ.mult k).isNone = true then clearMult (σ₁.setMult k m) k else σ₁.setMult k m) =
+              σ₁ := by
+          intro σ₁ h₁
+          rcases hmk : a.σ.mult k with _ | m'
+          · simp only [Option.isNone_none, ite_true]
+            exact clearMult_setMult (h₁.trans hmk)
+          · have := multMatches_bound hmm hmk
             subst this
-            simp only [ite_true, setMult_self hm']
-    · -- bound: the variable is checked and left alone
-      cases μ with
-      | exact k =>
-          have hk : m = k := by
-            simp only [multMatches] at hmm; split at hmm <;> simp_all
-          simp only [hbf, Option.getD_some, Bool.false_eq_true, ite_false, hbset, hrestore k hk.symm]
-      | var k lo hi =>
-          have hk : k ∈ multVars elems := mem_multVars hx
-          simp only [hbf, Option.getD_some, Bool.false_eq_true, ite_false, hbset, setMult_mult_self,
-            hrestore m rfl]
-          rcases hu : usesMult elems e k with _ | _
-          · have hnone := hg.mult_free k hk hu
-            simp only [Bool.false_eq_true, ite_false, clearMult_setMult hnone]
-          · obtain ⟨m', hm'⟩ := Option.isSome_iff_exists.1 (hg.mult_bound k hu)
-            have := multMatches_bound hmm hm'
-            subst this
-            simp only [ite_true, setMult_self hm']
+            simp only [Option.isNone_some, Bool.false_eq_true, ite_false]
+            exact setMult_self (h₁.trans hmk)
+        rcases hcx : a.σ.cls x with _ | c₀
+        · simp only [hbget, hmbget, Option.getD_some, ite_true, hbset, hmbset, setMult_mult_self,
+            clearCls_setMult, clearCls_setCls hcx, hrestore m rfl, hσ a.σ rfl]
+        · simp only [hbget, hmbget, Option.getD_some, Bool.false_eq_true, ite_false, hbset, hmbset,
+            setMult_mult_self, hrestore m rfl, hσ a.σ rfl]
   · intro a e ri hg hacc
     obtain ⟨x, μ, hx, he, hri, σ', hmm, hcls⟩ := acAccept_some hpos hacc
     have hxg : elems.getD e defElem = (x, μ) := by rw [List.getD_eq_getElem?_getD, hx]; rfl
-    have hxe : elems[e] = (x, μ) := by rw [List.getElem?_eq_getElem he] at hx; simpa using hx
     rcases hres : a.res.getD ri (0, 0) with ⟨c, m⟩
     have hres' : a.res[ri] = (c, m) := by
       rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hri] at hres; exact hres
@@ -1145,48 +1130,15 @@ theorem acLaws (elems : List (Var × Mult)) (res₀ : List (C × Nat)) (hpos : �
       rw [List.map_set, ← hg.res_cls]
       have : (a.res.map Prod.fst)[ri]'(by simpa using hri) = c := by simp [hres']
       rw [← this, List.set_getElem_self]
-    have hbc : ∀ j, e + 1 ≤ j → ∀ b, (a.bound.set e b).getD j false = false := by
-      intro j hj b
+    have hbc : ∀ l : List Bool, (∀ j, e ≤ j → l.getD j false = false) →
+        ∀ j, e + 1 ≤ j → ∀ b, (l.set e b).getD j false = false := by
+      intro l hl j hj b
       rw [List.getD_eq_getElem?_getD, List.getElem?_set_ne (by omega), ← List.getD_eq_getElem?_getD]
-      exact hg.bound_clear j (by omega)
+      exact hl j (by omega)
     simp only [acOps, acApply, hxg, hres]
-    rcases μ with k | ⟨k, lo, hi⟩
-    · -- exact: the multiplicity cells are unchanged
-      have hσ : ∀ k', (match a.σ.cls x with | some _ => a.σ | none => a.σ.setCls x c).mult k' = a.σ.mult k' := by
-        intro k'; split <;> rfl
-      refine ⟨by simp [hg.bound_len], fun j hj => hbc j hj _, by simp [hg.res_len], hcls', ?_, ?_⟩
-      · intro k' hk' hu
-        rw [usesMult_succ elems e k' he, hxe, Bool.or_eq_false_iff] at hu
-        dsimp only; rw [hσ]; exact hg.mult_free k' hk' hu.1
-      · intro k' hu
-        rw [usesMult_succ elems e k' he, hxe] at hu
-        dsimp only at hu
-        simp only [Bool.or_false] at hu
-        dsimp only; rw [hσ]; exact hg.mult_bound k' hu
-    · -- variable: the cell `k` is written
-      have hσ : ∀ k', ((match a.σ.cls x with | some _ => a.σ | none => a.σ.setCls x c).setMult k m).mult k' =
-          if k' = k then some m else a.σ.mult k' := by
-        intro k'
-        by_cases hk : k' = k
-        · subst hk; simp
-        · rw [setMult_mult_ne _ _ _ _ hk]; simp only [hk, ↓reduceIte]; split <;> rfl
-      refine ⟨by simp [hg.bound_len], fun j hj => hbc j hj _, by simp [hg.res_len], hcls', ?_, ?_⟩
-      · intro k' hk' hu
-        rw [usesMult_succ elems e k' he, hxe, Bool.or_eq_false_iff] at hu
-        dsimp only at hu
-        have hne : k' ≠ k := by
-          intro h; subst h; simp at hu
-        dsimp only; rw [hσ]; simp only [hne, ↓reduceIte]; exact hg.mult_free k' hk' hu.1
-      · intro k' hu
-        rw [usesMult_succ elems e k' he, hxe, Bool.or_eq_true] at hu
-        dsimp only at hu
-        dsimp only; rw [hσ]
-        by_cases hk : k' = k
-        · simp [hk]
-        · simp only [hk, ↓reduceIte]
-          rcases hu with hu | hu
-          · exact hg.mult_bound k' hu
-          · simp only [beq_iff_eq] at hu; exact absurd hu.symm hk
+    exact ⟨by simp [hg.bound_len], fun j hj => hbc _ hg.bound_clear j hj _,
+      by simp [hg.mbound_len], fun j hj => hbc _ hg.mbound_clear j hj _,
+      by simp [hg.res_len], hcls'⟩
 
 
 /-! ### The AC frame yields `decomposeAC` -/
@@ -1249,7 +1201,9 @@ theorem acApply_eq {elems : List (Var × Mult)} {a : ACStore} {e ri : Nat} {x : 
   constructor
   · simp only [acApply, hxg, hres]
   · rw [multMatches_some hmm]
-    cases μ <;> simp only [acApply, multApply, hxg, hres] <;> split <;> rfl
+    cases μ
+    · simp only [acApply, multApply, hxg, hres]
+    · simp only [acApply, multApply, hxg, hres]; split <;> rfl
 
 theorem flatMap_range_congr {γ : Type} (f g : Nat → List γ) (n : Nat) (h : ∀ i, i < n → f i = g i) :
     (List.range n).flatMap f = (List.range n).flatMap g := by
@@ -1379,26 +1333,28 @@ theorem enum_eq_decomposeAC (elems : List (Var × Mult)) (rest : Option Var) (re
           · rw [hnone hc, multMatches_zero hμ]; simp
           · simp [hc]
 
-/-- `enter_ac`'s frame store: the environment, the node's entries, `bound = vec![false; n]`. -/
+/-- `enter_ac`'s frame store: the environment, the node's entries,
+`bound = vec![false; n]` and `mult_bound = vec![false; n]`. -/
 def acInit (elems : List (Var × Mult)) (res₀ : List (C × Nat)) (σ₀ : Binding) : ACStore :=
-  ⟨σ₀, res₀, List.replicate elems.length false⟩
+  ⟨σ₀, res₀, List.replicate elems.length false, List.replicate elems.length false⟩
 
-theorem acGood_init (elems : List (Var × Mult)) (res₀ : List (C × Nat)) (σ₀ : Binding)
-    (hμ : ∀ k ∈ multVars elems, σ₀.mult k = none) : ACGood elems res₀ 0 (acInit elems res₀ σ₀) := by
-  refine ⟨by simp [acInit], ?_, rfl, rfl, fun k hk _ => hμ k hk, ?_⟩
+/-- Every environment starts a good store, whatever it binds: an earlier atom may have
+bound a multiplicity variable of the elements. -/
+theorem acGood_init (elems : List (Var × Mult)) (res₀ : List (C × Nat)) (σ₀ : Binding) :
+    ACGood elems res₀ 0 (acInit elems res₀ σ₀) := by
+  refine ⟨by simp [acInit], ?_, by simp [acInit], ?_, rfl, rfl⟩ <;>
   · intro j _
     simp only [acInit, List.getD_eq_getElem?_getD, List.getElem?_replicate]
     split <;> rfl
-  · intro k hu
-    simp [usesMult] at hu
 
 /-- Theorem B for AC: the frame's yields, after the leaf, are the executor's decomposition
 `decomposeAC`, element for element, for every fuel: the first `k` yields are the first `k`
-of the executor's list, and with fuel for every yield the lists are equal. -/
+of the executor's list, and with fuel for every yield the lists are equal. The environment
+`σ₀` is arbitrary: a multiplicity variable of the elements may be bound on entry, by an
+earlier atom of the query. -/
 theorem acFrame_eq_decomposeAC (elems : List (Var × Mult)) (rest : Option Var)
     (res₀ : List (C × Nat)) (σ₀ : Binding) (hnd : (res₀.map Prod.fst).Nodup)
-    (hpos : ∀ p ∈ elems, MultPos p.2) (hμ : ∀ k ∈ multVars elems, σ₀.mult k = none)
-    (hne : elems ≠ []) :
+    (hpos : ∀ p ∈ elems, MultPos p.2) (hne : elems ≠ []) :
     (∀ k, ((acOps elems res₀.length).drive k ((acOps elems res₀.length).init (acInit elems res₀ σ₀))).filterMap
         (acLeaf rest) = (((acOps elems res₀.length).enum 0 (acInit elems res₀ σ₀)).take k).filterMap (acLeaf rest)) ∧
     ∀ k, ((acOps elems res₀.length).enum 0 (acInit elems res₀ σ₀)).length ≤ k →
@@ -1407,7 +1363,7 @@ theorem acFrame_eq_decomposeAC (elems : List (Var × Mult)) (rest : Option Var)
   have hn : 0 < (acOps elems res₀.length).n := by
     show 0 < elems.length; exact List.length_pos_iff.2 hne
   have hl := acLaws elems res₀ hpos
-  have h0 := acGood_init elems res₀ σ₀ hμ
+  have h0 := acGood_init elems res₀ σ₀
   have hdec : decomposeAC elems rest res₀ σ₀ =
       ((acOps elems res₀.length).enum 0 (acInit elems res₀ σ₀)).filterMap (acLeaf rest) :=
     enum_eq_decomposeAC elems rest res₀ hnd hpos _ 0 _ rfl h0

@@ -716,8 +716,7 @@ theorem drive_eq_enum (hl : ops.Laws good) (h₀ : good 0 a₀) (hn : 0 < ops.n)
 
 theorem acFrame_eq_decomposeAC (elems : List (Var × Mult)) (rest : Option Var)
     (res₀ : List (C × Nat)) (σ₀ : Binding) (hnd : (res₀.map Prod.fst).Nodup)
-    (hpos : ∀ p ∈ elems, MultPos p.2) (hμ : ∀ k ∈ multVars elems, σ₀.mult k = none)
-    (hne : elems ≠ []) :
+    (hpos : ∀ p ∈ elems, MultPos p.2) (hne : elems ≠ []) :
     (∀ k, (drive k (init (acInit elems res₀ σ₀))).filterMap (acLeaf rest) =
         ((enum 0 (acInit elems res₀ σ₀)).take k).filterMap (acLeaf rest)) ∧
     ∀ k, (enum 0 (acInit elems res₀ σ₀)).length ≤ k →
@@ -741,8 +740,13 @@ for the AC store and connects `enum` to the executor's `decomposeAC`
 check) are the executor's list, element for element, so the same set with the same order.
 `decomposeAC_nodup` says that list has no duplicates when the entries' classes are distinct,
 as a node's `(class, count)` entries are after rebuild. The hypotheses are the executor's:
-distinct entry classes, no annotation that accepts count 0 (`EnvAtomsWF`), and the elements'
-multiplicity variables unbound at entry. The ACI twin (`aciFrame_eq_decomposeACI`,
+distinct entry classes and no annotation that accepts count 0 (`EnvAtomsWF`). The
+environment `σ₀` at entry is arbitrary: a multiplicity variable is interned per query, so an
+earlier atom may have bound one the elements carry. The AC store records per element whether
+its scan bound the multiplicity variable (`mbound`, the engine's `mult_bound`), and `acUndo`
+clears the variable only then, as `decompose_ac_elem` clears it only when `was_unbound`; the
+reachable stores (`ACGood`) constrain the flags and the residual and nothing of the
+multiplicity cells. The ACI twin (`aciFrame_eq_decomposeACI`,
 `decomposeACI_nodup`) has distinct set children as its hypothesis.
 
 **Adequacy.** The frame stack above the decompositions (`next_match`, `backtrack` over the
@@ -755,10 +759,14 @@ engine after the fixes those two checks and the model found: `ac_advance` comple
 later elements greedily and undid the moved element twice (an assignment with a bound later
 element was missed, and an index past the residual read); a single-shot sequence step left
 its children bound when the join below moved on; an AC node was read through
-`mset_children`, which panics on a commutative pair; and a bound element took any entry of
+`mset_children`, which panics on a commutative pair; a bound element took any entry of
 its class, so a commutative pair with equal children gave an assignment twice where
-`decompose_ac_elem` gives it once. The cursor reads the full index only, so under semi-naive
-it finds the naive match set; the corpus comparison runs naive.
+`decompose_ac_elem` gives it once; and `ac_undo` cleared a multiplicity variable unless an
+earlier element of the same frame carried it, so after a yield the frame reset a count an
+earlier atom had bound and its next scan took an entry of another count
+(`multiplicity_variable_bound_by_an_earlier_atom` in `egraph/tests/cursor_shapes.rs`). The
+cursor reads the full index only, so under semi-naive it finds the naive match set; the
+corpus comparison runs naive.
 
 ## 4. Flattened matching
 
@@ -3428,7 +3436,7 @@ on record.
 | the fold mirror | the conformance oracle `runER` run with the fold directions of the case (`Conform/Flatten/Oracle.lean`, `FCase.dirOf`) against the engine's `:flatten` matching on fold patterns; bindings compared as the number of distinct `Tag` nodes | `rawOptD`, `enumerateR` with `Dir.left` and `Dir.right` (`FoldEnum.lean`, `FoldRegroup.lean`) | 800 samples (the 400 committed `conform` and `conform-flatten` samples and 400 more of seed 3 of the `:flatten` generator), 230 with a fold in the pattern; every check holds and the binding counts agree; the comparison test is not committed |
 | the atom-choice mirror, `atom_choice_agrees_with_the_model_on_the_rounds_corpus` (`ematch.rs`) | at every phase-B decision of the `conform-rounds` corpus run naive and semi-naive under runtime scheduling, the atom `choose_atom` takes against the one a Rust transliteration of `chooseEngine` takes from the same bindings and bucket lengths | `chooseEngine` (`EMatch/Engine/Choose.lean`) | 200 files, 4945 decisions, 1591 with several candidates, all agree; two mutations of the transliteration are caught (30 and 808 disagreements) |
 | the static-plan mirror, `static_plan_agrees_with_the_model_on_the_rounds_corpus` (`schedule.rs`) | every plan `schedule_inner` builds while the `conform-rounds` corpus runs naive and semi-naive, against the steps a Rust transliteration of `scheduleEngine` (`model::schedule`) emits from the engine's prices: atom order, binding kind per variable, join lookups | `scheduleEngine` (`EMatch/Engine/Schedule.lean`), `engineJoinLookups` | 200 files, 2999 plans; 2679 compared (1185 with several atoms, 4071 picks), all agree; 320 outside the model, each for a rule with a `(= x g)` atom; three mutations caught (608, 17 and 458 disagreements), a fourth by `eager_chain_agrees_with_the_model` |
-| the cursor mirror, `cursor_agrees_with_the_recursive_executor_on_the_rounds_corpus` and `cursor_frames_agree_with_the_lean_model_on_random_residuals` (`ematch.rs`) | every static plan `run_query_into` runs while the `conform-rounds` corpus runs naive, against the match multiset `MatchIterator` yields on the same plan and index (`mirror_cursor`); and the engine's cursor on random multiset and set nodes against a Rust transliteration of the Lean frame (`scan`, `findStep`, `findLoop`, `postYield`, `drive` over the AC and ACI stores) | `drive_eq_enum`, `acFrame_eq_decomposeAC`, `aciFrame_eq_decomposeACI` (`EMatch/Engine/Cursor.lean`); the frame stack has no model | 200 files, 1427 plans, 770 with a match, all agree; 720 random patterns compared, all agree, the model's lists without repeat; the corpus mirror found three defects of the cursor (Section 3.9) |
+| the cursor mirror, `cursor_agrees_with_the_recursive_executor_on_the_rounds_corpus` and `cursor_frames_agree_with_the_lean_model_on_random_residuals` (`ematch.rs`) | every static plan `run_query_into` runs while the `conform-rounds` corpus runs naive, against the match multiset `MatchIterator` yields on the same plan and index (`mirror_cursor`); and the engine's cursor on random multiset and set nodes against a Rust transliteration of the Lean frame (`scan`, `findStep`, `findLoop`, `postYield`, `drive` over the AC and ACI stores), run along the plan's joins and decompositions from the environment the earlier steps leave, on patterns with exact counts and with multiplicity variables, alone or shared with an earlier atom | `drive_eq_enum`, `acFrame_eq_decomposeAC`, `aciFrame_eq_decomposeACI` (`EMatch/Engine/Cursor.lean`); the frame stack has no model | 200 files, 1427 plans, 770 with a match, all agree; 864 random patterns compared, 84 of them with a multiplicity variable an earlier atom binds, all agree, the model's lists without repeat; the corpus mirror found three defects of the cursor (Section 3.9) |
 | the certified completion states (`semper-conform-cc-cert`, `tests/egg/conform-cc-cert/`) | the engine's `check-neq` under eager completion against pairs a concrete countermodel separates, with the certificate in the preceding comment; `check-eq` against the bounded oracle | `not_E_of_separates`, `E_sound` (`CC/Countermodel.lean`); `run_sound` (`CC/BoundedOracle.lean`) | 200 committed programs, seed 1, run by `conform.rs`; a failing `check-neq` is an engine unsoundness, a failing `check-eq` a completeness gap |
 | the soundness waves | the certified generator's programs with their `dump-egraph` line, run through the engine by the soundness runner, which reads the dumped final state and checks every certified `check-neq` | `not_E_of_separates` on the dumped state | 10,200 programs over the waves run; every fixture named `ac_collapsed_recanon.egg`, `cancel_lattice.egg`, `cancel_crit_pair.egg`, `cancel_lattice_lazy.egg`, `nilpotent_group_lattice.egg` and `ac_reactivate_min_monomial.egg` is a reduction of a program of this generator |
 
