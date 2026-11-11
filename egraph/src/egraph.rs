@@ -2498,10 +2498,17 @@ where
                 self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
                 return;
             }
+            // A merge can reorient the rule that collapsed a node; the node is then a
+            // rule again (`ac_collapsed_reoriented.egg`).
+            self.unretire_irreducible_collapsed();
             // Debug builds check I5 on every congruence-closed state of the loop: the
             // stored minimal monomials are what the round orients its rules toward.
             #[cfg(debug_assertions)]
             self.debug_check_min_monomial_invariant();
+            // And that no collapsed node is irreducible under the current rules and
+            // laws: such a node is an equation completion never superposes.
+            #[cfg(debug_assertions)]
+            self.debug_check_no_irreducible_collapsed();
             // Goal-directed early stop (the lazy-check transaction): the pair
             // joined, so the question is answered — stop mid-closure. The
             // graph is plain-congruence-closed at this point, a valid state.
@@ -2915,6 +2922,60 @@ where
         }
     }
 
+    /// Reactivate every collapsed completion node that no current rule of its operator
+    /// reduces. A node is collapsed against the rules of the round that reduced it; a
+    /// later merge can reorient every rule whose left-hand side it contains (the
+    /// reducer's class takes the reducer as its minimal monomial), and the node is then
+    /// an equation no rule represents and completion never superposes. The rules are
+    /// read as `cc_round` reads them: active nodes whose monomial is greater than their
+    /// class's right-hand side. A node holding an inverse pair stays collapsed: the
+    /// group law reduces it. A reactivated node takes part in its class's minimal
+    /// monomial, and the next round reads it as a rule; the full round that precedes a
+    /// reported fixpoint superposes it. Reactivation only adds rules (a lower minimal
+    /// monomial orients more nodes, never fewer), so one pass leaves no collapsed node
+    /// irreducible. Runs after each congruence rebuild of the completion loop.
+    fn unretire_irreducible_collapsed(&mut self) {
+        use crate::multiset::multiset_subset;
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        let mut collapsed: Vec<Cfg::G> = Vec::new();
+        let mut rules: Vec<(Cfg::O, Vec<(Cfg::G, Cfg::M)>)> = Vec::new();
+        let mut mono: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        let mut rhs: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        for id in self.completion_node_ids() {
+            let flags = self.node_flags(id);
+            if flags & FLAG_SUBSUMED != 0 {
+                continue;
+            }
+            if flags & FLAG_AC_COLLAPSED != 0 {
+                collapsed.push(id);
+                continue;
+            }
+            self.node_monomial_into(id, &mut mono);
+            if self.class_rhs_into(id, &mut rhs)
+                && self.monomial_cmp_key(&mono, &rhs) == std::cmp::Ordering::Greater
+            {
+                rules.push((self.node_op(id), mono.clone()));
+            }
+        }
+        for id in collapsed {
+            let op = self.node_op(id);
+            self.node_monomial_into(id, &mut mono);
+            if rules
+                .iter()
+                .any(|(o, lhs)| *o == op && multiset_subset(lhs, &mono))
+            {
+                continue;
+            }
+            if let Some(inv) = self.inverse_op(op)
+                && self.group_cancel_pairs(inv, &mut mono)
+            {
+                continue;
+            }
+            self.clear_node_flag(id, FLAG_AC_COLLAPSED);
+            self.refresh_min_monomial(id);
+        }
+    }
+
     /// Ordinary worklist-driven congruence closure: drain the merge worklist,
     /// recanonicalizing the parents of each absorbed class and merging the
     /// resulting hash-cons collisions, to a fixpoint.
@@ -2969,6 +3030,12 @@ where
             }
 
             for &parent in &refresh {
+                // As in `recanonize_parent`: a collapsed node whose monomial changed is
+                // active again, and the next round re-tests it (`ac_collapsed_stuck.egg`).
+                // Cleared before the refresh, which skips collapsed nodes.
+                if self.node_flags(parent) & crate::node_types::FLAG_AC_COLLAPSED != 0 {
+                    self.clear_node_flag(parent, crate::node_types::FLAG_AC_COLLAPSED);
+                }
                 self.refresh_min_monomial(parent);
             }
             self.refresh_buf = refresh;
@@ -5140,6 +5207,122 @@ where
     /// congruence rebuild of the completion loop in debug builds.
     pub fn debug_check_min_monomial_invariant(&self) {
         if let Err(e) = self.check_min_monomial_invariant() {
+            panic!("{e}");
+        }
+    }
+
+    /// Check that no collapsed completion node is irreducible: every node carrying
+    /// `FLAG_AC_COLLAPSED` (and not `FLAG_SUBSUMED`) has a monomial, read under the
+    /// current union-find, that one of the operator's laws or one of its current rules
+    /// reduces. A collapsed node is not a rule, so an irreducible one is an equation
+    /// completion never superposes. The laws are the unit as a summand, a count at or
+    /// above the nilpotent order, a count above 1 under idempotence, and a summand
+    /// together with the class of its existing inverse node. The rules are recomputed
+    /// here as completion reads them: every active node whose monomial is greater than
+    /// its class's right-hand side (`class_rhs_into`). A rule reduces a monomial when its
+    /// left-hand side is a sub-multiset of it. Two cases pass without a reduction: a
+    /// degenerate monomial (empty, or one summand of count 1) is an equality with a
+    /// class, not a rule; a copy of an active node of the same operator, class and
+    /// monomial leaves the equation to that node. `Err` names the node, its class, its
+    /// monomial and the operator.
+    pub fn check_no_irreducible_collapsed(&self) -> Result<(), String> {
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        use std::collections::BTreeMap;
+        type Mono<G, M> = Vec<(G, M)>;
+        let mut collapsed: Vec<Cfg::G> = Vec::new();
+        let mut rules: BTreeMap<Cfg::O, Vec<Mono<Cfg::G, Cfg::M>>> = BTreeMap::new();
+        let mut active: std::collections::BTreeSet<(Cfg::O, Cfg::G, Mono<Cfg::G, Cfg::M>)> =
+            std::collections::BTreeSet::new();
+        let mut buf: Mono<Cfg::G, Cfg::M> = Vec::new();
+        let mut rhs: Mono<Cfg::G, Cfg::M> = Vec::new();
+        for id in self.completion_node_ids() {
+            let flags = self.node_flags(id);
+            if flags & FLAG_SUBSUMED != 0 {
+                continue;
+            }
+            if flags & FLAG_AC_COLLAPSED != 0 {
+                collapsed.push(id);
+                continue;
+            }
+            self.node_monomial_into(id, &mut buf);
+            if self.class_rhs_into(id, &mut rhs)
+                && self.monomial_cmp_key(&buf, &rhs) == std::cmp::Ordering::Greater
+            {
+                rules.entry(self.node_op(id)).or_default().push(buf.clone());
+            }
+            active.insert((self.node_op(id), self.class_repr(id), buf.clone()));
+        }
+        let count = |m: &[(Cfg::G, Cfg::M)], g: Cfg::G| -> usize {
+            m.iter()
+                .filter(|&&(h, _)| h == g)
+                .map(|&(_, k)| k.to_usize())
+                .sum()
+        };
+        let contains = |big: &[(Cfg::G, Cfg::M)], small: &[(Cfg::G, Cfg::M)]| -> bool {
+            small.iter().all(|&(g, _)| count(big, g) >= count(small, g))
+        };
+        for id in collapsed {
+            let op = self.node_op(id);
+            self.node_monomial_into(id, &mut buf);
+            if buf.is_empty() || (buf.len() == 1 && buf[0].1.to_usize() == 1) {
+                continue;
+            }
+            // A copy of an active node of its class: that node carries the equation.
+            if active.contains(&(op, self.class_repr(id), buf.clone())) {
+                continue;
+            }
+            let unit = self.unit_node(op).map(|u| self.classes.find_const(u));
+            if unit.is_some_and(|u| count(&buf, u) > 0) {
+                continue;
+            }
+            let law_count = match self.op_clamp(op) {
+                CompletionClamp::Nilpotent { order } => {
+                    buf.iter().any(|&(_, k)| k.to_usize() >= usize::from(order))
+                }
+                CompletionClamp::Idempotent => buf.iter().any(|&(_, k)| k.to_usize() > 1),
+                CompletionClamp::Multiset => false,
+            };
+            if law_count {
+                continue;
+            }
+            if let Some(inv) = self.inverse_op(op)
+                && self.inverse_classes(inv).into_iter().any(|(y, x)| {
+                    if y == x {
+                        count(&buf, x) >= 2
+                    } else {
+                        count(&buf, x) > 0 && count(&buf, y) > 0
+                    }
+                })
+            {
+                continue;
+            }
+            if rules
+                .get(&op)
+                .is_some_and(|rs| rs.iter().any(|lhs| contains(&buf, lhs)))
+            {
+                continue;
+            }
+            let parts: Vec<String> = buf
+                .iter()
+                .map(|&(g, k)| format!("{:?}^{}", g, k.to_usize()))
+                .collect();
+            return Err(format!(
+                "collapsed node {id:?} (class {:?}, op {}) has monomial {{{}}}, which no law \
+                 and none of the op's {} current rules reduce",
+                self.class_repr(id),
+                self.ops.info(op).name,
+                parts.join(", "),
+                rules.get(&op).map_or(0, Vec::len)
+            ));
+        }
+        Ok(())
+    }
+
+    /// Debug: panic when `check_no_irreducible_collapsed` fails. Run after each
+    /// congruence rebuild of the completion loop in debug builds, beside
+    /// `debug_check_min_monomial_invariant`.
+    pub fn debug_check_no_irreducible_collapsed(&self) {
+        if let Err(e) = self.check_no_irreducible_collapsed() {
             panic!("{e}");
         }
     }

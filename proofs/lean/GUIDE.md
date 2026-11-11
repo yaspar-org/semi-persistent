@@ -1945,9 +1945,15 @@ materialize(N):                                       -- cc_round, local `materi
   return find id
 ```
 
-The engine runs the same refresh in `recanonize_parent` when recanonicalization shrinks a
-collapsed node and clears its flag; the model states both as `unretire` followed by
-`refreshRhs` (`unretire_refresh_reachable`).
+The engine runs the same refresh when recanonicalization changes a collapsed node's
+monomial, in `recanonize_parent` and in the absorbed-uses sweep of `rebuild_congruence`, and
+it clears the flag. After each congruence rebuild of the completion loop,
+`unretire_irreducible_collapsed` does the same for every collapsed node that no current rule
+of its operator reduces and that holds no inverse pair: a merge can reorient the rule that
+collapsed it. The model states all three as `unretire` followed by `refreshRhs`
+(`unretire_refresh_reachable`). Debug builds then check that every collapsed node is
+reducible by a current rule or a law of its operator, or is a copy of an active node of its
+class (`check_no_irreducible_collapsed`).
 
 The engine orders monomials by per-class order keys, not by representative id
 (`CC/MinMonoKey.lean`). At a merge every node's keyed monomial stays or shrinks

@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; A collapsed node recanonicalized by the absorbed-uses sweep of `rebuild_congruence` is
+;; active again, as one recanonicalized by `recanonize_parent` is. The first rounds orient
+;; `c0c3 → c0c1` and collapse `Add{c0,c2,c3}`, which contains it, into `c0c1c2`. The merge
+;; `C0 = C3` turns the node into `Add{c0²,c2}` and the rule into `c0² = c0c1`, now oriented
+;; `c0c1 → c0²`: no rule reduces `c0²c2`, which is the rule `c0²c2 → c0²`. The sweep used to
+;; keep the collapsed flag, so the node stayed retired until a later normal form
+;; hash-consed to it, and the debug check `check_no_irreducible_collapsed` failed after
+;; the rebuild. Expected: ok. Reduced from swgen laws seed 913, case 104.
+(sort E)
+(function C0 () E)
+(function C1 () E)
+(function C2 () E)
+(function C3 () E)
+(function Add (E) E :assoc-comm)
+(set-option :completion eager)
+(union (Add (C0) (C1)) (Add (C0) (C3)))
+(union (Add (C1) (C3)) (Add (C0) (C2) (C3)))
+(union (C0) (C3))
+(check-eq (Add (C0) (C1)) (Add (C0):2))
+(check-eq (Add (C0) (C2) (C3)) (Add (C0):2))
+(check-eq (Add (C0) (C1) (C2)) (Add (C0):2))
