@@ -250,7 +250,9 @@ pub fn check_mult_literals<Cfg: crate::config::EGraphConfig, O, S, V>(
                 check_op_mults::<Cfg, _, _>(a)?;
                 check_op_mults::<Cfg, _, _>(b)?;
             }
-            CompiledAction::Refine(_, _) => todo!("abs-surface-syntax: extract_lhs_from_action for Refine"),
+            CompiledAction::Refine(_, _) => {
+                todo!("abs-surface-syntax: extract_lhs_from_action for Refine")
+            }
             CompiledAction::Insert(t) => check_op_mults::<Cfg, _, _>(t)?,
             CompiledAction::Set { args, value, .. } => {
                 for a in args {

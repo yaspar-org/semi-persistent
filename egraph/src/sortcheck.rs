@@ -1576,7 +1576,27 @@ where
 {
     match cmd {
         // TODO(abs-surface-syntax): validate `:interp` and `:domains` against the registry (or the stub list until abs-domain-registry lands), apply the carrier's default set, and record carrier and mask in `SortRegistry`, see egraph/doc/future/abstract-syntax-task.md §3
-        Command::Sort { name, interp: _, domains: _ } => {
+        // TODO(abs-surface-syntax): validate `:interp` and `:domains` against the registry (or the stub list until abs-domain-registry lands), apply the carrier's default set, and record carrier and mask in `SortRegistry`, see egraph/doc/future/abstract-syntax-task.md §3
+        // TODO(abs-surface-syntax): validate `:interp` and `:domains` against the registry (or the stub list until abs-domain-registry lands), apply the carrier's default set, and record carrier and mask in `SortRegistry`, see egraph/doc/future/abstract-syntax-task.md §3
+        Command::Sort {
+            name,
+            interp,
+            domains: _,
+        } => {
+            if let Some(i_str) = interp {
+                if i_str.starts_with("(bitvec ") {
+                    let w_str = i_str
+                        .trim_start_matches("(bitvec ")
+                        .trim_end_matches(')')
+                        .trim();
+                    if w_str == "0" {
+                        return Err(serr(
+                            "invalid carrier: bit-vector width must be greater than zero".to_string(),
+                            Span::Dummy,
+                        ));
+                    }
+                }
+            }
             eg.intern_sort(name);
         }
         Command::Function {

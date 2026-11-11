@@ -832,11 +832,15 @@ fn parse_abs_value(input: &mut &str) -> ModalResult<crate::abs_syntax::AbsValueL
         }
         "bits" => {
             ws_inner(input);
-            if input.starts_with(":val") { *input = &input[":val".len()..]; }
+            if input.starts_with(":val") {
+                *input = &input[":val".len()..];
+            }
             ws_inner(input);
             let val = ident(input)?.to_string();
             ws_inner(input);
-            if input.starts_with(":mask") { *input = &input[":mask".len()..]; }
+            if input.starts_with(":mask") {
+                *input = &input[":mask".len()..];
+            }
             ws_inner(input);
             let mask = ident(input)?.to_string();
             crate::abs_syntax::AbsValueLit::Bits { val, mask }
@@ -853,7 +857,9 @@ fn parse_abs_value(input: &mut &str) -> ModalResult<crate::abs_syntax::AbsValueL
         "false" => crate::abs_syntax::AbsValueLit::False,
         _ => {
             let mut e = ContextError::new();
-            e.push(StrContext::Expected(StrContextValue::Description("known abstract value type")));
+            e.push(StrContext::Expected(StrContextValue::Description(
+                "known abstract value type",
+            )));
             return Err(ErrMode::Cut(e));
         }
     };
@@ -1405,13 +1411,13 @@ fn parse_command(
             let name = ident(input)?.to_owned();
             let mut interp = None;
             let mut domains = None;
-            
+
             loop {
                 ws(input)?;
                 if input.starts_with(')') {
                     break;
                 }
-                
+
                 if input.starts_with(":interp") {
                     *input = &input[":interp".len()..];
                     ws(input)?;
@@ -1434,8 +1440,12 @@ fn parse_command(
                     break; // Unrecognized token, loop breaks and it will fail cleanly later
                 }
             }
-            
-            SurfaceCommand::Pass(Command::Sort { name, interp, domains })
+
+            SurfaceCommand::Pass(Command::Sort {
+                name,
+                interp,
+                domains,
+            })
         }
         // `(function …)` and `(constructor …)` share a shape; the keyword decides only
         // whether the declared op is a constructor (a term former, extraction-eligible with
@@ -1980,15 +1990,23 @@ fn parse_command(
 ///
 /// The returned `OpMeta` has `is_constructor: false`; the caller sets it, since that comes from
 /// the declaration keyword (`constructor` / `datatype`), not from a tag.
-fn parse_decl_tags(input: &mut &str, base: usize) -> ModalResult<(Vec<AlgTag>, OpMeta, Option<String>, Option<(String, String)>)> {
+fn parse_decl_tags(
+    input: &mut &str,
+    base: usize,
+) -> ModalResult<(
+    Vec<AlgTag>,
+    OpMeta,
+    Option<String>,
+    Option<(String, String)>,
+)> {
     let mut tags = Vec::new();
     let mut meta = OpMeta::default();
     let mut interp = None;
     let mut range = None;
-    
+
     loop {
         ws_inner(input);
-        
+
         if input.starts_with(":interp") {
             *input = &input[":interp".len()..];
             ws_inner(input);
