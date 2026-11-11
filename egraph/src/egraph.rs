@@ -2843,6 +2843,14 @@ where
     /// resulting hash-cons collision or degenerate-arity merge into `self.collisions`.
     /// Shared by the absorbed-uses sweep and the became-a-unit sweep in
     /// [`rebuild_congruence`](Self::rebuild_congruence).
+    /// [`recanonize_parent`](Self::recanonize_parent) outside `rebuild`, so a test can
+    /// rewrite an indexed node's stored children mid-round and see the snapshot check in
+    /// `saturate::debug_check_snapshot_contents` fire.
+    #[cfg(all(test, debug_assertions))]
+    pub(crate) fn test_recanonize_parent(&mut self, parent: Cfg::G) {
+        self.recanonize_parent(parent);
+    }
+
     fn recanonize_parent(&mut self, parent: Cfg::G) {
         let find = |g: Cfg::G| self.classes.find_const(g);
         // The op's identity as a *class* under the current union-find: recanonize drops it

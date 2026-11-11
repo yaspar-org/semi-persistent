@@ -3683,6 +3683,27 @@ right-hand side (`flatten_mset_children`, which reads each argument class's `ato
 minimal monomial) is outside `saturation_complete` and covered by `spelling_epoch`; the
 galloping cursor is verified separately in Verus (`containers-verus`).
 
+Atom kinds the model does not have. The plan, round and saturation theorems quantify over
+`QAtom` (`EMatch/Engine/Sched.lean`), which has scanning atoms and `Eq` only, with a local
+variable in every child position and an interval on every multiplicity variable. A rule that
+uses any of the following is outside them, and has at most the per-step theorems of
+Section 3.8: disequality atoms (`Neq`); predicate guards (`Pred`); sequence collection
+(`Collect`); a global in a child or element position (`PatVar::Global`,
+`egraph/src/resolve.rs:126-129`), where the model's child is a `Var`; and `!=` on a
+multiplicity (`CmpOp::Ne`, parsed at `egraph/src/parser.rs:528`, left out of the bounds at
+`egraph/src/resolve.rs:2058` and tested per binding at `egraph/src/ematch.rs:2771`), where
+the model's `Mult.var k lo hi` (`EMatch/Defs.lean:95`) is an interval and has no hole.
+
+The frozen `Graph` the matching theorems read is the engine's view only under the snapshot
+invariant: the matcher reads class representatives from the round index
+(`IndexStore::round_repr`) but node contents (`child_at`, `ac_children`, `set_children`,
+`seq_children`, the op filter's fallback to `node_op`) from the live graph, so no action
+between a round's index build and the next rebuild may rewrite the stored children or
+operator of an indexed node. In debug builds `debug_check_snapshot_contents`
+(`egraph/src/saturate.rs`) checks it at the end of every round of the naive, semi-naive and
+tracing loops; `snapshot_check_fires_on_recanonized_indexed_node` shows it fire on a
+recanonicalization run mid-round.
+
 ## 10. Constraints on the engine, with their evidence
 
 Each entry is a rule the engine keeps, the failure without it, and the evidence for it: the

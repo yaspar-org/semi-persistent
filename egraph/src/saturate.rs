@@ -363,6 +363,98 @@ pub struct RoundDelta<'a, Cfg: EGraphConfig> {
     pub subsumed: &'a [Cfg::G],
 }
 
+/// One indexed node's stored content, as the matcher reads it from the live graph: the
+/// operator, the literal, and the children with their multiplicities, as raw stored ids
+/// (not canonicalized).
+#[cfg(debug_assertions)]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct NodeContent<M> {
+    op: usize,
+    lit: Option<usize>,
+    children: Vec<(usize, M)>,
+}
+
+/// The stored content of every node a round index holds, recorded at the index build
+/// (see [`debug_snapshot_contents`]).
+#[cfg(debug_assertions)]
+pub(crate) struct SnapshotContents<G, M> {
+    nodes: Vec<(G, NodeContent<M>)>,
+}
+
+#[cfg(debug_assertions)]
+fn node_content<Cfg, L, const T: bool, const P: bool>(
+    eg: &EGraph<Cfg, L, T, P>,
+    id: Cfg::G,
+) -> NodeContent<Cfg::M>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    let mut children = Vec::new();
+    eg.for_each_child(id, |c, m| children.push((c.to_usize(), m)));
+    NodeContent {
+        op: eg.node_op(id).to_usize(),
+        lit: eg.node_lit(id).map(|v| v.to_usize()),
+        children,
+    }
+}
+
+/// Record the stored content of every node in `index`, for
+/// [`debug_check_snapshot_contents`] at round end.
+///
+/// The snapshot invariant: the matcher reads class representatives from the round
+/// index (`IndexStore::round_repr`) but node contents (`child_at`, `ac_children`,
+/// `set_children`, `seq_children`, the op filter's fallback) from the live graph. The two
+/// views agree, and the round matches one frozen graph, only if no action between the
+/// index build and the next rebuild rewrites the stored children or operator of an
+/// indexed node. Recanonicalization, the one writer of stored children, runs inside
+/// `rebuild`. Debug builds only.
+#[cfg(debug_assertions)]
+pub(crate) fn debug_snapshot_contents<Cfg, L, const T: bool, const P: bool>(
+    eg: &EGraph<Cfg, L, T, P>,
+    index: &IndexStore<Cfg>,
+) -> SnapshotContents<Cfg::G, Cfg::M>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    let mut nodes = Vec::with_capacity(index.by_op.total());
+    for &k in index.by_op.occupied_keys() {
+        for &id in index.by_op.get(k) {
+            nodes.push((id, node_content(eg, id)));
+        }
+    }
+    SnapshotContents { nodes }
+}
+
+/// Panic if a node recorded by [`debug_snapshot_contents`] no longer stores the content it
+/// had at the index build: the snapshot invariant documented there is broken.
+#[cfg(debug_assertions)]
+pub(crate) fn debug_check_snapshot_contents<Cfg, L, const T: bool, const P: bool>(
+    eg: &EGraph<Cfg, L, T, P>,
+    snap: &SnapshotContents<Cfg::G, Cfg::M>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    for (id, before) in &snap.nodes {
+        let now = node_content(eg, *id);
+        assert!(
+            *before == now,
+            "snapshot invariant violated: indexed node {} changed its stored content \
+             between the round index build and round end: at build {before:?}, at round \
+             end {now:?}",
+            id.to_usize(),
+        );
+    }
+}
+
 /// [`saturate_spec_in`] over a rule list that may hold sequence rules ([`Rule`]).
 pub fn saturate_rules_naive<Cfg, L, M, S, R, const T: bool, const P: bool>(
     rules: &[R],
@@ -406,6 +498,8 @@ where
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
             IndexStore::build_with(eg, scratch)
         };
+        #[cfg(debug_assertions)]
+        let snap = debug_snapshot_contents(eg, &index);
         // The fixpoint test compares the graph, not the actions' counts: see `size_stamp`.
         let stamp = eg.size_stamp();
         let mut changes = 0;
@@ -448,6 +542,8 @@ where
                 )?;
             }
         }
+        #[cfg(debug_assertions)]
+        debug_check_snapshot_contents(eg, &snap);
         // Before any exit from the loop body: the arenas go back so the next
         // round, and the next `(run)`, build into the same span tables.
         index.recycle_into(scratch, true);
@@ -1008,6 +1104,9 @@ where
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
             IndexStore::build_with(eg, scratch)
         };
+        // The delta's nodes are a subset of the full index's, so one snapshot covers both.
+        #[cfg(debug_assertions)]
+        let snap = debug_snapshot_contents(eg, &full);
         // delta = everything touched since the previous round's index build
         // (fresh nodes from the last round's apply + this round's recanon).
         let delta = if i == 0 {
@@ -1159,6 +1258,8 @@ where
             }
         }
         match_timer.stop();
+        #[cfg(debug_assertions)]
+        debug_check_snapshot_contents(eg, &snap);
         let had_delta = delta.is_some();
         // Both stores' arenas go back before any exit from the loop body, each
         // to the set it was drawn from.
@@ -1222,6 +1323,8 @@ where
         eg.rebuild();
         width_check(eg)?;
         let index = IndexStore::build(eg);
+        #[cfg(debug_assertions)]
+        let snap = debug_snapshot_contents(eg, &index);
         let stats = crate::schedule::IndexStats::from_index(&index);
         let vindex = crate::index::VariantIndex::naive(&index);
         let stamp = eg.size_stamp();
@@ -1280,6 +1383,8 @@ where
                 changes += applied.map_err(|e| crate::apply::name_fault(e, rule, eg))?;
             }
         }
+        #[cfg(debug_assertions)]
+        debug_check_snapshot_contents(eg, &snap);
         if changes == 0 && eg.size_stamp() == stamp {
             eprintln!("-- fixpoint after {total_iter} iterations --");
             let saturated = eg.completion_at_fixpoint();
@@ -3333,5 +3438,79 @@ mod tests {
             eg.find(lit5),
             "IAdd(ILit(2), ILit(3)) = ILit(5)"
         );
+    }
+
+    /// The snapshot check fires when an indexed node's stored children change between
+    /// the round index build and round end: here a merge followed by a recanonicalization
+    /// outside `rebuild`, the one writer of stored children, run mid-round.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "snapshot invariant violated: indexed node")]
+    fn snapshot_check_fires_on_recanonized_indexed_node() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        let fab = eg.add(eg.ops().id_by_name("f").unwrap(), &[a, b]);
+        let add_ac = eg.add(eg.ops().id_by_name("add").unwrap(), &[a, c]);
+        eg.rebuild();
+        let index = IndexStore::build(&eg);
+        let snap = debug_snapshot_contents(&eg, &index);
+        assert!(
+            snap.nodes.iter().any(|(id, _)| *id == fab),
+            "f(a, b) is indexed"
+        );
+        // Unchanged graph: the check passes.
+        debug_check_snapshot_contents(&eg, &snap);
+        // `a = b` and a recanonicalization of both parents: `f(a, b)` now stores one
+        // class twice, whichever side the merge kept as root.
+        eg.merge(a, b);
+        eg.test_recanonize_parent(fab);
+        eg.test_recanonize_parent(add_ac);
+        debug_check_snapshot_contents(&eg, &snap);
+    }
+
+    /// A saturation run with unions (`(g x) => x` merges a class into its child's) and AC
+    /// operators, under both drivers, keeps every indexed node's stored content fixed
+    /// within each round: the snapshot check in the round loops does not fire.
+    #[test]
+    fn snapshot_check_holds_over_ac_saturation() {
+        let globals = crate::resolve::GlobalCtx::<SortId, crate::id::ENodeId>::new();
+        let setup = || {
+            let mut eg = make_eg();
+            let mut rr = crate::registry::RuleRegistry::<false>::new();
+            let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+            let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+            let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+            let fab = eg.add(eg.ops().id_by_name("f").unwrap(), &[a, b]);
+            let _fbc = eg.add(eg.ops().id_by_name("f").unwrap(), &[b, c]);
+            let _add = eg.add(eg.ops().id_by_name("add").unwrap(), &[a, b, c]);
+            let _uni = eg.add(eg.ops().id_by_name("union").unwrap(), &[fab, c]);
+            let rules = vec![
+                mk_rule("(f x y)", "(f y x)", eg.ops(), eg.sorts(), &mut rr),
+                mk_rule("(f x y)", "(add x y)", eg.ops(), eg.sorts(), &mut rr),
+                mk_rule("(add x y ..rest)", "(g x)", eg.ops(), eg.sorts(), &mut rr),
+                mk_rule(
+                    "(union x y ..rest)",
+                    "(add x y)",
+                    eg.ops(),
+                    eg.sorts(),
+                    &mut rr,
+                ),
+                mk_rule("(g x)", "x", eg.ops(), eg.sorts(), &mut rr),
+            ];
+            (eg, rules)
+        };
+        let (mut a, rules_a) = setup();
+        let ra = saturate::<DefaultConfig, _, _, _, false, false>(
+            &rules_a, &mut a, &NiraModel, 20, &globals,
+        )
+        .unwrap();
+        let (mut b, rules_b) = setup();
+        let rb = saturate_semi::<DefaultConfig, _, _, _, false, false>(
+            &rules_b, &mut b, &NiraModel, 20, &globals,
+        )
+        .unwrap();
+        assert!(ra.iterations > 1 && rb.iterations > 1);
     }
 }
