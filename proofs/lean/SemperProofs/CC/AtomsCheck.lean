@@ -24,6 +24,8 @@ import SemperProofs.CC.AtomsEngine
 #print axioms SemperProofs.CC.AtomsWitness.witness_fixed
 #print axioms SemperProofs.CC.AtomsWitness.witness_complete
 #print axioms SemperProofs.CC.AtomsWitness.witness_I3
+#print axioms SemperProofs.CC.AtomsWitness.witness_reactivate
+#print axioms SemperProofs.CC.AtomsWitness.witness_covered
 #print axioms SemperProofs.CC.AtomsWitness.witness_not_all
 #print axioms SemperProofs.CC.atomCollapse_of_addFixed
 #print axioms SemperProofs.CC.roundFixedA_of_addFixed

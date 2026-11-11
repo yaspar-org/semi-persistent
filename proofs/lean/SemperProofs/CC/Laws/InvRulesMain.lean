@@ -114,12 +114,12 @@ theorem transGen_flip {α : Type*} {r : α → α → Prop} {a b : α} (h : Tran
   | single h => exact TransGen.single h
   | tail _ h ih => exact TransGen.head h ih
 
-/-- Every node, retired or not, rewrites to its class's right-hand side:
-`Converged.nodes_reduce` for active nodes, `I3` and well-founded
-induction on `→_R` for retired ones. -/
+/-- Every node, retired or not, reduces to its class's right-hand side by
+the rules and the laws: `Converged.nodes_reduce` for active nodes, `I3`
+and well-founded induction on the step relation for retired ones. -/
 theorem nodes_reduce_all {L : Laws n} {st : State n} (hconv : Converged L st) (h3 : I3 L st) :
-    ∀ M c, (M, c) ∈ st.nodes → ReflTransGen (Rw L st.rules) M (st.rhs (st.find c)) := by
-  have hwf := (Rw_wf (L := L) (R := st.rules) (rules_oriented st)).transGen
+    ∀ M c, (M, c) ∈ st.nodes → ReflTransGen (st.RwL L) M (st.rhs (st.find c)) := by
+  have hwf := (RwL_wf L st).transGen
   intro M
   induction M using hwf.induction with
   | _ M ih =>
@@ -129,7 +129,7 @@ theorem nodes_reduce_all {L : Laws n} {st : State n} (hconv : Converged L st) (h
       have := ih M' (transGen_flip hMM') c' hM'
       rw [hc'] at this
       exact hMM'.to_reflTransGen.trans this
-    · exact hconv.nodes_reduce M c ⟨hM, hr⟩
+    · exact reflTransGen_imp (fun _ _ h => RwL_of_Rw h) (hconv.nodes_reduce M c ⟨hM, hr⟩)
 
 /-- `M →*_{R ∪ Ax} clamp M`. -/
 theorem rtg_clamp (L : Laws n) (R : Rules n) (M : Monomial n) :
@@ -142,9 +142,9 @@ theorem rtg_clamp (L : Laws n) (R : Rules n) (M : Monomial n) :
 theorem joinable_of_nodes {L : Laws n} {st : State n} (hconv : Converged L st) (h3 : I3 L st)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.nodes) (hN : (N, d) ∈ st.nodes)
     (hcd : st.find c = st.find d) : Joinable (RwAx L st.rules) M N := by
-  refine ⟨st.rhs (st.find c), Rw_rtg_embed (nodes_reduce_all hconv h3 M c hM), ?_⟩
+  refine ⟨st.rhs (st.find c), RwL_rtg_embed (nodes_reduce_all hconv h3 M c hM), ?_⟩
   rw [hcd]
-  exact Rw_rtg_embed (nodes_reduce_all hconv h3 N d hN)
+  exact RwL_rtg_embed (nodes_reduce_all hconv h3 N d hN)
 
 /-- Two monomials whose normalized nodes are in one class are joinable. -/
 theorem joinable_of_clamp_nodes {L : Laws n} {st : State n} (hconv : Converged L st)
@@ -177,6 +177,13 @@ theorem inverseAxiomCP_of_fixed {L : Laws n} {inv : Fin n → Option (Fin n)} {s
     exact joinable_of_clamp_nodes hconv h3 hc hd hcd
 
 /-! ## R4 and R5 give `NilpotentInverseCP` -/
+
+/-- The empty monomial has no step by a rule or a law. -/
+theorem RwL_zero_normal {L : Laws n} {st : State n} : ∀ N, ¬ st.RwL L 0 N := by
+  intro N h
+  rcases RwL_degLex h with h' | ⟨-, c, -, h'⟩
+  · simp at h'
+  · simp at h'
 
 /-- The empty monomial is normal for an oriented rule set. -/
 theorem Rw_zero_normal {L : Laws n} {R : Rules n} (hor : Oriented R) :
@@ -239,9 +246,9 @@ theorem nilpotentInverseCP_of_fixed {L : Laws n} {inv : Fin n → Option (Fin n)
       obtain ⟨c, d, hc, hd, hcd⟩ := hfix.r4 x x hxy
       rw [hself x hxy hk2 (by omega)] at hc
       have h0 : st.rhs (st.find c) = 0 :=
-        (rtg_of_normal (Rw_zero_normal (rules_oriented st)) (nodes_reduce_all hconv h3 _ c hc)).symm
+        (rtg_of_normal RwL_zero_normal (nodes_reduce_all hconv h3 _ c hc)).symm
       have hx : ReflTransGen (RwAx L st.rules) {x} 0 := by
-        have := Rw_rtg_embed (nodes_reduce_all hconv h3 _ d hd)
+        have := RwL_rtg_embed (nodes_reduce_all hconv h3 _ d hd)
         rwa [← hcd, h0] at this
       exact ⟨0, ReflTransGen.refl, hred.trans hx⟩
 

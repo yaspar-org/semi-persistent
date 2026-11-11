@@ -2,6 +2,7 @@ import SemperProofs.CC.Atoms
 import SemperProofs.CC.Lattice
 import SemperProofs.CC.Laws.InvRulesMain
 import SemperProofs.CC.Laws.AxiomCP
+import SemperProofs.CC.Reactivate
 
 /-!
 # The engine-level completeness theorems with leaf constants
@@ -40,9 +41,7 @@ theorem I3_withAtoms {L : Laws n} {st : State n} {A : Set (Fin n)} {u : Option (
   obtain ⟨M', c', hMM', hM', hc'⟩ := h3 M c hM.1
   refine ⟨M', c', ?_, Or.inl hM', hc'⟩
   clear hM' hc'
-  induction hMM' with
-  | single h => exact TransGen.single (Rw_mono State.rules_withAtoms h)
-  | tail _ h ih => exact ih.tail (Rw_mono State.rules_withAtoms h)
+  exact transGen_imp (fun _ _ h => h.imp (Rw_mono State.rules_withAtoms) id) hMM'
 
 /-- `InvNodes` of the completion view from the stored `g`-nodes, when every
 class a `g`-node touches is atomic: the one-element nodes the inverse rules

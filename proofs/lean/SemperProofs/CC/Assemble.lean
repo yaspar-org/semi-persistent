@@ -83,6 +83,22 @@ theorem clamp_rtg_RwAx (L : Laws n) (R : Rules n) (M : Monomial n) :
   · rw [h]
   · exact ReflTransGen.single (RwAx_of_law h)
 
+/-- A step by a rule or a law (`State.RwL`) is a chain of plain steps by
+the rules and the law instances: a clamped rule step is a plain rule step
+followed by at most one law step (`Rw_embed`), and a law step alone is one
+law instance (`clamp_rtg_RwAx`). -/
+theorem RwL_embed {L : Laws n} {st : State n} {M N : Monomial n} (h : st.RwL L M N) :
+    ReflTransGen (RwAx L st.rules) M N := by
+  rcases h with h | ⟨rfl, -⟩
+  · exact Rw_embed h
+  · exact clamp_rtg_RwAx L _ M
+
+theorem RwL_rtg_embed {L : Laws n} {st : State n} {M N : Monomial n}
+    (h : ReflTransGen (st.RwL L) M N) : ReflTransGen (RwAx L st.rules) M N := by
+  induction h with
+  | refl => exact ReflTransGen.refl
+  | tail _ hstep ih => exact ih.trans (RwL_embed hstep)
+
 /-- **The rule-rule critical pairs of a fixed round are joinable under plain
 rewriting by the rules and law instances.** `RoundFixed.cp_joinable_all`
 joins the clamped reducts under clamped rewriting; each plain reduct

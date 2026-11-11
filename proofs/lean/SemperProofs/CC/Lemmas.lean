@@ -174,6 +174,62 @@ theorem Step_rtg_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : S
   | refl => exact E.refl _
   | tail _ hstep ih => exact E.trans ih (Step_sound h hstep)
 
+/-! ## Steps by a rule or a law (`State.RwL`) -/
+
+/-- A transitive chain passes to a larger relation. -/
+theorem transGen_imp {α : Type*} {r p : α → α → Prop} (h : ∀ a b, r a b → p a b) {a b : α}
+    (hab : TransGen r a b) : TransGen p a b := by
+  induction hab with
+  | single h' => exact TransGen.single (h _ _ h')
+  | tail _ h' ih => exact ih.tail (h _ _ h')
+
+theorem reflTransGen_imp {α : Type*} {r p : α → α → Prop} (h : ∀ a b, r a b → p a b) {a b : α}
+    (hab : ReflTransGen r a b) : ReflTransGen p a b := by
+  induction hab with
+  | refl => exact ReflTransGen.refl
+  | tail _ h' ih => exact ih.tail (h _ _ h')
+
+/-- A rule step is a step. -/
+theorem RwL_of_Rw {L : Laws n} {st : State n} {M N : Monomial n} (h : Rw L st.rules M N) :
+    st.RwL L M N := Or.inl h
+
+/-- A step by a rule or a law is `≫`-decreasing: the rules of a state are
+oriented by definition and `clamp` only removes children. -/
+theorem RwL_degLex {L : Laws n} {st : State n} {M N : Monomial n} (h : st.RwL L M N) :
+    degLex M N := by
+  rcases h with h | ⟨rfl, hne⟩
+  · exact Rw_degLex (R := st.rules) (fun _ _ hr => hr.choose_spec.choose_spec.2.2.1) h
+  · exact degLex_of_lt (lt_of_le_of_ne (L.clamp_le M) hne)
+
+theorem RwL_wf (L : Laws n) (st : State n) :
+    WellFounded (fun N M : Monomial n => st.RwL L M N) :=
+  Subrelation.wf (fun h => RwL_degLex h) degLex_wf
+
+/-- A step by a rule or a law of a sound state is an `=_E`-consequence. -/
+theorem RwL_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (h : I2 L S st) {M N : Monomial n} (hs : st.RwL L M N) : E L S M N := by
+  rcases hs with hs | ⟨rfl, hne⟩
+  · exact Rw_sound (rules_sound h) hs
+  · rcases L.clamp_law M with hc | hc
+    · exact absurd hc hne
+    · exact E.law hc
+
+theorem RwL_rtg_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (h : I2 L S st) {M N : Monomial n} (hs : ReflTransGen (st.RwL L) M N) : E L S M N := by
+  induction hs with
+  | refl => exact E.refl _
+  | tail _ hstep ih => exact E.trans ih (RwL_sound h hstep)
+
+/-- The retirement discipline stated over rule steps alone gives `I3`: a
+rule step is a step. -/
+theorem I3_of_rw {L : Laws n} {st : State n}
+    (h : ∀ M c, (M, c) ∈ st.retired →
+      ∃ M' c', TransGen (Rw L st.rules) M M' ∧ (M', c') ∈ st.nodes ∧ st.find c' = st.find c) :
+    I3 L st := by
+  intro M c hM
+  obtain ⟨M', c', hMM', hM', hc'⟩ := h M c hM
+  exact ⟨M', c', transGen_imp (fun _ _ h => RwL_of_Rw h) hMM', hM', hc'⟩
+
 /-! ## L6: every inference preserves I2 -/
 
 /-- Merging two classes that hold `=_E`-equal nodes preserves I2. -/

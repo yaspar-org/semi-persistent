@@ -347,6 +347,38 @@ theorem theoryClosed_of_complete (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St 
   TheoryClosed.ofParts (closedAC_of_complete hcomp h2 h3 hk hN hs hcov hsum hlaws) hrest hdedup
     hsorted
 
+/-- `closedAC_of_complete` with `I3` derived from the reactivation pass
+(`I3_of_reactivate_fixed_complete`). -/
+theorem closedAC_of_complete_reactivate (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st) (hreact : st.reactivate Lc = st)
+    (hrc : RetiredCovered st)
+    (hcancel : Lc.cancellative → ∀ P Q Y,
+      Joinable (Rw (plain n) (st.rules ∪ Lc.axRules)) (P + Y) (Q + Y) →
+      Joinable (Rw (plain n) (st.rules ∪ Lc.axRules)) P Q)
+   
+    (hk : S.graph.KeysNodup) (hN : Stored st N) (hs : SubRep S.graph st f N ι)
+    (hcov : FCover S.graph f N ι) (hsum : SummandsAtomic st N) (hlaws : LawsRead S L f st Lc) :
+    ClosedAC S L f :=
+  closedAC_of_complete hcomp h2 (I3_of_reactivate_fixed_complete hcomp h2 hreact hrc hcancel) hk hN
+    hs hcov hsum hlaws
+
+/-- **`theoryClosed_of_complete` with `I3` derived from the reactivation
+pass.** In place of `I3`: the pass leaves the state unchanged (`hreact`),
+every retired node is a stored node whose class holds an active node
+(`hrc`), and joinability cancels when the operator is cancellative
+(`hcancel`, vacuous otherwise). -/
+theorem theoryClosed_of_complete_reactivate (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st)
+    (hreact : st.reactivate Lc = st)
+    (hrc : RetiredCovered st)
+    (hcancel : Lc.cancellative → ∀ P Q Y,
+      Joinable (Rw (plain n) (st.rules ∪ Lc.axRules)) (P + Y) (Q + Y) →
+      Joinable (Rw (plain n) (st.rules ∪ Lc.axRules)) P Q)
+    (hk : S.graph.KeysNodup) (hN : Stored st N) (hs : SubRep S.graph st f N ι)
+    (hcov : FCover S.graph f N ι) (hsum : SummandsAtomic st N) (hlaws : LawsRead S L f st Lc)
+    (hdedup : ∀ id₁ id₂ nd, (id₁, nd) ∈ S.nodes → (id₂, nd) ∈ S.nodes → S.find id₁ = S.find id₂)
+    (hsorted : PairsSorted S) (hrest : TheoryClosedRest S L f) : TheoryClosed S L :=
+  theoryClosed_of_complete hcomp h2 (I3_of_reactivate_fixed_complete hcomp h2 hreact hrc hcancel)
+    hk hN hs hcov hsum hlaws hdedup hsorted hrest
+
 end Chain
 
 /-! ## Saturation with completion on, from the completion state -/
@@ -401,5 +433,60 @@ theorem saturation_complete_closed_of_complete_atoms {sig : Sym → Kind} {rules
   saturation_complete_closed_of_complete A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
     (CompleteHyps.ofAtoms hcomp) h2 h3 hk (Stored.withAtoms hN X u) (hs.withAtoms X u) hcov
     (summandsAtomic_withAtoms hX) hlaws hsorted hrest
+
+/-- **`saturation_complete_closed_of_complete` with `I3` derived from the
+reactivation pass** (`I3_of_reactivate_fixed_complete`). -/
+theorem saturation_complete_closed_of_complete_reactivate {sig : Sym → Kind} {rules : List Rule}
+    {L : Sym → OpLaws} (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKE sig rules A)
+    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainE rules A₀ As)
+    {A : SActRoundN L} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
+    {Lc : Laws n} {St : Set (Monomial n × Monomial n)} {st : State n}
+    (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st) (hreact : st.reactivate Lc = st)
+    (hrc : RetiredCovered st)
+    (hcancel : Lc.cancellative → ∀ P Q Y,
+      Joinable (Rw (plain n) (st.rules ∪ Lc.axRules)) (P + Y) (Q + Y) →
+      Joinable (Rw (plain n) (st.rules ∪ Lc.axRules)) P Q)
+   
+    (hk : A.Sa.graph.KeysNodup) {f : Sym} {N : Finset (Monomial n × Fin n)}
+    {ι : Monomial n × Fin n → NodeId} (hN : Stored st N) (hs : SubRep A.Sa.graph st f N ι)
+    (hcov : FCover A.Sa.graph f N ι) (hsum : SummandsAtomic st N)
+    (hlaws : LawsRead A.Sa L f st Lc) (hsorted : PairsSorted A.Sa)
+    (hrest : TheoryClosedRest A.Sa L f) :
+    ∀ rule ∈ rules, ∀ σ, Matches A.Sa.index rule.atoms σ →
+      FiredE A.Sa.graph L σ rule ∧
+      ∀ a b, Action.union a b ∈ rule.actions →
+        ∀ c₁ c₂, DenN A.Sa.graph L σ a c₁ → DenN A.Sa.graph L σ b c₂ → c₁ = c₂ :=
+  saturation_complete_closed_of_complete A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp h2
+    (I3_of_reactivate_fixed_complete hcomp h2 hreact hrc hcancel) hk hN hs hcov hsum hlaws hsorted
+    hrest
+
+/-- **`saturation_complete_closed_of_complete_atoms` with `I3` derived from
+the reactivation pass**, read on the completion view. -/
+theorem saturation_complete_closed_of_complete_atoms_reactivate {sig : Sym → Kind} {rules : List Rule}
+    {L : Sym → OpLaws} (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
+    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKE sig rules A)
+    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainE rules A₀ As)
+    {A : SActRoundN L} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
+    {Lc : Laws n} {St : Set (Monomial n × Monomial n)} {st : State n} {X : Set (Fin n)}
+    {u : Option (Fin n)} (hcomp : CompleteAtoms Lc St st X u)
+    (h2 : I2 Lc St (st.withAtoms X u)) (hreact : (st.withAtoms X u).reactivate Lc = st.withAtoms X u)
+    (hrc : RetiredCovered (st.withAtoms X u))
+    (hcancel : Lc.cancellative → ∀ P Q Y,
+      Joinable (Rw (plain n) ((st.withAtoms X u).rules ∪ Lc.axRules)) (P + Y) (Q + Y) →
+      Joinable (Rw (plain n) ((st.withAtoms X u).rules ∪ Lc.axRules)) P Q)
+   
+    (hk : A.Sa.graph.KeysNodup) {f : Sym} {N : Finset (Monomial n × Fin n)}
+    {ι : Monomial n × Fin n → NodeId} (hN : Stored st N) (hs : SubRep A.Sa.graph st f N ι)
+    (hcov : FCover A.Sa.graph f N ι) (hX : ∀ p ∈ N, ∀ y ∈ p.1, y ∈ X)
+    (hlaws : LawsRead A.Sa L f (st.withAtoms X u) Lc) (hsorted : PairsSorted A.Sa)
+    (hrest : TheoryClosedRest A.Sa L f) :
+    ∀ rule ∈ rules, ∀ σ, Matches A.Sa.index rule.atoms σ →
+      FiredE A.Sa.graph L σ rule ∧
+      ∀ a b, Action.union a b ∈ rule.actions →
+        ∀ c₁ c₂, DenN A.Sa.graph L σ a c₁ → DenN A.Sa.graph L σ b c₂ → c₁ = c₂ :=
+  saturation_complete_closed_of_complete_atoms A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp h2
+    (I3_of_reactivate_fixed_complete (CompleteHyps.ofAtoms hcomp) h2 hreact hrc hcancel) hk hN hs
+    hcov hX hlaws hsorted hrest
 
 end SemperProofs.Final

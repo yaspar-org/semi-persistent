@@ -250,11 +250,21 @@ def I2 (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : State n) : Prop :
   ∀ M c M' c', (M, c) ∈ st.nodes → (M', c') ∈ st.nodes → st.find c = st.find c' →
     E L S M M'
 
-/-- I3: every retired node rewrites, in at least one step, to a node of
-its class. -/
+/-- One step of the engine's reduction of a monomial: a rewrite by a rule of
+the state, or a law step alone, `M → clamp M` when `clamp` changes `M` (a
+unit summand, a count the nilpotent or idempotent clamp lowers, an inverse
+pair). A node collapsed by inverse-pair cancellation alone has no rule
+step, so the retirement discipline `I3` is stated over this relation. -/
+def State.RwL (st : State n) (L : Laws n) (M N : Monomial n) : Prop :=
+  Rw L st.rules M N ∨ (N = L.clamp M ∧ L.clamp M ≠ M)
+
+/-- I3: every retired node reduces, in at least one step, to a node of
+its class. A step is a rewrite by a rule of the state or a law step
+(`State.RwL`). Derived from the engine's reactivation pass at the fixpoint
+(`I3_of_reactivate_fixed`, `CC/Reactivate.lean`). -/
 def I3 (L : Laws n) (st : State n) : Prop :=
   ∀ M c, (M, c) ∈ st.retired →
-    ∃ M' c', Relation.TransGen (Rw L st.rules) M M' ∧ (M', c') ∈ st.nodes ∧
+    ∃ M' c', Relation.TransGen (st.RwL L) M M' ∧ (M', c') ∈ st.nodes ∧
       st.find c' = st.find c
 
 /-- I4: fixed summand pool. Every class occurring as a child is in `pool`. -/
