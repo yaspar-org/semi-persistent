@@ -40,7 +40,11 @@ const PROGRAM: &str = "\
 ";
 
 fn build() -> EG {
-    let cmds = semi_persistent_egraph::parser::parse_program_v2(PROGRAM).expect("parse");
+    build_from(PROGRAM)
+}
+
+fn build_from(program: &str) -> EG {
+    let cmds = semi_persistent_egraph::parser::parse_program_v2(program).expect("parse");
     let mut it =
         Interpreter::<DefaultConfig, MachineLit, MachineModel, true, false>::new(MachineModel);
     let mut globals = GlobalCtx::new();
@@ -208,4 +212,28 @@ fn decompositions_with_a_bound_element() {
     ] {
         assert_eq!(agree(&eg, pattern).len(), n, "{pattern}");
     }
+}
+
+/// Two AC atoms sharing the multiplicity variable `k`: the atom joined first binds it,
+/// so the second atom's frame finds `k` bound and must leave it bound when it undoes an
+/// element. Over `F{a:2, b:1}` and `H{a:2, b:1}` the matches pair equal counts: `x` and
+/// `y` both `a` (count 2) or both `b` (count 1). The cursor's `ac_undo` cleared `k`
+/// unless an earlier element of the same frame carried it, so after the first yield the
+/// inner frame's next scan took `b:1` under a `k` bound to 2 by the outer atom, a match
+/// `decompose_ac_elem` rejects, and the outer frame then restored its entry from the
+/// cleared cell.
+#[test]
+fn multiplicity_variable_bound_by_an_earlier_atom() {
+    let eg = build_from(
+        "\
+(sort E)
+(function a () E) (function b () E)
+(function F (E) E :assoc-comm)
+(function H (E) E :assoc-comm)
+(let faab (F (a) (a) (b)))
+(let haab (H (a) (a) (b)))
+",
+    );
+    assert_eq!(agree(&eg, "(F x:k ..r) (H y:k ..s)").len(), 2);
+    assert_eq!(agree(&eg, "(F x:k y:j) (H z:k w:j)").len(), 2);
 }

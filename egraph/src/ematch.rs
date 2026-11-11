@@ -3497,6 +3497,10 @@ enum FrameKind<'a, Cfg: EGraphConfig> {
         /// Per element, whether the scan bound its variable, which is the condition for
         /// the undo to unbind it.
         bound: Vec<bool>,
+        /// Per element, whether the scan bound its multiplicity variable, which is the
+        /// condition for the undo to clear it. The variable is interned per query, so an
+        /// earlier atom or an earlier element may have bound it.
+        mult_bound: Vec<bool>,
         ei: usize,
     },
     ACIDecompose {
@@ -3954,7 +3958,15 @@ where
         }
         let mut ri_at = vec![0usize; elems.len()];
         let mut bound = vec![false; elems.len()];
-        let mut valid = self.ac_find_first(elems, &mut residual, &mut ri_at, &mut bound, 0);
+        let mut mult_bound = vec![false; elems.len()];
+        let mut valid = self.ac_find_first(
+            elems,
+            &mut residual,
+            &mut ri_at,
+            &mut bound,
+            &mut mult_bound,
+            0,
+        );
         if valid {
             if let Some(rv) = rest {
                 let zero = Cfg::M::ZERO;
@@ -3973,7 +3985,14 @@ where
                 let zero = Cfg::M::ZERO;
                 if !residual.iter().all(|&(_, m)| m == zero) {
                     for e in (0..elems.len()).rev() {
-                        self.ac_undo(elems, &mut residual, e, ri_at[e], &mut bound);
+                        self.ac_undo(
+                            elems,
+                            &mut residual,
+                            e,
+                            ri_at[e],
+                            &mut bound,
+                            &mut mult_bound,
+                        );
                     }
                     valid = false;
                 }
@@ -3990,6 +4009,7 @@ where
                 residual,
                 ri_at,
                 bound,
+                mult_bound,
                 ei,
             },
             step_idx: self.cursor,
@@ -4164,6 +4184,7 @@ where
                     residual,
                     ri_at,
                     bound,
+                    mult_bound,
                     ei,
                 } => {
                     if *ei == elems.len()
@@ -4172,7 +4193,7 @@ where
                         self.env.pop_mset(rv);
                     }
                     loop {
-                        if !self.ac_advance(elems, residual, ri_at, bound, ei) {
+                        if !self.ac_advance(elems, residual, ri_at, bound, mult_bound, ei) {
                             break;
                         }
                         if let Some(rv) = *rest {
@@ -4247,6 +4268,7 @@ where
         residual: &mut [(Cfg::G, Cfg::M)],
         ri_at: &mut [usize],
         bound: &mut [bool],
+        mult_bound: &mut [bool],
         from: usize,
     ) -> bool {
         // `ri_at[ei]` is the entry to resume from: the caller's index for `from`, the
@@ -4258,7 +4280,7 @@ where
         let mut ei = from;
         while ei < elems.len() {
             let start = ri_at[ei];
-            match self.ac_scan(elems, residual, ei, start, bound) {
+            match self.ac_scan(elems, residual, ei, start, bound, mult_bound) {
                 Some(ri) => {
                     ri_at[ei] = ri;
                     ei += 1;
@@ -4272,7 +4294,7 @@ where
                         return false;
                     }
                     ei -= 1;
-                    self.ac_undo(elems, residual, ei, ri_at[ei], bound);
+                    self.ac_undo(elems, residual, ei, ri_at[ei], bound, mult_bound);
                     ri_at[ei] += 1;
                 }
             }
@@ -4281,9 +4303,10 @@ where
     }
 
     /// Take one residual entry for element `ei`, recording in `bound[ei]` whether this
-    /// scan bound the element variable. A variable already bound is matched against the
-    /// residual and left alone, and [`Self::ac_undo`] must leave it alone too; see
-    /// [`unbind`].
+    /// scan bound the element variable and in `mult_bound[ei]` whether it bound the
+    /// multiplicity variable. A variable already bound, by an earlier element or an
+    /// earlier atom, is matched against the residual and left alone, and
+    /// [`Self::ac_undo`] must leave it alone too; see [`unbind`].
     fn ac_scan(
         &mut self,
         elems: &[(PatVar, RMult)],
@@ -4291,9 +4314,11 @@ where
         ei: usize,
         start: usize,
         bound: &mut [bool],
+        mult_bound: &mut [bool],
     ) -> Option<usize> {
         let (var, mult) = &elems[ei];
         bound[ei] = false;
+        mult_bound[ei] = false;
 
         let bound_repr = match *var {
             PatVar::Global(gid) => Some(canon(self.index, self.eg, self.globals.binding(gid))),
@@ -4316,6 +4341,7 @@ where
                     // this entry's multiplicity; reuse it.
                     RMult::Exact(_) => residual[ri].1,
                     RMult::Var { var: mv, .. } => {
+                        mult_bound[ei] = self.env.get_mult(*mv) == Cfg::M::ZERO;
                         self.env.set_mult(*mv, residual[ri].1);
                         residual[ri].1
                     }
@@ -4340,6 +4366,7 @@ where
                 // See the bound-repr path above.
                 RMult::Exact(_) => avail,
                 RMult::Var { var: mv, .. } => {
+                    mult_bound[ei] = self.env.get_mult(*mv) == Cfg::M::ZERO;
                     self.env.set_mult(*mv, avail);
                     avail
                 }
@@ -4357,6 +4384,7 @@ where
         ei: usize,
         ri: usize,
         bound: &mut [bool],
+        mult_bound: &mut [bool],
     ) {
         let (var, mult) = &elems[ei];
         let restore: Cfg::M = match mult {
@@ -4380,15 +4408,16 @@ where
             self.env.clear(vid);
         }
         bound[ei] = false;
-        if let RMult::Var { var: mv, .. } = mult {
-            // Only clear if no earlier element uses the same mult variable
-            let earlier_uses = elems[..ei]
-                .iter()
-                .any(|(_, m)| matches!(m, RMult::Var { var: v, .. } if *v == *mv));
-            if !earlier_uses {
-                self.env.set_mult(*mv, Cfg::M::ZERO);
-            }
+        // Clear the multiplicity variable only if this element's scan bound it, as
+        // `decompose_ac_elem` does with `was_unbound`. The variable is interned per
+        // query: clearing it whenever no earlier element of this frame carried it reset
+        // a count an earlier atom bound, so the next scan took an entry of another count.
+        if let RMult::Var { var: mv, .. } = mult
+            && mult_bound[ei]
+        {
+            self.env.set_mult(*mv, Cfg::M::ZERO);
         }
+        mult_bound[ei] = false;
     }
 
     /// Move to the next assignment in entry order: undo the last element, advance its
@@ -4404,15 +4433,16 @@ where
         residual: &mut [(Cfg::G, Cfg::M)],
         ri_at: &mut [usize],
         bound: &mut [bool],
+        mult_bound: &mut [bool],
         ei: &mut usize,
     ) -> bool {
         if elems.is_empty() || *ei != elems.len() {
             return false;
         }
         let e = elems.len() - 1;
-        self.ac_undo(elems, residual, e, ri_at[e], bound);
+        self.ac_undo(elems, residual, e, ri_at[e], bound, mult_bound);
         ri_at[e] += 1;
-        if self.ac_find_first(elems, residual, ri_at, bound, e) {
+        if self.ac_find_first(elems, residual, ri_at, bound, mult_bound, e) {
             *ei = elems.len();
             true
         } else {
@@ -7528,12 +7558,15 @@ mod tests {
         }
     }
 
-    /// `ACStore`: the environment's class cells, the residual entries, the `bound` flags.
+    /// `ACStore`: the environment's class and multiplicity cells, the residual entries,
+    /// the `bound` and `mbound` flags.
     #[derive(Clone)]
     struct LeanAc {
         sigma: Vec<Option<usize>>,
+        mult: Vec<Option<u64>>,
         res: Vec<(usize, u64)>,
         bound: Vec<bool>,
+        mbound: Vec<bool>,
     }
 
     /// `ACIStore`.
@@ -7544,8 +7577,25 @@ mod tests {
         bound: Vec<bool>,
     }
 
-    /// `acOps elems len`, for exact annotations (`acAccept`, `acApply`, `acUndo`).
-    fn lean_ac_ops(elems: Vec<(usize, u64)>, len: usize) -> LeanOps<LeanAc> {
+    /// A `Mult` the transliteration reads: an exact count, or a multiplicity variable with
+    /// no constraint (`var k 1 none`).
+    #[derive(Clone, Copy)]
+    enum LeanMult {
+        Exact(u64),
+        Var(usize),
+    }
+
+    /// `multMatches σ μ m`, as a test: the exact count, or a positive count equal to the
+    /// variable's binding when it has one.
+    fn lean_mult_matches(a: &LeanAc, mu: LeanMult, m: u64) -> bool {
+        match mu {
+            LeanMult::Exact(k) => m == k,
+            LeanMult::Var(k) => m >= 1 && a.mult[k].is_none_or(|b| b == m),
+        }
+    }
+
+    /// `acOps elems len` (`acAccept`, `acApply`, `acUndo`).
+    fn lean_ac_ops(elems: Vec<(usize, LeanMult)>, len: usize) -> LeanOps<LeanAc> {
         let n = elems.len();
         let e1 = elems.clone();
         let e2 = elems.clone();
@@ -7556,38 +7606,65 @@ mod tests {
                 let Some(&(x, mu)) = elems.get(e) else {
                     return false;
                 };
-                let (c, m) = a.res.get(ri).copied().unwrap_or((0, 0));
                 match a.sigma[x] {
-                    Some(c2) => c == c2 && m == mu,
-                    None => m == mu,
+                    Some(c2) => {
+                        a.res
+                            .iter()
+                            .position(|&(c, m)| c == c2 && lean_mult_matches(a, mu, m))
+                            == Some(ri)
+                    }
+                    None => lean_mult_matches(a, mu, a.res.get(ri).copied().unwrap_or((0, 0)).1),
                 }
             }),
             apply: Box::new(move |a, e, ri| {
-                let (x, _) = e1.get(e).copied().unwrap_or((0, 1));
-                let (c, _) = a.res.get(ri).copied().unwrap_or((0, 0));
+                let (x, mu) = e1.get(e).copied().unwrap_or((0, LeanMult::Exact(1)));
+                let (c, m) = a.res.get(ri).copied().unwrap_or((0, 0));
                 let mut a = a.clone();
                 let free = a.sigma[x].is_none();
                 if free {
                     a.sigma[x] = Some(c);
                 }
+                let mb = match mu {
+                    LeanMult::Exact(_) => false,
+                    LeanMult::Var(k) => {
+                        let unbound = a.mult[k].is_none();
+                        a.mult[k] = Some(m);
+                        unbound
+                    }
+                };
                 if let Some(slot) = a.res.get_mut(ri) {
                     *slot = (c, 0);
                 }
                 if let Some(b) = a.bound.get_mut(e) {
                     *b = free;
                 }
+                if let Some(b) = a.mbound.get_mut(e) {
+                    *b = mb;
+                }
                 a
             }),
             undo: Box::new(move |a, e, ri| {
-                let (x, mu) = e2.get(e).copied().unwrap_or((0, 1));
+                let (x, mu) = e2.get(e).copied().unwrap_or((0, LeanMult::Exact(1)));
                 let mut a = a.clone();
+                let restore = match mu {
+                    LeanMult::Exact(k) => k,
+                    LeanMult::Var(k) => a.mult[k].unwrap_or(0),
+                };
                 if let Some(slot) = a.res.get_mut(ri) {
-                    slot.1 += mu;
+                    slot.1 += restore;
                 }
                 if a.bound.get(e).copied().unwrap_or(false) {
                     a.sigma[x] = None;
                 }
+                if let LeanMult::Var(k) = mu
+                    && a.mbound.get(e).copied().unwrap_or(false)
+                {
+                    a.mult[k] = None;
+                }
                 if let Some(b) = a.bound.get_mut(e) {
+                    *b = false;
+                }
+                if let Some(b) = a.mbound.get_mut(e) {
                     *b = false;
                 }
                 a
@@ -7665,16 +7742,19 @@ mod tests {
     /// The decomposition frames of `Cursor.lean` (`findFirst`, `advance`, transliterated
     /// above) against the engine's cursor on random residuals: random multiset and set
     /// nodes over four constants, patterns with one to three free elements, with and
-    /// without a bound constant element and a rest. The model takes the plan's
-    /// decomposition step as the engine runs it (elements, rest, the constant bound
-    /// before or re-joined after) and the node's residual as `mset_children` /
-    /// `set_children` give it; the match sets must agree and the model's list must have
-    /// no repeat (`acFrame_eq_decomposeAC`, `decomposeAC_nodup` and the ACI twins).
+    /// without a bound constant element and a rest, and multiset patterns whose elements
+    /// carry multiplicity variables, alone or shared with an earlier atom that binds them
+    /// before the frame. The model runs the plan's steps as the engine runs them (the
+    /// node joins, the constants bound before or re-joined after, each decomposition
+    /// through the transliterated frame from the environment the earlier steps leave) on
+    /// the node's residual as `mset_children` / `set_children` give it; the match sets
+    /// must agree and the model's list must have no repeat (`acFrame_eq_decomposeAC`,
+    /// `decomposeAC_nodup` and the ACI twins).
     #[test]
     fn cursor_frames_agree_with_the_lean_model_on_random_residuals() {
         let mut rng = Xorshift(0x9E37_79B9_7F4A_7C15);
         let consts = ["a", "b", "c", "d"];
-        let (mut compared, mut skipped) = (0usize, 0usize);
+        let (mut compared, mut skipped, mut mult_shared) = (0usize, 0usize, 0usize);
         for graph in 0..12 {
             let mut eg = EG::from_model(&NiraModel);
             let e = eg.intern_sort("IExpr");
@@ -7690,12 +7770,13 @@ mod tests {
             for op in ["add", "union"] {
                 let opid = eg.ops().id_by_name(op).unwrap();
                 for _ in 0..(3 + graph % 3) {
-                    let size = 1 + rng.below(4);
+                    let size = 1 + rng.below(4 + graph % 3);
                     let children: Vec<_> =
                         (0..size).map(|_| cids[rng.below(consts.len())]).collect();
                     eg.add(opid, &children);
                 }
             }
+            let mut patterns: Vec<String> = Vec::new();
             for op in ["add", "union"] {
                 for free in 1..=3usize {
                     for bound in [None, Some(0usize), Some(1), Some(2), Some(3)] {
@@ -7713,30 +7794,74 @@ mod tests {
                                 pat.push_str(" ..r");
                             }
                             pat.push(')');
-                            match compare_frame_with_model(&eg, &pat) {
-                                Some(()) => compared += 1,
-                                None => skipped += 1,
-                            }
+                            patterns.push(pat);
                         }
                     }
                 }
             }
+            // Multiplicity variables: within one atom, and shared with an earlier atom,
+            // whose decomposition binds the variable before the frame that reads it.
+            for pat in [
+                "(add x:k ..r)",
+                "(add x:k y:k ..r)",
+                "(add x:k y ..r)",
+                "(add x:k y:j)",
+                "(add x:k y:k)",
+                "(add x:k ..r) (add y:k ..s)",
+                "(add x:k ..r) (add y:k z:k ..s)",
+                "(add x:k y ..r) (add z:k w ..s)",
+                "(add x:k y:j ..r) (add z:j w:k ..s)",
+                "(add x:k y:j) (add z:k w:j)",
+                "(add x:k ..r) (add y:k (a) ..s)",
+                "(add x:k ..r) (add (b) y:k ..s)",
+            ] {
+                patterns.push(pat.to_string());
+            }
+            for pat in &patterns {
+                match compare_frame_with_model(&eg, pat) {
+                    Some(decomps) => {
+                        compared += 1;
+                        if decomps > 1 && pat.contains(":k") {
+                            mult_shared += 1;
+                        }
+                    }
+                    None => skipped += 1,
+                }
+            }
         }
         eprintln!(
-            "cursor frames against the Lean model: {compared} patterns compared, {skipped} outside"
+            "cursor frames against the Lean model: {compared} patterns compared \
+             ({mult_shared} with a multiplicity variable bound by an earlier atom), \
+             {skipped} outside"
         );
         assert!(
-            compared >= 400,
+            compared >= 800,
             "too few patterns compared: {compared} ({skipped} skipped)"
+        );
+        assert!(
+            mult_shared >= 80,
+            "too few patterns with a shared multiplicity variable: {mult_shared}"
         );
     }
 
-    /// One pattern on one graph: the engine's cursor against the transliterated frame.
-    /// `None` when the plan has a step the model does not read.
-    fn compare_frame_with_model(eg: &EG, pat: &str) -> Option<()> {
+    /// The model's environment along the plan: node classes (canonical) and the node each
+    /// node variable names, multiplicity cells, and the rests pushed.
+    #[derive(Clone)]
+    struct ModelEnv {
+        nodes: Vec<Option<usize>>,
+        node_ids: Vec<Option<ENodeId>>,
+        mult: Vec<Option<u64>>,
+        sets: Vec<Vec<usize>>,
+        msets: Vec<Vec<(usize, u64)>>,
+    }
+
+    /// One pattern on one graph: the engine's cursor against the transliterated frames.
+    /// `None` when the plan has a step the model does not read; otherwise the number of
+    /// decomposition steps.
+    fn compare_frame_with_model(eg: &EG, pat: &str) -> Option<usize> {
         let ops = eg.ops();
         let sorts = eg.sorts();
-        let pats = vec![parse_pattern(pat)];
+        let pats = crate::test_helpers::parse_patterns(pat);
         let fq = flatten(&pats, ops).unwrap();
         let rq = resolve(
             &fq,
@@ -7749,172 +7874,24 @@ mod tests {
         let plan = schedule(&rq);
         let store = IndexStore::build(eg);
         let index = VariantIndex::naive(&store);
-        let canon = |g: ENodeId| eg.find_const(g).to_usize();
-        // The class a constant's join binds: the one node of its operator.
-        let const_class = |lookups: &[IndexLookup<OpId, u32>]| -> Option<usize> {
-            if let [IndexLookup::ByOp { op }] = lookups {
-                let b = store.nodes_by_op(*op);
-                (b.len() == 1).then(|| canon(b[0]))
-            } else {
-                None
-            }
-        };
-        // The decomposition step, the joins before it (bindings) and after it (filters).
-        let pos = plan.steps.iter().position(|s| {
-            matches!(
-                s,
-                Step::DecomposeAC { view: None, .. } | Step::DecomposeACI { view: None, .. }
-            )
-        })?;
-        let nvars = plan.shape.num_vars();
-        let mut pre: Vec<Option<usize>> = vec![None; nvars];
-        let mut post: Vec<(usize, usize)> = Vec::new();
-        let (node_var, op) = match &plan.steps[pos] {
-            Step::DecomposeAC { node, .. } | Step::DecomposeACI { node, .. } => {
-                let op = plan.steps[..pos].iter().find_map(|s| match s {
-                    Step::Join {
-                        target, lookups, ..
-                    } if target == node => lookups.iter().find_map(|l| match l {
-                        IndexLookup::ByOp { op } => Some(*op),
-                        _ => None,
-                    }),
-                    _ => None,
-                })?;
-                (*node, op)
-            }
-            _ => unreachable!(),
-        };
-        for (i, s) in plan.steps.iter().enumerate() {
-            if i == pos {
-                continue;
-            }
-            match s {
-                Step::Join {
-                    target, lookups, ..
-                } if *target == node_var => {}
-                Step::Join {
-                    target, lookups, ..
-                } if i < pos => {
-                    pre[target.idx()] = Some(const_class(lookups)?);
-                }
-                Step::Join {
-                    target, lookups, ..
-                } => {
-                    // A constant re-joined after the decomposition: `[ByRepr t, ByOp c]`.
-                    let mut class = None;
-                    let mut repr_ok = false;
-                    for l in lookups {
-                        match l {
-                            IndexLookup::ByRepr { repr } if repr == target => repr_ok = true,
-                            IndexLookup::ByOp { op } => {
-                                class = const_class(&[IndexLookup::ByOp { op: *op }])
-                            }
-                            _ => return None,
-                        }
-                    }
-                    if !repr_ok {
-                        return None;
-                    }
-                    post.push((target.idx(), class?));
-                }
-                _ => return None,
-            }
-        }
         let shape = &plan.shape;
-        let mut model: Vec<String> = Vec::new();
-        for &g in store.nodes_by_op(op) {
-            let mut nodes = pre.clone();
-            nodes[node_var.idx()] = Some(canon(g));
-            let leaves: Vec<(Vec<Option<usize>>, Vec<usize>, Vec<(usize, u64)>)> = match &plan.steps
-                [pos]
-            {
-                Step::DecomposeAC { elems, rest, .. } => {
-                    let mut res = Vec::new();
-                    eg.mset_children(g, &mut res);
-                    let res: Vec<(usize, u64)> = res
-                        .iter()
-                        .map(|&(c, m)| (canon(c), m.to_u64().expect("count")))
-                        .collect();
-                    let mut es = Vec::new();
-                    for (pv, mu) in elems {
-                        let (PatVar::Local(v), RMult::Exact(k)) = (pv, mu) else {
-                            return None;
-                        };
-                        es.push((v.idx(), *k));
-                    }
-                    if es.is_empty() {
-                        return None;
-                    }
-                    let lops = lean_ac_ops(es, res.len());
-                    let a0 = LeanAc {
-                        sigma: nodes.clone(),
-                        res: res.clone(),
-                        bound: vec![false; lops.n],
-                    };
-                    let fuel = lops.fuel();
-                    lops.drive(fuel, lops.init(a0))
-                        .into_iter()
-                        .filter_map(|a| {
-                            let left: Vec<(usize, u64)> =
-                                a.res.iter().copied().filter(|e| e.1 != 0).collect();
-                            match rest {
-                                None if left.is_empty() => Some((a.sigma, Vec::new(), Vec::new())),
-                                None => None,
-                                Some(_) => Some((a.sigma, Vec::new(), left)),
-                            }
-                        })
-                        .collect()
-                }
-                Step::DecomposeACI { elems, rest, .. } => {
-                    let mut res = Vec::new();
-                    eg.set_children(g, &mut res);
-                    let res: Vec<usize> = res.iter().map(|&c| canon(c)).collect();
-                    let mut es = Vec::new();
-                    for pv in elems {
-                        let PatVar::Local(v) = pv else { return None };
-                        es.push(v.idx());
-                    }
-                    if es.is_empty() {
-                        return None;
-                    }
-                    let lops = lean_aci_ops(es, res.clone());
-                    let a0 = LeanAci {
-                        sigma: nodes.clone(),
-                        used: vec![false; res.len()],
-                        bound: vec![false; lops.n],
-                    };
-                    let fuel = lops.fuel();
-                    lops.drive(fuel, lops.init(a0))
-                        .into_iter()
-                        .filter_map(|a| {
-                            let rem: Vec<usize> = res
-                                .iter()
-                                .copied()
-                                .enumerate()
-                                .filter(|(i, _)| !a.used[*i])
-                                .map(|(_, c)| c)
-                                .collect();
-                            match rest {
-                                None if rem.is_empty() => Some((a.sigma, Vec::new(), Vec::new())),
-                                None => None,
-                                Some(_) => Some((a.sigma, rem, Vec::new())),
-                            }
-                        })
-                        .collect()
-                }
-                _ => unreachable!(),
-            };
-            for (sigma, set_rest, mset_rest) in leaves {
-                if post.iter().any(|&(v, c)| sigma[v] != Some(c)) {
-                    continue;
-                }
-                let sets: Vec<Vec<usize>> =
-                    (0..shape.sets.len()).map(|_| set_rest.clone()).collect();
-                let msets: Vec<Vec<(usize, u64)>> =
-                    (0..shape.msets.len()).map(|_| mset_rest.clone()).collect();
-                model.push(key_of_parts(&sigma, &[], &sets, &msets));
-            }
+        let decomps = plan
+            .steps
+            .iter()
+            .filter(|s| matches!(s, Step::DecomposeAC { .. } | Step::DecomposeACI { .. }))
+            .count();
+        if decomps == 0 {
+            return None;
         }
+        let env = ModelEnv {
+            nodes: vec![None; shape.num_vars()],
+            node_ids: vec![None; shape.num_vars()],
+            mult: vec![None; shape.num_mult_vars()],
+            sets: vec![Vec::new(); shape.sets.len()],
+            msets: vec![Vec::new(); shape.msets.len()],
+        };
+        let mut model: Vec<String> = Vec::new();
+        model_steps(eg, &store, &plan.steps, 0, env, &mut model)?;
         let model_set: std::collections::BTreeSet<String> = model.iter().cloned().collect();
         assert_eq!(
             model.len(),
@@ -7929,6 +7906,170 @@ mod tests {
             cursor, model_set,
             "{pat}: the cursor and the model disagree"
         );
-        Some(())
+        Some(decomps)
+    }
+
+    /// The plan from step `i` under `env`, pushing the key of every match into `out`:
+    /// a join of an unbound node by operator enumerates the operator's nodes, a join of a
+    /// bound one (a constant re-joined) checks it, and a decomposition runs the
+    /// transliterated frame from `env`. `None` on a step the model does not read.
+    fn model_steps(
+        eg: &EG,
+        store: &IndexStore<DefaultConfig>,
+        steps: &[Step<OpId, u32, NiraLitVal>],
+        i: usize,
+        env: ModelEnv,
+        out: &mut Vec<String>,
+    ) -> Option<()> {
+        let canon = |g: ENodeId| eg.find_const(g).to_usize();
+        let Some(step) = steps.get(i) else {
+            out.push(key_of_parts(&env.nodes, &[], &env.sets, &env.msets));
+            return Some(());
+        };
+        match step {
+            Step::Join {
+                target, lookups, ..
+            } => match env.nodes[target.idx()] {
+                None => {
+                    // The operator's nodes. A `ByContains` lookup of a bound element is a
+                    // prefilter: the decomposition reads that element and rejects a node
+                    // without it, so the model leaves it to the frame.
+                    let mut op = None;
+                    for l in lookups {
+                        match l {
+                            IndexLookup::ByOp { op: o } => op = Some(*o),
+                            IndexLookup::ByContains { .. } => {}
+                            _ => return None,
+                        }
+                    }
+                    for &g in store.nodes_by_op(op?) {
+                        let mut env = env.clone();
+                        env.nodes[target.idx()] = Some(canon(g));
+                        env.node_ids[target.idx()] = Some(g);
+                        model_steps(eg, store, steps, i + 1, env, out)?;
+                    }
+                    Some(())
+                }
+                Some(class) => {
+                    let mut repr_ok = false;
+                    let mut found = None;
+                    for l in lookups {
+                        match l {
+                            IndexLookup::ByRepr { repr } if repr == target => repr_ok = true,
+                            IndexLookup::ByOp { op } => {
+                                found =
+                                    Some(store.nodes_by_op(*op).iter().any(|&g| canon(g) == class));
+                            }
+                            _ => return None,
+                        }
+                    }
+                    if !repr_ok {
+                        return None;
+                    }
+                    if found? {
+                        model_steps(eg, store, steps, i + 1, env, out)?;
+                    }
+                    Some(())
+                }
+            },
+            Step::DecomposeAC {
+                node,
+                elems,
+                rest,
+                idempotent: false,
+                view: None,
+            } => {
+                let g = env.node_ids[node.idx()]?;
+                let mut res = Vec::new();
+                eg.mset_children(g, &mut res);
+                let res: Vec<(usize, u64)> = res
+                    .iter()
+                    .map(|&(c, m)| (canon(c), m.to_u64().expect("count")))
+                    .collect();
+                let mut es = Vec::new();
+                for (pv, mu) in elems {
+                    let PatVar::Local(v) = pv else { return None };
+                    let mu = match mu {
+                        RMult::Exact(k) => LeanMult::Exact(*k),
+                        RMult::Var {
+                            var,
+                            constraint: None,
+                        } => LeanMult::Var(var.idx()),
+                        RMult::Var { .. } => return None,
+                    };
+                    es.push((v.idx(), mu));
+                }
+                if es.is_empty() {
+                    return None;
+                }
+                let lops = lean_ac_ops(es, res.len());
+                let a0 = LeanAc {
+                    sigma: env.nodes.clone(),
+                    mult: env.mult.clone(),
+                    res,
+                    bound: vec![false; lops.n],
+                    mbound: vec![false; lops.n],
+                };
+                for a in lops.drive(lops.fuel(), lops.init(a0)) {
+                    let left: Vec<(usize, u64)> =
+                        a.res.iter().copied().filter(|e| e.1 != 0).collect();
+                    let mut env = env.clone();
+                    match rest {
+                        None if !left.is_empty() => continue,
+                        None => {}
+                        Some(rv) => env.msets[rv.idx()] = left,
+                    }
+                    env.nodes = a.sigma;
+                    env.mult = a.mult;
+                    model_steps(eg, store, steps, i + 1, env, out)?;
+                }
+                Some(())
+            }
+            Step::DecomposeACI {
+                node,
+                elems,
+                rest,
+                view: None,
+                ..
+            } => {
+                let g = env.node_ids[node.idx()]?;
+                let mut res = Vec::new();
+                eg.set_children(g, &mut res);
+                let res: Vec<usize> = res.iter().map(|&c| canon(c)).collect();
+                let mut es = Vec::new();
+                for pv in elems {
+                    let PatVar::Local(v) = pv else { return None };
+                    es.push(v.idx());
+                }
+                if es.is_empty() {
+                    return None;
+                }
+                let lops = lean_aci_ops(es, res.clone());
+                let a0 = LeanAci {
+                    sigma: env.nodes.clone(),
+                    used: vec![false; res.len()],
+                    bound: vec![false; lops.n],
+                };
+                for a in lops.drive(lops.fuel(), lops.init(a0)) {
+                    let rem: Vec<usize> = res
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .filter(|(i, _)| !a.used[*i])
+                        .map(|(_, c)| c)
+                        .collect();
+                    let mut env = env.clone();
+                    match rest {
+                        None if !rem.is_empty() => continue,
+                        None => {}
+                        Some(rv) => env.sets[rv.idx()] = rem,
+                    }
+                    env.nodes = a.sigma;
+                    model_steps(eg, store, steps, i + 1, env, out)?;
+                }
+                Some(())
+            }
+            _ => None,
+        }
     }
 }
