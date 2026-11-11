@@ -3894,10 +3894,19 @@ the fixpoint, with matches unfired (completeness). Evidence: fixtures
 
 **Must report completeness only on a `Converged` outcome, never on a budget stop.**
 Otherwise the round matches on a store that is not a completion fixpoint, `before_fixed`
-fails, `rebuild_idle` does not apply, and the saturation theorems say nothing. Evidence:
-`CompletionRun` and `CompletionOutcome` (`Fidelity/StopTest.lean`),
-fixture `ac_lazy_budget_inconclusive.egg` (a `check-neq` reported inconclusive after a budget
-stop). The runtime design note asks for `Converged` before any check.
+fails, `rebuild_idle` does not apply, and the saturation theorems say nothing. The engine
+reads the outcome in both modes: a lazy check reports a budget stop as inconclusive, and the
+eager run loops (naive, semi-naive and the tracing loop of `saturate.rs`) report a round
+that changed nothing as saturated only when the rebuild before it left `Converged` or
+`Disabled` (`EGraph::completion_at_fixpoint`). Under eager completion the node budget
+restarts at every rebuild, so each rebuild of a run can stop on it while the rules change
+nothing. A completion round that collapses a node reports a change even when its merge
+was a no-op: it removed a rule, so it is not the round that confirms the fixpoint.
+Evidence: `CompletionRun` and `CompletionOutcome` (`Fidelity/StopTest.lean`), fixture
+`ac_lazy_budget_inconclusive.egg` (a `check-neq` reported inconclusive after a budget stop),
+`saturation_verdict.rs` (an eager run whose every rebuild stops on the node budget is
+unsaturated; a round whose only effect is a collapse is followed by another). The runtime
+design note asks for `Converged` before any check.
 
 **Must keep a collapsed node a member of its class, reducible by the rules to an active
 node of that class.** A collapsed node stays in the index and is matchable, so `FCover`

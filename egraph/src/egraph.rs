@@ -561,6 +561,18 @@ where
         self.decision_spent = false;
     }
 
+    /// Whether the last `rebuild` left the graph at its completion fixpoint: completion
+    /// is off ([`CompletionOutcome::Disabled`]), reached its fixpoint
+    /// ([`CompletionOutcome::Converged`]), or no rebuild has run. Any other outcome
+    /// (a budget stop, an overflow, a goal stop) leaves AC-entailed equalities out of
+    /// the graph, and a saturation round that changes nothing on it is no fixpoint.
+    pub fn completion_at_fixpoint(&self) -> bool {
+        matches!(
+            self.completion_outcome,
+            None | Some(CompletionOutcome::Disabled | CompletionOutcome::Converged { .. })
+        )
+    }
+
     /// Whether the open lazy decision is out of budget: it has minted more nodes than
     /// `completion_node_budget` allows, or one of its completion rebuilds stopped on a
     /// budget. Always false outside a decision. The saturation loops read it after each
@@ -4231,12 +4243,15 @@ where
                         node_b: node,
                     }
                 };
-                changed |= do_merge(self, c_prime, class, just);
+                do_merge(self, c_prime, class, just);
                 // Collapse: the node was reducible by another rule (proper containment),
                 // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
                 // NOT subsume — the node stays matchable and a legal child; only
-                // completion's active set excludes it. Merge first, mark second.
+                // completion's active set excludes it. Merge first, mark second. The
+                // collapse is a change even when the merge was not: it removes a rule, so
+                // the round ran over a rule set it then changed and is no fixpoint round.
                 self.set_cc_collapsed(node);
+                changed = true;
             }
         }
         let dt_aprime = t_aprime.elapsed();

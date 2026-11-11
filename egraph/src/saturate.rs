@@ -68,7 +68,9 @@ impl<G> RunSpec<G> {
 pub struct SatResult {
     /// Number of iterations executed.
     pub iterations: usize,
-    /// Whether a fixpoint was reached (no new merges/insertions).
+    /// Whether a fixpoint was reached: a round added no node, merge or subsumption, and
+    /// the rebuild before it left completion at its fixpoint
+    /// ([`crate::egraph::EGraph::completion_at_fixpoint`]; false after a budget stop).
     pub saturated: bool,
     /// Whether the run stopped because its `:until` goal held. Distinct from `saturated`:
     /// the goal can be met with rules still firing.
@@ -455,8 +457,18 @@ where
             return Ok(sat_result_seq(seq_report, i + 1, false, false, steps_base));
         }
         // `changes` still carries what the stamp cannot see: a `:subsume` flag newly set.
+        // The rules' fixpoint is the run's only when the round's rebuild left completion
+        // at its fixpoint: after a budget stop (eager completion restarts its budget at
+        // every rebuild) the graph lacks AC-entailed equalities, so the run is unsaturated.
         if changes == 0 && eg.size_stamp() == stamp {
-            return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
+            let saturated = eg.completion_at_fixpoint();
+            return Ok(sat_result_seq(
+                seq_report,
+                i + 1,
+                saturated,
+                false,
+                steps_base,
+            ));
         }
     }
     // The budget is spent, but a goal met by the last iteration's work should still be
@@ -1161,8 +1173,18 @@ where
         }
 
         // `changes` still carries what the stamp cannot see: a `:subsume` flag newly set.
+        // The rules' fixpoint is the run's only when the round's rebuild left completion
+        // at its fixpoint: after a budget stop (eager completion restarts its budget at
+        // every rebuild) the graph lacks AC-entailed equalities, so the run is unsaturated.
         if changes == 0 && eg.size_stamp() == stamp {
-            return Ok(sat_result_seq(seq_report, i + 1, true, false, steps_base));
+            let saturated = eg.completion_at_fixpoint();
+            return Ok(sat_result_seq(
+                seq_report,
+                i + 1,
+                saturated,
+                false,
+                steps_base,
+            ));
         }
     }
     if spec.until.is_some() || stop.is_some() {
@@ -1260,7 +1282,8 @@ where
         }
         if changes == 0 && eg.size_stamp() == stamp {
             eprintln!("-- fixpoint after {total_iter} iterations --");
-            return Ok(sat_result(total_iter, true, false, steps_base));
+            let saturated = eg.completion_at_fixpoint();
+            return Ok(sat_result(total_iter, saturated, false, steps_base));
         }
         eprintln!("-- iteration {total_iter}: {changes} changes --");
     }
