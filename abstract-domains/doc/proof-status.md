@@ -229,9 +229,10 @@ removed widened products were retired. Public ghost/spec Bézout and CRT lemmas,
 including `is_extended_gcd` and `lemma_crt_solution_class_exact`, remain available.
 
 The shared-helper change adds no multiplication transfer or reduced-product
-integration. Unit A integration, `Refine` for Congruence with `Facts.c`, and
-grid reduction remain follow-up work outside this domain. No proof bypasses or new
-trusted items were introduced.
+integration. Congruence `Refine` with `Facts.c` and grid reduction are now
+implemented separately, with export soundness, refinement preservation,
+no growth, and well-formedness proved. No proof bypasses or new trusted items
+were introduced.
 
 ### Congruence
 
@@ -379,6 +380,60 @@ binary checks cover the other eight laws. Existing full-u8 normalization,
 negation, boundary, and all-canonical-upper-bound tests remain in place.
 The oracle is exhaustive within its stated input model, not over every pair
 or triple of all 16,640 canonical u8 classes.
+
+### Grid rounding
+
+`src/grid.rs` rounds a word onto the grid of a congruence `(r, m)`:
+`{x | x % m == r}`, or `{r}` when `m == 0`. These helpers are the
+interval/congruence grid step of `Facts::normalize`
+(`doc/reduced-product.md`). `round_up(x, r, m)`
+returns the smallest grid point `>= x` and `round_down(x, r, m)` the
+largest grid point `<= x`. Both contracts state optimality, not only
+membership: no grid point lies strictly between `x` and the result.
+`None` means no grid point exists on that side within `W`, so both
+functions return `None` where the arithmetic would wrap. They are generic
+over `W: Word` and compute only with `urem`, `checked_add` and
+`checked_sub`. The tests check them against brute force on every
+well-formed `(x, r, m)` at `u8`, and on hand-computed boundary cases at
+`u128`:
+
+```text
+cargo test -p semi-persistent-abstract-domains --test grid
+```
+
+### Facts congruence field
+
+`Facts<W>` (`src/facts.rs`) has a congruence field `c` next to the unsigned
+bounds `u`, and `γ` is the intersection of the two. `reduced` states that both
+bounds of `u` lie on the grid of `c` and that a single value is a constant
+congruence; `normalize` establishes it with `round_up` and `round_down`, and
+returns `Bot` exactly when the fields share no value. `lemma_canonical`
+proves that reduced records with the same concretization are equal: the
+bounds are the least and greatest members, and past one value the modulus is
+the gap to the second member. The singleton case reduces both ways: a
+constant `c` collapses `u` to that value, and a single-value `u` makes `c`
+constant, also in `from_interval`. So `from_interval` sets `c` to top only
+when `u` has two or more values. `join`, `widen` and `meet` apply the grid
+step after the field-wise operation; `leq` is field-wise. `from_parts(u, c)`
+builds the reduced record of two facts. `contains_zero` now checks both
+fields, because its contract is exact. Unsigned add/sub/neg in `facts_ops.rs`
+now compute both `u` and `c`, combined by `lift_parts` through `from_parts`.
+The contracts prove sound arithmetic and well-formedness; an empty field
+intersection permits the helper's Top fallback. The existing mixed-wrap GCD
+fallback is unchanged, with no general arithmetic optimality claim.
+Multiplication, division, and remainder retain their interval transfers.
+
+The tests check `from_parts` and `normalize` against concrete sets on u8
+intervals with bounds near the ends of the range, small moduli and the sign
+bit, crossed with constants, every class of modulus up to 20 and a few large
+moduli: the result is exact, its bounds are the extreme members, each set
+has one representation, and a normalized record is a fixpoint. They also check meet, refine, join, widen and `leq` against sets
+on reduced records, the examples of `doc/reduced-product.md`, and boundary
+cases at `u128`:
+
+```text
+cargo test -p semi-persistent-abstract-domains --test facts_congruence
+```
 
 ## Wrapped widening and shared-facts refinement
 

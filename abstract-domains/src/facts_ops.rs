@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Forward transfers on `Facts<W>`.
 //!
-//! Starting point for the BitVec transfers (doc/reduced-product.md): each transfer
-//! applies the `u` field's transfer and normalizes. A transfer for a new field
-//! computes that field from the operands' fields; `normalize` then combines it
-//! with the others.
+//! Unsigned add/sub/neg transfer both interval and congruence fields, then
+//! normalize their intersection. Other transfers retain their interval-based
+//! behavior (doc/reduced-product.md).
 // Proof-only bindings are erased outside Verus.
 #![allow(unused_variables)]
 use crate::bool4::*;
+use crate::congruence::Congruence;
 use crate::facts::*;
 use crate::interval::*;
 use crate::lattice::*;
@@ -54,6 +54,37 @@ fn lift<W: Word>(u: Interval<W>) -> (r: Facts<W>)
     }
 }
 
+/// Combine independently sound fields. An empty intersection has no concrete
+/// result to preserve, so Top is a sound fallback for the bottomless return type.
+fn lift_parts<W: Word>(u: Interval<W>, c: Congruence<W>) -> (r: Facts<W>)
+    requires
+        u.wf(),
+        c.wf(),
+    ensures
+        r.wf(),
+        forall|x: W| u.gamma(x) && c.gamma(x) ==> #[trigger] r.gamma(x),
+{
+    let n = Facts::from_parts(u, c);
+    match n {
+        BotOr::Val(r) => {
+            proof {
+                assert forall|x: W| u.gamma(x) && c.gamma(x) implies #[trigger] r.gamma(x) by {
+                    assert(n.gamma(x));
+                }
+            }
+            r
+        },
+        BotOr::Bot => {
+            proof {
+                assert forall|x: W| u.gamma(x) && c.gamma(x) implies false by {
+                    assert(n.gamma(x));
+                }
+            }
+            Facts::top()
+        },
+    }
+}
+
 /// Lifts a division result from the `u` field.
 fn lift_div<W: Word>(q: (BotOr<Interval<W>>, DivZero)) -> (r: (BotOr<Facts<W>>, DivZero))
     requires
@@ -82,15 +113,55 @@ fn lift_div<W: Word>(q: (BotOr<Interval<W>>, DivZero)) -> (r: (BotOr<Facts<W>>, 
 
 impl<W: Word> Arith<Unsigned<W>> for Facts<W> {
     fn add(&self, o: &Self) -> (r: Self) {
-        lift(<Interval<W> as Arith<Unsigned<W>>>::add(&self.interval(), &o.interval()))
+        let (ua, ub) = (self.interval(), o.interval());
+        let (ca, cb) = (self.congruence(), o.congruence());
+        let u = <Interval<W> as Arith<Unsigned<W>>>::add(&ua, &ub);
+        let c = ca.add(&cb);
+        let r = lift_parts(u, c);
+        proof {
+            assert forall|x: W, y: W| self.gamma(x) && o.gamma(y)
+                implies #[trigger] r.gamma(Unsigned::<W>::add(x, y)) by {
+                assert(ua.gamma(x) && ub.gamma(y));
+                assert(ca.has(x) && cb.has(y));
+                assert(u.gamma(Unsigned::<W>::add(x, y)));
+                assert(c.has(Unsigned::<W>::add(x, y)));
+            }
+        }
+        r
     }
 
     fn sub(&self, o: &Self) -> (r: Self) {
-        lift(<Interval<W> as Arith<Unsigned<W>>>::sub(&self.interval(), &o.interval()))
+        let (ua, ub) = (self.interval(), o.interval());
+        let (ca, cb) = (self.congruence(), o.congruence());
+        let u = <Interval<W> as Arith<Unsigned<W>>>::sub(&ua, &ub);
+        let c = ca.sub(&cb);
+        let r = lift_parts(u, c);
+        proof {
+            assert forall|x: W, y: W| self.gamma(x) && o.gamma(y)
+                implies #[trigger] r.gamma(Unsigned::<W>::sub(x, y)) by {
+                assert(ua.gamma(x) && ub.gamma(y));
+                assert(ca.has(x) && cb.has(y));
+                assert(u.gamma(Unsigned::<W>::sub(x, y)));
+                assert(c.has(Unsigned::<W>::sub(x, y)));
+            }
+        }
+        r
     }
 
     fn neg(&self) -> (r: Self) {
-        lift(<Interval<W> as Arith<Unsigned<W>>>::neg(&self.interval()))
+        let ua = self.interval();
+        let ca = self.congruence();
+        let u = <Interval<W> as Arith<Unsigned<W>>>::neg(&ua);
+        let c = ca.neg();
+        let r = lift_parts(u, c);
+        proof {
+            assert forall|x: W| self.gamma(x) implies #[trigger] r.gamma(Unsigned::<W>::neg(x)) by {
+                assert(ua.gamma(x) && ca.has(x));
+                assert(u.gamma(Unsigned::<W>::neg(x)));
+                assert(c.has(Unsigned::<W>::neg(x)));
+            }
+        }
+        r
     }
 }
 
@@ -103,7 +174,13 @@ impl<W: Word> Mul<Unsigned<W>> for Facts<W> {
 impl<W: Word> DivRem<Unsigned<W>> for Facts<W> {
     fn contains_zero(&self) -> (b: bool) {
         let u = self.interval();
-        <Interval<W> as DivRem<Unsigned<W>>>::contains_zero(&u)
+        let z = W::zero();
+        proof {
+            W::lemma_modulus();
+            W::lemma_from_int(0);
+            W::lemma_view_injective(z, W::from_int(0));
+        }
+        <Interval<W> as DivRem<Unsigned<W>>>::contains_zero(&u) && self.congruence().contains(z)
     }
 
     fn div(&self, d: &Self) -> (r: (BotOr<Self>, DivZero)) {
@@ -120,7 +197,13 @@ impl<W: Word> DivRem<Unsigned<W>> for Facts<W> {
 impl<W: Word> DivRem<Signed<W>> for Facts<W> {
     fn contains_zero(&self) -> (b: bool) {
         let u = self.interval();
-        <Interval<W> as DivRem<Signed<W>>>::contains_zero(&u)
+        let z = W::zero();
+        proof {
+            W::lemma_modulus();
+            W::lemma_from_int(0);
+            W::lemma_view_injective(z, W::from_int(0));
+        }
+        <Interval<W> as DivRem<Signed<W>>>::contains_zero(&u) && self.congruence().contains(z)
     }
 
     fn div(&self, d: &Self) -> (r: (BotOr<Self>, DivZero)) {
