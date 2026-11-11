@@ -405,8 +405,8 @@ Inverse support is narrower: the implementation cancels explicit
 signed coefficients, triangular reduction, or full Abelian-group completion.
 (Corrected 2026-11-04: since commit `e1e6aec8` it also asserts the five cross-node
 consequences R1-R5 of the inverse law, and `completion_complete_inverse_engine` proves
-completion complete under `:inverse` for a model with those rules; the remaining limits of
-this paragraph stand.)
+completion complete under `:inverse` at a fixpoint of `lattice_round`; the remaining limits
+of this paragraph stand.)
 `CompletionOutcome::Converged` therefore reports the implementation's
 full-round fixpoint, not completeness for the general Abelian-group word
 problem.

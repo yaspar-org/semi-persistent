@@ -292,7 +292,10 @@ operator: the engine's `lattice_round` establishes `LatticeClosed` at its
 fixpoint (`Lattice.latticeClosed_of_engineFixed`) and does not establish
 `hcancel` (`Lattice.hcancel_not_derivable`). `hcp` is replaced by its
 part involving a law instance (`AxiomCP`): the rule-rule part follows from
-the fixed round (`ruleRuleCP_of_fixed`, through `hcp_of_fixed`). -/
+the fixed round (`ruleRuleCP_of_fixed`, through `hcp_of_fixed`). The
+rewriting argument runs for a non-cancellative operator only, so `hcp_ax`
+is required for one only: a cancellative law set, every `:inverse` one
+among them, goes through lattice closure (`CompleteAtoms.ofLattice`). -/
 structure CompleteAtoms (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : State n)
     (A : Set (Fin n)) (u : Option (Fin n)) : Prop where
   slots : ∃ ss₀ ss : SlotState n,
@@ -302,7 +305,7 @@ structure CompleteAtoms (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : 
   hfix : RoundFixedA L st A u
   hlaw : ∀ P Q, L.lawRel P Q → degLex P Q
   hnf_ax : ∀ M N, ¬ Rw (plain n) L.axRules (L.clamp M) N
-  hcp_ax : AxiomCP L (st.withAtoms A u).rules
+  hcp_ax : ¬ L.cancellative → AxiomCP L (st.withAtoms A u).rules
   hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d
   hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A u).active ∧
     (N, d) ∈ (st.withAtoms A u).active ∧ st.find c = st.find d
@@ -325,7 +328,7 @@ theorem same_class (h : CompleteAtoms L S st A u) {M N : Monomial n} {c d : Fin 
   · exact Lattice.complete_of_latticeClosed (h.hlat hc) h.hS hM hN (Lattice.E_union_left hMN)
   · obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
     exact completion_complete_atoms h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw h.hnf_ax
-      (hcp_of_fixed h.hfix.roundFixed h.hcp_ax) h.hcc h.hS (fun h => absurd h hc) hM hN hMN
+      (hcp_of_fixed h.hfix.roundFixed (h.hcp_ax hc)) h.hcc h.hS (fun h => absurd h hc) hM hN hMN
 
 /-- Two stored active nodes. -/
 theorem nodes (h : CompleteAtoms L S st A u) {M N : Monomial n} {c d : Fin n}

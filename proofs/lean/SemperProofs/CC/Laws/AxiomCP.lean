@@ -24,11 +24,13 @@ the empty inverse), `identityInverse` and `combined` (identity, nilpotent,
 inverse), together with `nilpotent` and `inverse` alone, the model's law
 sets with no engine tag set.
 
-The inverse conditions (`InvMatching`, `InverseAxiomCP`,
-`NilpotentInverseCP`) are what the fixpoints of the inverse rules R1 to R5
-establish (`Laws/InvRulesMain.lean`); `LawSpec.conds_inverse_of_fixed`,
-`LawSpec.conds_identityInverse_of_fixed` and
-`LawSpec.conds_combined_of_fixed` assemble `Conds` from them.
+The bundles need `AxiomCP` for a non-cancellative operator only. Every
+law set with an inverse is cancellative at the engine (`sortcheck.rs`
+treats an `:inverse` operator as cancellative), and its completeness goes
+through lattice closure (`CompleteHyps.ofLattice`,
+`CompleteAtoms.ofLattice`), so the inverse conditions (`InvMatching`,
+`InverseAxiomCP`, `NilpotentInverseCP`) are not derived for the engine's
+states.
 -/
 
 namespace SemperProofs.CC
@@ -219,71 +221,5 @@ per-law theorem gives the whole `HCP`, and `AxiomCP` is its law part. -/
 theorem axiomCP_of_laws (sp : LawSpec n) {st : State n} (hfix : RoundFixed sp.laws st)
     (hc : sp.Conds st.rules) : AxiomCP sp.laws st.rules :=
   AxiomCP.of_hcp (sp.hcp (rules_oriented st) (ruleRuleCP_of_fixed hfix) hc)
-
-/-! ## The inverse conditions from the fixpoints of R1 to R5 -/
-
-namespace LawSpec
-
-/-- The conditions of `inverse` from a fixed round under R1 and R3, the
-`g`-nodes read by `inv`, the retirement discipline and cancellation-normal
-left-hand sides (as `completion_complete_inverse_engine` takes them). -/
-theorem conds_inverse_of_fixed (inv : Fin n → Option (Fin n)) (cancel : Prop) {st : State n}
-    {gnodes : Set (Fin n × Fin n)}
-    (hconv : Converged (Laws.inverse inv cancel) st) (h3 : I3 (Laws.inverse inv cancel) st)
-    (hfixinv : RoundFixedInv (invWalk inv) inv st) (hinv : InvNodes st gnodes inv)
-    (hlhs : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A) :
-    (LawSpec.inverse inv cancel).Conds st.rules where
-  matching := invMatching_of_fixed hfixinv hinv
-  lhs := hlhs
-  ax := inverseAxiomCP_of_fixed hconv h3 hfixinv
-
-/-- The conditions of `combined` from a fixed round under R1 to R5, the
-`g`-nodes read by `inv`, the retirement discipline and canonical left-hand
-sides (as `completion_complete_combined_engine` takes them). -/
-theorem conds_combined_of_fixed (u : Fin n) (k : ℕ) (hk : 2 ≤ k) (inv : Fin n → Option (Fin n))
-    (cancel : Prop) (hu : InvUnitFree inv u) {st : State n} {gnodes : Set (Fin n × Fin n)}
-    (hconv : Converged (Laws.combined u k hk inv cancel hu) st)
-    (h3 : I3 (Laws.combined u k hk inv cancel hu) st)
-    (hfixinv : RoundFixedInv (combinedClamp u k inv) inv st)
-    (hfixk : RoundFixedInvNil (combinedClamp u k inv) inv k st)
-    (hinv : InvNodes st gnodes inv)
-    (hlhs_u : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
-    (hlhs_k : ∀ A B, (A, B) ∈ st.rules → ∀ a, A.count a < k)
-    (hlhs_inv : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A)
-    (hax_nil : ∀ A B, (A, B) ∈ st.rules → ∀ a ∈ A,
-      Joinable (Rw (SemperProofs.CC.plain n)
-          (st.rules ∪ (Laws.combined u k hk inv cancel hu).axRules))
-        (B + Multiset.replicate (k - A.count a) a) (A.filter (· ≠ a))) :
-    (LawSpec.combined u k hk inv cancel hu).Conds st.rules where
-  matching := invMatching_of_fixed hfixinv hinv
-  lhs_u := hlhs_u
-  lhs_k := hlhs_k
-  lhs_inv := hlhs_inv
-  ax_nil := hax_nil
-  ax_inv := inverseAxiomCP_of_fixed hconv h3 hfixinv
-  nilinv :=
-    nilpotentInverseCP_of_fixed hconv h3 (combined_hasInv u k hk inv cancel hu) hfixk
-      (fun x hxx hk2 hodd =>
-        combined_clamp_replicate_self u k hk cancel hu hxx (by omega) (by omega))
-
-/-- The conditions of `identityInverse` from a fixed round under R1 and R3,
-the `g`-nodes read by `inv`, the retirement discipline and canonical
-left-hand sides (as `completion_complete_identityInverse_engine` takes
-them). -/
-theorem conds_identityInverse_of_fixed (u : Fin n) (inv : Fin n → Option (Fin n))
-    (cancel : Prop) (hu : InvUnitFree inv u) {st : State n} {gnodes : Set (Fin n × Fin n)}
-    (hconv : Converged (Laws.identityInverse u inv cancel hu) st)
-    (h3 : I3 (Laws.identityInverse u inv cancel hu) st)
-    (hfixinv : RoundFixedInv (identityInverseClamp u inv) inv st)
-    (hinv : InvNodes st gnodes inv)
-    (hlhs_u : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
-    (hlhs_inv : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A) :
-    (LawSpec.identityInverse u inv cancel hu).Conds st.rules where
-  matching := invMatching_of_fixed hfixinv hinv
-  lhs_u := hlhs_u
-  lhs_inv := hlhs_inv
-  ax_inv := inverseAxiomCP_of_fixed hconv h3 hfixinv
-
-end LawSpec
 
 end SemperProofs.CC

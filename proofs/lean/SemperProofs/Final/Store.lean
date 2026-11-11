@@ -33,12 +33,12 @@ unconstrained.
   root. The engine keeps a collapsed node (`FLAG_AC_COLLAPSED`, retired in
   the model) in the index and matchable, so `FCover` fails on every run in
   which completion collapsed a node (`Final/Witness.lean`, `not_cover`).
-* `saturation_modulo_complete_store_retired`: the correspondence extended
-  to the retired nodes (`SubRepR`), `FCover` over active and retired nodes
-  together, and for every match: the instance is fired, and the root's
-  class is the class of an active node `q` of `st` whose monomial is
-  `=_E`-equal to the matched node's, the retired node rewriting to it
-  (`I3`, `node_reduces_active`) and the rewrite being sound (`I2`).
+* `saturation_modulo_complete_store_retired_covered`, `_atoms_covered`:
+  the correspondence extended to the retired nodes (`SubRepR`), `FCover`
+  over active and retired nodes together, and for every match: the
+  instance is fired, and the root's class is the class of an active node
+  `q` of `st` whose monomial is `=_E`-equal to the matched node's
+  (`RetiredCovered` and `I2`, `node_equal_active_covered`).
 
 `Final/Witness.lean` exhibits a run, a completion state with leaf
 constants and a rule `(rewrite (+ x y) (g x y))` that meet every hypothesis
@@ -256,42 +256,15 @@ theorem saturation_modulo_complete_store_retired_of {ops : Sym → OpLaws} {sig 
 
 /-- **Saturation is complete modulo the AC theory, on the store, at a
 retired root.** The correspondence `SubRepR` stores the active nodes `act`
-and the stored nodes `ret` (the retired ones) of the sound (`I2`) and
-retirement-disciplined (`I3`) converged state `st` in the index, and
-`FCover` over `act ∪ ret` makes every `f`-node of the index one of them. For
-every match `σ` of a rule whose query is one pattern `P` with head `f`: the
-instance is fired in the store, the root is the node of some `p'`, active or
-retired, where `σ` matches `P`, and there is an active node `q` of `st`, in
-`p'`'s class and `=_E`-equal to it (`p'` itself when active, a reduct of
-`p'` by the rules when retired), whose class the root binds and at which
-`P` matches at the class level. Every active `p ∈ act` `=_E`-equal to `p'`
-gives the same class, read in the index as `A.Sa.find (ι p)`. -/
-theorem saturation_modulo_complete_store_retired {ops : Sym → OpLaws} {sig : Sym → Kind}
-    {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
-    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
-    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
-    {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
-    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
-    {act ret : Finset (Monomial n × Fin n)} (hcomp : CompleteHyps L S st) (h2 : I2 L S st)
-    (h3 : I3 L st) (hw : Within st act) (hret : Stored st ret) {f : Sym}
-    {ι : Monomial n × Fin n → NodeId} (hs : SubRepR A.Sa.index st f act ret ι)
-    (hcov : FCover A.Sa.index f (act ∪ ret) ι) :
-    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
-      P.head = some f →
-      ∀ σ, Matches A.Sa.index rule.atoms σ →
-        FiredN A.Sa.graph ops σ rule ∧
-        ∃ p' ∈ act ∪ ret, σ.node r = some (ι p') ∧ MatchN A.Sa.index P (mkNode st f p') σ ∧
-          ∃ q ∈ st.active, E L S p'.1 q.1 ∧ st.find q.2 = st.find p'.2 ∧
-            σ.cls r = some (clsId (st.find q.2)) ∧
-            MatchC A.Sa.index P (clsId (st.find q.2)) σ ∧
-            ∀ p ∈ act, E L S p.1 p'.1 →
-              σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ :=
-  saturation_modulo_complete_store_retired_of A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp hw
-    (fun p hp => node_equal_active h2 h3 (hret p hp)) hs hcov
-
-/-- **`saturation_modulo_complete_store_retired` without `I3`.** A retired
-root needs only an active node of its class `=_E`-equal to it, which
+and the stored nodes `ret` (the retired ones) of the sound (`I2`) converged
+state `st` in the index, and `FCover` over `act ∪ ret` makes every `f`-node
+of the index one of them. For every match `σ` of a rule whose query is one
+pattern `P` with head `f`: the instance is fired in the store, the root is
+the node of some `p'`, active or retired, where `σ` matches `P`, and there
+is an active node `q` of `st`, in `p'`'s class and `=_E`-equal to it, whose
+class the root binds and at which `P` matches at the class level. Every
+active `p ∈ act` `=_E`-equal to `p'` gives the same class, read in the
+index as `A.Sa.find (ι p)`. A retired root needs only an active node of its class `=_E`-equal to it, which
 `RetiredCovered` and `I2` give (`node_equal_active_covered`); no reduction,
 no confluence, no `hcancel`. `RetiredCovered` holds of every state reachable
 from one with no retired node (`retiredCovered_of_reachable`). -/
@@ -319,43 +292,13 @@ theorem saturation_modulo_complete_store_retired_covered {ops : Sym → OpLaws} 
   saturation_modulo_complete_store_retired_of A₀ As hmatch h₀ hok hemit₀ hchain hA hfix hcomp hw
     (fun p hp => node_equal_active_covered h2 hrc (hret p hp)) hs hcov
 
-/-- `saturation_modulo_complete_store_retired` for a completion state with
-leaf constants. `I2` and `I3` are taken on the completion view
-`st.withAtoms X u`: the view's rules include `M → {x}` for an atomic class,
-so the stored `I3` lifts to it (`I3_withAtoms`), and `I2` on the view also
+/-- `saturation_modulo_complete_store_retired_covered` for a completion
+state with leaf constants: `RetiredCovered` of the stored state, carried to
+the view (`RetiredCovered.withAtoms`), and `I2` on the view, which also
 states that a stored node in an atom's class is `=_E`-equal to the
-constant, which the stored state does not record. The active node `q` is an
-active node of the view: a stored active node or an implicit node of a leaf
-constant (`State.mem_active_withAtoms`). -/
-theorem saturation_modulo_complete_store_retired_atoms {ops : Sym → OpLaws} {sig : Sym → Kind}
-    {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)
-    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
-    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
-    {A : SActRoundN ops} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
-    {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n} {X : Set (Fin n)}
-    {u : Option (Fin n)} {act ret : Finset (Monomial n × Fin n)}
-    (hcomp : CompleteAtoms L S st X u) (h2 : I2 L S (st.withAtoms X u))
-    (h3 : I3 L (st.withAtoms X u)) (hw : Within st act) (hret : Stored st ret) {f : Sym}
-    {ι : Monomial n × Fin n → NodeId} (hs : SubRepR A.Sa.index st f act ret ι)
-    (hcov : FCover A.Sa.index f (act ∪ ret) ι) :
-    ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
-      P.head = some f →
-      ∀ σ, Matches A.Sa.index rule.atoms σ →
-        FiredN A.Sa.graph ops σ rule ∧
-        ∃ p' ∈ act ∪ ret, σ.node r = some (ι p') ∧ MatchN A.Sa.index P (mkNode st f p') σ ∧
-          ∃ q ∈ (st.withAtoms X u).active, E L S p'.1 q.1 ∧ st.find q.2 = st.find p'.2 ∧
-            σ.cls r = some (clsId (st.find q.2)) ∧
-            MatchC A.Sa.index P (clsId (st.find q.2)) σ ∧
-            ∀ p ∈ act, E L S p.1 p'.1 →
-              σ.cls r = some (A.Sa.find (ι p)) ∧ MatchC A.Sa.index P (A.Sa.find (ι p)) σ :=
-  saturation_modulo_complete_store_retired A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
-    (CompleteHyps.ofAtoms hcomp) h2 h3 (fun p hp => State.active_withAtoms (hw p hp))
-    (fun p hp => Or.inl (hret p hp)) (hs.withAtoms X u) hcov
-
-/-- **`saturation_modulo_complete_store_retired_atoms` without `I3`**:
-`RetiredCovered` of the stored state, carried to the view
-(`RetiredCovered.withAtoms`), and `I2` on the view. -/
+constant. The active node `q` is an active node of the view: a stored
+active node or an implicit node of a leaf constant
+(`State.mem_active_withAtoms`). -/
 theorem saturation_modulo_complete_store_retired_atoms_covered {ops : Sym → OpLaws} {sig : Sym → Kind}
     {naive : Rule → Bool} {rules : List Rule}
     (A₀ : SActRoundN ops) (As : List (SActRoundN ops)) (hmatch : MatchersOK rules)

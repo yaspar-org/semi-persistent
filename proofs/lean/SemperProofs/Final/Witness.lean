@@ -837,7 +837,7 @@ retired node is a stored node whose class holds the active `{c, d}`
 same statement directly. -/
 theorem witness_I3 : I3 (Laws.plainAC 5) wv :=
   I3_of_reactivate_fixed_complete (CompleteHyps.ofAtoms witness_complete) witness_I2
-    witness_reactivate witness_covered (fun h => h.elim)
+    witness_reactivate witness_covered (fun h => h.elim) (fun h => h.elim)
 
 /-- **The final theorem at a retired root, instantiated.**
 `saturation_modulo_complete_store_retired_atoms_covered` applied to the
@@ -997,7 +997,7 @@ theorem hyp_rest : TheoryClosedRest A₁.Sa ops 0 where
 
 /-- **The store of the fixpoint round is closed under the theory**, derived
 from the completion state through the correspondence
-(`theoryClosed_of_complete`). -/
+(`theoryClosed_of_complete_covered`). -/
 theorem witness_theoryClosed : TheoryClosed A₁.Sa ops :=
   theoryClosed_of_complete_covered (CompleteHyps.ofAtoms witness_complete) witness_I2
     witness_covered keys₁
@@ -1005,7 +1005,7 @@ theorem witness_theoryClosed : TheoryClosed A₁.Sa ops :=
     (summandsAtomic_withAtoms hyp_summands) hyp_laws dedup₁ hyp_sorted hyp_rest
 
 /-- **Saturation with completion on, instantiated.**
-`saturation_complete_closed_of_complete_atoms` on the two rounds of the
+`saturation_complete_closed_of_complete_atoms_covered` on the two rounds of the
 program above, with every hypothesis proved: at the fixpoint every match
 is fired modulo the theory, and every union a rule asks for holds between
 any values of its two sides. -/

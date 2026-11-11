@@ -32,11 +32,12 @@ as an `=_E`-equality between monomials of the completion state, and
   class holding no node is invariant modulo the nilpotent order, so a chain
   between two singletons starts and ends at noded classes or is trivial
   (`eq_of_chain_not_noded`).
-* `closedAC_of_complete`: the store is closed under the theory of `f`;
-  `theoryClosed_of_complete`: `TheoryClosed` from it, the remainder
-  `TheoryClosedRest` (the other operators and the ACI and A theories), the
-  hash-cons dedup and sorted pairs.
-* `saturation_complete_closed_of_complete`, `_atoms`:
+* `closedAC_of_complete_covered`: the store is closed under the theory of
+  `f`; `theoryClosed_of_complete_covered`: `TheoryClosed` from it, the
+  remainder `TheoryClosedRest` (the other operators and the ACI and A
+  theories), the hash-cons dedup and sorted pairs. A retired node is
+  `=_E`-equal to an active node of its class by `RetiredCovered` and `I2`.
+* `saturation_complete_closed_of_complete_covered`, `_atoms_covered`:
   `saturation_complete_closed` with the completion hypotheses in place of
   `TheoryClosed`.
 
@@ -313,8 +314,7 @@ theorem eq_of_chain_not_noded (hk : S.graph.KeysNodup) (hN : Stored st N)
 /-- **The store is closed under the theory of `f`.** A chain between the
 singletons of two classes reads as an `=_E`-equality between nodes of the
 state in those classes; each is `=_E`-equal to an active node of its class
-(`heq`: `node_equal_active` from `I3`, or `node_equal_active_covered` from
-`RetiredCovered`), and two `=_E`-equal active nodes of a converged
+(`heq`: `node_equal_active_covered` from `RetiredCovered`), and two `=_E`-equal active nodes of a converged
 state are in one class (`ac_equal_same_class`). A class holding no node
 ends no chain but the trivial one. -/
 theorem closedAC_of_complete_of (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st)
@@ -337,27 +337,9 @@ theorem closedAC_of_complete_of (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St s
     · exact (eq_of_chain_not_noded hk hN hs hcov hsum hlaws hx' (Relation.EqvGen.symm _ _ h)).symm
   · exact eq_of_chain_not_noded hk hN hs hcov hsum hlaws hx h
 
-theorem closedAC_of_complete (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st) (h3 : I3 Lc st)
-    (hk : S.graph.KeysNodup) (hN : Stored st N) (hs : SubRep S.graph st f N ι)
-    (hcov : FCover S.graph f N ι) (hsum : SummandsAtomic st N) (hlaws : LawsRead S L f st Lc) :
-    ClosedAC S L f :=
-  closedAC_of_complete_of hcomp h2 (fun _ _ h => node_equal_active h2 h3 h) hk hN hs hcov hsum hlaws
-
-/-- **`TheoryClosed` from the completion state.** The closure under the
-theory of `f` is derived; the remainder (`TheoryClosedRest`: the other AC
-operators, the ACI and A theories), the hash-cons dedup and the sorted
-pairs are the store's. -/
-theorem theoryClosed_of_complete (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st)
-    (h3 : I3 Lc st) (hk : S.graph.KeysNodup) (hN : Stored st N) (hs : SubRep S.graph st f N ι)
-    (hcov : FCover S.graph f N ι) (hsum : SummandsAtomic st N) (hlaws : LawsRead S L f st Lc)
-    (hdedup : ∀ id₁ id₂ nd, (id₁, nd) ∈ S.nodes → (id₂, nd) ∈ S.nodes → S.find id₁ = S.find id₂)
-    (hsorted : PairsSorted S) (hrest : TheoryClosedRest S L f) : TheoryClosed S L :=
-  TheoryClosed.ofParts (closedAC_of_complete hcomp h2 h3 hk hN hs hcov hsum hlaws) hrest hdedup
-    hsorted
-
-/-- **`closedAC_of_complete` without `I3`.** A node of the state is
-`=_E`-equal to an active node of its class by `RetiredCovered` and `I2`
-(`node_equal_active_covered`). -/
+/-- **The store is closed under the theory of `f`, from the completion
+state.** A node of the state is `=_E`-equal to an active node of its class
+by `RetiredCovered` and `I2` (`node_equal_active_covered`). -/
 theorem closedAC_of_complete_covered (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st)
     (hrc : RetiredCovered st) (hk : S.graph.KeysNodup) (hN : Stored st N)
     (hs : SubRep S.graph st f N ι) (hcov : FCover S.graph f N ι) (hsum : SummandsAtomic st N)
@@ -365,7 +347,10 @@ theorem closedAC_of_complete_covered (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc
   closedAC_of_complete_of hcomp h2 (fun _ _ h => node_equal_active_covered h2 hrc h) hk hN hs hcov
     hsum hlaws
 
-/-- **`theoryClosed_of_complete` without `I3`**, from `RetiredCovered`. -/
+/-- **`TheoryClosed` from the completion state.** The closure under the
+theory of `f` is derived (`closedAC_of_complete_covered`); the remainder
+(`TheoryClosedRest`: the other AC operators, the ACI and A theories), the
+hash-cons dedup and the sorted pairs are the store's. -/
 theorem theoryClosed_of_complete_covered (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st)
     (hrc : RetiredCovered st) (hk : S.graph.KeysNodup) (hN : Stored st N)
     (hs : SubRep S.graph st f N ι) (hcov : FCover S.graph f N ι) (hsum : SummandsAtomic st N)
@@ -383,55 +368,10 @@ end Chain
 of `TheoryClosed`.** The run is that of `saturation_complete_closed`; the
 store after the fixpoint round holds the nodes of the state's `f`-nodes `N`
 (`SubRep` on the store, `FCover`: no other `f`-node, `Stored`), with atomic
-summands and the laws read alike; `I2` and `I3` make a retired node
-`=_E`-equal to an active one of its class. The dedup is the round's
+summands and the laws read alike; `I2` and `RetiredCovered` make a retired
+node `=_E`-equal to an active one of its class
+(`theoryClosed_of_complete_covered`). The dedup is the round's
 (`StoreWF.dedup`). -/
-theorem saturation_complete_closed_of_complete {sig : Sym → Kind} {rules : List Rule}
-    {L : Sym → OpLaws} (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
-    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKE sig rules A)
-    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainE rules A₀ As)
-    {A : SActRoundN L} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
-    {Lc : Laws n} {St : Set (Monomial n × Monomial n)} {st : State n}
-    (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st) (h3 : I3 Lc st)
-    (hk : A.Sa.graph.KeysNodup) {f : Sym} {N : Finset (Monomial n × Fin n)}
-    {ι : Monomial n × Fin n → NodeId} (hN : Stored st N) (hs : SubRep A.Sa.graph st f N ι)
-    (hcov : FCover A.Sa.graph f N ι) (hsum : SummandsAtomic st N)
-    (hlaws : LawsRead A.Sa L f st Lc) (hsorted : PairsSorted A.Sa)
-    (hrest : TheoryClosedRest A.Sa L f) :
-    ∀ rule ∈ rules, ∀ σ, Matches A.Sa.index rule.atoms σ →
-      FiredE A.Sa.graph L σ rule ∧
-      ∀ a b, Action.union a b ∈ rule.actions →
-        ∀ c₁ c₂, DenN A.Sa.graph L σ a c₁ → DenN A.Sa.graph L σ b c₂ → c₁ = c₂ :=
-  saturation_complete_closed A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
-    (theoryClosed_of_complete hcomp h2 h3 hk hN hs hcov hsum hlaws (hok A hA).store.dedup hsorted
-      hrest)
-
-/-- The same with a completion state with leaf constants: `I2`, `I3` and the
-laws are read on the completion view `st.withAtoms X u`, whose implicit
-nodes make every summand in `X` atomic. -/
-theorem saturation_complete_closed_of_complete_atoms {sig : Sym → Kind} {rules : List Rule}
-    {L : Sym → OpLaws} (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
-    (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKE sig rules A)
-    (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainE rules A₀ As)
-    {A : SActRoundN L} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
-    {Lc : Laws n} {St : Set (Monomial n × Monomial n)} {st : State n} {X : Set (Fin n)}
-    {u : Option (Fin n)} (hcomp : CompleteAtoms Lc St st X u)
-    (h2 : I2 Lc St (st.withAtoms X u)) (h3 : I3 Lc (st.withAtoms X u))
-    (hk : A.Sa.graph.KeysNodup) {f : Sym} {N : Finset (Monomial n × Fin n)}
-    {ι : Monomial n × Fin n → NodeId} (hN : Stored st N) (hs : SubRep A.Sa.graph st f N ι)
-    (hcov : FCover A.Sa.graph f N ι) (hX : ∀ p ∈ N, ∀ y ∈ p.1, y ∈ X)
-    (hlaws : LawsRead A.Sa L f (st.withAtoms X u) Lc) (hsorted : PairsSorted A.Sa)
-    (hrest : TheoryClosedRest A.Sa L f) :
-    ∀ rule ∈ rules, ∀ σ, Matches A.Sa.index rule.atoms σ →
-      FiredE A.Sa.graph L σ rule ∧
-      ∀ a b, Action.union a b ∈ rule.actions →
-        ∀ c₁ c₂, DenN A.Sa.graph L σ a c₁ → DenN A.Sa.graph L σ b c₂ → c₁ = c₂ :=
-  saturation_complete_closed_of_complete A₀ As hmatch h₀ hok hemit₀ hchain hA hfix
-    (CompleteHyps.ofAtoms hcomp) h2 h3 hk (Stored.withAtoms hN X u) (hs.withAtoms X u) hcov
-    (summandsAtomic_withAtoms hX) hlaws hsorted hrest
-
-/-- **`saturation_complete_closed_of_complete` without `I3`**, from
-`RetiredCovered` (`theoryClosed_of_complete_covered`). -/
 theorem saturation_complete_closed_of_complete_covered {sig : Sym → Kind} {rules : List Rule}
     {L : Sym → OpLaws} (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKE sig rules A)
@@ -452,8 +392,10 @@ theorem saturation_complete_closed_of_complete_covered {sig : Sym → Kind} {rul
     (theoryClosed_of_complete_covered hcomp h2 hrc hk hN hs hcov hsum hlaws (hok A hA).store.dedup
       hsorted hrest)
 
-/-- **`saturation_complete_closed_of_complete_atoms` without `I3`**:
-`RetiredCovered` of the stored state, carried to the view. -/
+/-- The same with a completion state with leaf constants: `I2` and the laws
+are read on the completion view `st.withAtoms X u`, whose implicit nodes
+make every summand in `X` atomic, and `RetiredCovered` of the stored state
+is carried to the view (`RetiredCovered.withAtoms`). -/
 theorem saturation_complete_closed_of_complete_atoms_covered {sig : Sym → Kind} {rules : List Rule}
     {L : Sym → OpLaws} (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKE sig rules A)

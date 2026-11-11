@@ -14,9 +14,12 @@ graph `represents st f A`.
   `completion_complete_cancellative_engine`: those of
   `completion_complete_at_convergence` with `hcancel` replaced by
   `LatticeClosed` and `hcp` by its part involving a law instance
-  (`AxiomCP`; the rule-rule part follows from `RoundFixed`).
-  `CompleteHyps.ofLaws` builds it for a law set the model names
-  (`LawSpec`) from the per-law conditions in place of `AxiomCP`.
+  (`AxiomCP`, required for a non-cancellative operator only; the
+  rule-rule part follows from `RoundFixed`). `CompleteHyps.ofLaws` builds
+  it for a law set the model names (`LawSpec`) from the per-law conditions
+  in place of `AxiomCP`; `CompleteHyps.ofLattice` builds it for a
+  cancellative one from lattice closure, with no condition on the critical
+  pairs.
 * `ac_equal_same_class`: two `=_E`-equal active nodes are in one class;
   `ac_equal_same_class_graph` restates it on the graph.
 * `Term` / `ETerm`: the binary ground terms of the operator over the class
@@ -42,8 +45,11 @@ asserted equations `S`: those of `completion_complete_at_convergence` with
 `hcancel` replaced by lattice closure for a cancellative operator, which is
 what the engine's `lattice_round` establishes at its fixpoint, and `hcp`
 replaced by `AxiomCP`, the critical pairs involving a law instance; the
-rule-rule pairs follow from the fixed round (`hcp_of_fixed`). See
-`CC/Main.lean` and `CC/Assemble.lean` for their reading. -/
+rule-rule pairs follow from the fixed round (`hcp_of_fixed`). `AxiomCP`
+is required for a non-cancellative operator only: completeness for a
+cancellative one, every `:inverse` operator among them, goes through
+lattice closure. See `CC/Main.lean` and `CC/Assemble.lean` for their
+reading. -/
 structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : State n) :
     Prop where
   slots : ∃ ss₀ ss : SlotState n,
@@ -53,7 +59,7 @@ structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : S
   hfix : RoundFixed L st
   hlaw : ∀ P Q, L.lawRel P Q → degLex P Q
   hnf_ax : ∀ M N, ¬ Rw (plain n) L.axRules (L.clamp M) N
-  hcp_ax : AxiomCP L st.rules
+  hcp_ax : ¬ L.cancellative → AxiomCP L st.rules
   hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d
   hS : ∀ M N, (M, N) ∈ S →
     ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d
@@ -97,10 +103,39 @@ theorem CompleteHyps.ofLaws (sp : LawSpec n) {S : Set (Monomial n × Monomial n)
   hfix := hfix
   hlaw := sp.hlaw
   hnf_ax := sp.hnf_ax
-  hcp_ax := axiomCP_of_laws sp hfix hc
+  hcp_ax := fun _ => axiomCP_of_laws sp hfix hc
   hcc := hcc
   hS := hS
   hlat := hlat
+
+/-- **`CompleteHyps` from lattice closure, for a cancellative law set.**
+For a law set the model names whose operator is cancellative (every
+`:inverse` law set at the engine, which treats an `:inverse` operator as
+cancellative), the bundle needs no condition on the critical pairs:
+completeness goes through lattice closure (`hlat`, what `lattice_round`
+establishes at its fixpoint, `Lattice.latticeClosed_of_engineFixed`), and
+`AxiomCP` is required for a non-cancellative operator only. -/
+theorem CompleteHyps.ofLattice (sp : LawSpec n) {S : Set (Monomial n × Monomial n)}
+    {st : State n}
+    (slots : ∃ ss₀ ss : SlotState n,
+      SlotState.I5 ss₀ ∧ SlotState.OpsStar ss₀ ss ∧ SlotState.Agrees st ss)
+    (h0 : I0Active st) (hcanon : ∀ c, sp.laws.clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixed sp.laws st)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    (hcancel : sp.laws.cancellative) (hlat : Lattice.LatticeClosed sp.laws st) :
+    CompleteHyps sp.laws S st where
+  slots := slots
+  h0 := h0
+  hcanon := hcanon
+  hfix := hfix
+  hlaw := sp.hlaw
+  hnf_ax := sp.hnf_ax
+  hcp_ax := fun h => absurd hcancel h
+  hcc := hcc
+  hS := hS
+  hlat := fun _ => hlat
 
 /-- The graph of the completion view is the graph of the stored state: the
 view changes the node set, and the graph reads only `find` and the
@@ -123,9 +158,11 @@ theorem ac_equal_same_class {L : Laws n} {S : Set (Monomial n × Monomial n)} {s
     (h : CompleteHyps L S st) {M N : Monomial n} {c d : Fin n}
     (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active) (hMN : E L S M N) :
     st.find c = st.find d := by
-  obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
-  exact Lattice.completion_complete_cancellative_engine h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw
-    h.hnf_ax (hcp_of_fixed h.hfix h.hcp_ax) h.hcc h.hS h.hlat hM hN hMN
+  by_cases hc : L.cancellative
+  · exact Lattice.complete_of_latticeClosed (h.hlat hc) h.hS hM hN (Lattice.E_union_left hMN)
+  · obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
+    exact Lattice.completion_complete_cancellative_engine h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw
+      h.hnf_ax (hcp_of_fixed h.hfix (h.hcp_ax hc)) h.hcc h.hS h.hlat hM hN hMN
 
 /-- On the graph: two `mset` nodes whose monomials are `=_E`-equal are in
 one class. -/

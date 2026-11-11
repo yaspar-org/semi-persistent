@@ -47,6 +47,3 @@ import SemperProofs.CC.Laws.AxiomCP
 #print axioms SemperProofs.CC.LawSpec.hnf_ax
 #print axioms SemperProofs.CC.LawSpec.hcp
 #print axioms SemperProofs.CC.axiomCP_of_laws
-#print axioms SemperProofs.CC.LawSpec.conds_inverse_of_fixed
-#print axioms SemperProofs.CC.LawSpec.conds_combined_of_fixed
-#print axioms SemperProofs.CC.LawSpec.conds_identityInverse_of_fixed

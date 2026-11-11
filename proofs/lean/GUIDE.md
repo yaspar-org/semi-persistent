@@ -1690,7 +1690,8 @@ The invariants (`CC/Defs.lean:244-266`, `CC/Assemble.lean:94`):
   `State.RwL`: a rewrite by a rule of the state, or a law step alone, `M → clamp M` when
   `clamp` changes `M`. A node collapsed by inverse-pair cancellation alone has no rule step,
   so the relation includes the law step. I3 is derived from the reactivation pass at the
-  fixpoint (`I3_of_reactivate_fixed`, Section 5.5), not assumed.
+  fixpoint (`I3_of_reactivate_fixed`, Section 5.5), not assumed; no completeness theorem
+  takes it as a hypothesis.
 - **I5**: each class's `rhs` is the `degLex`-least active node of the class.
 
 `RoundFixed` (`CC/Defs.lean:298`) is the fixpoint condition, stated as the three checks of the
@@ -1811,21 +1812,26 @@ the model names; the law part of `hcp` (`AxiomCP`) is derived from the fixed rou
 per-law conditions on the rules for those law sets (`axiomCP_of_laws`, Section 5.6); no
 engine fact supplies `hcancel`, which Section 5.7 replaces by lattice closure in the bundles.
 The conclusion is completeness at the fixpoint: two theory-equal active nodes are in one class.
-Outside: retired nodes (in a class with their reduct by I3, not by this theorem), leaf
+Outside: retired nodes (in a class with an active node `=_E`-equal to them by `RetiredCovered`
+and `I2`, not by this theorem), leaf
 constants (Section 5.9), the number of rounds, and any run that stopped on a budget.
 
 `h0` constrains only the classes that hold an active node, and `hcc` only the active
 nodes; the statement over every class of `Fin n` is the corollary
 `completion_complete_at_convergence_of_all` (`CC/Main.lean:125`). The theorem keeps `hcp` as
 stated; the bundles `CompleteHyps` and `CompleteAtoms` take instead
-`hcp_ax : AxiomCP L st.rules` (`CC/Assemble.lean`), and `hcp_of_fixed` rebuilds `hcp` from
+`hcp_ax : ¬ L.cancellative → AxiomCP L st.rules` (`CC/Assemble.lean`), and `hcp_of_fixed`
+rebuilds `hcp` from
 `RoundFixed` and `AxiomCP`: `ruleRuleCP_of_fixed` lifts `RoundFixed.cp_joinable_all` to
 plain rewriting (each plain reduct reaches its clamp in at most one law step,
 `clamp_rtg_RwAx`, and a clamped step embeds, `Rw_rtg_embed`). The law theorems of
 `CC/Laws/Main.lean` discharge their rule-rule condition `RuleRuleCP` the same way. For a law
 set `LawSpec` names, `CompleteHyps.ofLaws` and `CompleteAtoms.ofLaws` build the bundles
 from the per-law conditions `LawSpec.Conds` in place of `hcp_ax`, which `axiomCP_of_laws`
-derives (Section 5.6).
+derives (Section 5.6). The bundles need `AxiomCP` for a non-cancellative operator only: for a
+cancellative one `same_class` goes through lattice closure (Section 5.7), and
+`CompleteHyps.ofLattice`, `CompleteAtoms.ofLattice` build them from `hlat` with no condition on
+the critical pairs. Every law set with an inverse is cancellative at the engine.
 
 | Hypothesis | Meaning | Class | Source | Runtime check |
 |---|---|---|---|---|
@@ -1835,7 +1841,7 @@ derives (Section 5.6).
 | `hfix` | the round is a fixpoint (`RoundFixed`) | assumed | the confirmation round of `cc_round` at convergence | tier 2 (`nf_present`, `lhs_reduced`, `cp_joinable`) |
 | `hlaw`, `hnf_ax` | law instances decrease `degLex`; clamp outputs are law-normal | derived | discharged for every `NFLaw` instance in `CC/Laws/` | once per signature |
 | `hcp`, rule-rule part | every critical pair of two rules is joinable under plain rewriting | derived | `ruleRuleCP_of_fixed`, `hcp_of_fixed` from `hfix` | none beyond `hfix` |
-| `hcp`, law part (`AxiomCP`) | every critical pair involving a law instance is joinable | derived for the law sets `LawSpec` names; assumed for an abstract law set | `axiomCP_of_laws` from `hfix` and the per-law conditions `LawSpec.Conds` on left-hand sides (`hu`, `hlhs`, `hax`, `hmatch`), which `CC/Laws/` states; `Laws/InvRulesMain.lean` derives the inverse ones from the fixpoints of R1 to R5 (`LawSpec.conds_inverse_of_fixed`, `conds_combined_of_fixed`); a hypothesis `hcp_ax` for an abstract law set | the per-law conditions, one pass over the rules |
+| `hcp`, law part (`AxiomCP`) | every critical pair involving a law instance is joinable | derived for the law sets `LawSpec` names; not needed for a cancellative law set; assumed for an abstract non-cancellative law set | `axiomCP_of_laws` from `hfix` and the per-law conditions `LawSpec.Conds` on left-hand sides (`hu`, `hlhs`, `hax`, `hmatch`), which `CC/Laws/` states; the bundles take it under `¬ L.cancellative`, so a law set with an inverse (cancellative at the engine) needs none of the inverse conditions (`ofLattice`) | the per-law conditions, one pass over the rules |
 | `hcc` | two active nodes with the same monomial share a class | assumed | hash-consing | tier 1; `debug_check_congruent_dup_invariant` exists as a debug check |
 | `hS` | every asserted pair is two active nodes of one class | assumed | the input | none |
 | `hcancel` | joinability cancels a common summand | limit | not an engine fact (`hcancel_not_derivable`, Section 5.7); `CompleteHyps` takes `hlat` (lattice closure) in its place, which `latticeClosed_of_engineFixed` derives from the fixpoint of `lattice_round` | tier 1, as lattice closure |
@@ -2040,8 +2046,11 @@ instances is confluent, `RwAx_confluent`), and `hS` and `hcancel` (`=_E`-equal m
 joinable, `E_joinable_RwAx`). The normal form of the retired node is then the class's
 right-hand side, a node of the class, and `Reducible` gives the chain at least one step.
 `Bridge.I3_of_reactivate_fixed_complete` takes the same from the bundle `CompleteHyps`
-with `I2`, `hreact`, `RetiredCovered` and `hcancel`; `hcancel` is vacuous for an operator
-that is not cancellative, and the bundle does not give it otherwise.
+with `I2`, `hreact`, `RetiredCovered`, `hax` and `hcancel`; `hax` (the critical pairs
+involving a law instance) and `hcancel` are vacuous for an operator that is not
+cancellative, and the bundle gives neither otherwise. No completeness theorem consumes I3:
+the final theorems use `RetiredCovered` and `I2`, and the inverse law sets go through
+lattice closure (Section 5.6).
 
 The model identifies an engine node with the pair of its monomial and its class, so the
 check's exemption for a copy of an active node (same operator, class and monomial) is the
@@ -2093,19 +2102,49 @@ duplicate-free; under `:inverse` the inverse map is injective and involutive
 (`InvMatching`), left-hand sides hold no inverse pair (`InvNormal`), the rule-inverse pairs
 join (`InverseAxiomCP`), and for the compositions with an inverse the unit is no inverse
 (`InvUnitFree`) and, with a nilpotent order, the nilpotent-inverse pairs join
-(`NilpotentInverseCP`). The `_engine` forms
-(`completion_complete_inverse_engine`, `completion_complete_combined_engine`,
-`completion_complete_identityInverse_engine`, `CC/Laws/InvRulesMain.lean`, `:350`, `:380`,
-`:435`) derive the inverse conditions from the
-fixpoints of the engine's rules R1 to R5 (`RoundFixedInv`, `RoundFixedInvUnit`,
-`RoundFixedInvNil`; `invMatching_of_fixed`, `invUnitFree_of_fixed`,
-`inverseAxiomCP_of_fixed`, `nilpotentInverseCP_of_fixed`) and the inverse nodes present
-(`InvNodes`), and need I3. They keep I3 as a hypothesis: they use it to read a node
-asserted by R3 to R5, retired since, as joinable with its class, and that joinability
-closes the critical pairs of a rule with an inverse pair that confluence, and so
-`I3_of_reactivate_fixed`, needs. Every form takes `hcancel`; for a cancellative operator the
+(`NilpotentInverseCP`). Every form takes `hcancel`; for a cancellative operator the
 bundles use the lattice theorems of Section 5.7 instead. Outside: a law the development has
 no instance for.
+
+**The engine-level statements for the inverse law sets** (`CC/Laws/InvRulesMain.lean`,
+`:273`, `:286`, `:298`).
+
+```lean
+theorem completion_complete_inverse_engine (inv : Fin n → Option (Fin n)) (cancel : Prop)
+    {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hlat : Lattice.LatticeClosed (Laws.inverse inv cancel) st)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
+    (hMN : E (Laws.inverse inv cancel) S M N) : st.find c = st.find d
+
+theorem completion_complete_combined_engine (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
+    (inv : Fin n → Option (Fin n)) (cancel : Prop) (hu : InvUnitFree inv u) ...
+    (hlat : Lattice.LatticeClosed (Laws.combined u k hk inv cancel hu) st) (hS : ...) ...
+    (hMN : E (Laws.combined u k hk inv cancel hu) S M N) : st.find c = st.find d
+
+theorem completion_complete_identityInverse_engine (u : Fin n) (inv : Fin n → Option (Fin n))
+    (cancel : Prop) (hu : InvUnitFree inv u) ...
+    (hlat : Lattice.LatticeClosed (Laws.identityInverse u inv cancel hu) st) (hS : ...) ...
+    (hMN : E (Laws.identityInverse u inv cancel hu) S M N) : st.find c = st.find d
+```
+
+**Reading.** At a lattice-closed state in which every asserted pair is a pair of active
+classmates, two active nodes equal in the inverse law set's theory are in one class.
+Completeness for the inverse law sets goes through lattice closure: the engine accepts
+`:inverse` only on an operator it treats as cancellative (`egraph/src/sortcheck.rs:1776`,
+`let cancellative = cancellative || inverse.is_some();`), runs `lattice_round` for every
+cancellative operator after a full completion round that changes nothing
+(`egraph/src/egraph.rs:2625-2631`), and the fixpoint of `lattice_round` is lattice-closed
+(`latticeClosed_of_engineFixed`, Section 5.7). The proof is
+`Lattice.complete_of_latticeClosed`, which needs no cancellation and no critical pair:
+`E_mem_lattice` holds for every law set. `hu` is the proof `Laws.combined` and
+`Laws.identityInverse` carry; the fixed round under R2 supplies it (`invUnitFree_of_fixed`).
+No hypothesis on retired nodes, on the fixpoints of R1, R3, R4, R5 or on left-hand sides
+remains. The rewriting route (`completion_complete_inverse`, `_combined`,
+`_identityInverse` of `CC/Laws/Main.lean`, with the inverse conditions as hypotheses) remains
+for a non-cancellative inverse law set, which the engine rejects. Outside: an `:inverse`
+operator on which `lattice_round` does not run, which the engine does not build.
 
 The engine applies the five inverse rules R1 to R5 in `inverse_law_repair`
 (`egraph/src/egraph.rs:3361`). `CC/Laws/InvRules.lean` models them as inference steps;
@@ -2133,15 +2172,18 @@ inverse_rules(st):                                    -- inverse_law_repair
 ```
 
 Each `join(P, Q)` normalizes both sides and merges their classes. The model states the
-fixpoints (`RoundFixedInv`, `RoundFixedInvUnit`, `RoundFixedInvNil`) and derives the four
-inverse conditions from them; the engine generates the pairs for touched rules in
-intermediate rounds and for every rule in the full round.
+fixpoints (`RoundFixedInv`, `RoundFixedInvUnit`, `RoundFixedInvNil`) and derives
+`InvMatching` (R1, `invMatching_of_fixed`) and `InvUnitFree` (R2, `invUnitFree_of_fixed`)
+from them; the engine generates the pairs for touched rules in intermediate rounds and for
+every rule in the full round. Completeness for the inverse law sets does not use R3 to R5:
+it goes through lattice closure.
 
-**Adequacy.** The three `_engine` theorems take `hcancel`, `hcc`, `hS`, the minimal-monomial
-hypotheses, `I3` and conditions on left-hand sides, and with the cancellative operator
-`inv_rules_sound` requires, `hcancel` is the hypothesis Section 5.7 shows the engine does not
-establish; the `_atoms` forms of Section 5.9 and the bundles take lattice closure in its
-place.
+**Adequacy.** The three `_engine` theorems take lattice closure and `hS`, and nothing the
+engine does not establish: `hlat` is the fixpoint of `lattice_round`, which runs because the
+engine treats every `:inverse` operator as cancellative, the operator `inv_rules_sound`
+requires. The seven law theorems take `hcancel`, which Section 5.7 shows the engine does not
+establish for a cancellative operator; the `_atoms` forms of Section 5.9 and the bundles take
+lattice closure in its place.
 
 **`AxiomCP` from the per-law conditions** (`CC/Laws/AxiomCP.lean`). `LawSpec n` enumerates
 the law sets the model names, with their parameters: `plain`, `identity u cancel`,
@@ -2182,10 +2224,18 @@ hypotheses the same way. `CompleteHyps.ofLaws` (`CC/Bridge/Modulo.lean`) and
 `CompleteAtoms.ofLaws` (`CC/AtomsEngine.lean`) build the bundles from the engine-side
 hypotheses and `LawSpec.Conds` in place of `hcp_ax`, `hlaw` and `hnf_ax`; the existing
 fields and theorems are unchanged, and `AtomsWitness.witness_complete` goes through
-`CompleteAtoms.ofLaws` at `LawSpec.plain`. The inverse conditions are what the fixpoints of
-R1 to R5 establish: `LawSpec.conds_inverse_of_fixed`, `conds_identityInverse_of_fixed` and
-`conds_combined_of_fixed` assemble `Conds` from `RoundFixedInv`, `RoundFixedInvUnit`,
-`RoundFixedInvNil`, `InvNodes`, `I3` and `Converged`, as the `_engine` theorems do.
+`CompleteAtoms.ofLaws` at `LawSpec.plain`. The field `hcp_ax` is required under
+`¬ L.cancellative` only: for a cancellative law set the bundles' `same_class` takes the
+lattice branch. `CompleteHyps.ofLattice` (`CC/Bridge/Modulo.lean:118`) and
+`CompleteAtoms.ofLattice` (`CC/AtomsEngine.lean:160`) build the bundles for a cancellative law
+set `LawSpec` names from `hcancel : sp.laws.cancellative` and `hlat`, with no `LawSpec.Conds`;
+every law set with an inverse is built this way at the engine.
+
+```lean
+theorem CompleteHyps.ofLattice (sp : LawSpec n) ... (hfix : RoundFixed sp.laws st) ...
+    (hcancel : sp.laws.cancellative) (hlat : Lattice.LatticeClosed sp.laws st) :
+    CompleteHyps sp.laws S st
+```
 
 The engine accepts, on an AC operator, the tag sets plain, `:identity`, `:idempotent`,
 `:idempotent :identity`, `:identity :nilpotent k`, `:identity :inverse` and
@@ -2201,8 +2251,8 @@ law sets under `InvUnitFree`, which R2 supplies (`invUnitFree_of_fixed`); the co
 with the idempotent law leaves out the idempotent generator at the unit, `{u, u} → {u}`,
 which is not an instance of the composite normal form and which `{u} → ∅` derives. Outside:
 the conditions `hlhs` and `hax` of the nilpotent and idempotent laws and `hu` of the identity
-law, which are stated on the rules and not derived from a fixpoint structure as the inverse
-ones are.
+law, which are stated on the rules and not derived from a fixpoint structure, for a
+non-cancellative law set.
 
 ### 5.7 The lattice round
 
@@ -2275,7 +2325,9 @@ term its node holds (`nodeEqs`, `classEqs`); that reading agrees with the core t
 under `FlatSound`, which is not shown invariant under `Infer`. In the cancellative branch of
 `completion_complete_cancellative_engine`, the proof uses only `LatticeClosed` and `hS`. The
 variant with leaf constants, `completion_complete_cancellative_engine_atoms`, is in
-Section 5.9.
+Section 5.9. The engine treats every `:inverse` operator as cancellative, so the inverse
+law sets take this branch: their engine-level statements (Section 5.6) are
+`complete_of_latticeClosed` at those law sets.
 
 **Pseudo-code: the completion loop, the confirmation round and the lattice round.**
 
@@ -2425,9 +2477,10 @@ over the view's rules, which include `M → {x}`. `hcc` is on the stored nodes o
 unit alike: any two of them that are theory-equal are in one class. The proof applies
 `completion_complete_at_convergence` to the view, with `hfix.roundFixed` and
 `hfix.congr hcc`. `CompleteAtoms` (`:277`) packages the hypotheses with `hlat` in place of
-`hcancel` and `AxiomCP` in place of the law part of `hcp`, which `CompleteAtoms.ofLaws`
-derives from the per-law conditions for the law sets `LawSpec` names (Section 5.6); its
-corollaries name the cases:
+`hcancel` and `AxiomCP` in place of the law part of `hcp`, required for a non-cancellative
+operator only, which `CompleteAtoms.ofLaws` derives from the per-law conditions for the law
+sets `LawSpec` names (Section 5.6); `CompleteAtoms.ofLattice` builds the bundle for a
+cancellative law set from lattice closure of the view alone; its corollaries name the cases:
 `nodes` (two stored nodes), `atom_class` (`:317`, a node theory-equal to `{x}` is in `x`'s
 class), `atoms`, `unit_class` and `materialized`. Outside: a class that holds an `f`-node and
 another operator's node and is no child, which the engine marks atomic and the model's store
@@ -2439,20 +2492,22 @@ does not see.
 | `h0` | the view | assumed | an atomic class's `rhs` is `{x}` (`class_rhs_into`) | tier 1, "a class with none is a leaf whose normal form is `{c}`" |
 | `hcanon` | the stored `rhs` | assumed | the output of `nary_canon` | tier 1 |
 | `hfix` (`RoundFixedA`) | the view, plus the collapse | assumed; the collapse derived at `A := atomicOf st` | the confirmation round; `atomCollapse_of_addFixed` derives the collapse from `AddFixed`, a hypothesis on the normalize pass | tier 2, as `nf_present` and `cp_joinable` |
-| `hcp` | the view's rules, which include `M → {x}` | rule-rule part derived from `RoundFixedA`; law part derived for the law sets `LawSpec` names, assumed for an abstract law set | `hcp_of_fixed` at `hfix.roundFixed`; `CompleteAtoms.ofLaws` takes `LawSpec.Conds` on the view's rules and `axiomCP_of_laws` supplies `hcp_ax` | tier 2, the per-law conditions over the view's rules |
+| `hcp` | the view's rules, which include `M → {x}` | rule-rule part derived from `RoundFixedA`; law part derived for the law sets `LawSpec` names, not needed for a cancellative law set, assumed for an abstract non-cancellative law set | `hcp_of_fixed` at `hfix.roundFixed`; `CompleteAtoms.ofLaws` takes `LawSpec.Conds` on the view's rules and `axiomCP_of_laws` supplies `hcp_ax`; `CompleteAtoms.ofLattice` needs neither for a cancellative law set (every law set with an inverse) | tier 2, the per-law conditions over the view's rules |
 | `hcc` | the stored active nodes | assumed | hash-consing | tier 1 |
 | `hS` | the view: an asserted pair may relate a node to a constant | assumed | the input | none |
 | `hcancel` | the view's rules | limit | not an engine fact (Section 5.7); `CompleteAtoms` takes `hlat : L.cancellative → LatticeClosed L (st.withAtoms A u)` in its place | tier 1, as lattice closure |
 | `A` | a parameter; the `_atomic` corollaries take `atomicOf st` (`CC/AtomicOf.lean`), the set the `atomic` bit defines on the store of one operator | derived for the model's store, assumed for the bit | a child of a stored node (`add_use`) or a class with no `f`-node (`register_if_fresh`); a class holding an `f`-node and another operator's node, never a child, is outside the model's store | tier 1, "the bit is set iff `atomicOf`"; the five `atomic_bit_*.egg` fixtures probe the transitions |
 
 `CC/AtomsEngine.lean` restates the engine-level theorems on the view:
-`completion_complete_cancellative_engine_atoms` (`:62`, `LatticeClosed` of the view in place
-of `hcancel`), `completion_complete_inverse_engine_atoms` (`:85`),
-`completion_complete_combined_engine_atoms` (`:112`, the unit as the implicit node
-`(∅, u)`) and `completion_complete_identityInverse_engine_atoms` (`:157`). `I3_withAtoms`
-(`:37`) carries the retirement invariant to the view, and
-`invNodes_withAtoms` (`:50`) derives the one-element nodes the inverse rules R1 to R5 are
-stated on from the implicit nodes, when every class a `g`-node touches is atomic.
+`completion_complete_cancellative_engine_atoms` (`:66`, `LatticeClosed` of the view in place
+of `hcancel`), `completion_complete_inverse_engine_atoms` (`:90`),
+`completion_complete_combined_engine_atoms` (`:102`, the unit as the implicit node
+`(∅, u)`) and `completion_complete_identityInverse_engine_atoms` (`:115`); the three inverse
+forms take `LatticeClosed` of the view and `hS` on the view, as in Section 5.6. `I3_withAtoms`
+(`:43`) carries the retirement invariant to the view, and
+`invNodes_withAtoms` (`:54`) derives the one-element nodes the inverse rules R1 to R5 are
+stated on from the implicit nodes, when every class a `g`-node touches is atomic; with the
+fixed round under R2 it gives the `InvUnitFree` proof of the law set.
 
 **The bit and `add`** (`CC/AtomicOf.lean`). The engine keeps one `atomic` bit per class, set
 and never cleared: `add_use` (`containers/src/eclasses.rs`) sets it on every child of a
@@ -2834,8 +2889,8 @@ sequence store (`dedup_of_inv`, `Rounds/SeqSplice.lean:234`), but no theorem bui
   `saturation_complete_closed` adds `TheoryClosed`, the store reading of the completion
   completeness theorem, under which every value `add` builds for a right-hand side is in the
   match root's class (`denE_denN_eq`). `Final/Closed.lean` derives `TheoryClosed` from the
-  completion state through the correspondence (`theoryClosed_of_complete`), and
-  `saturation_complete_closed_of_complete` takes the completion hypotheses in its place. `PersistFails.sa_not_closed` and
+  completion state through the correspondence (`theoryClosed_of_complete_covered`), and
+  `saturation_complete_closed_of_complete_covered` takes the completion hypotheses in its place. `PersistFails.sa_not_closed` and
   `PersistFails.completed` place the counter-model: its after-store is not closed under the
   theory; its completion is, and reaches the instance.
 - `Fidelity/Sound.lean`: `denN_sound` (`:123`) states that what the actions build denotes the
@@ -2899,8 +2954,8 @@ merge-membership delta and the order of the worklist are summarized by `Round.WF
 completion on, the engine does not re-match and completion joins the two spellings:
 `saturation_complete_closed` (`Fidelity/RecanonComplete.lean`) takes the store's closure
 under the theory (`TheoryClosed`) in place of the routing, and
-`saturation_complete_closed_of_complete` (`Final/Closed.lean`) derives the closure from the
-completion state (statements below).
+`saturation_complete_closed_of_complete_covered` (`Final/Closed.lean`) derives the closure
+from the completion state (statements below).
 
 ```lean
 theorem inv_step_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
@@ -2958,19 +3013,19 @@ structure LawsRead (S : Store) (L : Sym → OpLaws) (f : Sym) (st : State n) (Lc
 def SummandsAtomic (st : State n) (N : Finset (Monomial n × Fin n)) : Prop :=
   ∀ p ∈ N, ∀ y ∈ p.1, HoldsAtom st (clsId (st.find y)) y
 
-theorem theoryClosed_of_complete (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st)
-    (h3 : I3 Lc st) (hk : S.graph.KeysNodup) (hN : Stored st N) (hs : SubRep S.graph st f N ι)
-    (hcov : FCover S.graph f N ι) (hsum : SummandsAtomic st N) (hlaws : LawsRead S L f st Lc)
+theorem theoryClosed_of_complete_covered (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st)
+    (hrc : RetiredCovered st) (hk : S.graph.KeysNodup) (hN : Stored st N)
+    (hs : SubRep S.graph st f N ι) (hcov : FCover S.graph f N ι) (hsum : SummandsAtomic st N) (hlaws : LawsRead S L f st Lc)
     (hdedup : ∀ id₁ id₂ nd, (id₁, nd) ∈ S.nodes → (id₂, nd) ∈ S.nodes → S.find id₁ = S.find id₂)
     (hsorted : PairsSorted S) (hrest : TheoryClosedRest S L f) : TheoryClosed S L
 
-theorem saturation_complete_closed_of_complete {sig : Sym → Kind} {rules : List Rule}
+theorem saturation_complete_closed_of_complete_covered {sig : Sym → Kind} {rules : List Rule}
     {L : Sym → OpLaws} (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKE sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainE rules A₀ As)
     {A : SActRoundN L} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged)
     {Lc : Laws n} {St : Set (Monomial n × Monomial n)} {st : State n}
-    (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st) (h3 : I3 Lc st)
+    (hcomp : CompleteHyps Lc St st) (h2 : I2 Lc St st) (hrc : RetiredCovered st)
     (hk : A.Sa.graph.KeysNodup) {f : Sym} {N : Finset (Monomial n × Fin n)}
     {ι : Monomial n × Fin n → NodeId} (hN : Stored st N) (hs : SubRep A.Sa.graph st f N ι)
     (hcov : FCover A.Sa.graph f N ι) (hsum : SummandsAtomic st N)
@@ -3002,7 +3057,7 @@ build (`DenN`) in that class, and `saturation_complete_closed` says that at the 
 every union a rule asks for holds between any values of its two sides: a re-match would
 merge nothing. The conclusion is `FiredE`, not `FiredN`: the new spelling need not be stored
 as a node, since completion materializes the normal form of the old node (`nf_present`), not
-every spelling. `theoryClosed_of_complete` (`Final/Closed.lean`) derives `TheoryClosed` from
+every spelling. `theoryClosed_of_complete_covered` (`Final/Closed.lean`) derives `TheoryClosed` from
 the completion state of one AC operator `f`: the store holds the nodes of a set `N` of stored
 nodes of the state, active or retired, under `ι` (`SubRep` on the store, `Stored`) and no
 other `f`-node (`FCover`); the class of each summand holds the summand's one-element monomial
@@ -3010,11 +3065,9 @@ other `f`-node (`FCover`); the class of each summand holds the summand's one-ele
 `summandsAtomic_withAtoms`); the laws the store reads for `f` agree with the state's
 (`LawsRead`: the unit's class holds the empty node, the nilpotent order is at least two and a
 law instance on every atom, an inverse pair is a law instance on the two atoms its classes
-hold); `I2` and `I3` relate a retired node to an active one of its class
-(`node_equal_active`). That relation needs no reduction: the `_covered` forms
-(`closedAC_of_complete_covered`, `theoryClosed_of_complete_covered`) take `RetiredCovered`
-in place of `I3`, and `node_equal_active_covered` gives the active classmate from it and
-`I2` alone. The proof is the inverse of `ACStep.mapE`. A store class is read as
+hold); `RetiredCovered` and `I2` relate a retired node to an active one of its class
+(`node_equal_active_covered`). That relation needs no reduction, so no retirement discipline
+is assumed. The proof is the inverse of `ACStep.mapE`. A store class is read as
 the monomial of a node of the state in that class (`readClass`, `0` for a class holding
 none), a child multiset as the sum of the readings (`readMset`), and one normalization step
 on the store is an `=_E`-equality of the readings (`ACStep.readE`): a splice through the node
@@ -3030,11 +3083,10 @@ closure under the theory of every other AC operator (`ClosedAC`; one completion 
 operator derives each) and under the ACI and A theories of every operator (`ClosedACI`,
 `ClosedA`), which the completion state does not model; `closedAC_of_absent`,
 `closedACI_of_absent` and `closedA_of_absent` discharge it for an operator with no stored
-node of the kind and no law. `saturation_complete_closed_of_complete` is
+node of the kind and no law. `saturation_complete_closed_of_complete_covered` is
 `saturation_complete_closed` with these hypotheses in place of `TheoryClosed`, and its
-`_atoms` form takes `CompleteAtoms`, with `I2`, `I3` and the laws read on the completion view
-and the summands in the atomic set. `saturation_complete_closed_of_complete_covered` and its
-`_atoms` form take `RetiredCovered` of the stored state in place of `I3`. `witness_theoryClosed` and
+`_atoms_covered` form takes `CompleteAtoms`, with `I2` and the laws read on the completion view,
+the summands in the atomic set, and `RetiredCovered` of the stored state. `witness_theoryClosed` and
 `witness_saturation_complete_closed` (`Final/Witness.lean`) prove every hypothesis on the run
 of Section 7.7. The counter-model of `denN_persist_fails` fits:
 `PersistFails.sa_not_closed` shows its after-store is not closed under the theory
@@ -3211,7 +3263,7 @@ removes both.
 | `h₀`, `hok` | rule atoms well formed; per round: `WF`, tracking, `PersistFixed`, no subsumption | assumed | the fixed-arity nodes persist literally in every rebuild; n-ary nodes are not constrained here, the routing of `AChain` covers a non-literal rebuild |
 | `hemit₀`, `hchain` | every naive or variant binding is applied | assumed | the engine's matcher and `apply.rs` |
 | `hfix` | round `A` changes nothing | derived in the `_engine` forms | `engine_stop_unchanged` derives it from the stop test; this form takes it as stated |
-| `hcomp` | completion has converged (`CompleteHyps`; `CompleteAtoms` in the leaf-constant form) | assumed, with the derived and limit parts of Section 5.3 | includes `hlat` (lattice closure, in place of `hcancel`) and `hcp_ax` (`AxiomCP`), which `CompleteHyps.ofLaws` and `CompleteAtoms.ofLaws` derive from the per-law conditions for the law sets `LawSpec` names |
+| `hcomp` | completion has converged (`CompleteHyps`; `CompleteAtoms` in the leaf-constant form) | assumed, with the derived and limit parts of Section 5.3 | includes `hlat` (lattice closure, in place of `hcancel`) and `hcp_ax` (`AxiomCP`, required for a non-cancellative operator only), which `CompleteHyps.ofLaws` and `CompleteAtoms.ofLaws` derive from the per-law conditions for the law sets `LawSpec` names; for a cancellative law set, every law set with an inverse among them, `CompleteHyps.ofLattice` and `CompleteAtoms.ofLattice` build the bundle from `hlat` alone; no retirement discipline (I3) is assumed |
 | `henum` | `act` is the set of stored active nodes | definitional | |
 | `hG` | the fixpoint snapshot is the represented graph | limit of this form | no engine index satisfies it (Section 7.5); `SubRep` on the index replaces it in `saturation_modulo_complete_store_atoms` (Section 7.7) |
 | `rule.atoms = ...`, `P.head = some f` | the rule's query is one pattern with head `f` | side condition | no `Eq` atoms, no globals |
@@ -3379,10 +3431,10 @@ between `st` and the rounds. A match rooted at a retired node is covered by the 
 below. The completion settings in which the engine does not re-match
 after a spelling change are covered at the store level by `saturation_complete_closed`
 (Section 6.5), which takes the store's closure under the theory (`TheoryClosed`) in place of
-the routing of `SChainN`; `saturation_complete_closed_of_complete` derives the closure from
-the completion state, up to the remainder `TheoryClosedRest` (Section 9).
+the routing of `SChainN`; `saturation_complete_closed_of_complete_covered` derives the closure
+from the completion state, up to the remainder `TheoryClosedRest` (Section 9).
 
-**`saturation_modulo_complete_store_retired`** (`Final/Store.lean`). The
+**`saturation_modulo_complete_store_retired_covered`** (`Final/Store.lean`). The
 engine keeps a collapsed node (`FLAG_AC_COLLAPSED`, retired in the model) in the index and
 matchable, so `FCover` over `act` fails on every run in which completion collapsed a node
 (`not_cover`, below). `SubRepR G st f act ret ι` (`CC/Bridge/Sub.lean`) extends the
@@ -3391,8 +3443,8 @@ the children of `mkNode` and its class in `st`; `Stored st ret` says they are no
 `st`. With `FCover` over `act ∪ ret`, the theorem concludes for every match of the index:
 
 ```lean
-theorem saturation_modulo_complete_store_retired ...
-    (hcomp : CompleteHyps L S st) (h2 : I2 L S st) (h3 : I3 L st)
+theorem saturation_modulo_complete_store_retired_covered ...
+    (hcomp : CompleteHyps L S st) (h2 : I2 L S st) (hrc : RetiredCovered st)
     (hw : Within st act) (hret : Stored st ret)
     (hs : SubRepR A.Sa.index st f act ret ι) (hcov : FCover A.Sa.index f (act ∪ ret) ι) :
     ∀ rule ∈ rules, ∀ (P : Pat) (r : Var), rule.atoms = (atoms P r).map QAtom.scan →
@@ -3412,15 +3464,12 @@ active or retired, where the pattern matches, and there is an active node `q` of
 `p'`'s class and `=_E`-equal to it, whose class the root binds and at which the pattern
 matches at the class level; every active `p ∈ act` `=_E`-equal to `p'` gives the same
 class, read in the index as `A.Sa.find (ι p)`. For an active `p'`, `q` is `p'` itself. For a
-retired `p'`, `node_reduces_active` (`CC/Bridge/Sub.lean`) gives `q`: `I3` reduces a retired
-node, by the rules and the laws, to a node of its class, smaller under `≫`, so well-founded
-induction on the step relation (`RwL_wf`) reaches an active one, and `I2` (`RwL_rtg_sound`)
-makes the reduction an `=_E`-equality (`node_equal_active`). `I2` is a hypothesis beside
-`CompleteHyps`. The conclusion needs only an active classmate `=_E`-equal to `p'`, not a
-reduction: the `_retired_covered` forms take `RetiredCovered` in place of `I3`, and
-`node_equal_active_covered` gives `q` from it and `I2`, with no confluence and no `hcancel`.
-`RetiredCovered` is an `Infer` invariant (Section 5.1); the leaf-constant form `saturation_modulo_complete_store_retired_atoms`
-takes them on the completion view, whose rules include `M → {x}` for an atomic class and
+retired `p'`, the conclusion needs only an active classmate `=_E`-equal to `p'`, not a
+reduction: `RetiredCovered` (a retired node is a stored node whose class holds an active
+node) and `I2` give it (`node_equal_active_covered`), with no confluence, no `hcancel` and no
+retirement discipline. `I2` is a hypothesis beside `CompleteHyps`. `RetiredCovered` is an
+`Infer` invariant (Section 5.1); the leaf-constant form
+`saturation_modulo_complete_store_retired_atoms_covered` takes `I2` on the completion view, whose rules include `M → {x}` for an atomic class and
 whose `q` may be an implicit node of a leaf constant. Matching on a retired node is sound
 in the engine because the node is still a member of its class, so a match rooted at it is a
 match at that class, and completeness is unaffected because every match it yields is
@@ -3471,7 +3520,7 @@ which completion collapsed a node. `witness_saturation_modulo_complete_retired` 
 `saturation_modulo_complete_store_retired_atoms_covered` on the same run, with `ret = {p₂}`
 (`{a, b, d}`), `Stored`, `SubRepR` and `FCover` over `act ∪ ret` proved (`hyp_ret`,
 `hyp_subR`, `hyp_coverR`), `I2` on the completion view (`witness_I2`: `{a, b}` with `c`,
-`{a, b, d}` with `{c, d}`) and `RetiredCovered` of the stored state in place of `I3`
+`{a, b, d}` with `{c, d}`) and `RetiredCovered` of the stored state
 (`witness_covered_stored`, derived from the one-`retire` run `wst_reachable`). The second rewrite matches `{a, b, d}`
 only (`match_cases₂`: three distinct elements, which no two-element node holds), and
 `witness_fires_retired` reads the conclusion at the match `x ↦ a, y ↦ b, z ↦ d` rooted at
@@ -3487,12 +3536,13 @@ running the plan. `witness_atomicOf`, `witness_complete_atomic` and
 relates the completion state to the rounds or to the engine's rebuild, so the theorem says
 nothing about a run whose index does not hold the active nodes of a converged state. The
 minimal-monomial hypotheses stay in `CompleteAtoms`; `hcp` is reduced to `AxiomCP`, which
-the per-law conditions discharge for the law sets `LawSpec` names (`CompleteAtoms.ofLaws`),
-and `hcancel` is replaced by lattice closure. The engine's completion settings, which do not
+the per-law conditions discharge for the law sets `LawSpec` names (`CompleteAtoms.ofLaws`)
+and which a cancellative law set does not need (`CompleteAtoms.ofLattice`), and `hcancel` is
+replaced by lattice closure. The engine's completion settings, which do not
 re-match, reach every instance at the class level: `saturation_complete_closed` takes the
 store's closure under the theory (`TheoryClosed`) in place of the routing of `SChainN`, and
-`saturation_complete_closed_of_complete` derives the closure from `CompleteHyps`, `I2`, `I3`
-and the correspondence on the store, leaving the other operators and the ACI and A theories
+`saturation_complete_closed_of_complete_covered` derives the closure from `CompleteHyps`, `I2`,
+`RetiredCovered` and the correspondence on the store, leaving the other operators and the ACI and A theories
 as the remainder `TheoryClosedRest`. The covering
 form over `act` alone excludes any index holding a collapsed `f`-node; the retired form takes
 `I2`, `RetiredCovered` (an `Infer` invariant) and `SubRepR` as further hypotheses and
@@ -3509,9 +3559,9 @@ hypotheses are those of `CompleteAtoms` (the table of Section 5.9). The bridge a
 | `hw : Within st act` | every node of `act` is an active node of `st` | definitional | `act` is chosen as the active nodes |
 | `hs : SubRep A.Sa.index st f act ι` | each `p ∈ act` is stored in the index under `ι p` with the children of `mkNode st f p`, in the class `st` gives it | assumed | the correspondence between the engine's index and the completion state of the model; no theorem relates the two (Section 9) |
 | `hfix : A.Unchanged` | the round changes nothing | derived | `engine_stop_unchanged`, in `saturation_modulo_complete_store_engine` |
-| `FCover` (the `_cover` form) | every `f`-node of the index is the node of some `p ∈ act` | limit | fails on every run in which completion collapsed a node (`not_cover`); the `_retired` form takes `SubRepR`, `I2`, `I3` instead, and `_retired_covered` takes `RetiredCovered` (derived along a run) in place of `I3` |
-| `TheoryClosed` (`saturation_complete_closed`, completion on) | the store is closed under the theory | derived | `theoryClosed_of_complete`, from `CompleteHyps`, `I2`, `I3` (`RetiredCovered` in its place in `theoryClosed_of_complete_covered`), `SubRep` and `FCover` on the store, `SummandsAtomic`, `LawsRead`, the dedup and `PairsSorted`, in `saturation_complete_closed_of_complete` (Section 6.5) |
-| `TheoryClosedRest` (`saturation_complete_closed_of_complete`) | the other AC operators and the ACI and A theories are closed | assumed | one completion state per AC operator; the ACI and A theories have no completion state (Section 9) |
+| `FCover` (the `_cover` form) | every `f`-node of the index is the node of some `p ∈ act` | limit | fails on every run in which completion collapsed a node (`not_cover`); the `_retired_covered` form takes `SubRepR`, `I2` and `RetiredCovered` (derived along a run) instead |
+| `TheoryClosed` (`saturation_complete_closed`, completion on) | the store is closed under the theory | derived | `theoryClosed_of_complete_covered`, from `CompleteHyps`, `I2`, `RetiredCovered`, `SubRep` and `FCover` on the store, `SummandsAtomic`, `LawsRead`, the dedup and `PairsSorted`, in `saturation_complete_closed_of_complete_covered` (Section 6.5) |
+| `TheoryClosedRest` (`saturation_complete_closed_of_complete_covered`) | the other AC operators and the ACI and A theories are closed | assumed | one completion state per AC operator; the ACI and A theories have no completion state (Section 9) |
 | a theory-equal term absent from the graph; a two-item match whose children classes merge | | limit | `per_node_form_fails`; `proofs/repro/ac_collapse.egg` (`NoCollapse`) |
 
 ## 8. Conformance and mirror tests, and the fixtures
@@ -3657,14 +3707,13 @@ models, and the limits that stay by design.
 2. **The remainder of `TheoryClosed`.** With completion on the engine does not re-match
    after a spelling change, and `saturation_complete_closed` reaches every instance at the
    class level under `TheoryClosed`, the store's closure under the theory.
-   `theoryClosed_of_complete` (`Final/Closed.lean`) derives it from `CompleteHyps`, `I2`, `I3`
-   (or `RetiredCovered` in its place, `theoryClosed_of_complete_covered`)
-   and the correspondence on the store (`SubRep`, `FCover`, `SummandsAtomic`, `LawsRead`) for
-   the AC operator of the completion state, and `saturation_complete_closed_of_complete`
-   takes those hypotheses in its place. What stays a hypothesis is `TheoryClosedRest`: the
+   `theoryClosed_of_complete_covered` (`Final/Closed.lean`) derives it from `CompleteHyps`,
+   `I2`, `RetiredCovered` and the correspondence on the store (`SubRep`, `FCover`,
+   `SummandsAtomic`, `LawsRead`) for the AC operator of the completion state, and
+   `saturation_complete_closed_of_complete_covered` takes those hypotheses in its place. What stays a hypothesis is `TheoryClosedRest`: the
    closure under the theory of every other AC operator, and under the ACI and A theories of
    every operator, which `CC/` does not model (`ClosedACI`, `ClosedA`). Closes it: one
-   completion state per AC operator in `saturation_complete_closed_of_complete` (a family in
+   completion state per AC operator in `saturation_complete_closed_of_complete_covered` (a family in
    place of the single state), and a set-node correspondence for the ACI operators under
    which `ACIStep` reads in a completion state with the idempotent law; the A theory has no
    completion theorem (gap 10). Acceptance: `TheoryClosedRest` reduced to its `seq` field.
@@ -3674,8 +3723,8 @@ models, and the limits that stay by design.
    place of `hcp_ax`. What remains: the conditions `hlhs` and `hax` of the nilpotent and
    idempotent laws (counts below the threshold on every left-hand side; the engine's axiom
    pairs joinable) and `hu` of the identity law are stated on the rules and derived from no
-   fixpoint structure, where the inverse conditions are derived from `RoundFixedInv`,
-   `RoundFixedInvUnit` and `RoundFixedInvNil`. Closes it: a fixpoint structure for the axiom
+   fixpoint structure; the inverse law sets need no such condition, since they are
+   cancellative at the engine and go through lattice closure (`ofLattice`). Closes it: a fixpoint structure for the axiom
    pairs of the count-threshold laws (the per-rule pairs of `cc_round`, stated as
    `RoundFixedInv.r3_left` is) with a theorem deriving `hax` from it. Acceptance:
    `LawSpec.conds_nilpotent_of_fixed` and `conds_idempotent_of_fixed`, audited in
@@ -3781,22 +3830,12 @@ models, and the limits that stay by design.
     `seq_collect.rs:252`) are not in the repository. Closes it: one pass over the docstrings
     replacing line numbers by function names. Acceptance: no docstring cites a Rust line
     number, and every fixture a docstring names exists.
-13. **I3 for the inverse laws.** The final theorems need of a retired node only an active
-    classmate `=_E`-equal to it, which `RetiredCovered` and `I2` give; `RetiredCovered` is an
-    `Infer` invariant. The three `_engine` theorems of Section 5.6 and the
-    `LawSpec.conds_*_of_fixed` constructors need more: a node asserted by R3 to R5, possibly
-    retired since, joinable with its class's right-hand side, which closes the critical
-    pairs of a rule with an inverse pair. They keep I3 (restated over `State.RwL`).
-    `I3_of_reactivate_fixed` derives I3 through confluence, which needs those pairs. An
-    induction on `≫` that derives both below a bound does not close: the step "a retired
-    node `P` below the bound reduces to its class's right-hand side, given confluence below
-    the bound" needs `P` joinable with an active classmate, and the state gives only the
-    `=_E`-equality of the two (`I2`), whose derivation passes through monomials above the
-    bound (the `congr` and `trans` cases of `E_joinable_RwAx`); the static facts without
-    `I2` and `hS` do not suffice (`ReactivateCE.reactivate_fixed_not_I3`). Closes it: an
-    invariant carried along the run that keeps each retired node joinable with its class as
-    the rules change (a proof-ordering argument), or a bounded `=_E`. Acceptance: `_engine`
-    forms that take `st.reactivate L = st` in place of `I3`.
+
+No completeness theorem assumes the retirement discipline I3: the final theorems read a
+retired node through `RetiredCovered` and `I2`, and the inverse law sets go through lattice
+closure (Section 5.6). The rewriting route for an inverse law set (`completion_complete_inverse`
+and its compositions in `CC/Laws/Main.lean`, with `InverseAxiomCP` and `NilpotentInverseCP` as
+hypotheses) remains for a non-cancellative inverse law set, which the engine rejects.
 
 Outside the model by design, and not listed as gaps: the engine's `Comm` atom joins through
 `by_contains` as AC does (`egraph/src/schedule.rs:749`), where the model's `byContains`
@@ -3870,8 +3909,8 @@ needs it.
 
 **Must merge a node's normal form into its class before flagging the node collapsed.**
 Otherwise a retired node's reduct is in no class with it and the equality it carried is lost
-(I3 fails; `nodes_reduce_all` in `CC/Laws/InvRulesMain.lean` and `node_reduces_active`
-need I3, and `RetiredCovered` fails; the model's `Infer.retire` requires a smaller active
+(I3 fails, and `node_reduces_active` needs it; `RetiredCovered` fails, and the retired forms of
+the final theorem need it; the model's `Infer.retire` requires a smaller active
 classmate, so `Infer_retiredCovered` keeps it along every run). Evidence: no reproducer, because `cc_round` calls
 `do_merge` before `set_cc_collapsed`; the rule is recorded in
 `06-ac-congruence-closure.md`, Section 9c, so that a refactoring keeps the order. `witness_I3` checks I3 on the atoms witness.
@@ -3880,7 +3919,7 @@ classmate, so `Infer_retiredCovered` keeps it along every run). Evidence: no rep
 congruence rebuild of the completion loop.** A node is collapsed against the rules of the
 round that reduced it; a later merge can reorient or retire each of them, and the node is
 then an equation no rule represents and completion never superposes (I3 fails, and with it
-`node_reduces_active` and the retired forms of the final theorem). Evidence: the audit
+`node_reduces_active`). Evidence: the audit
 cases (a node recanonicalized by a child merge; a node collapsed against a rule later
 reoriented or retired; a node collapsed by inverse-pair cancellation alone), the pass
 `unretire_irreducible_collapsed` and the debug check `check_no_irreducible_collapsed`.
@@ -3917,14 +3956,15 @@ counter-model `hcancel_not_derivable`
 place of `hcancel`, and `latticeClosed_of_engineFixed` gives it from the step's fixpoint.
 
 **Must apply the inverse rules R1 to R5 at rebuild and generate the rule-inverse critical
-pairs.** Otherwise the four conditions the inverse completeness theorem needs
-(`InvMatching`, `InvUnitFree`, `InverseAxiomCP`, `NilpotentInverseCP`) fail, and
-consequences such as `d + neg(a) = c` from `a + c = d` are missed (completeness). Evidence:
-counter-models `invGen_cp_not_joinable` (`CC/Laws/Inverse.lean:512`) and
-`combined_counterexample` (`CC/Laws/Combined.lean:160`), the four reproducers
+pairs.** Otherwise the four conditions the rewriting route needs (`InvMatching`,
+`InvUnitFree`, `InverseAxiomCP`, `NilpotentInverseCP`) fail, and rewriting misses
+consequences such as `d + neg(a) = c` from `a + c = d`. Evidence: counter-models `invGen_cp_not_joinable` (`CC/Laws/Inverse.lean:512`)
+and `combined_counterexample` (`CC/Laws/Combined.lean:160`), the four reproducers
 `proofs/repro/inv-into-unit.egg`, `unit-inverse.egg`, `rule-inverse-cp.egg`,
-`z3-inverse.egg`. `completion_complete_inverse_engine` derives the four
-conditions from the rules' fixpoints (`invMatching_of_fixed` and the three others).
+`z3-inverse.egg`. The engine-level statements (`completion_complete_inverse_engine` and
+its compositions) go through lattice closure, which `lattice_round` establishes for every
+`:inverse` operator, and use R1 to R5 only for the law set itself: `InvUnitFree` from R2
+(`invUnitFree_of_fixed`), as the proof the composite law sets carry.
 
 **Must rewrite a fold's spelling in `a_round` only at a prefix of a left fold and a suffix
 of a right fold.** Otherwise the rewrite spells a different term and merges two terms the
@@ -4079,8 +4119,9 @@ design note asks for `Converged` before any check.
 node of that class.** A collapsed node stays in the index and is matchable, so `FCover`
 over the active nodes fails on it and `saturation_modulo_complete_store_cover` has no
 witness on such a run (`not_cover`, `Final/Witness.lean:666`). The match it yields is
-covered by `saturation_modulo_complete_store_retired` because the retired node is still a
-member of its class (`SubRepR`) and reduces to an active node of it (I3, `I2`): its root
+covered by `saturation_modulo_complete_store_retired_covered` because the retired node is
+still a member of its class (`SubRepR`), which holds an active node `=_E`-equal to it
+(`RetiredCovered`, `I2`): its root
 binds that node's class, so the match is sound, and the active node yields the same match
 at the class level, so completeness is unaffected. What the engine pays is time: the match
 rooted at the collapsed node builds nodes `=_E`-equal to the ones the active match builds,

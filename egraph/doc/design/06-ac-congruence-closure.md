@@ -753,7 +753,7 @@ Chore B.** Two ways to get it wrong:
   (Because collapse keeps the node matchable this is less dangerous than under subsume,
   but the merge must still land first so the reduced form exists. The §5b cancellation
   case depends on the reduced node existing before matching proceeds.) The Lean
-  completeness proof needs this order as invariant I3 (§9c).
+  model states this order as invariant I3 and as `RetiredCovered` (§9c).
 - **Eager within the round.** The flag must gate Chore B *in the same round* the node
   becomes reducible. If this round's superposition pass still sees it, it breeds anyway.
   (The flag takes effect only when the next round rebuilds the active set, so within the
@@ -1758,9 +1758,10 @@ keys, so a merge never raises a child's key and no stored node grows.
 **Merge a node's normal form into its class before flagging the node collapsed.** The
 mechanisms are the (A′) inter-reduction merge and `FLAG_AC_COLLAPSED`, which removes the node
 from the rule set the next round reads. §6b states the order ("merge before mark"); the Lean
-proof needs it as invariant I3 (`CC/Defs.lean`: every retired node rewrites, in at least one
-step, to a node of its class), which `completion_complete_at_convergence` assumes and
-`CC/Laws/InvRulesMain.lean` uses (`nodes_reduce_all`). A node flagged before its reduct is
+proof states it as invariant I3 (`CC/Defs.lean`: every retired node rewrites, in at least one
+step, to a node of its class), derived from the reactivation pass (`I3_of_reactivate_fixed`),
+and as `RetiredCovered` (a retired node's class holds an active node), which the final
+theorems take and `Infer.retire` keeps. A node flagged before its reduct is
 merged is a retired node whose reduct is in no class with it, and the equality it carried is
 lost. `cc_round` calls `do_merge` and then `set_cc_collapsed` in the (A′) loop. No reproducer
 exists, because the engine has always merged first; the rule is recorded so that reordering
@@ -1905,9 +1906,10 @@ whole list with hypotheses is `proofs/lean/STATUS.md`):
   (`latticeClosed_of_engineFixed`); `hcancel` itself does not follow
   (`hcancel_not_derivable`). The rule above lists the lattice theorems.
 - Per law: `completion_complete_{identity,nilpotent,idempotent,inverse,combined}`
-  (`CC/Laws/`) discharge `hlaw` and `hnf_ax`. `completion_complete_inverse_engine` and
-  `completion_complete_combined_engine` (`CC/Laws/InvRulesMain.lean`) replace the four
-  `:inverse` hypotheses by the engine's R1-R5 (Chapter 5 §5.2).
+  (`CC/Laws/`) discharge `hlaw` and `hnf_ax`. `completion_complete_inverse_engine`,
+  `completion_complete_combined_engine` and `completion_complete_identityInverse_engine`
+  (`CC/Laws/InvRulesMain.lean`) conclude completeness for the inverse law sets from lattice
+  closure and `hS`: an `:inverse` operator is cancellative, so `lattice_round` runs for it.
 - Leaf constants: `completion_complete_atoms` (`CC/Atoms.lean`) and the `_atoms` forms of the
   engine theorems (`CC/AtomsEngine.lean`) apply the theorems above to the completion view that
   adds the one-element monomial `{x}` of each atomic class as a node of `x` and the empty
@@ -1977,8 +1979,9 @@ are class ids, whose constant rules are a `find` function, and whose rule set is
 nodes (`completion_sound`, `kapur_termination`, `confluent_modulo`,
 `completion_complete_at_convergence`; hypotheses in `proofs/lean/STATUS.md`). Two of those
 hypotheses are engine obligations this section did not list: I5, the stored minimal monomial
-is the class's least active monomial, and I3, every retired node rewrites to a node of its
-class (§9c). The obligations below remain open for the Rust code itself, where the
+is the class's least active monomial, and `RetiredCovered`, every retired node's class holds an
+active node (§9c; the stronger I3, every retired node rewrites to a node of its class, is
+derived from the reactivation pass and assumed by no completeness theorem). The obligations below remain open for the Rust code itself, where the
 conformance generators and the fixtures are the evidence. §9c, "What is machine-checked",
 lists every hypothesis of `completion_complete_at_convergence`; the engine meets
 `RoundFixed.nf_present`, `RoundFixed.cp_joinable` and, for a cancelative operator,

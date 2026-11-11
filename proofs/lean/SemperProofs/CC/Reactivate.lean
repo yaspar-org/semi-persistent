@@ -41,15 +41,18 @@ This file models the pass and derives `I3` from its fixpoint.
 
 The derivation goes through confluence of rewriting by the rules and the
 law instances: the pass makes a retired node reducible, and confluence
-places its normal form in its class. The engine-level theorems for an
-operator with inverses (`completion_complete_inverse_engine`,
+places its normal form in its class. No completeness theorem takes `I3` as
+a hypothesis: the final theorems read a retired node through
+`RetiredCovered` and `I2` (`node_equal_active_covered`), and the
+engine-level theorems for an operator with inverses
+(`completion_complete_inverse_engine`,
 `completion_complete_combined_engine`,
-`completion_complete_identityInverse_engine`, `Laws/InvRulesMain.lean`) use
-`I3` before confluence is available: they read a node asserted by R3 to R5,
-possibly retired since, as joinable with its class, and that joinability is
-what closes the critical pairs of a rule with an inverse pair. They keep
-`I3` as a hypothesis. For a cancellative operator the derivation needs
-`hcancel`, which lattice closure does not give.
+`completion_complete_identityInverse_engine`, `Laws/InvRulesMain.lean`) go
+through lattice closure, which the engine's `lattice_round` establishes for
+every `:inverse` operator (cancellative at the engine). For a cancellative
+operator the derivation of `I3` needs `hcancel`, which lattice closure does
+not give, and the critical pairs involving a law instance (`hax` in
+`Bridge.I3_of_reactivate_fixed_complete`).
 
 ## What the model identifies
 

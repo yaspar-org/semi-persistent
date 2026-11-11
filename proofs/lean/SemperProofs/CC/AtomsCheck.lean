@@ -21,6 +21,7 @@ import SemperProofs.CC.AtomsEngine
 #print axioms SemperProofs.CC.completion_complete_combined_engine_atoms
 #print axioms SemperProofs.CC.completion_complete_identityInverse_engine_atoms
 #print axioms SemperProofs.CC.CompleteAtoms.ofLaws
+#print axioms SemperProofs.CC.CompleteAtoms.ofLattice
 #print axioms SemperProofs.CC.AtomsWitness.witness_fixed
 #print axioms SemperProofs.CC.AtomsWitness.witness_complete
 #print axioms SemperProofs.CC.AtomsWitness.witness_I3

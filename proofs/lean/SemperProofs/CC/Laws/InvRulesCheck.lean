@@ -15,9 +15,6 @@ import SemperProofs.CC.Laws.InvRulesMain
 #print axioms SemperProofs.CC.inv_rules_sound_combined
 #print axioms SemperProofs.CC.invMatching_of_fixed
 #print axioms SemperProofs.CC.invUnitFree_of_fixed
-#print axioms SemperProofs.CC.nodes_reduce_all
-#print axioms SemperProofs.CC.inverseAxiomCP_of_fixed
-#print axioms SemperProofs.CC.nilpotentInverseCP_of_fixed
 #print axioms SemperProofs.CC.invWalk_replicate_self
 #print axioms SemperProofs.CC.combined_clamp_replicate_self
 #print axioms SemperProofs.CC.completion_complete_inverse_engine
