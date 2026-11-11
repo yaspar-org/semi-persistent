@@ -134,6 +134,15 @@ theorem rules_withAtoms : st.rules ⊆ (st.withAtoms A u).rules := by
 
 end State
 
+/-- `RetiredCovered` passes to the completion view: its retired nodes are
+stored retired nodes, and its active nodes contain the stored ones. -/
+theorem RetiredCovered.withAtoms {st : State n} (h : RetiredCovered st) (A : Set (Fin n))
+    (u : Option (Fin n)) : RetiredCovered (st.withAtoms A u) := by
+  intro M c hM
+  obtain ⟨hn, K, c', hK, hc⟩ := h M c hM.1
+  exact ⟨Or.inl hn, K, c', State.active_withAtoms hK, hc⟩
+
+
 /-! ## The one-element collapse -/
 
 /-- The one-element collapse at a fixed round: an active node whose normal

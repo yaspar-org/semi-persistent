@@ -1,4 +1,5 @@
 import SemperProofs.CC.Bridge.Modulo
+import SemperProofs.CC.Reactivate
 
 /-!
 # Bridge: the represented graph as a part of a larger graph
@@ -17,7 +18,7 @@ model) in the index and matchable. `SubRepR G st f A R ι` extends the
 correspondence to a set `R` of stored nodes, the retired ones: they too
 sit in `G` under `ι`, with the children of `mkNode` and the class of
 `st`. A match rooted at a retired node is read at the class of an active
-node the retired one rewrites to, which `I3` provides
+node the retired one reduces to, which `I3` provides
 (`node_reduces_active`).
 
 The bridge theorems of `Modulo.lean` hold on the part: two theory-equal
@@ -121,15 +122,15 @@ theorem SubRepR.withAtoms {G : Graph} {st : State n} {f : Sym}
     SubRepR G (st.withAtoms X u) f A R ι :=
   ⟨h.active.withAtoms X u, h.retired.withAtoms X u⟩
 
-/-- Every stored node rewrites to an active node of its class: an active
-node is its own reduct, and a retired node rewrites to a node of its
-class (`I3`), smaller under `≫`, so well-founded induction on `→_R`
-(`Rw_wf`) reaches an active one. -/
+/-- Every stored node reduces to an active node of its class: an active
+node is its own reduct, and a retired node reduces, by the rules and the
+laws, to a node of its class (`I3`), smaller under `≫`, so well-founded
+induction on the step relation (`RwL_wf`) reaches an active one. -/
 theorem node_reduces_active {L : Laws n} {st : State n} (h3 : I3 L st) :
     ∀ M c, (M, c) ∈ st.nodes →
-      ∃ M' c', Relation.ReflTransGen (Rw L st.rules) M M' ∧ (M', c') ∈ st.active ∧
+      ∃ M' c', Relation.ReflTransGen (st.RwL L) M M' ∧ (M', c') ∈ st.active ∧
         st.find c' = st.find c := by
-  have hwf := (Rw_wf (L := L) (R := st.rules) (rules_oriented st)).transGen
+  have hwf := (RwL_wf L st).transGen
   intro M
   induction M using hwf.induction with
   | _ M ih =>
@@ -146,6 +147,41 @@ theorem node_equal_active {L : Laws n} {S : Set (Monomial n × Monomial n)} {st 
     (h2 : I2 L S st) (h3 : I3 L st) {M : Monomial n} {c : Fin n} (hM : (M, c) ∈ st.nodes) :
     ∃ q ∈ st.active, E L S M q.1 ∧ st.find q.2 = st.find c := by
   obtain ⟨M', c', hrw, hact, hc⟩ := node_reduces_active h3 M c hM
-  exact ⟨(M', c'), hact, Rw_rtg_sound (rules_sound h2) hrw, hc⟩
+  exact ⟨(M', c'), hact, RwL_rtg_sound h2 hrw, hc⟩
+
+/-! ## `I3` from the reactivation pass -/
+
+/-- **`I3` from the reactivation pass, on the packaged hypotheses.** At a
+converged state (`CompleteHyps`) that is sound (`I2`), that the
+reactivation pass leaves unchanged (`hreact`: the engine's state when the
+completion loop reports a fixpoint, `reactivate_idem`) and whose retired
+nodes are stored nodes of classes holding an active node (`hcov`), every
+retired node reduces to a node of its class. `hcancel` is the hypothesis of
+`completion_complete_at_convergence`: joinability cancels a common summand
+when the operator is cancellative, and it is vacuous otherwise. For a
+cancellative operator `CompleteHyps` goes through lattice closure and does
+not give it (`Lattice.hcancel_not_derivable`). -/
+theorem I3_of_reactivate_fixed_complete {L : Laws n} {S : Set (Monomial n × Monomial n)}
+    {st : State n} (hcomp : CompleteHyps L S st) (h2 : I2 L S st)
+    (hreact : st.reactivate L = st) (hcov : RetiredCovered st)
+    (hcancel : L.cancellative → ∀ M N X,
+      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) (M + X) (N + X) →
+      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) M N) : I3 L st := by
+  obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := hcomp.slots
+  have h5 : I5 st := SlotState.state_I5_of_slot (SlotState.reachable_I5 h5₀ hrun) ha
+  exact I3_of_reactivate_fixed hreact hcov h2 hcomp.h0 h5 hcomp.hcanon hcomp.hfix hcomp.hlaw
+    hcomp.hnf_ax (hcp_of_fixed hcomp.hfix hcomp.hcp_ax) hcomp.hS hcancel
+
+/-- `node_reduces_active` with `I3` derived from the reactivation pass. -/
+theorem node_reduces_active_reactivate {L : Laws n} {S : Set (Monomial n × Monomial n)}
+    {st : State n} (hcomp : CompleteHyps L S st) (h2 : I2 L S st)
+    (hreact : st.reactivate L = st) (hcov : RetiredCovered st)
+    (hcancel : L.cancellative → ∀ M N X,
+      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) (M + X) (N + X) →
+      Joinable (Rw (plain n) (st.rules ∪ L.axRules)) M N) :
+    ∀ M c, (M, c) ∈ st.nodes →
+      ∃ M' c', Relation.ReflTransGen (st.RwL L) M M' ∧ (M', c') ∈ st.active ∧
+        st.find c' = st.find c :=
+  node_reduces_active (I3_of_reactivate_fixed_complete hcomp h2 hreact hcov hcancel)
 
 end SemperProofs.CC.Bridge

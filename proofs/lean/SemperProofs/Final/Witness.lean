@@ -48,10 +48,13 @@ says nothing about a match rooted at it, and the covering form
 `saturation_modulo_complete_store_cover` does not apply to this store: its
 `FCover` requires every `+`-node of the index to be active, and the
 collapsed node is not. `witness_saturation_modulo_complete_retired` is
-`saturation_modulo_complete_store_retired_atoms` on the same run, with the
-retired node in `ret`, `SubRepR` and `FCover` over `act ∪ ret` proved
-(`hyp_subR`, `hyp_coverR`), `I2` and `I3` on the completion view
-(`witness_I2`, `witness_I3`), and `witness_fires_retired` reads it at the
+`saturation_modulo_complete_store_retired_atoms_covered` on the same
+run, with the retired node in `ret`, `SubRepR` and `FCover` over
+`act ∪ ret` proved (`hyp_subR`, `hyp_coverR`), `I2` on the completion view
+(`witness_I2`) and `RetiredCovered` in place of `I3`, derived from the
+one-`retire` run that reaches the stored state (`wst_reachable`,
+`witness_covered_stored`); `witness_I3` derives I3 itself from the
+reactivation pass (`witness_reactivate`), and `witness_fires_retired` reads it at the
 match `x ↦ a, y ↦ b, z ↦ d` of the second rewrite rooted at `{a, b, d}`:
 the instance is fired, the root binds the class of the active `{c, d}`,
 `=_E`-equal to `{a, b, d}` under `a + b = c`.
@@ -825,11 +828,23 @@ theorem witness_I2 : I2 (Laws.plainAC 5) wS wv := by
     | (subst h₂; exact E.symm (E.ax rfl))
     | (subst h₂; exact absurd hc (by decide))
 
+/-- **The retirement discipline on the view, derived from the reactivation
+pass.** The pass leaves the view unchanged (`witness_reactivate`: the
+retired `{a, b, d}` holds the left-hand side of `{a, b} → {c}`), the
+retired node is a stored node whose class holds the active `{c, d}`
+(`witness_covered`), and plain AC is not cancellative; `I3` follows by
+`I3_of_reactivate_fixed_complete`. `AtomsWitness.witness_I3` checks the
+same statement directly. -/
+theorem witness_I3 : I3 (Laws.plainAC 5) wv :=
+  I3_of_reactivate_fixed_complete (CompleteHyps.ofAtoms witness_complete) witness_I2
+    witness_reactivate witness_covered (fun h => h.elim)
+
 /-- **The final theorem at a retired root, instantiated.**
-`saturation_modulo_complete_store_retired_atoms` applied to the two rounds
-of the program above, with the retired `{a, b, d}` in `ret`, the
-correspondence and the cover over active and retired nodes together, and
-`I2`, `I3` on the completion view: every hypothesis is proved here. -/
+`saturation_modulo_complete_store_retired_atoms_covered` applied to the
+two rounds of the program above, with the retired `{a, b, d}` in `ret`, the
+correspondence and the cover over active and retired nodes together, `I2`
+on the completion view, and `RetiredCovered` of the stored state, derived
+from the run, in place of `I3`: every hypothesis is proved here. -/
 theorem witness_saturation_modulo_complete_retired :
     ∀ r ∈ rules, ∀ (P : Pat) (root : Var), r.atoms = (atoms P root).map QAtom.scan →
       P.head = some 0 →
@@ -841,9 +856,9 @@ theorem witness_saturation_modulo_complete_retired :
             MatchC A₁.Sa.index P (clsId (wst.find q.2)) σ ∧
             ∀ p ∈ act, E (Laws.plainAC 5) wS p.1 p'.1 →
               σ.cls root = some (A₁.Sa.find (ι p)) ∧ MatchC A₁.Sa.index P (A₁.Sa.find (ι p)) σ :=
-  saturation_modulo_complete_store_retired_atoms (naive := naive) A₀ [A₁] matchersOK hyp_h₀
-    hyp_ok hyp_emit₀ hyp_chain (A := A₁) (by simp) hyp_fix witness_complete witness_I2 witness_I3
-    hyp_within hyp_ret hyp_subR hyp_coverR
+  saturation_modulo_complete_store_retired_atoms_covered (naive := naive) A₀ [A₁] matchersOK
+    hyp_h₀ hyp_ok hyp_emit₀ hyp_chain (A := A₁) (by simp) hyp_fix witness_complete witness_I2
+    witness_covered_stored hyp_within hyp_ret hyp_subR hyp_coverR
 
 /-- The match `x ↦ a, y ↦ b, z ↦ d` of `(+ x y z)` at the retired node
 `{a, b, d}`. -/
@@ -907,7 +922,7 @@ its root class is the class of the active node `{c, d}`, `=_E`-equal to
 `{a, b, d}` under `a + b = c`, where the rewrite matches at the class
 level, and it matches at the represented node of `{a, b, d}`. The theorem
 reaches `{c, d}` through the rules of the completion state (`{a, b, d}`
-rewrites to it by `{a, b} → {c}`, `witness_I3`), not through the store's
+reduces to it by `{a, b} → {c}`, `witness_I3`), not through the store's
 union-find (`retired_class`). -/
 theorem witness_fires_retired :
     FiredN A₁.Sa.graph ops σabd rule₂ ∧
@@ -984,7 +999,8 @@ theorem hyp_rest : TheoryClosedRest A₁.Sa ops 0 where
 from the completion state through the correspondence
 (`theoryClosed_of_complete`). -/
 theorem witness_theoryClosed : TheoryClosed A₁.Sa ops :=
-  theoryClosed_of_complete (CompleteHyps.ofAtoms witness_complete) witness_I2 witness_I3 keys₁
+  theoryClosed_of_complete_covered (CompleteHyps.ofAtoms witness_complete) witness_I2
+    witness_covered keys₁
     (Stored.withAtoms hyp_stored wA none) (hyp_subG.withAtoms wA none) hyp_coverG
     (summandsAtomic_withAtoms hyp_summands) hyp_laws dedup₁ hyp_sorted hyp_rest
 
@@ -998,8 +1014,8 @@ theorem witness_saturation_complete_closed :
       FiredE A₁.Sa.graph ops σ r ∧
       ∀ a b, Action.union a b ∈ r.actions →
         ∀ c₁ c₂, DenN A₁.Sa.graph ops σ a c₁ → DenN A₁.Sa.graph ops σ b c₂ → c₁ = c₂ :=
-  saturation_complete_closed_of_complete_atoms A₀ [A₁] matchersOK hyp_h₀ hyp_okE hyp_emit₀
-    (SChainN.toE hyp_chain) (A := A₁) (by simp) hyp_fix witness_complete witness_I2 witness_I3
-    keys₁ hyp_stored hyp_subG hyp_coverG hyp_summands hyp_laws hyp_sorted hyp_rest
+  saturation_complete_closed_of_complete_atoms_covered A₀ [A₁] matchersOK hyp_h₀ hyp_okE
+    hyp_emit₀ (SChainN.toE hyp_chain) (A := A₁) (by simp) hyp_fix witness_complete witness_I2
+    witness_covered_stored keys₁ hyp_stored hyp_subG hyp_coverG hyp_summands hyp_laws hyp_sorted hyp_rest
 
 end SemperProofs.Final.Witness

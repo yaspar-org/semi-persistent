@@ -21,3 +21,5 @@ import SemperProofs.CC.Bridge.Sub
 #print axioms SemperProofs.CC.Bridge.represents_fcover
 #print axioms SemperProofs.CC.Bridge.ac_equal_same_class_sub
 #print axioms SemperProofs.CC.Bridge.matches_closed_under_theory_sub
+#print axioms SemperProofs.CC.Bridge.I3_of_reactivate_fixed_complete
+#print axioms SemperProofs.CC.Bridge.node_reduces_active_reactivate

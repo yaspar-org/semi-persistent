@@ -21,7 +21,8 @@ commits and the withdrawn claims.
   `_store_engine` (the engine's stop test), `_store_cover` (with `FCover`),
   `_store_atomic` (with `CompleteAtomic`), and
   `saturation_modulo_complete_store_retired` and `_retired_atoms` (with
-  `SubRepR` over active and retired nodes, `FCover` over both, `I2`, `I3`:
+  `SubRepR` over active and retired nodes, `FCover` over both, `I2`, `I3`, or
+  in the `_covered` forms `RetiredCovered` in place of `I3`:
   every match of the index, a match rooted at a retired node included). The
   statement, its reading and its hypotheses: GUIDE Section 7.7.
 - `Final/Witness.lean`: `witness_saturation_modulo_complete`,
@@ -127,6 +128,23 @@ commits and the withdrawn claims.
   `unretire_refresh_I5`, `unretire_refresh_reachable`; in `Slot.lean`
   `SlotState.unretire` is an `Op`, `unretire_I5`, and
   `unretireNoRefresh_breaks_I5` is the repro `ac_reactivate_min_monomial.egg`.
+- `Reactivate.lean`: the engine's reactivation pass
+  `unretire_irreducible_collapsed` as `State.reactivate` (test `Reducible`:
+  a rule's left-hand side inside the monomial, or `clamp` changes it;
+  transcription `reactivateOn`, `reactivateOn_eq`); `reactivate_reachable`,
+  `reactivate_I2`, `reactivate_I4`, `reactivate_I5`, `reactivate_fixed_iff`,
+  `reactivate_idem`; `I3_of_reactivate_fixed` derives I3 (over
+  `State.RwL`, a rule step or a law step) from `st.reactivate L = st`,
+  `RetiredCovered`, I2 and the hypotheses of completeness at convergence;
+  `ReactivateCE.reactivate_fixed_not_I3` shows the pass alone does not
+  give it. `Bridge.I3_of_reactivate_fixed_complete` and
+  `node_reduces_active_reactivate` read it on `CompleteHyps`. The retired
+  store theorems and `Final/Closed.lean` need no I3: their `_covered`
+  forms take `RetiredCovered`, an `Infer` invariant (`Infer.retire` requires
+  a smaller active classmate; `Infer_retiredCovered`,
+  `retiredCovered_of_reachable`, `node_equal_active_covered` in
+  `Lemmas.lean`). The inverse `_engine` theorems keep I3 (GUIDE Section 9,
+  item 13). GUIDE Section 5.5.
 - `MinMonoKey.lean`: completion orders monomials by per-class order
   keys (`keyDegLex`; a merged class takes the lesser key, `key_merge`), not by
   representative id. `rename_key_le`, `survivor_key_le`: at a merge every

@@ -1,6 +1,7 @@
 import SemperProofs.Basic
 import SemperProofs.CC.Main
 import SemperProofs.CC.EngineSteps
+import SemperProofs.CC.Reactivate
 import SemperProofs.CC.Atoms
 import SemperProofs.CC.AtomicOf
 import SemperProofs.CC.AtomsEngine

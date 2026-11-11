@@ -117,7 +117,7 @@ theorem Infer_measure {L : Laws n} {st st' : State n} (hinf : Infer L st st') :
   cases hinf with
   | mint _ hd => exact Or.inr (measure_addNode_lt st hd)
   | joinMerge _ _ _ => exact measure_merge st _ _
-  | retire _ => exact Or.inl ⟨rfl, rfl⟩
+  | retire _ _ => exact Or.inl ⟨rfl, rfl⟩
   | unretire _ => exact Or.inl ⟨rfl, rfl⟩
   | setRhs _ => exact Or.inl ⟨rfl, rfl⟩
 
