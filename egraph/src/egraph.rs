@@ -576,6 +576,12 @@ where
     /// ([`CompletionOutcome::Converged`]), or no rebuild has run. Any other outcome
     /// (a budget stop, an overflow, a goal stop) leaves AC-entailed equalities out of
     /// the graph, and a saturation round that changes nothing on it is no fixpoint.
+    ///
+    /// This is the engine's side of `EnginePhase.before_fixed` (`K.step Sb = none`,
+    /// `proofs/lean/SemperProofs/Fidelity/StopTest.lean`): the stop-test theorems
+    /// (`engine_stop_unchanged`, `EnginePhase.rebuild_idle`) apply to a round only when
+    /// the snapshot it matched on is a completion fixpoint, so the run loops report
+    /// `saturated` through this predicate (`tests/saturation_verdict.rs`).
     pub fn completion_at_fixpoint(&self) -> bool {
         matches!(
             self.completion_outcome,

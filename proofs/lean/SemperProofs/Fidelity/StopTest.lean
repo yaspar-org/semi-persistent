@@ -289,7 +289,17 @@ structure EnginePhase (K : Completion) (Sb Sa : Store) where
   subs_counted : subs ≤ changes
   /-- The snapshot the round matched on is a completion fixpoint: the
   rebuild that produced it converged (`CompletionRun.converged_fixed`), or
-  completion is disabled and `K.step` is `none` everywhere. -/
+  completion is disabled and `K.step` is `none` everywhere.
+
+  The engine establishes this field at the round whose stop test it
+  reports: the run loops of `saturate.rs` (`saturate_rules_naive`,
+  `saturate_rules_semi_tracked`, `saturate_trace`) return `saturated` only
+  when `EGraph::completion_at_fixpoint` holds, that is when the outcome of
+  the rebuild that produced `Sb` is `Converged` or `Disabled`. A completion
+  round that collapses a node counts as a change in `cc_round`, so
+  `Converged` is reported only by a round that took no step, the premise
+  `K.step S' = none` of `CompletionRun.converged`. Tests:
+  `egraph/tests/saturation_verdict.rs`. -/
   before_fixed : K.step Sb = none
   /-- The store after `rebuild_congruence`: the worklist holds the merges,
   so with none it is empty, and a node `add` minted is canonical and fresh
