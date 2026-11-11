@@ -3022,6 +3022,22 @@ The theorem needs the snapshot the round matched on to be a completion fixpoint
 (`before_fixed`), which only a `converged` rebuild gives; a budget stop in the previous
 rebuild leaves `Unchanged` underived, and the loop reports no fixpoint.
 
+**Alignment of the stop test with the engine.** The field the engine has to establish is
+`EnginePhase.before_fixed : K.step Sb = none`. It does so in the three run loops of
+`saturate.rs` (`saturate_rules_naive`, `saturate_rules_semi_tracked`, `saturate_trace`):
+each returns `saturated` as `EGraph::completion_at_fixpoint`, which holds exactly when the
+outcome of the rebuild that produced the snapshot is `Converged` or `Disabled`, the two
+cases in which `K.step Sb = none` (`CompletionRun.converged_fixed`, or completion off). The
+second premise is on the completion run: `CompletionRun.converged` requires
+`K.step S' = none`, and `cc_round` counts a collapse as a change, so the round that reports
+`Converged` is one that took no step. The correspondence is checked by two tests, not
+proved: `eager_run_stopped_on_node_budget_is_not_saturated` (a run whose rebuild stops on
+`AbortedGrowthLimit` is not reported saturated, in both matching strategies) and
+`completion_round_that_only_retires_a_node_is_not_the_fixpoint` (a round whose only effect is
+a collapse is followed by another round), both in `egraph/tests/saturation_verdict.rs`. The
+other fields of `EnginePhase` (`run`, `subs_counted`, `cong_idle`, `rebuild`) have no such
+test and no instance in the tree.
+
 ## 7. The final theorem
 
 ### 7.1 The represented graph
