@@ -72,6 +72,11 @@ pub use egraph::{
     take_markrestore_profile, take_restore_member_profile,
 };
 
+/// The debug mirror of the completion merges: the kinds it checks and its counters
+/// (debug builds only).
+#[cfg(debug_assertions)]
+pub use egraph::cc_mirror;
+
 // Flat re-exports from other modules
 pub use classes::EClasses;
 pub use config::EGraphConfig;

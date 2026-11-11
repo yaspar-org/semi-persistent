@@ -16,6 +16,9 @@ use crate::registry::{AxiomRegistry, OpKind, OpRegistry, RuleRegistry, SortRegis
 use crate::typed_routing::NodeRef;
 use crate::union_find::{Justification, ProofBuf};
 
+#[cfg(debug_assertions)]
+pub mod cc_mirror;
+
 /// How a completion op's monomial counts are bounded during normalization (design "three
 /// independent axes"): unbounded ℕ (MSet plain AC), clamped to {0,1} by dedup (Set idempotent =
 /// ACI), or reduced mod `order` (nilpotent, e.g. XOR at order 2 — stored MSet, the clamp is the
@@ -302,6 +305,11 @@ pub struct EGraph<
     /// declared inverse. NOTE: gate-level group support — inverse-PAIR cancellation only,
     /// not Kapur §5.4's full Abelian-group completion (no Gaussian elimination).
     inverse_op: crate::containers::SpUniqueMap<Cfg::O, Cfg::O, <Cfg::O as DenseId>::Index, TRACK>,
+    /// Debug mirror of the completion merges: the pending tag of the next merge and the
+    /// checker's own reading of the round (`cc_mirror`). Not rolled back by `restore`:
+    /// it holds nothing between two completion passes.
+    #[cfg(debug_assertions)]
+    cc_mirror: cc_mirror::Mirror<Cfg::G, Cfg::O>,
     /// Give a rewrite's AC result a flat alternative for each atomic same-op child
     /// (`--flatten-rhs`); see [`EGraph::same_op_summands`].
     pub flatten_rhs: bool,
@@ -496,6 +504,8 @@ where
             mset_flatten_buf: Vec::new(),
             unit_node: crate::containers::SpUniqueMap::new(),
             inverse_op: crate::containers::SpUniqueMap::new(),
+            #[cfg(debug_assertions)]
+            cc_mirror: cc_mirror::Mirror::default(),
             flatten_rhs: false,
             completion_outcome: None,
             completion_node_budget: DEFAULT_COMPLETION_NODE_BUDGET,
@@ -1915,6 +1925,11 @@ where
         if ra == rb {
             return None;
         }
+        // Inside the completion code every merge carries a tag naming the Lean theorem
+        // that justifies it; the mirror checks the theorem's preconditions on the state
+        // as it stands before the merge.
+        #[cfg(debug_assertions)]
+        self.cc_mirror_on_merge(a, b);
         // Survivor policy (--union-by): `Rank` leaves the choice to the
         // union-find; the directed criteria keep the heavier side, so the
         // absorbed side is the cheap one and is known before the union.
@@ -2551,8 +2566,12 @@ where
             let was_full = full;
             // `|`, not `||`: the A-only pass runs every iteration, its changes
             // and the AC round's alike drain through the same fixpoint.
-            let changed =
-                self.cc_round(full, prev_mark, mark) | self.a_round() | self.canon_repair_round();
+            #[cfg(debug_assertions)]
+            self.cc_mirror_enter_round();
+            let cc_changed = self.cc_round(full, prev_mark, mark);
+            #[cfg(debug_assertions)]
+            self.cc_mirror_exit();
+            let changed = cc_changed | self.a_round() | self.canon_repair_round();
             prev_mark = mark;
             if std::mem::take(&mut self.cc_overflow) {
                 // Sound-but-incomplete stop, as for the growth budget, and reported. A
@@ -2599,7 +2618,12 @@ where
                 if was_full {
                     // The exact cancelative closure runs at the fixpoint only: it merges
                     // classes without adding nodes, and each merge reopens completion.
-                    if self.lattice_round() {
+                    #[cfg(debug_assertions)]
+                    self.cc_mirror_enter();
+                    let lattice_changed = self.lattice_round();
+                    #[cfg(debug_assertions)]
+                    self.cc_mirror_exit();
+                    if lattice_changed {
                         full = false;
                         continue;
                     }
@@ -2652,6 +2676,9 @@ where
         ops.sort_unstable();
         ops.dedup();
         let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
+        // The operator of each merge, for its mirror tag.
+        #[cfg(debug_assertions)]
+        let mut merge_ops: Vec<Cfg::O> = Vec::new();
         let mut mono: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for op in ops {
             let mut var: std::collections::HashMap<Cfg::G, usize> = Default::default();
@@ -2767,7 +2794,11 @@ where
                     }
                 }
                 match by_rep.entry(v) {
-                    std::collections::hash_map::Entry::Occupied(e) => merges.push((*e.get(), g)),
+                    std::collections::hash_map::Entry::Occupied(e) => {
+                        merges.push((*e.get(), g));
+                        #[cfg(debug_assertions)]
+                        merge_ops.push(op);
+                    }
                     std::collections::hash_map::Entry::Vacant(e) => {
                         e.insert(g);
                     }
@@ -2775,7 +2806,11 @@ where
             }
         }
         let mut changed = false;
+        #[cfg(debug_assertions)]
+        let mut merge_ops = merge_ops.into_iter();
         for (x, y) in merges {
+            #[cfg(debug_assertions)]
+            let op = merge_ops.next().expect("one operator per lattice merge");
             if self.classes.find_const(x) == self.classes.find_const(y) {
                 continue;
             }
@@ -2783,6 +2818,8 @@ where
                 node_a: x,
                 node_b: y,
             };
+            #[cfg(debug_assertions)]
+            self.cc_mirror_tag(cc_mirror::MergeWhy::Lattice { op });
             let m = if PROOFS {
                 self.merge_in_classes(x, y, Some(just))
             } else {
@@ -3315,7 +3352,11 @@ where
         if self.repair_state == Some(state) {
             return false;
         }
+        #[cfg(debug_assertions)]
+        self.cc_mirror_enter();
         let changed = self.inverse_cancel_repair() | self.inverse_law_repair();
+        #[cfg(debug_assertions)]
+        self.cc_mirror_exit();
         if !changed {
             // Arm the skip only on a clean round. A round that merged left `touched` and
             // `num_classes` moved, and the caller drains congruence and calls again.
@@ -3406,6 +3447,12 @@ where
             let c = self
                 .add_monomial(op, &ms, &mut scratch)
                 .expect("cancellation only lowers the counts of a stored monomial");
+            #[cfg(debug_assertions)]
+            self.cc_mirror_tag(cc_mirror::MergeWhy::InverseRepair {
+                op,
+                node: gid,
+                reduct: cc_mirror::mono(&ms),
+            });
             changed |= self.repair_merge(
                 c,
                 gid,
@@ -3414,6 +3461,8 @@ where
                     node_b: gid,
                 },
             );
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         changed
     }
@@ -3474,6 +3523,11 @@ where
         let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
         // `(op, base, k−1, target)`: the node `base^(k−1)` to build and merge with `target`.
         let mut powers: Vec<(Cfg::O, Cfg::G, Cfg::M, Cfg::G)> = Vec::new();
+        // The inference each entry of `merges` and of `powers` is, for its mirror tag.
+        #[cfg(debug_assertions)]
+        let mut merge_why: Vec<(Cfg::O, cc_mirror::InvRule<Cfg::G>)> = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut power_why: Vec<cc_mirror::InvRule<Cfg::G>> = Vec::new();
         for (op, inv) in ops {
             let nodes = self.inverse_nodes(inv);
             if nodes.is_empty() {
@@ -3499,15 +3553,23 @@ where
                 if let Some(e) = unit {
                     if y == e && x != e {
                         merges.push((x, node));
+                        #[cfg(debug_assertions)]
+                        merge_why.push((op, cc_mirror::InvRule::R2InvUnit { node }));
                     }
                     if x == e && y != e {
                         merges.push((node, x));
+                        #[cfg(debug_assertions)]
+                        merge_why.push((op, cc_mirror::InvRule::R2UnitInv { node }));
                     }
                 }
                 if let Some(k) = power {
                     powers.push((op, x, k, node));
+                    #[cfg(debug_assertions)]
+                    power_why.push(cc_mirror::InvRule::R4 { node });
                     if y != x {
                         powers.push((op, y, k, x));
+                        #[cfg(debug_assertions)]
+                        power_why.push(cc_mirror::InvRule::R5 { node });
                     }
                 }
             }
@@ -3515,17 +3577,28 @@ where
             for w in classes.windows(2) {
                 if w[0].0 == w[1].0 && w[0].1 != w[1].1 {
                     merges.push((w[0].1, w[1].1));
+                    #[cfg(debug_assertions)]
+                    merge_why.push((op, cc_mirror::InvRule::R1Inj));
                 }
             }
             for &(node, x) in &nodes {
                 // `x` holds some `inv(z)`, so `node` is `inv(inv(z))`.
                 if let Ok(i) = classes.binary_search_by(|p| p.0.cmp(&x)) {
                     merges.push((node, classes[i].1));
+                    #[cfg(debug_assertions)]
+                    merge_why.push((op, cc_mirror::InvRule::R1Inv { node }));
                 }
             }
         }
         let mut changed = false;
+        #[cfg(debug_assertions)]
+        let mut merge_why = merge_why.into_iter();
         for (a, b) in merges {
+            #[cfg(debug_assertions)]
+            {
+                let (op, rule) = merge_why.next().expect("one inference per merge");
+                self.cc_mirror_tag(cc_mirror::MergeWhy::InverseLaw { op, rule });
+            }
             changed |= self.repair_merge(
                 a,
                 b,
@@ -3534,12 +3607,21 @@ where
                     node_b: b,
                 },
             );
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         let mut scratch: Vec<Cfg::C> = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut power_why = power_why.into_iter();
         for (op, base, k, target) in powers {
             let c = self
                 .add_monomial(op, &[(base, k)], &mut scratch)
                 .expect("a count below the nilpotent order fits every multiplicity width");
+            #[cfg(debug_assertions)]
+            {
+                let rule = power_why.next().expect("one inference per power");
+                self.cc_mirror_tag(cc_mirror::MergeWhy::InverseLaw { op, rule });
+            }
             changed |= self.repair_merge(
                 c,
                 target,
@@ -3548,6 +3630,8 @@ where
                     node_b: target,
                 },
             );
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         changed
     }
@@ -3810,6 +3894,9 @@ where
             Vec<(Cfg::G, Cfg::M)>,
             Vec<(Cfg::G, Cfg::M)>,
         )> = Vec::new();
+        // One mirror tag per entry of `crit`: which pair it is and of which rules.
+        #[cfg(debug_assertions)]
+        let mut crit_why: Vec<cc_mirror::PairWhy<Cfg::G>> = Vec::new();
 
         // (A′) Normalize every active monomial node against the rules and merge its
         // normal form back in (Kapur Algo 2 step 2, "normalize Sf"). This subsumes plain
@@ -3883,6 +3970,8 @@ where
                             crate::multiset::clamp_idempotent(&mut r1);
                             if r1 != rules[ti].rhs {
                                 crit.push((op, CpOrigin::AxiomCp, r1, rules[ti].rhs.clone()));
+                                #[cfg(debug_assertions)]
+                                crit_why.push(cc_mirror::PairWhy::Idem { rule: m_node, a });
                             }
                         }
                     }
@@ -3905,6 +3994,8 @@ where
                             crate::multiset::clamp_nilpotent(&mut r1, order);
                             let r2 = crate::multiset::multiset_subtract(&rules[ti].lhs, &[(a, m)]);
                             crit.push((op, CpOrigin::AxiomCp, r1, r2));
+                            #[cfg(debug_assertions)]
+                            crit_why.push(cc_mirror::PairWhy::Nil { rule: m_node, a });
                         }
                     }
                     CompletionClamp::Multiset => {} // plain AC / identity-only: none (Lemma 4.3)
@@ -3928,7 +4019,26 @@ where
                             .binary_search_by(|p| p.0.cmp(&a))
                             .ok()
                             .map(|i| inverted[i].1);
+                        // The first `z` is the class of `inv(a)` when that node exists
+                        // (`AxiomPair.invLeft`); the other has `a` as the class of its
+                        // inverse node (`AxiomPair.invRight`).
+                        #[cfg(debug_assertions)]
+                        let mut left = inverse_of_a.is_some();
                         for z in inverse_of_a.into_iter().chain(inverted_by_a) {
+                            #[cfg(debug_assertions)]
+                            crit_why.push(if std::mem::take(&mut left) {
+                                cc_mirror::PairWhy::InvLeft {
+                                    rule: m_node,
+                                    a,
+                                    y: z,
+                                }
+                            } else {
+                                cc_mirror::PairWhy::InvRight {
+                                    rule: m_node,
+                                    x: z,
+                                    y: a,
+                                }
+                            });
                             let mut r1 = multiset_union(&rules[ti].rhs, &[(z, Cfg::M::ONE)]);
                             if let Some(order) = order {
                                 crate::multiset::clamp_nilpotent(&mut r1, order);
@@ -4014,6 +4124,11 @@ where
                     CompletionClamp::Multiset => {}
                 }
                 crit.push((op, CpOrigin::Superposition, r1, r2));
+                #[cfg(debug_assertions)]
+                crit_why.push(cc_mirror::PairWhy::Superpose {
+                    r1: m_node,
+                    r2: p_node,
+                });
             }
         }
 
@@ -4118,6 +4233,13 @@ where
                     Vec::new()
                 };
                 push_cancel(&mut crit, op, has_unit, &pl, m, r);
+                #[cfg(debug_assertions)]
+                crit_why.resize(
+                    crit.len(),
+                    cc_mirror::PairWhy::C1 {
+                        rule: rules[ti].node,
+                    },
+                );
             }
             // (C2) cancelative disjoint superposition — each unordered same-op antichain
             // pair once. O(rules²) but only over the (rare) cancelative ops' rules.
@@ -4138,9 +4260,23 @@ where
                         Vec::new()
                     };
                     push_cancel(&mut crit, op, has_unit, &pl, m, r);
+                    #[cfg(debug_assertions)]
+                    crit_why.resize(
+                        crit.len(),
+                        cc_mirror::PairWhy::C2 {
+                            r1: rules[ti].node,
+                            r2: rules[pj].node,
+                        },
+                    );
                 }
             }
         }
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            crit.len(),
+            crit_why.len(),
+            "one mirror tag per critical pair"
+        );
 
         // Critical-pair reducts are normalized to multisets (each step strictly lowers the
         // multiset in degree-lex order against the rule set, so it terminates), then only a
@@ -4251,7 +4387,15 @@ where
                         node_b: node,
                     }
                 };
+                #[cfg(debug_assertions)]
+                self.cc_mirror_tag(cc_mirror::MergeWhy::NormalForm {
+                    op,
+                    node,
+                    reduct: cc_mirror::mono(normal),
+                });
                 do_merge(self, c_prime, class, just);
+                #[cfg(debug_assertions)]
+                self.cc_mirror_untag();
                 // Collapse: the node was reducible by another rule (proper containment),
                 // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
                 // NOT subsume — the node stays matchable and a legal child; only
@@ -4306,7 +4450,11 @@ where
         let crit_generated = crit.len();
         let mut n1_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut n2_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut crit_why = crit_why.into_iter();
         for (op, origin, r1, r2) in crit {
+            #[cfg(debug_assertions)]
+            let why = crit_why.next().expect("one mirror tag per critical pair");
             // Same in-round stops as the (A′) loop above.
             if self.cc_should_stop() {
                 break;
@@ -4395,7 +4543,16 @@ where
                     node_b: c2,
                 },
             };
+            #[cfg(debug_assertions)]
+            self.cc_mirror_tag(cc_mirror::MergeWhy::Pair {
+                op,
+                origin: why,
+                pair: (cc_mirror::mono(&r1), cc_mirror::mono(&r2)),
+                reducts: (cc_mirror::mono(n1), cc_mirror::mono(n2)),
+            });
             changed |= do_merge(self, c1, c2, just);
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
             eprintln!(

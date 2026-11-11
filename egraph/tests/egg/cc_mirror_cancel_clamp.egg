@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; The cancellation closure C2 of `C0 + C1 = 2·C2 + C3` and `2·C2 = C0` builds the pair
+;; `(c + d³, e)` unclamped (CancelPair), and the engine normalizes it to `c` through the
+;; nilpotent clamp `d³ = 0`, which no `Normalize` step reaches (cc_mirror `clamped_side`).
+;; Reduced from `semper-conform-cc-cert` seed 932, case 340.
+(sort E)
+(function C0 () E)
+(function C1 () E)
+(function C2 () E)
+(function C3 () E)
+(function Zero () E)
+(function Add (E) E :assoc-comm :identity (Zero) :nilpotent 3 :cancellative)
+(set-option :completion eager)
+(union (Add (C0) (C1)) (Add (C2):2 (C3)))
+(union (Add (C2):2) (C0))
+(check-neq (C0) (C1))
+(check-neq (C0) (Zero))
