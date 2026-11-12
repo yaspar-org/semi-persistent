@@ -46,9 +46,10 @@ multiple rebuild cycles.
 ```rust
 pub enum Justification<G: DenseId> {
     Filler,
-    Rewrite { rule_id: RuleId },
+    Rewrite { rule_id: RuleId, inst: u32 },
     Congruence { node_a: G, node_b: G },
     Axiom { axiom_id: AxiomId },
+    Normalize { node: G, normal: G },
     ACSuperposition { node_a: G, node_b: G },
     ACInterReduction { node_a: G, node_b: G },
     ACAxiomCP { node_a: G, node_b: G },
@@ -59,9 +60,14 @@ pub enum Justification<G: DenseId> {
 ```
 
 - `Filler`: default-initialization value; it is never a real proof edge.
-- `Rewrite`: two nodes were merged by a rewrite rule firing.
+- `Rewrite`: two nodes were merged by a rule application. `inst` names the
+  rule instance, whose premise pairs are the equalities the application
+  used (see below); `NO_INSTANCE` when the caller recorded none.
 - `Congruence`: two nodes were merged because their children became
   equal (detected during rebuild).
+- `Normalize`: a node was merged with its normal form under the operator's
+  laws, one child's class or the unit (`and(a, a) = a`, `x + 0 = x`,
+  `xor(a, a) = 0`).
 - `Axiom`: two nodes were merged by an explicit `(union ...)` command or
   another caller-supplied axiom merge.
 - The five AC-specific variants identify critical-pair, inter-reduction,
@@ -74,6 +80,28 @@ pub enum Justification<G: DenseId> {
 The distinction between `Rewrite` and `Axiom` matters for proof
 presentation: rewrites reference user-defined rules (by index),
 while axioms reference caller-registered equality assertions.
+
+### Rule instances
+
+A rule application depends on more than its rule: `(rewrite (F (B)) H)`
+matches `F(A)` only through `A = B`. Under `PROOFS`, each match opens a rule
+instance in a table on the e-graph, and the instance records its premise
+pairs, the pairs of nodes the application needs equal:
+
+- for each atom of the query, each child of the matched node paired with
+  the node the pattern binds at that position (by position for ordered
+  operators, by class for commutative, AC and ACI operators);
+- the two sides of each equality atom (`(= x y)`, a global);
+- each variable the right-hand side fetches, paired with the class root the
+  right-hand side is built over.
+
+An instance that cannot pair a pattern position with a child of the matched
+node (a flattened view, whose elements come from nested nodes) or that
+contains a collected sequence is marked partial, and `rewrite_premises`
+reports it as unknown instead of claiming a complete list. Rule applications
+of the sequence engine and of collection rules record no instance yet. The
+table is append-only between marks; `restore`, `restore_and_pop` and
+`pop_scope` truncate it to the mark's lengths.
 
 ## Proof Forest
 
@@ -204,11 +232,26 @@ deep child grouping.
 
 ## `explain_deep`
 
-For a more detailed proof, `explain_deep` expands congruence steps: if two
-nodes were merged by congruence, it explains why each pair of children is
-equal. The implementation iterates by index through the growing
-`ProofBuf.steps` vector, so it does not recurse on the Rust call stack.
-`ProofBuf.seen` is scratch for the shallow LCA walk only.
+For a more detailed proof, `explain_deep` expands every step whose premises
+are equalities between other nodes, and appends the explanations of those
+equalities:
+
+- `Congruence`: the two nodes' original children. For ordered operators the
+  children pair by position. For commutative, AC and ACI operators the
+  children of both sides, together with the operator's unit and the
+  argument of each inverse child, are grouped by class, and in each class
+  every member is explained against the first. Pairing one child per class
+  from each side would miss the rest: `+(a, b)` and `+(a, a)` after `a = b`
+  pair `a` with `a`, and a child in the unit's class has no partner at all.
+- `Normalize`: the node's original children, the normal form and the unit,
+  grouped the same way.
+- `Rewrite`: the rule instance's premise pairs.
+
+The leaves are then `Axiom`, `Assumption`, a `Rewrite` with no complete
+instance, and the five completion variants, which do not record the rules
+and law instances they used. The implementation iterates by index through
+the growing `ProofBuf.steps` vector, so it does not recurse on the Rust call
+stack. `ProofBuf.seen` is scratch for the shallow LCA walk only.
 
 The expansion is memoized with two order-normalized pair sets, and the
 memoization is what makes the walk terminate, not just what makes it fast:
@@ -245,6 +288,30 @@ Skipping a repeat loses nothing: a repeat appends no steps, and consumers
 collect leaf justifications as a set. `deep_proof_diamond_is_linear` in
 `egraph_proof_test.rs` pins the linear bound on a nested diamond.
 
+## Proof Mode During Saturation
+
+Proof mode builds client terms through creation evidence, which can add a
+node the plain engine would not: a fresh node over non-root children, or a
+flagged duplicate of a node with history. Two rules keep saturation under
+proofs the same computation as without them:
+
+- **Built terms are memoized.** The hash-cons table cannot find such a node,
+  because its stored children are recanonicalized while its history keeps
+  the given ones, so `creation_memo` maps `(op, given children)` to the node
+  built for it. Without it a rule whose right-hand side re-fires each round
+  added one copy per round, and AC patterns enumerated every combination of
+  copies: `ac_lazy_alternation.egg` and `deep_constant_fold.egg` exceeded
+  2 GB with `--proofs` while they finish in under a second without it.
+- **Congruence waits for the round's rebuild.** Creation evidence closes
+  congruence after the term it built, which recanonicalizes nodes; inside a
+  saturation round those nodes are in the index every later rule of the
+  round matches against. While a round is open (`set_round_open`) the merges
+  wait on the worklist, as they do without proofs, and the round-end snapshot
+  check holds.
+
+Over the fixtures of `tests/egg`, each run with `--proofs` under a 20 s and
+2 GB bound, every fixture ends as it does without proofs.
+
 ## Semi-Persistence
 
 The proof forest is stored in the union-find's parent/justification
@@ -261,11 +328,32 @@ proof-parent forest invariant, the naive explanation walk, `LcaTable`
 construction/query, `explain_deep`, and serialization remain ordinary Rust
 covered by executable tests.
 
-`dump_all_proofs` emits one deterministic node-to-representative path for each
-e-node. It does not enumerate alternative proofs and does not call
-`explain_deep`. No independent replay checker currently validates the dump.
-Accordingly, this chapter does not claim a machine-checked theorem that every
-emitted explanation is a valid independently checked certificate.
+`tests/proof_replay.rs` replays explanations independently of the engine:
+for every node of every fixture in `tests/egg` run with proofs on, it takes
+`explain_deep(node, find(node))` and accepts a step in a fresh union-find
+only once its premises hold there (an axiom joins exactly the terms of its
+`union` command; a congruence step's children agree by position, or as
+classes after the operator's laws; a normalization leaves only the normal
+form's class or repeated classes; a rule application's premise pairs are
+joined). Every explanation over the fixtures replays. Steps the checker
+cannot replay, because the step records no premises, are counted and
+printed: the completion variants and the partial rule instances.
+
+Explanations stay incomplete in two known ways, listed here so a client does
+not read them as certificates:
+
+- `add` for AC, ACI and associative operators keeps no creation evidence: a
+  term built after its children merged can hash-cons onto an existing node,
+  or a law applied at build time can return another class's node, with no
+  forest edge relating the client's term to the stored one.
+- The completion variants are leaves: a superposition, inter-reduction or
+  cancellation step does not record the rules and law instances it used.
+
+`dump_all_proofs` emits one deterministic node-to-representative path for
+each e-node (format v2): the registered axioms with their two terms, each
+node's current and original children, and each rule application's instance
+premises. It does not enumerate alternative proofs and does not call
+`explain_deep`. No independent replay checker validates the dump itself.
 
 ---
 [← Ch 13: Soundness](13-soundness.md) · [Table of Contents](00-table-of-contents.md)
