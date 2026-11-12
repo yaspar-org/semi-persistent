@@ -262,14 +262,21 @@ fn reason<const T: bool, const P: bool>(
             render_node(eg, *node_a, terms),
             render_node(eg, *node_b, terms)
         ),
-        // C2 (doc §5): the log names the rule id only — no substitution and
-        // no matched instance — so this is all a checker gets.
-        Justification::Rewrite { rule_id } => {
-            format!(
-                "rewrite rule {rule_id:?} ; C2: rule id only, no substitution/instance in the log"
-            )
-        }
+        // The step names the rule and its instance; `explain_deep` expands the
+        // instance's premise pairs into steps of their own.
+        Justification::Rewrite { rule_id, inst } => match eg.rewrite_premises(*just) {
+            Some(p) => format!(
+                "rewrite rule {rule_id:?} instance {inst} ({} premises)",
+                p.len()
+            ),
+            None => format!("rewrite rule {rule_id:?} ; no complete instance recorded"),
+        },
         Justification::Assumption { lit } => format!("assumption {lit}"),
+        Justification::Normalize { node, normal } => format!(
+            "normalize({}, {})",
+            render_node(eg, *node, terms),
+            render_node(eg, *normal, terms)
+        ),
         Justification::ACSuperposition { .. }
         | Justification::ACInterReduction { .. }
         | Justification::ACAxiomCP { .. }
@@ -692,10 +699,10 @@ fn certificate_trace_with_rewrite_step() {
     assert!(has_congruence(&buf));
     assert!(has_axiom(&buf));
     assert!(
-        buf.steps.iter().any(|&(_, _, j)| j
-            == Justification::Rewrite {
-                rule_id: rule.rule_id
-            }),
+        buf.steps.iter().any(|&(_, _, j)| matches!(
+            j,
+            Justification::Rewrite { rule_id, .. } if rule_id == rule.rule_id
+        )),
         "chain1 must contain the Rewrite step for h1(a) = c, got {:?}",
         buf.steps
     );
@@ -923,20 +930,18 @@ fn ac_equal_projection_explains_to_empty_chain() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: post-rebuild degeneracy merge carries the wrong label.
+// Test 5: a post-rebuild degeneracy merge is a `Normalize` step.
 // ---------------------------------------------------------------------------
 
-/// Pins the documented post-rebuild degeneracy
-/// merge — here an ACI singleton collapse, and(a,b) with a = b recanonizing
-/// to {a} = a — is pushed through the collision queue and logged as
-/// `Congruence { node, child }` (egraph.rs recanonize_parent /
-/// degeneracy_merge). The label is wrong: no congruence happened, an
-/// idempotence law did, and the two nodes in the step do not even share an
-/// operator. C1 proposes dedicated variants (`UnitDrop`, `NilpotentClamp`,
-/// `SingletonCollapse`); when C1 lands, this test must fail and be updated.
+/// A post-rebuild degeneracy merge (here an ACI singleton collapse, and(a,b)
+/// with a = b recanonizing to {a} = a) is logged as `Normalize { node,
+/// normal }`, not as a congruence step: the two nodes do not share an
+/// operator, and the premises are the collapsed node's own children. The deep
+/// explanation therefore cites `a = b`, which a congruence label paired
+/// against the leaf's (empty) children and never reached.
 #[test]
-fn degeneracy_merge_is_labelled_congruence() {
-    // cc (AC completion) stays off — the default — so the only mechanism that
+fn degeneracy_merge_is_a_normalize_step() {
+    // cc (AC completion) stays off, the default, so the only mechanism that
     // can derive and(a,b) = a is the recanonize degeneracy path, not a
     // completion inference with its own AC label.
     let mut eg = Eg::<false, true>::new();
@@ -961,44 +966,30 @@ fn degeneracy_merge_is_labelled_congruence() {
 
     let mut buf = ProofBuf::new();
     assert!(eg.explain(and_ab, a, &mut buf));
-    print_chain("degeneracy: and(a,b) ≡ a after a=b", &buf, &eg, &terms);
-
-    // The degeneracy step is labelled Congruence and involves the collapsed
-    // Set node itself.
-    let degeneracy_step = buf
-        .steps
-        .iter()
-        .find_map(|(_, _, j)| match j {
-            Justification::Congruence { node_a, node_b }
-                if *node_a == and_ab || *node_b == and_ab =>
-            {
-                Some((*node_a, *node_b))
-            }
-            _ => None,
-        })
-        .expect("degeneracy merge must appear as a Congruence step (doc §3, C1)");
-
-    // No congruence happened: the equated nodes do not share an operator (a
-    // Set node against a nullary leaf). This is the C1 mislabelling.
-    let (na, nb) = degeneracy_step;
-    assert_ne!(
-        eg.node_op(na),
-        eg.node_op(nb),
-        "the 'Congruence' step relates nodes of different operators, \
-         so it cannot be a congruence; it is the ACI idempotence law \
-         (SingletonCollapse)"
+    print_chain("degeneracy: and(a,b) = a after a=b", &buf, &eg, &terms);
+    assert!(
+        buf.steps.iter().any(|(_, _, j)| matches!(
+            j,
+            Justification::Normalize { node, .. } if *node == and_ab
+        )),
+        "the collapse must be a Normalize step of the collapsed node: {:?}",
+        buf.steps
+    );
+    assert!(
+        !buf.steps
+            .iter()
+            .any(|(_, _, j)| matches!(j, Justification::Congruence { .. })),
+        "no congruence happened"
     );
 
-    // And explain_deep's congruence expansion has nothing to pair the MSet/Set
-    // children against on the leaf side: the deep chain adds no steps over
-    // the shallow one (doc §3: "explain_deep then tries to pair an MSet
-    // node's children against a leaf's and emits nothing").
-    let shallow_len = buf.steps.len();
+    // The deep chain expands the collapsed node's children and cites a = b.
     buf.clear();
     assert!(eg.explain_deep(and_ab, a, &mut buf));
-    assert_eq!(
-        buf.steps.len(),
-        shallow_len,
-        "congruence expansion of the degeneracy step should emit no sub-steps"
+    assert!(
+        buf.steps
+            .iter()
+            .any(|(_, _, j)| matches!(j, Justification::Axiom { axiom_id } if *axiom_id == ax)),
+        "the deep chain must cite a = b: {:?}",
+        buf.steps
     );
 }

@@ -500,6 +500,7 @@ where
         };
         #[cfg(debug_assertions)]
         let snap = debug_snapshot_contents(eg, &index);
+        eg.set_round_open(true);
         // The fixpoint test compares the graph, not the actions' counts: see `size_stamp`.
         let stamp = eg.size_stamp();
         let mut changes = 0;
@@ -542,6 +543,7 @@ where
                 )?;
             }
         }
+        eg.set_round_open(false);
         #[cfg(debug_assertions)]
         debug_check_snapshot_contents(eg, &snap);
         // Before any exit from the loop body: the arenas go back so the next
@@ -1107,6 +1109,7 @@ where
         // The delta's nodes are a subset of the full index's, so one snapshot covers both.
         #[cfg(debug_assertions)]
         let snap = debug_snapshot_contents(eg, &full);
+        eg.set_round_open(true);
         // delta = everything touched since the previous round's index build
         // (fresh nodes from the last round's apply + this round's recanon).
         let delta = if i == 0 {
@@ -1258,6 +1261,7 @@ where
             }
         }
         match_timer.stop();
+        eg.set_round_open(false);
         #[cfg(debug_assertions)]
         debug_check_snapshot_contents(eg, &snap);
         let had_delta = delta.is_some();
@@ -1325,6 +1329,7 @@ where
         let index = IndexStore::build(eg);
         #[cfg(debug_assertions)]
         let snap = debug_snapshot_contents(eg, &index);
+        eg.set_round_open(true);
         let stats = crate::schedule::IndexStats::from_index(&index);
         let vindex = crate::index::VariantIndex::naive(&index);
         let stamp = eg.size_stamp();
@@ -1383,6 +1388,7 @@ where
                 changes += applied.map_err(|e| crate::apply::name_fault(e, rule, eg))?;
             }
         }
+        eg.set_round_open(false);
         #[cfg(debug_assertions)]
         debug_check_snapshot_contents(eg, &snap);
         if changes == 0 && eg.size_stamp() == stamp {

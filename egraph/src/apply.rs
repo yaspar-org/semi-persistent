@@ -710,8 +710,20 @@ where
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
     Ok(match op {
-        RhsOp::FetchNode(node) => eg.find(env.node(*node)),
-        RhsOp::FetchGlobal(gid) => eg.find(globals.binding(*gid)),
+        RhsOp::FetchNode(node) => {
+            // The right-hand side is built over the class root: the instance needs the
+            // bound node equal to it.
+            let n = env.node(*node);
+            let r = eg.find(n);
+            eg.note_rule_premise(r, n);
+            r
+        }
+        RhsOp::FetchGlobal(gid) => {
+            let n = globals.binding(*gid);
+            let r = eg.find(n);
+            eg.note_rule_premise(r, n);
+            r
+        }
         RhsOp::Lit(op, val) => {
             let id = eg.lits_mut().intern(val.clone());
             eg.add_lit(*op, id)
@@ -1273,10 +1285,14 @@ where
             let vb = eval(b, env, eg, model, globals)?;
             if eg.find(va) != eg.find(vb) {
                 if P {
+                    let inst = eg.open_rule_instance();
                     eg.merge_justified(
                         va,
                         vb,
-                        crate::union_find::Justification::Rewrite { rule_id: *rule_id },
+                        crate::union_find::Justification::Rewrite {
+                            rule_id: *rule_id,
+                            inst,
+                        },
                     );
                 } else {
                     eg.merge(va, vb);
@@ -1314,6 +1330,125 @@ where
     })
 }
 
+/// Record, in the open rule instance, the equalities a match relies on: for
+/// each atom, every child of the matched node paired with the node the pattern
+/// binds at that position, and the two sides of each equality atom. Ordered
+/// atoms pair by position; commutative, AC and ACI atoms pair each pattern
+/// position with a child in its class. A position with no such child (a
+/// flattened view, whose elements come from nested nodes) marks the instance
+/// partial, as does a collected sequence: its premises are then not claimed
+/// complete.
+fn note_match_premises<Cfg, L, Q, S: Copy, const T: bool, const P: bool>(
+    query: &crate::resolve::ResolvedQuery<Cfg::O, S, L>,
+    m: &Q,
+    eg: &mut EGraph<Cfg, L, T, P>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    use crate::resolve::{PatVar, RAtom};
+    let bind = |v: &PatVar| match v {
+        PatVar::Local(id) => m.get(*id),
+        PatVar::Global(g) => globals.binding(*g),
+    };
+    let mut children: Vec<Cfg::G> = Vec::new();
+    let mut pattern: Vec<Cfg::G> = Vec::new();
+    for atom in &query.atoms {
+        pattern.clear();
+        let (node, ordered) = match atom {
+            RAtom::Plain { node, children, .. } | RAtom::AExact { node, children, .. } => {
+                pattern.extend(children.iter().map(bind));
+                (*node, true)
+            }
+            RAtom::APrefix {
+                node, pre, fixed, ..
+            } => {
+                pattern.extend_from_slice(m.seq_slice(*pre));
+                pattern.extend(fixed.iter().map(bind));
+                (*node, true)
+            }
+            RAtom::ASuffix {
+                node, fixed, suf, ..
+            } => {
+                pattern.extend(fixed.iter().map(bind));
+                pattern.extend_from_slice(m.seq_slice(*suf));
+                (*node, true)
+            }
+            RAtom::ABoth {
+                node,
+                pre,
+                fixed,
+                suf,
+                ..
+            } => {
+                pattern.extend_from_slice(m.seq_slice(*pre));
+                pattern.extend(fixed.iter().map(bind));
+                pattern.extend_from_slice(m.seq_slice(*suf));
+                (*node, true)
+            }
+            RAtom::ACExact { node, elems, .. } | RAtom::Comm { node, elems, .. } => {
+                pattern.extend(elems.iter().map(|(v, _)| bind(v)));
+                (*node, false)
+            }
+            RAtom::ACSub {
+                node, elems, rest, ..
+            } => {
+                pattern.extend(elems.iter().map(|(v, _)| bind(v)));
+                pattern.extend(m.mset_slice(*rest).iter().map(Cfg::mset_child_id));
+                (*node, false)
+            }
+            RAtom::ACIExact { node, elems, .. } => {
+                pattern.extend(elems.iter().map(bind));
+                (*node, false)
+            }
+            RAtom::ACISub {
+                node, elems, rest, ..
+            } => {
+                pattern.extend(elems.iter().map(bind));
+                pattern.extend_from_slice(m.set_slice(*rest));
+                (*node, false)
+            }
+            RAtom::Eq(a, b) => {
+                eg.note_rule_premise(m.get(*a), m.get(*b));
+                continue;
+            }
+            RAtom::EqGlobal(v, g) => {
+                eg.note_rule_premise(m.get(*v), globals.binding(*g));
+                continue;
+            }
+            RAtom::Collect { .. } => {
+                eg.note_rule_partial();
+                continue;
+            }
+            // Literal payloads and predicates over them, and disequalities, are not
+            // equalities between classes.
+            RAtom::Lit { .. } | RAtom::LitBind { .. } | RAtom::Neq(..) | RAtom::Pred { .. } => {
+                continue;
+            }
+        };
+        let n = m.get(node);
+        children.clear();
+        eg.for_each_child(n, |c, _| children.push(c));
+        if ordered && children.len() == pattern.len() {
+            for (&c, &p) in children.iter().zip(&pattern) {
+                eg.note_rule_premise(c, p);
+            }
+            continue;
+        }
+        for &p in &pattern {
+            let rp = eg.find_const(p);
+            match children.iter().find(|&&c| eg.find_const(c) == rp) {
+                Some(&c) => eg.note_rule_premise(c, p),
+                None => eg.note_rule_partial(),
+            }
+        }
+    }
+}
+
 pub(crate) fn apply_rule_actions<Cfg, L, M, Q, S, const T: bool, const P: bool>(
     rule: &PreparedRule<Cfg::O, S, L>,
     query: &Q,
@@ -1331,6 +1466,10 @@ where
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
     let mut env = RhsEnv::new(query, rule.rhs_locals);
+    if P {
+        eg.begin_rule_instance();
+        note_match_premises(&rule.query, query, eg, globals);
+    }
     // Actions are applied in order and an error stops at the one that faulted:
     // the earlier actions' effects stay in the e-graph. That is deliberate. The
     // run is over, so nothing reads the graph again except a diagnostic, and
@@ -1349,6 +1488,9 @@ where
                 break;
             }
         }
+    }
+    if P {
+        eg.end_rule_instance();
     }
     debug_assert!(
         env.locals_are_unbound(),
@@ -2851,7 +2993,7 @@ mod tests {
         assert!(
             buf.steps
                 .iter()
-                .any(|&(_, _, j)| j == crate::union_find::Justification::Rewrite { rule_id }),
+                .any(|&(_, _, j)| matches!(j, crate::union_find::Justification::Rewrite { rule_id: r, .. } if r == rule_id)),
             "expected a Rewrite {{ rule_id: r0 }} step in the proof, got: {:?}",
             buf.steps,
         );

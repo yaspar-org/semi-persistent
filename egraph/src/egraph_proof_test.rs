@@ -336,6 +336,13 @@ mod deep_proof_test {
                 }
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
                 Justification::Assumption { lit } => format!("assumption {lit}"),
+                Justification::Normalize { node, normal } => {
+                    format!(
+                        "normalize({}, {})",
+                        eg.node_op_name(*node),
+                        eg.node_op_name(*normal)
+                    )
+                }
                 Justification::ACSuperposition { .. }
                 | Justification::ACInterReduction { .. }
                 | Justification::ACAxiomCP { .. }
@@ -427,6 +434,13 @@ mod kind_proof_tests {
                 ),
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
                 Justification::Assumption { lit } => format!("assumption {lit}"),
+                Justification::Normalize { node, normal } => {
+                    format!(
+                        "normalize({}, {})",
+                        eg.node_op_name(*node),
+                        eg.node_op_name(*normal)
+                    )
+                }
                 Justification::ACSuperposition { .. }
                 | Justification::ACInterReduction { .. }
                 | Justification::ACAxiomCP { .. }
@@ -1184,6 +1198,13 @@ mod aci_deep_proof_test {
                 ),
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
                 Justification::Assumption { lit } => format!("assumption {lit}"),
+                Justification::Normalize { node, normal } => {
+                    format!(
+                        "normalize({}, {})",
+                        eg.node_op_name(*node),
+                        eg.node_op_name(*normal)
+                    )
+                }
                 Justification::ACSuperposition { .. }
                 | Justification::ACInterReduction { .. }
                 | Justification::ACAxiomCP { .. }

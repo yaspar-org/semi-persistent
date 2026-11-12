@@ -43,7 +43,7 @@ fn cites_the_rule(program: &str, root_op: &str, marker_op: &str) {
         .steps
         .iter()
         .filter_map(|(_, _, j)| {
-            if let Justification::Rewrite { rule_id } = j {
+            if let Justification::Rewrite { rule_id, .. } = j {
                 Some(eg.rules().name(*rule_id))
             } else {
                 None

@@ -339,22 +339,41 @@ where
     }
 
     /// Deep-explain `a = b` and collect the assumption literals from the
-    /// proof steps. `explain_deep` expands every congruence step into child
-    /// explanations, so the collection is complete for ground EUF, where
-    /// the only leaf justifications are assumptions.
+    /// proof steps. `explain_deep` expands congruence, normalization and
+    /// rule-instance steps into the steps their premises need, so every
+    /// remaining leaf must be an assumption: the literals are then all the
+    /// facts the equality depends on.
+    ///
+    /// Any other leaf (an axiom, a rule application with no recorded
+    /// instance, a completion inference) stands for premises the e-graph did
+    /// not record. Dropping it would make the conflict clause stronger than
+    /// the assignment entails, and the solver would answer unsat wrongly
+    /// (the defect of Z3 issue 11649), so it panics instead. The match is
+    /// exhaustive on purpose: a new justification kind must be classified
+    /// here before this layer compiles.
     fn explain_eq_lits(&mut self, a: Cfg::G, b: Cfg::G) -> Vec<Lit<Cfg::Atom>> {
         self.buf.steps.clear();
         let ok = self.eg.explain_deep(a, b, &mut self.buf);
         debug_assert!(ok, "explain_eq_lits on unequal classes");
-        let mut lits: Vec<Lit<Cfg::Atom>> = self
-            .buf
-            .steps
-            .iter()
-            .filter_map(|&(_, _, j)| match j {
-                Justification::Assumption { lit } => Some(Lit::decode(lit.as_usize())),
-                _ => None,
-            })
-            .collect();
+        let mut lits: Vec<Lit<Cfg::Atom>> = Vec::new();
+        for &(_, _, j) in &self.buf.steps {
+            match j {
+                Justification::Assumption { lit } => lits.push(Lit::decode(lit.as_usize())),
+                Justification::Congruence { .. } | Justification::Normalize { .. } => {}
+                Justification::Rewrite { .. } if self.eg.rewrite_premises(j).is_some() => {}
+                Justification::Rewrite { .. }
+                | Justification::Axiom { .. }
+                | Justification::ACSuperposition { .. }
+                | Justification::ACInterReduction { .. }
+                | Justification::ACAxiomCP { .. }
+                | Justification::Cancellative { .. }
+                | Justification::InverseCancel { .. }
+                | Justification::Filler => panic!(
+                    "EUF explanation reached {j:?}, a step whose antecedents the e-graph \
+                     does not record: a clause built without them would be unsound"
+                ),
+            }
+        }
         lits.sort_unstable();
         lits.dedup();
         lits
@@ -575,6 +594,47 @@ mod tests {
         let ab2 = e.eq_atom(a, b);
         assert_eq!(ab2.as_usize(), 0);
         assert_eq!(e.value(ab2), None);
+    }
+
+    /// A term built over a child whose class merged after its parent was
+    /// recanonicalized hits that parent's stale stored children. `m = f(c)` is
+    /// stored as `f(r)` once `c` joins the class of `r` and the graph is
+    /// rebuilt, with `c` kept as its original child. After `r` is absorbed
+    /// into a larger class, building `f(r)` must give a node of its own: if it
+    /// returned `m`, the explanation of `f(r) = f(d)` after `d = c` would read
+    /// `m`'s original child `c` and cite only `d = c`, dropping `c = r`.
+    #[test]
+    fn term_over_stale_children_keeps_its_evidence() {
+        let mut e = E::new();
+        let f = e.declare_fun("f", 1);
+        let [a, a2, b, b2, g, g2, c, d] =
+            ["a", "a2", "b", "b2", "g", "g2", "c", "d"].map(|n| e.declare_const(n));
+        let _m = e.term(f, &[c]);
+        // Rank 1 for a's class, so `c` joins it rather than the reverse.
+        let aa = e.eq_atom(a, a2);
+        e.assert_lit(lit(aa, true));
+        let ca = e.eq_atom(c, a);
+        e.assert_lit(lit(ca, true));
+        assert!(matches!(e.check(), CheckResult::Ok(_)));
+        let r = e.find(a);
+        assert_eq!(e.find(c), r);
+        // A rank-2 class that absorbs r's class without a rebuild.
+        for (x, y) in [(b, b2), (g, g2), (b, g)] {
+            let atom = e.eq_atom(x, y);
+            e.assert_lit(lit(atom, true));
+        }
+        let rb = e.eq_atom(r, b);
+        e.assert_lit(lit(rb, true));
+        assert_ne!(e.find(r), r, "r is no longer a root");
+        let fr = e.term(f, &[r]);
+        let dc = e.eq_atom(d, c);
+        e.assert_lit(lit(dc, true));
+        let fd = e.term(f, &[d]);
+        let top = e.eq_atom(fr, fd);
+        assert!(matches!(e.check(), CheckResult::Ok(_)));
+        let why = e.explain_true_eq(top).expect("f(r) = f(d)");
+        assert!(why.contains(&lit(ca, true)), "missing c = a: {why:?}");
+        assert!(why.contains(&lit(dc, true)), "missing d = c: {why:?}");
     }
 
     #[test]

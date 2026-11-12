@@ -1580,7 +1580,10 @@ where
                 .merge_justified(
                     new,
                     root,
-                    crate::union_find::Justification::Rewrite { rule_id },
+                    crate::union_find::Justification::Rewrite {
+                        rule_id,
+                        inst: crate::union_find::NO_INSTANCE,
+                    },
                 )
                 .is_some(),
             _ => eg.merge(new, root).is_some(),

@@ -1572,7 +1572,7 @@ fn a_flattened_union_cites_the_rule() {
         .steps
         .iter()
         .filter_map(|(_, _, j)| match j {
-            semi_persistent_egraph::union_find::Justification::Rewrite { rule_id } => {
+            semi_persistent_egraph::union_find::Justification::Rewrite { rule_id, .. } => {
                 Some(it.eg.rules().name(*rule_id))
             }
             _ => None,

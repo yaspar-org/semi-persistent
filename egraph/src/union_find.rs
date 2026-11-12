@@ -4,6 +4,11 @@
 
 use crate::containers::{DenseId, Tagged};
 
+/// The `inst` of a [`Justification::Rewrite`] for which no rule instance was
+/// recorded: the step's premises are unknown, and explanation consumers must
+/// not treat it as a leaf.
+pub const NO_INSTANCE: u32 = u32::MAX;
+
 /// Why two e-nodes were unified.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Justification<G: DenseId> {
@@ -13,8 +18,13 @@ pub enum Justification<G: DenseId> {
     /// justification.
     #[default]
     Filler,
+    /// A rule application. `inst` names the rule instance whose premise pairs
+    /// (the equalities the match and the right-hand side's construction used)
+    /// `explain_deep` expands, as it expands a congruence step's children;
+    /// [`NO_INSTANCE`] when the caller recorded none.
     Rewrite {
         rule_id: crate::id::RuleId,
+        inst: u32,
     },
     Congruence {
         node_a: G,
@@ -22,6 +32,15 @@ pub enum Justification<G: DenseId> {
     },
     Axiom {
         axiom_id: crate::id::AxiomId,
+    },
+    /// A node equal to its normal form under the operator's laws, where the
+    /// normal form is one child's class (`and(a, a) = a`, `x + 0 = x`) or the
+    /// unit (`xor(a, a) = 0`). The premises are the equalities among the
+    /// node's original children and between them and `normal` or the unit:
+    /// `explain_deep` expands them.
+    Normalize {
+        node: G,
+        normal: G,
     },
     /// AC completion: a critical-pair superposition between two rules sharing a child class.
     /// The merge equates the normalized reducts. (Kapur Def 3.2.)
