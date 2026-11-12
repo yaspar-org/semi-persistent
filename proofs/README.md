@@ -28,8 +28,8 @@ that on a 4-core runner, plus the cache download.
   identity, nilpotent, idempotent and inverse clamps of `nary_canon`, the
   completeness theorem instantiated for each, and `InvRules*.lean`: the
   five inverse rules the engine applies at rebuild and in completion, proved
-  sound and sufficient (`completion_complete_inverse_engine`,
-  `completion_complete_combined_engine`).
+  sound; completeness for the inverse law sets goes through lattice closure
+  (`completion_complete_inverse_engine`, `completion_complete_combined_engine`).
 - `SemperProofs/EMatch/`: e-matching under maximum-partition semantics.
   The reference plan (`ematch_sound`, `ematch_complete`); `Engine/`, every
   plan the scheduler can produce, runtime scheduling, the ByOp demotion,

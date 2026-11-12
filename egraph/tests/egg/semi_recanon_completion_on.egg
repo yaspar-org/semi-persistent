@@ -1,0 +1,29 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; The counter-model of `denN_persist_fails` under eager completion, naive and semi-naive.
+;; Round 0 fires `(F x)` with `x` bound to `d = Add{y, C, W}`, where `y` is the class of `H`
+;; and also holds `Add{P, Q}`: the right-hand side splices `d` and builds `N = Add{y, C, W, Z}`,
+;; so `F(d) = G(N)`. Round 1 merges `y` with the unit. Recanonicalization drops `y`: `d` is
+;; `Add{C, W}` and `N` is `Add{C, W, Z}`; `Add{P, Q}` is now in the unit's class, so completion
+;; rewrites `Add{P, Q, C, W, Z}` (the value of the right-hand side through the nested splice
+;; of `y`, the counter-model's `e'`) to `Add{C, W, Z}` and joins the two spellings. With
+;; completion on the semi-naive loop does not re-match `(F x)` after the law applied
+;; (`respelled` is off); the instance is reached through completion alone
+;; (`proofs/lean/SemperProofs/Fidelity/RecanonComplete.lean`, `saturation_complete_closed`,
+;; `PersistFails.completed`). With completion off, both strategies fail the last check.
+(set-option :completion eager)
+(sort E)
+(function P () E) (function Q () E) (function C () E) (function W () E) (function Z () E)
+(function H () E) (function Zero () E)
+(function Add (E) E :assoc-comm :identity (Zero))
+(function F (E) E) (function G (E) E)
+(union (Add (P) (Q)) (H))
+(let d (Add (H) (C) (W)))
+(let fd (F d))
+(let m (Add (P) (Q) (C) (W) (Z)))
+(rule ((F x)) ((union (F x) (G (Add x (Z))))))
+(rule ((G w)) ((union (H) (Zero))))
+(run 10)
+(check-eq (Add (H) (C) (W)) (Add (C) (W)))
+(check-eq (F (Add (C) (W))) (G (Add (C) (W) (Z))))
+(check-eq (G (Add (P) (Q) (C) (W) (Z))) (F (Add (H) (C) (W))))

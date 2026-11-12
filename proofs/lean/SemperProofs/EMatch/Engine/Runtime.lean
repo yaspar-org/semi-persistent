@@ -215,4 +215,115 @@ theorem runND_eq_plan {G : Graph} {sig : Sym → Kind} {atoms : List QAtom} {pla
   intro σ'
   rw [runND_matches choose hwf, plan_matches hwf h]
 
+/-! ## The adaptive scheduler under the semi-naive modes
+
+The engine runs its variants through the same adaptive loop: `run_join`
+consults the mode of the atom its block came from (`E:2864-2874`), and the
+rest of a block is mode-blind. `runNDA` is `runND` with each lowered block
+interpreted by `runA` under the index annotated with the atom's index; with
+the constant mode `full` it is `runND` as a set (`runNDA_full_iff`). -/
+
+/-- `runND` under a per-atom `IndexMode`: the lowered block of atom `i` is
+run as `runA` on the plan annotated with `i`. -/
+def runNDA (G : Graph) (isNew : NodeId → Bool) (mode : Nat → IndexMode) (atoms : List QAtom)
+    (choose : Binding → Finset Nat → Nat) :
+    Nat → Finset Nat → Finset Var → Binding → List Binding
+  | 0, _, _, σ => [σ]
+  | fuel + 1, used, B, σ =>
+      match eagerCandidate atoms used B with
+      | some i =>
+          match atoms[i]? with
+          | some q => (run G (q.eagerLower B) σ).flatMap
+              (runNDA G isNew mode atoms choose fuel (insert i used) (B ∪ q.binds))
+          | none => []
+      | none =>
+          if hS : (unusedScan atoms used).Nonempty then
+            let i := if choose σ (unusedScan atoms used) ∈ unusedScan atoms used
+              then choose σ (unusedScan atoms used) else (unusedScan atoms used).min' hS
+            match atoms[i]? with
+            | some (.scan a) =>
+                (runA G isNew mode ((lower a B).map (i, ·)) σ).flatMap
+                  (runNDA G isNew mode atoms choose fuel (insert i used) (B ∪ a.binds))
+            | _ => []
+          else [σ]
+
+theorem runNDA_run {G : Graph} {sig : Sym → Kind} {isNew : NodeId → Bool} {atoms : List QAtom}
+    {mode : Nat → IndexMode} {pre : Finset Var}
+    (choose : Binding → Finset Nat → Nat) (hwf : AtomsWF G sig atoms) :
+    ∀ (fuel : Nat) (used : Finset Nat) (B : Finset Var) (σ : Binding),
+    Inv G isNew atoms mode pre used B σ → unusedCount atoms used ≤ fuel →
+    ∀ σ', σ' ∈ runNDA G isNew mode atoms choose fuel used B σ ↔
+      RunSpec G isNew atoms mode used B σ σ' := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro used B σ hinv hfuel σ'
+      have hall := unusedCount_zero (Nat.le_zero.1 hfuel)
+      simp only [runNDA, List.mem_singleton]
+      exact runSpec_done hwf hinv (fun i a ha => hall i _ ha) (fun i q hq hu => absurd (hall i q hq) hu)
+  | succ fuel ih =>
+      intro used B σ hinv hfuel σ'
+      simp only [runNDA]
+      cases hc : eagerCandidate atoms used B with
+      | some i =>
+          obtain ⟨q, hq, hu, hf⟩ := eagerCandidate_some hc
+          simp only [hq]
+          have hi : i < atoms.length := (List.getElem?_eq_some_iff.1 hq).1
+          have hfuel' : unusedCount atoms (insert i used) ≤ fuel := by
+            have := unusedCount_insert hi hu; omega
+          exact step_eager_iff hwf hinv hq hu hf _ (fun σ₁ hinv₁ => ih _ _ σ₁ hinv₁ hfuel') σ'
+      | none =>
+          have hnone := eagerCandidate_none hc
+          simp only
+          split
+          · rename_i hS
+            set i := (if choose σ (unusedScan atoms used) ∈ unusedScan atoms used
+              then choose σ (unusedScan atoms used) else (unusedScan atoms used).min' hS) with hi_def
+            have hiS : i ∈ unusedScan atoms used := by
+              rw [hi_def]; split
+              · assumption
+              · exact Finset.min'_mem _ _
+            obtain ⟨hu, a, ha⟩ := mem_unusedScan.1 hiS
+            simp only [ha]
+            have hi : i < atoms.length := (List.getElem?_eq_some_iff.1 ha).1
+            have hfuel' : unusedCount atoms (insert i used) ≤ fuel := by
+              have := unusedCount_insert hi hu; omega
+            exact step_pick_iff hwf hinv ha hu _ (fun σ₁ => mem_runA_lower) _
+              (fun σ₁ hinv₁ => ih _ _ σ₁ hinv₁ hfuel') σ'
+          · rename_i hS
+            simp only [List.mem_singleton]
+            have hall : ∀ (i : Nat) (a : RAtom), atoms[i]? = some (.scan a) → i ∈ used := by
+              intro i a ha
+              by_contra hu
+              exact hS ⟨i, mem_unusedScan.2 ⟨hu, a, ha⟩⟩
+            exact runSpec_done hwf hinv hall hnone
+
+/-- The adaptive scheduler under modes emits exactly the matches the modes
+admit, whatever the choice function. -/
+theorem runNDA_matches {G : Graph} {sig : Sym → Kind} {isNew : NodeId → Bool} {atoms : List QAtom}
+    {mode : Nat → IndexMode} (choose : Binding → Finset Nat → Nat) (hwf : AtomsWF G sig atoms) :
+    ∀ σ', σ' ∈ runNDA G isNew mode atoms choose atoms.length ∅ ∅ Binding.empty ↔
+      Matches G atoms σ' ∧ ModeOk isNew atoms mode σ' := by
+  intro σ'
+  rw [runNDA_run choose hwf atoms.length ∅ ∅ Binding.empty (Inv.empty G _ atoms _)
+    (by unfold unusedCount; simp), runSpec_empty_iff]
+
+/-- Under modes, the adaptive scheduler and every `SchedA` plan emit the same set. -/
+theorem runNDA_eq_runA {G : Graph} {sig : Sym → Kind} {isNew : NodeId → Bool} {atoms : List QAtom}
+    {mode : Nat → IndexMode} {ap : APlan} (choose : Binding → Finset Nat → Nat)
+    (hwf : AtomsWF G sig atoms) (h : SchedA atoms ∅ ∅ ap) :
+    ∀ σ', σ' ∈ runNDA G isNew mode atoms choose atoms.length ∅ ∅ Binding.empty ↔
+      σ' ∈ runA G isNew mode ap Binding.empty := by
+  intro σ'
+  rw [runNDA_matches choose hwf, schedA_matches hwf h]
+
+/-- With the constant mode `full`, `runNDA` is `runND` as a set. -/
+theorem runNDA_full_iff {G : Graph} {sig : Sym → Kind} {isNew : NodeId → Bool} {atoms : List QAtom}
+    (choose : Binding → Finset Nat → Nat) (hwf : AtomsWF G sig atoms) :
+    ∀ σ', σ' ∈ runNDA G isNew (fun _ => .full) atoms choose atoms.length ∅ ∅ Binding.empty ↔
+      σ' ∈ runND G atoms choose atoms.length ∅ ∅ Binding.empty := by
+  intro σ'
+  rw [runNDA_matches choose hwf, runND_matches choose hwf]
+  exact ⟨And.left, fun hm => ⟨hm, modeOk_full _ _ _ hm⟩⟩
+
 end Semper.EMatch

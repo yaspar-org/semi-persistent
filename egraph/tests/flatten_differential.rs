@@ -15,7 +15,10 @@
 //! (a sub-multiset, a subset, or a run, a prefix or suffix for a fold) by a class holding
 //! an `f` node over that group, found by scanning every `f` member of the model rather
 //! than use lists. A regrouped view keeps its source's opening trees, and its matches
-//! must take each regrouped class, at most one per item.
+//! must take each regrouped class, at most one per item. For a set operator, each view
+//! of the loop also yields its overlap views (`flatten`, "Overlap views under
+//! idempotence"): the class of an `f` node over a subset of its classes added, and as many
+//! of those classes dropped as the pattern's item count fixes.
 //!
 //! **Views** (`doc/goal-flatten-and-engine-completion.md`, decision 2 and task 3). For a
 //! node `n` of an n-ary operator `f`, each child class `X` contributes one of:
@@ -475,7 +478,8 @@ thread_local! {
 /// replace a group of its entries by a class `g` holding an `f` node over that group,
 /// recursively. A regrouped view inherits each of its source's opening trees: a leaf
 /// holding a class of the group also holds `g`, the regrouped classes the group absorbs
-/// are no longer needed, and `g` is. A tree needing more than `limit` (the pattern's
+/// are no longer needed, and `g` is, of those only the classes the regrouped view holds
+/// (the laws may drop one), and a leaf that gains a dropped `g` is not inert. A tree needing more than `limit` (the pattern's
 /// items) is dropped once regrouping is done, not before: a later group may absorb the
 /// classes it needs.
 fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Alts>) {
@@ -511,32 +515,52 @@ fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Al
                 if done.contains(&c) {
                     continue;
                 }
-                let entry = by_view.entry(c).or_default();
+                let entry = by_view.entry(c.clone()).or_default();
                 if entry.iter().any(|l| l.is_empty()) {
                     continue;
                 }
-                let in_group = |x: &Class| grp.iter().any(|e| e.0 == *x);
-                for leaves in &alts {
-                    let mut next: Leaves = leaves
-                        .iter()
-                        .filter(|l| !(l.need && in_group(&l.x)))
-                        .map(|l| {
-                            let mut l = l.clone();
-                            if !l.need && !l.g.contains(g) && l.g.iter().any(in_group) {
-                                l.g.push(*g);
-                            }
-                            l
-                        })
-                        .collect();
-                    if !next.iter().any(|l| l.need && l.x == *g) {
-                        next.push(Leaf {
-                            x: *g,
-                            non_inert: false,
-                            g: vec![*g],
-                            need: true,
-                        });
+                entry.extend(derive_alts(&alts, *g, grp, &c));
+            }
+        }
+    }
+    // Overlap views under idempotence (`flatten`, "Overlap views under idempotence"): for
+    // a set operator and a pattern with items, each view of the loop yields, per group
+    // whose classes lie in it, the views that add `g` and drop `k` of the group's classes,
+    // `k` such that the view has `limit` entries; the records derive from the loop's trees
+    // of the view, and the overlap views are not overlapped again.
+    if kind == Kind::Aci && limit > 0 {
+        let loop_views: Vec<(View, Alts)> = by_view
+            .iter()
+            .map(|(v, a)| (v.clone(), a.clone()))
+            .collect();
+        for (v, alts) in &loop_views {
+            for (g, grp) in &groups {
+                let cs: Vec<Class> = grp.iter().map(|e| e.0).collect();
+                if cs.contains(g) || cs.len() < 2 || !cs.iter().all(|c| v.iter().any(|e| e.0 == *c))
+                {
+                    continue;
+                }
+                let in_view = v.iter().any(|e| e.0 == *g);
+                let base = v.len() + usize::from(!in_view);
+                if base < limit {
+                    continue;
+                }
+                let k = base - limit;
+                if cs.len() <= k || (k == 0 && in_view) {
+                    continue;
+                }
+                for drop in subsets(&cs, k) {
+                    let mut raw: View =
+                        v.iter().filter(|e| !drop.contains(&e.0)).copied().collect();
+                    raw.push((*g, 1));
+                    let Some(c) = canonical(model, f, raw) else {
+                        continue;
+                    };
+                    let entry = by_view.entry(c.clone()).or_default();
+                    if entry.iter().any(|l| l.is_empty()) {
+                        continue;
                     }
-                    entry.push(next);
+                    entry.extend(derive_alts(alts, *g, grp, &c));
                 }
             }
         }
@@ -544,6 +568,61 @@ fn regroup(model: &Model, f: OpId, limit: usize, by_view: &mut BTreeMap<View, Al
     for alts in by_view.values_mut() {
         alts.retain(|leaves| leaves.iter().filter(|l| l.need).count() <= limit);
     }
+}
+
+/// The opening trees of a view regrouped by the group `grp` of class `g` into the
+/// canonical view `c`: a leaf holding a class of the group also holds `g`, the regrouped
+/// classes the group absorbs are no longer needed, and `g` is, of those only the classes
+/// `c` holds (the laws may drop one), and a leaf that gains a dropped `g` is not inert.
+fn derive_alts(alts: &Alts, g: Class, grp: &View, c: &View) -> Alts {
+    let held: BTreeSet<Class> = c.iter().map(|e| e.0).collect();
+    let gone = !held.contains(&g);
+    let in_group = |x: &Class| grp.iter().any(|e| e.0 == *x);
+    alts.iter()
+        .map(|leaves| {
+            let mut next: Leaves = leaves
+                .iter()
+                .filter(|l| !(l.need && in_group(&l.x)))
+                .map(|l| {
+                    let mut l = l.clone();
+                    if !l.need && !l.g.contains(&g) && l.g.iter().any(in_group) {
+                        l.g.push(g);
+                        l.non_inert |= gone;
+                    }
+                    l
+                })
+                .collect();
+            if !next.iter().any(|l| l.need && l.x == g) {
+                next.push(Leaf {
+                    x: g,
+                    non_inert: false,
+                    g: vec![g],
+                    need: true,
+                });
+            }
+            next.retain(|l| !l.need || held.contains(&l.x));
+            next
+        })
+        .collect()
+}
+
+/// Every `k`-element subset of `cs`.
+fn subsets(cs: &[Class], k: usize) -> Vec<Vec<Class>> {
+    if k == 0 {
+        return vec![Vec::new()];
+    }
+    let Some((&first, rest)) = cs.split_first() else {
+        return Vec::new();
+    };
+    let mut out: Vec<Vec<Class>> = subsets(rest, k - 1)
+        .into_iter()
+        .map(|mut d| {
+            d.insert(0, first);
+            d
+        })
+        .collect();
+    out.extend(subsets(rest, k));
+    out
 }
 
 // ── Patterns ─────────────────────────────────────────────────────────────────
@@ -1317,8 +1396,8 @@ fn chain_graph() -> (EG, OpId, OpId, OpId) {
     (eg, l0, s, and)
 }
 
-/// Run `pattern` flattened, with its root bound to `root`: the matches, and the nodes
-/// the `Flatten` step skipped.
+/// Run `pattern` flattened, with its root bound to `root`: the matches, the nodes the
+/// `Flatten` step skipped, and the nodes whose regrouping was truncated.
 fn seeded(
     eg: &EG,
     pattern: &str,
@@ -1326,6 +1405,7 @@ fn seeded(
     more: &[(&str, ENodeId)],
 ) -> (
     Vec<semi_persistent_egraph::ematch::Match<DefaultConfig>>,
+    usize,
     usize,
     semi_persistent_egraph::resolve::MatchShape,
 ) {
@@ -1362,7 +1442,12 @@ fn seeded(
         &seeds,
     );
     let ms = (0..pool.len()).map(|j| pool.clone_match(j)).collect();
-    (ms, pool.flatten_skipped(), rq.shape)
+    (
+        ms,
+        pool.flatten_skipped(),
+        pool.flatten_regroup_truncated(),
+        rq.shape,
+    )
 }
 
 /// A chain of 100,000 nested conjunctions, `And{x_1, C_2}` with `C_i ≡ And{x_i, C_{i+1}}`,
@@ -1401,7 +1486,7 @@ fn deep_chain_flattens_without_recursion() {
     // `z` is seeded to the bottom leaf's class, so the decomposition finds its position
     // directly. With a fresh item it would try every position and copy the rest at
     // each, which is quadratic in the view's length with or without the tag.
-    let (ms, skipped, shape) = seeded(&eg, "(And z ..r)", ands[0], &[("z", bottom)]);
+    let (ms, skipped, _, shape) = seeded(&eg, "(And z ..r)", ands[0], &[("z", bottom)]);
     assert_eq!(skipped, 0);
     assert_eq!(
         ms.len(),
@@ -1437,15 +1522,16 @@ fn a_node_over_the_view_bound_is_skipped_and_counted() {
     let over = eg.add(and, &[ka, kb]);
     let fine = eg.add(and, &[leaves[2 * 1025 + 2], leaves[2 * 1025 + 3]]);
     eg.rebuild();
-    let (ms, skipped, _) = seeded(&eg, "(And x y ..r)", over, &[]);
+    let (ms, skipped, _, _) = seeded(&eg, "(And x y ..r)", over, &[]);
     assert_eq!(skipped, 1, "the node over the bound is counted");
     assert!(ms.is_empty(), "and contributes no match");
-    let (ms, skipped, _) = seeded(&eg, "(And x y ..r)", fine, &[]);
+    let (ms, skipped, _, _) = seeded(&eg, "(And x y ..r)", fine, &[]);
     assert_eq!(skipped, 0);
     assert_eq!(
         ms.len(),
-        2,
-        "another node still matches (two orders of its two children)"
+        6,
+        "another node still matches: two orders of its two children, and through the \
+         overlap stage its own class beside each child (And of fine and a is fine), two orders each"
     );
 }
 

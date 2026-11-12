@@ -573,7 +573,7 @@ theorem completion_complete_cancellative_engine {L : Laws n}
       Overlap r₁.1 r₂.1 →
       Joinable (Rw (plain n) (st.rules ∪ L.axRules))
         (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hlat : L.cancellative → LatticeClosed L st)
@@ -596,7 +596,7 @@ theorem completion_complete_cancellative_engine' {L : Laws n}
       Overlap r₁.1 r₂.1 →
       Joinable (Rw (plain n) (st.rules ∪ L.axRules))
         (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hfixL : L.cancellative → EngineFixed L st)
@@ -740,7 +740,7 @@ theorem hcancel_not_derivable :
   have nrm : ∀ {M : Monomial 4}, ¬ ({2, 2, 0} : Monomial 4) ≤ M →
       ∀ P, ¬ Rw (cancelAC 4) cexState.rules M P :=
     fun h => cex_normal (fun _ => rfl) (fun p hp => cex_rules hp) h
-  refine ⟨trivial, ⟨?_, ?_⟩, ?_, ?_, fun _ => rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨trivial, ⟨?_, ?_, ?_⟩, ?_, ?_, fun _ => rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · -- `nf_present`: a normal form of a node is a node of its class
     intro M c N hM hMN hN
     have ha := cex_active.mp hM
@@ -758,8 +758,9 @@ theorem hcancel_not_derivable :
       exact ⟨_, hM, rfl⟩
   · intro r₁ r₂ h₁ h₂ hne
     exact absurd ((cex_rules h₁).trans (cex_rules h₂).symm) hne
-  · intro c
-    refine ⟨c, cex_active.mpr ?_, rfl⟩
+  · intro r₁ r₂ h₁ h₂ hne
+    exact absurd ((cex_rules h₁).trans (cex_rules h₂).symm) hne
+  · refine I0Active_of_all fun c => ⟨c, cex_active.mpr ?_, rfl⟩
     fin_cases c
     · exact Or.inr (Or.inr (Or.inl rfl))
     · exact Or.inr (Or.inr (Or.inr (Or.inl rfl)))

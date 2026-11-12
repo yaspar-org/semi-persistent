@@ -16,6 +16,9 @@ use crate::registry::{AxiomRegistry, OpKind, OpRegistry, RuleRegistry, SortRegis
 use crate::typed_routing::NodeRef;
 use crate::union_find::{Justification, ProofBuf};
 
+#[cfg(debug_assertions)]
+pub mod cc_mirror;
+
 /// How a completion op's monomial counts are bounded during normalization (design "three
 /// independent axes"): unbounded ℕ (MSet plain AC), clamped to {0,1} by dedup (Set idempotent =
 /// ACI), or reduced mod `order` (nilpotent, e.g. XOR at order 2 — stored MSet, the clamp is the
@@ -210,9 +213,13 @@ pub struct EGraph<
     /// read can record it and the e-graph stays `Sync`.
     monomial_overflow: std::sync::atomic::AtomicBool,
     /// Counts the events that change how a build spells an AC term: a class holding a
-    /// completion monomial turns `atomic` (the build stops splicing it), or a merge changes
-    /// a class's minimal monomial for an op (the build splices a different monomial).
-    /// Neither event changes a node, so neither enters the semi-naive delta; the semi-naive
+    /// completion monomial turns `atomic` (the build stops splicing it), a merge changes
+    /// a class's minimal monomial for an op (the build splices a different monomial), or
+    /// a rebuild applies a law to a stored n-ary node beyond `find` (a unit drop, a count
+    /// clamp, a degenerate arity: `VarCanon::law_applied`), after which a right-hand side
+    /// built through that node's class has another value while the node that holds the
+    /// match is untouched (`proofs/lean/SemperProofs/Fidelity/Recanon.lean`,
+    /// `denN_persist_fails`). None of these events enters the semi-naive delta; the semi-naive
     /// loop reads this counter instead and, in plain mode, re-matches in full the rules
     /// whose right-hand side builds an AC term (design §9.2, "A build-time choice the delta
     /// cannot see"). Monotone, and not rolled back by `restore`: a spurious increase only
@@ -298,6 +305,11 @@ pub struct EGraph<
     /// declared inverse. NOTE: gate-level group support — inverse-PAIR cancellation only,
     /// not Kapur §5.4's full Abelian-group completion (no Gaussian elimination).
     inverse_op: crate::containers::SpUniqueMap<Cfg::O, Cfg::O, <Cfg::O as DenseId>::Index, TRACK>,
+    /// Debug mirror of the completion merges: the pending tag of the next merge and the
+    /// checker's own reading of the round (`cc_mirror`). Not rolled back by `restore`:
+    /// it holds nothing between two completion passes.
+    #[cfg(debug_assertions)]
+    cc_mirror: cc_mirror::Mirror<Cfg::G, Cfg::O>,
     /// Give a rewrite's AC result a flat alternative for each atomic same-op child
     /// (`--flatten-rhs`); see [`EGraph::same_op_summands`].
     pub flatten_rhs: bool,
@@ -492,6 +504,8 @@ where
             mset_flatten_buf: Vec::new(),
             unit_node: crate::containers::SpUniqueMap::new(),
             inverse_op: crate::containers::SpUniqueMap::new(),
+            #[cfg(debug_assertions)]
+            cc_mirror: cc_mirror::Mirror::default(),
             flatten_rhs: false,
             completion_outcome: None,
             completion_node_budget: DEFAULT_COMPLETION_NODE_BUDGET,
@@ -555,6 +569,24 @@ where
     pub fn close_decision_budget(&mut self) {
         self.decision_start = None;
         self.decision_spent = false;
+    }
+
+    /// Whether the last `rebuild` left the graph at its completion fixpoint: completion
+    /// is off ([`CompletionOutcome::Disabled`]), reached its fixpoint
+    /// ([`CompletionOutcome::Converged`]), or no rebuild has run. Any other outcome
+    /// (a budget stop, an overflow, a goal stop) leaves AC-entailed equalities out of
+    /// the graph, and a saturation round that changes nothing on it is no fixpoint.
+    ///
+    /// This is the engine's side of `EnginePhase.before_fixed` (`K.step Sb = none`,
+    /// `proofs/lean/SemperProofs/Fidelity/StopTest.lean`): the stop-test theorems
+    /// (`engine_stop_unchanged`, `EnginePhase.rebuild_idle`) apply to a round only when
+    /// the snapshot it matched on is a completion fixpoint, so the run loops report
+    /// `saturated` through this predicate (`tests/saturation_verdict.rs`).
+    pub fn completion_at_fixpoint(&self) -> bool {
+        matches!(
+            self.completion_outcome,
+            None | Some(CompletionOutcome::Disabled | CompletionOutcome::Converged { .. })
+        )
     }
 
     /// Whether the open lazy decision is out of budget: it has minted more nodes than
@@ -1899,6 +1931,11 @@ where
         if ra == rb {
             return None;
         }
+        // Inside the completion code every merge carries a tag naming the Lean theorem
+        // that justifies it; the mirror checks the theorem's preconditions on the state
+        // as it stands before the merge.
+        #[cfg(debug_assertions)]
+        self.cc_mirror_on_merge(a, b);
         // Survivor policy (--union-by): `Rank` leaves the choice to the
         // union-find; the directed criteria keep the heavier side, so the
         // absorbed side is the cheap one and is known before the union.
@@ -2494,6 +2531,17 @@ where
                 self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
                 return;
             }
+            // A merge can reorient the rule that collapsed a node; the node is then a
+            // rule again (`ac_collapsed_reoriented.egg`).
+            self.unretire_irreducible_collapsed();
+            // Debug builds check I5 on every congruence-closed state of the loop: the
+            // stored minimal monomials are what the round orients its rules toward.
+            #[cfg(debug_assertions)]
+            self.debug_check_min_monomial_invariant();
+            // And that no collapsed node is irreducible under the current rules and
+            // laws: such a node is an equation completion never superposes.
+            #[cfg(debug_assertions)]
+            self.debug_check_no_irreducible_collapsed();
             // Goal-directed early stop (the lazy-check transaction): the pair
             // joined, so the question is answered — stop mid-closure. The
             // graph is plain-congruence-closed at this point, a valid state.
@@ -2524,8 +2572,12 @@ where
             let was_full = full;
             // `|`, not `||`: the A-only pass runs every iteration, its changes
             // and the AC round's alike drain through the same fixpoint.
-            let changed =
-                self.cc_round(full, prev_mark, mark) | self.a_round() | self.canon_repair_round();
+            #[cfg(debug_assertions)]
+            self.cc_mirror_enter_round();
+            let cc_changed = self.cc_round(full, prev_mark, mark);
+            #[cfg(debug_assertions)]
+            self.cc_mirror_exit();
+            let changed = cc_changed | self.a_round() | self.canon_repair_round();
             prev_mark = mark;
             if std::mem::take(&mut self.cc_overflow) {
                 // Sound-but-incomplete stop, as for the growth budget, and reported. A
@@ -2572,7 +2624,12 @@ where
                 if was_full {
                     // The exact cancelative closure runs at the fixpoint only: it merges
                     // classes without adding nodes, and each merge reopens completion.
-                    if self.lattice_round() {
+                    #[cfg(debug_assertions)]
+                    self.cc_mirror_enter();
+                    let lattice_changed = self.lattice_round();
+                    #[cfg(debug_assertions)]
+                    self.cc_mirror_exit();
+                    if lattice_changed {
                         full = false;
                         continue;
                     }
@@ -2625,6 +2682,9 @@ where
         ops.sort_unstable();
         ops.dedup();
         let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
+        // The operator of each merge, for its mirror tag.
+        #[cfg(debug_assertions)]
+        let mut merge_ops: Vec<Cfg::O> = Vec::new();
         let mut mono: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for op in ops {
             let mut var: std::collections::HashMap<Cfg::G, usize> = Default::default();
@@ -2740,7 +2800,11 @@ where
                     }
                 }
                 match by_rep.entry(v) {
-                    std::collections::hash_map::Entry::Occupied(e) => merges.push((*e.get(), g)),
+                    std::collections::hash_map::Entry::Occupied(e) => {
+                        merges.push((*e.get(), g));
+                        #[cfg(debug_assertions)]
+                        merge_ops.push(op);
+                    }
                     std::collections::hash_map::Entry::Vacant(e) => {
                         e.insert(g);
                     }
@@ -2748,7 +2812,11 @@ where
             }
         }
         let mut changed = false;
+        #[cfg(debug_assertions)]
+        let mut merge_ops = merge_ops.into_iter();
         for (x, y) in merges {
+            #[cfg(debug_assertions)]
+            let op = merge_ops.next().expect("one operator per lattice merge");
             if self.classes.find_const(x) == self.classes.find_const(y) {
                 continue;
             }
@@ -2756,6 +2824,8 @@ where
                 node_a: x,
                 node_b: y,
             };
+            #[cfg(debug_assertions)]
+            self.cc_mirror_tag(cc_mirror::MergeWhy::Lattice { op });
             let m = if PROOFS {
                 self.merge_in_classes(x, y, Some(just))
             } else {
@@ -2816,6 +2886,14 @@ where
     /// resulting hash-cons collision or degenerate-arity merge into `self.collisions`.
     /// Shared by the absorbed-uses sweep and the became-a-unit sweep in
     /// [`rebuild_congruence`](Self::rebuild_congruence).
+    /// [`recanonize_parent`](Self::recanonize_parent) outside `rebuild`, so a test can
+    /// rewrite an indexed node's stored children mid-round and see the snapshot check in
+    /// `saturate::debug_check_snapshot_contents` fire.
+    #[cfg(all(test, debug_assertions))]
+    pub(crate) fn test_recanonize_parent(&mut self, parent: Cfg::G) {
+        self.recanonize_parent(parent);
+    }
+
     fn recanonize_parent(&mut self, parent: Cfg::G) {
         let find = |g: Cfg::G| self.classes.find_const(g);
         // The op's identity as a *class* under the current union-find: recanonize drops it
@@ -2832,7 +2910,7 @@ where
                 .map(|u| classes.find_const(u))
         };
         let touched_before = self.touched.len();
-        let normal = self.nodes.recanonize_node(
+        let (normal, law) = self.nodes.recanonize_node(
             parent,
             find,
             unit_of,
@@ -2842,19 +2920,27 @@ where
             &mut self.touched,
             &self.ops,
         );
+        // A law changed the node beyond `find`: a right-hand side built from its class may
+        // now spell differently, and nothing in the delta names it (see the
+        // `spelling_epoch` field).
+        if law {
+            self.spelling_epoch += 1;
+        }
         // The span changed (recanonize pushes to `touched` only then) and still forms a
         // node: keep the class's min-monomial slot least (I5).
         if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before {
-            self.refresh_min_monomial(parent);
             // A collapse retired the node because another rule's left-hand side was
             // contained in its old monomial; the new monomial may contain none, and then
             // the node is a rule completion must superpose. Reactivate it: the next round
             // re-tests reducibility and collapses it again if a rule still reduces it.
             // Left set, `Add{c2,c3,c5}` collapsed by `c2c4 → c2c3` became `Add{c2²,c5}` at
             // `C2 = C3`, and `C5 = C5·C5` was never derived (`ac_collapsed_recanon.egg`).
+            // The flag is cleared before the refresh, which skips collapsed nodes: a node
+            // active again takes part in the class's minimal monomial.
             if self.node_flags(parent) & crate::node_types::FLAG_AC_COLLAPSED != 0 {
                 self.clear_node_flag(parent, crate::node_types::FLAG_AC_COLLAPSED);
             }
+            self.refresh_min_monomial(parent);
         }
         // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
         // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
@@ -2899,6 +2985,60 @@ where
         }
     }
 
+    /// Reactivate every collapsed completion node that no current rule of its operator
+    /// reduces. A node is collapsed against the rules of the round that reduced it; a
+    /// later merge can reorient every rule whose left-hand side it contains (the
+    /// reducer's class takes the reducer as its minimal monomial), and the node is then
+    /// an equation no rule represents and completion never superposes. The rules are
+    /// read as `cc_round` reads them: active nodes whose monomial is greater than their
+    /// class's right-hand side. A node holding an inverse pair stays collapsed: the
+    /// group law reduces it. A reactivated node takes part in its class's minimal
+    /// monomial, and the next round reads it as a rule; the full round that precedes a
+    /// reported fixpoint superposes it. Reactivation only adds rules (a lower minimal
+    /// monomial orients more nodes, never fewer), so one pass leaves no collapsed node
+    /// irreducible. Runs after each congruence rebuild of the completion loop.
+    fn unretire_irreducible_collapsed(&mut self) {
+        use crate::multiset::multiset_subset;
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        let mut collapsed: Vec<Cfg::G> = Vec::new();
+        let mut rules: Vec<(Cfg::O, Vec<(Cfg::G, Cfg::M)>)> = Vec::new();
+        let mut mono: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        let mut rhs: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        for id in self.completion_node_ids() {
+            let flags = self.node_flags(id);
+            if flags & FLAG_SUBSUMED != 0 {
+                continue;
+            }
+            if flags & FLAG_AC_COLLAPSED != 0 {
+                collapsed.push(id);
+                continue;
+            }
+            self.node_monomial_into(id, &mut mono);
+            if self.class_rhs_into(id, &mut rhs)
+                && self.monomial_cmp_key(&mono, &rhs) == std::cmp::Ordering::Greater
+            {
+                rules.push((self.node_op(id), mono.clone()));
+            }
+        }
+        for id in collapsed {
+            let op = self.node_op(id);
+            self.node_monomial_into(id, &mut mono);
+            if rules
+                .iter()
+                .any(|(o, lhs)| *o == op && multiset_subset(lhs, &mono))
+            {
+                continue;
+            }
+            if let Some(inv) = self.inverse_op(op)
+                && self.group_cancel_pairs(inv, &mut mono)
+            {
+                continue;
+            }
+            self.clear_node_flag(id, FLAG_AC_COLLAPSED);
+            self.refresh_min_monomial(id);
+        }
+    }
+
     /// Ordinary worklist-driven congruence closure: drain the merge worklist,
     /// recanonicalizing the parents of each absorbed class and merging the
     /// resulting hash-cons collisions, to a fixpoint.
@@ -2922,7 +3062,7 @@ where
                         .map(|u| classes.find_const(u))
                 };
                 let touched_before = self.touched.len();
-                let normal = self.nodes.recanonize_node(
+                let (normal, law) = self.nodes.recanonize_node(
                     parent,
                     find,
                     unit_of,
@@ -2932,6 +3072,11 @@ where
                     &mut self.touched,
                     &self.ops,
                 );
+                // As in `recanonize_parent`: a law applied beyond `find` is a spelling
+                // change the delta does not name.
+                if law {
+                    self.spelling_epoch += 1;
+                }
                 // As in `recanonize_parent`: a changed span that is still a node refreshes
                 // the class's min-monomial slot (I5). Deferred past the loop, which holds
                 // the use-list borrow.
@@ -2948,6 +3093,12 @@ where
             }
 
             for &parent in &refresh {
+                // As in `recanonize_parent`: a collapsed node whose monomial changed is
+                // active again, and the next round re-tests it (`ac_collapsed_stuck.egg`).
+                // Cleared before the refresh, which skips collapsed nodes.
+                if self.node_flags(parent) & crate::node_types::FLAG_AC_COLLAPSED != 0 {
+                    self.clear_node_flag(parent, crate::node_types::FLAG_AC_COLLAPSED);
+                }
                 self.refresh_min_monomial(parent);
             }
             self.refresh_buf = refresh;
@@ -3207,7 +3358,11 @@ where
         if self.repair_state == Some(state) {
             return false;
         }
+        #[cfg(debug_assertions)]
+        self.cc_mirror_enter();
         let changed = self.inverse_cancel_repair() | self.inverse_law_repair();
+        #[cfg(debug_assertions)]
+        self.cc_mirror_exit();
         if !changed {
             // Arm the skip only on a clean round. A round that merged left `touched` and
             // `num_classes` moved, and the caller drains congruence and calls again.
@@ -3298,6 +3453,12 @@ where
             let c = self
                 .add_monomial(op, &ms, &mut scratch)
                 .expect("cancellation only lowers the counts of a stored monomial");
+            #[cfg(debug_assertions)]
+            self.cc_mirror_tag(cc_mirror::MergeWhy::InverseRepair {
+                op,
+                node: gid,
+                reduct: cc_mirror::mono(&ms),
+            });
             changed |= self.repair_merge(
                 c,
                 gid,
@@ -3306,6 +3467,8 @@ where
                     node_b: gid,
                 },
             );
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         changed
     }
@@ -3366,6 +3529,11 @@ where
         let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
         // `(op, base, k−1, target)`: the node `base^(k−1)` to build and merge with `target`.
         let mut powers: Vec<(Cfg::O, Cfg::G, Cfg::M, Cfg::G)> = Vec::new();
+        // The inference each entry of `merges` and of `powers` is, for its mirror tag.
+        #[cfg(debug_assertions)]
+        let mut merge_why: Vec<(Cfg::O, cc_mirror::InvRule<Cfg::G>)> = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut power_why: Vec<cc_mirror::InvRule<Cfg::G>> = Vec::new();
         for (op, inv) in ops {
             let nodes = self.inverse_nodes(inv);
             if nodes.is_empty() {
@@ -3391,15 +3559,23 @@ where
                 if let Some(e) = unit {
                     if y == e && x != e {
                         merges.push((x, node));
+                        #[cfg(debug_assertions)]
+                        merge_why.push((op, cc_mirror::InvRule::R2InvUnit { node }));
                     }
                     if x == e && y != e {
                         merges.push((node, x));
+                        #[cfg(debug_assertions)]
+                        merge_why.push((op, cc_mirror::InvRule::R2UnitInv { node }));
                     }
                 }
                 if let Some(k) = power {
                     powers.push((op, x, k, node));
+                    #[cfg(debug_assertions)]
+                    power_why.push(cc_mirror::InvRule::R4 { node });
                     if y != x {
                         powers.push((op, y, k, x));
+                        #[cfg(debug_assertions)]
+                        power_why.push(cc_mirror::InvRule::R5 { node });
                     }
                 }
             }
@@ -3407,17 +3583,28 @@ where
             for w in classes.windows(2) {
                 if w[0].0 == w[1].0 && w[0].1 != w[1].1 {
                     merges.push((w[0].1, w[1].1));
+                    #[cfg(debug_assertions)]
+                    merge_why.push((op, cc_mirror::InvRule::R1Inj));
                 }
             }
             for &(node, x) in &nodes {
                 // `x` holds some `inv(z)`, so `node` is `inv(inv(z))`.
                 if let Ok(i) = classes.binary_search_by(|p| p.0.cmp(&x)) {
                     merges.push((node, classes[i].1));
+                    #[cfg(debug_assertions)]
+                    merge_why.push((op, cc_mirror::InvRule::R1Inv { node }));
                 }
             }
         }
         let mut changed = false;
+        #[cfg(debug_assertions)]
+        let mut merge_why = merge_why.into_iter();
         for (a, b) in merges {
+            #[cfg(debug_assertions)]
+            {
+                let (op, rule) = merge_why.next().expect("one inference per merge");
+                self.cc_mirror_tag(cc_mirror::MergeWhy::InverseLaw { op, rule });
+            }
             changed |= self.repair_merge(
                 a,
                 b,
@@ -3426,12 +3613,21 @@ where
                     node_b: b,
                 },
             );
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         let mut scratch: Vec<Cfg::C> = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut power_why = power_why.into_iter();
         for (op, base, k, target) in powers {
             let c = self
                 .add_monomial(op, &[(base, k)], &mut scratch)
                 .expect("a count below the nilpotent order fits every multiplicity width");
+            #[cfg(debug_assertions)]
+            {
+                let rule = power_why.next().expect("one inference per power");
+                self.cc_mirror_tag(cc_mirror::MergeWhy::InverseLaw { op, rule });
+            }
             changed |= self.repair_merge(
                 c,
                 target,
@@ -3440,6 +3636,8 @@ where
                     node_b: target,
                 },
             );
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         changed
     }
@@ -3637,7 +3835,11 @@ where
         // its superpositions are never generated. `ac_collapsed_recanon.egg`: the normal
         // form `c2²c5` of `c2c4c5` was such a node, and `C5 = C5·C5` was never derived.
         // Reactivation counts as a change, so the round loop does not report a fixpoint
-        // before the node is processed.
+        // before the node is processed. The node is active again, so it takes part in
+        // its class's minimal monomial (I5): the refresh folds it in. Without it the
+        // stored minimal monomial can stay on a node this round collapses, when the
+        // reactivated node is the normal form of the class's own minimal monomial under a
+        // rule a merge reoriented (`ac_reactivate_min_monomial.egg`).
         let reactivated = std::cell::Cell::new(false);
         let materialize =
             |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::C>| {
@@ -3646,6 +3848,7 @@ where
                     && eg.node_flags(id) & crate::node_types::FLAG_AC_COLLAPSED != 0
                 {
                     eg.clear_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
+                    eg.refresh_min_monomial(id);
                     reactivated.set(true);
                 }
                 Some(id)
@@ -3697,6 +3900,9 @@ where
             Vec<(Cfg::G, Cfg::M)>,
             Vec<(Cfg::G, Cfg::M)>,
         )> = Vec::new();
+        // One mirror tag per entry of `crit`: which pair it is and of which rules.
+        #[cfg(debug_assertions)]
+        let mut crit_why: Vec<cc_mirror::PairWhy<Cfg::G>> = Vec::new();
 
         // (A′) Normalize every active monomial node against the rules and merge its
         // normal form back in (Kapur Algo 2 step 2, "normalize Sf"). This subsumes plain
@@ -3770,6 +3976,8 @@ where
                             crate::multiset::clamp_idempotent(&mut r1);
                             if r1 != rules[ti].rhs {
                                 crit.push((op, CpOrigin::AxiomCp, r1, rules[ti].rhs.clone()));
+                                #[cfg(debug_assertions)]
+                                crit_why.push(cc_mirror::PairWhy::Idem { rule: m_node, a });
                             }
                         }
                     }
@@ -3792,6 +4000,8 @@ where
                             crate::multiset::clamp_nilpotent(&mut r1, order);
                             let r2 = crate::multiset::multiset_subtract(&rules[ti].lhs, &[(a, m)]);
                             crit.push((op, CpOrigin::AxiomCp, r1, r2));
+                            #[cfg(debug_assertions)]
+                            crit_why.push(cc_mirror::PairWhy::Nil { rule: m_node, a });
                         }
                     }
                     CompletionClamp::Multiset => {} // plain AC / identity-only: none (Lemma 4.3)
@@ -3815,7 +4025,26 @@ where
                             .binary_search_by(|p| p.0.cmp(&a))
                             .ok()
                             .map(|i| inverted[i].1);
+                        // The first `z` is the class of `inv(a)` when that node exists
+                        // (`AxiomPair.invLeft`); the other has `a` as the class of its
+                        // inverse node (`AxiomPair.invRight`).
+                        #[cfg(debug_assertions)]
+                        let mut left = inverse_of_a.is_some();
                         for z in inverse_of_a.into_iter().chain(inverted_by_a) {
+                            #[cfg(debug_assertions)]
+                            crit_why.push(if std::mem::take(&mut left) {
+                                cc_mirror::PairWhy::InvLeft {
+                                    rule: m_node,
+                                    a,
+                                    y: z,
+                                }
+                            } else {
+                                cc_mirror::PairWhy::InvRight {
+                                    rule: m_node,
+                                    x: z,
+                                    y: a,
+                                }
+                            });
                             let mut r1 = multiset_union(&rules[ti].rhs, &[(z, Cfg::M::ONE)]);
                             if let Some(order) = order {
                                 crate::multiset::clamp_nilpotent(&mut r1, order);
@@ -3901,6 +4130,11 @@ where
                     CompletionClamp::Multiset => {}
                 }
                 crit.push((op, CpOrigin::Superposition, r1, r2));
+                #[cfg(debug_assertions)]
+                crit_why.push(cc_mirror::PairWhy::Superpose {
+                    r1: m_node,
+                    r2: p_node,
+                });
             }
         }
 
@@ -3963,6 +4197,9 @@ where
                 crit.push((op, CpOrigin::Cancellative, m, r));
             } else {
                 // §5.2(iii)(b): f(ne ∪ {c}) = f({c}) for every constant c in the pool.
+                // Only the right side empties: a left side contained in the right side is
+                // below it in degree-lex, so orientation puts it on the right.
+                debug_assert!(!m.is_empty(), "cancel-close: the left side emptied");
                 let ne = if m.is_empty() { r } else { m };
                 for &g in pool {
                     let one = [(g, Cfg::M::ONE)];
@@ -4002,6 +4239,13 @@ where
                     Vec::new()
                 };
                 push_cancel(&mut crit, op, has_unit, &pl, m, r);
+                #[cfg(debug_assertions)]
+                crit_why.resize(
+                    crit.len(),
+                    cc_mirror::PairWhy::C1 {
+                        rule: rules[ti].node,
+                    },
+                );
             }
             // (C2) cancelative disjoint superposition — each unordered same-op antichain
             // pair once. O(rules²) but only over the (rare) cancelative ops' rules.
@@ -4022,9 +4266,23 @@ where
                         Vec::new()
                     };
                     push_cancel(&mut crit, op, has_unit, &pl, m, r);
+                    #[cfg(debug_assertions)]
+                    crit_why.resize(
+                        crit.len(),
+                        cc_mirror::PairWhy::C2 {
+                            r1: rules[ti].node,
+                            r2: rules[pj].node,
+                        },
+                    );
                 }
             }
         }
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            crit.len(),
+            crit_why.len(),
+            "one mirror tag per critical pair"
+        );
 
         // Critical-pair reducts are normalized to multisets (each step strictly lowers the
         // multiset in degree-lex order against the rule set, so it terminates), then only a
@@ -4135,12 +4393,23 @@ where
                         node_b: node,
                     }
                 };
-                changed |= do_merge(self, c_prime, class, just);
+                #[cfg(debug_assertions)]
+                self.cc_mirror_tag(cc_mirror::MergeWhy::NormalForm {
+                    op,
+                    node,
+                    reduct: cc_mirror::mono(normal),
+                });
+                do_merge(self, c_prime, class, just);
+                #[cfg(debug_assertions)]
+                self.cc_mirror_untag();
                 // Collapse: the node was reducible by another rule (proper containment),
                 // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
                 // NOT subsume — the node stays matchable and a legal child; only
-                // completion's active set excludes it. Merge first, mark second.
+                // completion's active set excludes it. Merge first, mark second. The
+                // collapse is a change even when the merge was not: it removes a rule, so
+                // the round ran over a rule set it then changed and is no fixpoint round.
                 self.set_cc_collapsed(node);
+                changed = true;
             }
         }
         let dt_aprime = t_aprime.elapsed();
@@ -4187,7 +4456,11 @@ where
         let crit_generated = crit.len();
         let mut n1_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut n2_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut crit_why = crit_why.into_iter();
         for (op, origin, r1, r2) in crit {
+            #[cfg(debug_assertions)]
+            let why = crit_why.next().expect("one mirror tag per critical pair");
             // Same in-round stops as the (A′) loop above.
             if self.cc_should_stop() {
                 break;
@@ -4276,7 +4549,16 @@ where
                     node_b: c2,
                 },
             };
+            #[cfg(debug_assertions)]
+            self.cc_mirror_tag(cc_mirror::MergeWhy::Pair {
+                op,
+                origin: why,
+                pair: (cc_mirror::mono(&r1), cc_mirror::mono(&r2)),
+                reducts: (cc_mirror::mono(n1), cc_mirror::mono(n2)),
+            });
             changed |= do_merge(self, c1, c2, just);
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
             eprintln!(
@@ -4999,6 +5281,235 @@ where
                 "class {repr:?}: all {n} members carry FLAG_CONGRUENT_DUP, so the class has \
                  no visible member"
             );
+        }
+    }
+
+    /// Check invariant I5: for every class and completion operator with at least one
+    /// active node (neither `FLAG_SUBSUMED` nor `FLAG_AC_COLLAPSED`), the stored minimal
+    /// monomial is a node of that class and operator, is not collapsed, and its monomial
+    /// is the `monomial_cmp_key`-least among the class's active nodes of the operator. A
+    /// stored node that is subsumed is accepted when its monomial is at most the least
+    /// active one: it is still the class's least, and orients the same rules. The least
+    /// monomial is recomputed here by a scan over all nodes, independently of the
+    /// incremental maintenance (`register_if_fresh`, `fold_min_monomial`,
+    /// `refresh_min_monomial`), so a maintenance gap shows as a mismatch. Unit and atomic
+    /// classes are skipped: their right-hand side is `{}` or `{class}`, not the stored
+    /// node. `Err` names the class, the operator, the stored node and monomial, and the
+    /// recomputed ones.
+    pub fn check_min_monomial_invariant(&self) -> Result<(), String> {
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        use std::collections::BTreeMap;
+        let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
+        // Per (class representative, op): the least active monomial and a node holding it.
+        let mut least: BTreeMap<(Cfg::G, Cfg::O), (Cfg::G, Vec<(Cfg::G, Cfg::M)>)> =
+            BTreeMap::new();
+        let mut buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        for id in self.node_ids() {
+            if !matches!(self.node_ref(id), NodeRef::MSet(_) | NodeRef::Set(_))
+                || self.node_flags(id) & inactive != 0
+            {
+                continue;
+            }
+            self.node_monomial_into(id, &mut buf);
+            let key = (self.class_repr(id), self.node_op(id));
+            match least.get_mut(&key) {
+                None => {
+                    least.insert(key, (id, buf.clone()));
+                }
+                Some(cur) => {
+                    if self.monomial_cmp_key(&buf, &cur.1) == std::cmp::Ordering::Less {
+                        *cur = (id, buf.clone());
+                    }
+                }
+            }
+        }
+        let show = |m: &[(Cfg::G, Cfg::M)]| -> String {
+            let parts: Vec<String> = m
+                .iter()
+                .map(|&(g, k)| format!("{:?}^{}", g, k.to_usize()))
+                .collect();
+            format!("{{{}}}", parts.join(", "))
+        };
+        for (&(cls, op), (node, m)) in &least {
+            // The right-hand side of a unit class is the empty monomial and that of an
+            // atomic class is `{class}` (`class_rhs_into`): neither reads the stored
+            // minimal monomial, and a size-1 node `f(x)` merged with `x` by degeneracy
+            // sits below every stored one. Both are outside I5.
+            if self
+                .unit_node(op)
+                .is_some_and(|u| self.class_repr(u) == cls)
+                || self.class_atomic(cls) == Some(true)
+            {
+                continue;
+            }
+            let op_name = &self.ops.info(op).name;
+            let Some(stored) = self.class_min_monomial_of_op(cls, op) else {
+                return Err(format!(
+                    "I5: class {cls:?}, op {op_name}: no stored minimal monomial, least \
+                     active node {node:?} = {}",
+                    show(m)
+                ));
+            };
+            let flags = self.node_flags(stored);
+            if self.class_repr(stored) != cls
+                || self.node_op(stored) != op
+                || flags & FLAG_AC_COLLAPSED != 0
+            {
+                self.node_monomial_into(stored, &mut buf);
+                return Err(format!(
+                    "I5: class {cls:?}, op {op_name}: stored minimal monomial {stored:?} = {} \
+                     is {}; least active node {node:?} = {}",
+                    show(&buf),
+                    if self.class_repr(stored) != cls {
+                        "in another class"
+                    } else if self.node_op(stored) != op {
+                        "a node of another op"
+                    } else {
+                        "collapsed"
+                    },
+                    show(m)
+                ));
+            }
+            self.node_monomial_into(stored, &mut buf);
+            let cmp = self.monomial_cmp_key(&buf, m);
+            let ok = if flags & FLAG_SUBSUMED != 0 {
+                cmp != std::cmp::Ordering::Greater
+            } else {
+                cmp == std::cmp::Ordering::Equal
+            };
+            if !ok {
+                return Err(format!(
+                    "I5: class {cls:?}, op {op_name}: stored minimal monomial {stored:?} = {} \
+                     is not the least active monomial; least active node {node:?} = {} ({cmp:?})",
+                    show(&buf),
+                    show(m)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Debug: panic when `check_min_monomial_invariant` fails. Run after each
+    /// congruence rebuild of the completion loop in debug builds.
+    pub fn debug_check_min_monomial_invariant(&self) {
+        if let Err(e) = self.check_min_monomial_invariant() {
+            panic!("{e}");
+        }
+    }
+
+    /// Check that no collapsed completion node is irreducible: every node carrying
+    /// `FLAG_AC_COLLAPSED` (and not `FLAG_SUBSUMED`) has a monomial, read under the
+    /// current union-find, that one of the operator's laws or one of its current rules
+    /// reduces. A collapsed node is not a rule, so an irreducible one is an equation
+    /// completion never superposes. The laws are the unit as a summand, a count at or
+    /// above the nilpotent order, a count above 1 under idempotence, and a summand
+    /// together with the class of its existing inverse node. The rules are recomputed
+    /// here as completion reads them: every active node whose monomial is greater than
+    /// its class's right-hand side (`class_rhs_into`). A rule reduces a monomial when its
+    /// left-hand side is a sub-multiset of it. Two cases pass without a reduction: a
+    /// degenerate monomial (empty, or one summand of count 1) is an equality with a
+    /// class, not a rule; a copy of an active node of the same operator, class and
+    /// monomial leaves the equation to that node. `Err` names the node, its class, its
+    /// monomial and the operator.
+    pub fn check_no_irreducible_collapsed(&self) -> Result<(), String> {
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        use std::collections::BTreeMap;
+        type Mono<G, M> = Vec<(G, M)>;
+        let mut collapsed: Vec<Cfg::G> = Vec::new();
+        let mut rules: BTreeMap<Cfg::O, Vec<Mono<Cfg::G, Cfg::M>>> = BTreeMap::new();
+        let mut active: std::collections::BTreeSet<(Cfg::O, Cfg::G, Mono<Cfg::G, Cfg::M>)> =
+            std::collections::BTreeSet::new();
+        let mut buf: Mono<Cfg::G, Cfg::M> = Vec::new();
+        let mut rhs: Mono<Cfg::G, Cfg::M> = Vec::new();
+        for id in self.completion_node_ids() {
+            let flags = self.node_flags(id);
+            if flags & FLAG_SUBSUMED != 0 {
+                continue;
+            }
+            if flags & FLAG_AC_COLLAPSED != 0 {
+                collapsed.push(id);
+                continue;
+            }
+            self.node_monomial_into(id, &mut buf);
+            if self.class_rhs_into(id, &mut rhs)
+                && self.monomial_cmp_key(&buf, &rhs) == std::cmp::Ordering::Greater
+            {
+                rules.entry(self.node_op(id)).or_default().push(buf.clone());
+            }
+            active.insert((self.node_op(id), self.class_repr(id), buf.clone()));
+        }
+        let count = |m: &[(Cfg::G, Cfg::M)], g: Cfg::G| -> usize {
+            m.iter()
+                .filter(|&&(h, _)| h == g)
+                .map(|&(_, k)| k.to_usize())
+                .sum()
+        };
+        let contains = |big: &[(Cfg::G, Cfg::M)], small: &[(Cfg::G, Cfg::M)]| -> bool {
+            small.iter().all(|&(g, _)| count(big, g) >= count(small, g))
+        };
+        for id in collapsed {
+            let op = self.node_op(id);
+            self.node_monomial_into(id, &mut buf);
+            if buf.is_empty() || (buf.len() == 1 && buf[0].1.to_usize() == 1) {
+                continue;
+            }
+            // A copy of an active node of its class: that node carries the equation.
+            if active.contains(&(op, self.class_repr(id), buf.clone())) {
+                continue;
+            }
+            let unit = self.unit_node(op).map(|u| self.classes.find_const(u));
+            if unit.is_some_and(|u| count(&buf, u) > 0) {
+                continue;
+            }
+            let law_count = match self.op_clamp(op) {
+                CompletionClamp::Nilpotent { order } => {
+                    buf.iter().any(|&(_, k)| k.to_usize() >= usize::from(order))
+                }
+                CompletionClamp::Idempotent => buf.iter().any(|&(_, k)| k.to_usize() > 1),
+                CompletionClamp::Multiset => false,
+            };
+            if law_count {
+                continue;
+            }
+            if let Some(inv) = self.inverse_op(op)
+                && self.inverse_classes(inv).into_iter().any(|(y, x)| {
+                    if y == x {
+                        count(&buf, x) >= 2
+                    } else {
+                        count(&buf, x) > 0 && count(&buf, y) > 0
+                    }
+                })
+            {
+                continue;
+            }
+            if rules
+                .get(&op)
+                .is_some_and(|rs| rs.iter().any(|lhs| contains(&buf, lhs)))
+            {
+                continue;
+            }
+            let parts: Vec<String> = buf
+                .iter()
+                .map(|&(g, k)| format!("{:?}^{}", g, k.to_usize()))
+                .collect();
+            return Err(format!(
+                "collapsed node {id:?} (class {:?}, op {}) has monomial {{{}}}, which no law \
+                 and none of the op's {} current rules reduce",
+                self.class_repr(id),
+                self.ops.info(op).name,
+                parts.join(", "),
+                rules.get(&op).map_or(0, Vec::len)
+            ));
+        }
+        Ok(())
+    }
+
+    /// Debug: panic when `check_no_irreducible_collapsed` fails. Run after each
+    /// congruence rebuild of the completion loop in debug builds, beside
+    /// `debug_check_min_monomial_invariant`.
+    pub fn debug_check_no_irreducible_collapsed(&self) {
+        if let Err(e) = self.check_no_irreducible_collapsed() {
+            panic!("{e}");
         }
     }
 

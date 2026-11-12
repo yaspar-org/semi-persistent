@@ -4,6 +4,14 @@
 
 ### Added
 
+- `:flatten` matching of an `:assoc-comm-idem` operator also matches the overlap views of
+  every regrouped view: the class of an `S` node over a subset of the view's classes enters
+  the view and as many of its members leave as the pattern's item count fixes, so with
+  `sab = S{A, B}` and `s = S{A, B, C}` the pattern `(S x y z)` binds `x = sab, y = A, z = C`.
+  The stage runs after the regrouping loop, for idempotent operators only, and counts its
+  work and records against `MAX_REGROUP_WORK` and `MAX_REGROUP_VIEWS`
+  (`FlattenScratch::regroup`; Lean `RegroupOverlap.lean`, `regroupSkipO_match_iff_laws`,
+  `regroupBoundedO_query_exact`). Fixture `flatten_regroup_laws_idem.egg` (the match found).
 - `egraph/tests/egg/cbmc/`: 214 programs converted from 107 CBMC e-graph dumps (a
   `base` and a `cong` e-graph per dump, up to 42,120 nodes each), with the converter
   `scripts/cbmc-egg-convert.py`. `cbmc_corpus` in `egg_tests.rs` loads and rebuilds every

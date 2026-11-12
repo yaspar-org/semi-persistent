@@ -1,30 +1,30 @@
 import SemperProofs.CC.Laws.InvRules
+import SemperProofs.CC.Lattice
 
 /-!
-# A fixed round under R1-R5 discharges the inverse hypotheses
+# A fixed round under R1-R5, and completeness for the inverse law sets
 
 `RoundFixedInv`, `RoundFixedInvUnit` and `RoundFixedInvNil` say that every
 premise of R1-R5 among the state's nodes already has its conclusion: the
 classes are merged (R1, R2) or the built node is present in the class
-(R3, R4, R5). From these and `InvNodes` the four law-side hypotheses of
-`completion_complete_inverse` / `completion_complete_combined` follow:
+(R3, R4, R5). From these and `InvNodes`, R1 gives `InvMatching`
+(`invMatching_of_fixed`) and R2 gives `InvUnitFree` (`invUnitFree_of_fixed`),
+the proof that `Laws.combined` and `Laws.identityInverse` carry.
 
-* `invMatching_of_fixed` (R1), `invUnitFree_of_fixed` (R2),
-* `inverseAxiomCP_of_fixed` (R3), `nilpotentInverseCP_of_fixed` (R4, R5).
+The engine-level theorems `completion_complete_inverse_engine`,
+`completion_complete_combined_engine` and
+`completion_complete_identityInverse_engine` close the file. The engine
+accepts `:inverse` only on a cancellative operator (`sortcheck.rs`) and runs
+`lattice_round` for it at the completion fixpoint; that fixpoint is
+lattice-closed (`Lattice.latticeClosed_of_engineFixed`), and lattice closure
+with the asserted pairs among active classmates gives completeness for
+every law set (`Lattice.complete_of_latticeClosed`). No critical pair of
+the inverse law and no retirement discipline is needed.
 
-The last two read "node present in the class" as joinability under
-`R ∪ Ax` through `Converged.nodes_reduce`; a node asserted by a rule may
-have been retired since, so the retired case goes through `I3`
-(`nodes_reduce_all`). The engine-level theorems
-`completion_complete_inverse_engine` and
-`completion_complete_combined_engine` close the file.
-
-R5 is not in `spec-inverse-rules.md`. `NilpotentInverseCP` demands the
-pair `({x}, y^(k−1))` joinable for `inv x = y ≠ x` even when `g(y)` is
-absent; the law-law critical pair of `yᵏ → ∅` with `{x, y} → ∅` exists
-whether or not `g(y)` does, and R4 fires only for classes with an
-inverse node. R5: for each `g(x)` in class `y ≠ x`, assert
-`f{y : k−1} = x` (`E`: `y^(k−1) = y^(k−1) ⊎ {x, y} = yᵏ ⊎ {x} = {x}`).
+R5 is not in `spec-inverse-rules.md`: for each `g(x)` in class `y ≠ x`,
+assert `f{y : k−1} = x` (`E`: `y^(k−1) = y^(k−1) ⊎ {x, y} = yᵏ ⊎ {x} = {x}`).
+R4 fires only for classes with an inverse node, and the law-law critical
+pair of `yᵏ → ∅` with `{x, y} → ∅` exists whether or not `g(y)` does.
 -/
 
 namespace SemperProofs.CC
@@ -106,30 +106,13 @@ theorem invUnitFree_of_fixed {inv : Fin n → Option (Fin n)} {u : Fin n} {st : 
     have := hfix.r2_inv_unit x y hxy rfl
     rwa [hinv.rep_dom hxy, hu] at this
 
-/-! ## Nodes present in one class are joinable -/
+/-! ## Rewriting lemmas -/
 
 theorem transGen_flip {α : Type*} {r : α → α → Prop} {a b : α} (h : TransGen r a b) :
     TransGen (fun y x => r x y) b a := by
   induction h with
   | single h => exact TransGen.single h
   | tail _ h ih => exact TransGen.head h ih
-
-/-- Every node, retired or not, rewrites to its class's right-hand side:
-`Converged.nodes_reduce` for active nodes, `I3` and well-founded
-induction on `→_R` for retired ones. -/
-theorem nodes_reduce_all {L : Laws n} {st : State n} (hconv : Converged L st) (h3 : I3 L st) :
-    ∀ M c, (M, c) ∈ st.nodes → ReflTransGen (Rw L st.rules) M (st.rhs (st.find c)) := by
-  have hwf := (Rw_wf (L := L) (R := st.rules) (rules_oriented st)).transGen
-  intro M
-  induction M using hwf.induction with
-  | _ M ih =>
-    intro c hM
-    by_cases hr : (M, c) ∈ st.retired
-    · obtain ⟨M', c', hMM', hM', hc'⟩ := h3 M c hr
-      have := ih M' (transGen_flip hMM') c' hM'
-      rw [hc'] at this
-      exact hMM'.to_reflTransGen.trans this
-    · exact hconv.nodes_reduce M c ⟨hM, hr⟩
 
 /-- `M →*_{R ∪ Ax} clamp M`. -/
 theorem rtg_clamp (L : Laws n) (R : Rules n) (M : Monomial n) :
@@ -138,45 +121,14 @@ theorem rtg_clamp (L : Laws n) (R : Rules n) (M : Monomial n) :
   · rw [h]
   · exact ReflTransGen.single (RwAx_of_law h)
 
-/-- Two nodes of one class are joinable under `R ∪ Ax`. -/
-theorem joinable_of_nodes {L : Laws n} {st : State n} (hconv : Converged L st) (h3 : I3 L st)
-    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.nodes) (hN : (N, d) ∈ st.nodes)
-    (hcd : st.find c = st.find d) : Joinable (RwAx L st.rules) M N := by
-  refine ⟨st.rhs (st.find c), Rw_rtg_embed (nodes_reduce_all hconv h3 M c hM), ?_⟩
-  rw [hcd]
-  exact Rw_rtg_embed (nodes_reduce_all hconv h3 N d hN)
+/-! ## Powers and the empty monomial -/
 
-/-- Two monomials whose normalized nodes are in one class are joinable. -/
-theorem joinable_of_clamp_nodes {L : Laws n} {st : State n} (hconv : Converged L st)
-    (h3 : I3 L st) {M N : Monomial n} {c d : Fin n} (hM : (L.clamp M, c) ∈ st.nodes)
-    (hN : (L.clamp N, d) ∈ st.nodes) (hcd : st.find c = st.find d) :
-    Joinable (RwAx L st.rules) M N := by
-  obtain ⟨P, h₁, h₂⟩ := joinable_of_nodes hconv h3 hM hN hcd
-  exact ⟨P, (rtg_clamp L _ M).trans h₁, (rtg_clamp L _ N).trans h₂⟩
-
-/-- A normalized node and a plain node of one class. -/
-theorem joinable_of_clamp_node_left {L : Laws n} {st : State n} (hconv : Converged L st)
-    (h3 : I3 L st) {M N : Monomial n} {c d : Fin n} (hM : (L.clamp M, c) ∈ st.nodes)
-    (hN : (N, d) ∈ st.nodes) (hcd : st.find c = st.find d) :
-    Joinable (RwAx L st.rules) M N := by
-  obtain ⟨P, h₁, h₂⟩ := joinable_of_nodes hconv h3 hM hN hcd
-  exact ⟨P, (rtg_clamp L _ M).trans h₁, h₂⟩
-
-/-! ## R3 gives `InverseAxiomCP` -/
-
-theorem inverseAxiomCP_of_fixed {L : Laws n} {inv : Fin n → Option (Fin n)} {st : State n}
-    (hconv : Converged L st) (h3 : I3 L st) (hfix : RoundFixedInv L.clamp inv st) :
-    InverseAxiomCP L inv st.rules := by
-  intro A B hAB x y hxy
-  constructor
-  · intro hx
-    obtain ⟨c, d, hc, hd, hcd⟩ := hfix.r3_left A B hAB x hx y hxy
-    exact joinable_of_clamp_nodes hconv h3 hc hd hcd
-  · intro _ hy
-    obtain ⟨c, d, hc, hd, hcd⟩ := hfix.r3_right A B hAB x y hxy hy
-    exact joinable_of_clamp_nodes hconv h3 hc hd hcd
-
-/-! ## R4 and R5 give `NilpotentInverseCP` -/
+/-- The empty monomial has no step by a rule or a law. -/
+theorem RwL_zero_normal {L : Laws n} {st : State n} : ∀ N, ¬ st.RwL L 0 N := by
+  intro N h
+  rcases RwL_degLex h with h' | ⟨-, c, -, h'⟩
+  · simp at h'
+  · simp at h'
 
 /-- The empty monomial is normal for an oriented rule set. -/
 theorem Rw_zero_normal {L : Laws n} {R : Rules n} (hor : Oriented R) :
@@ -208,42 +160,6 @@ theorem rtg_replicate_mod_two {R : Rules n} {x : Fin n}
   rw [e, replicate_sub_replicate] at this
   have hm : m - 2 * (m / 2) = m % 2 := by omega
   rwa [hm] at this
-
-/-- `NilpotentInverseCP` from a fixed round under R4 and R5. The
-self-inverse case with odd `k` needs the normalized node `clamp(x^(k−1))`
-to be the empty monomial (`hself`; `combined_clamp_replicate_self` below
-proves it for the engine's clamp). -/
-theorem nilpotentInverseCP_of_fixed {L : Laws n} {inv : Fin n → Option (Fin n)} {k : ℕ}
-    {st : State n} (hconv : Converged L st) (h3 : I3 L st) (hinv : L.HasInv inv)
-    (hfix : RoundFixedInvNil L.clamp inv k st)
-    (hself : ∀ x, inv x = some x → 2 < k → k % 2 = 1 →
-      L.clamp (Multiset.replicate (k - 1) x) = 0) :
-    NilpotentInverseCP (st.rules ∪ L.axRules) k inv := by
-  intro x y hxy
-  constructor
-  · intro hne
-    constructor
-    · obtain ⟨c, d, hc, hd, hcd⟩ := hfix.r4 x y hxy
-      exact Joinable_symm (joinable_of_clamp_node_left hconv h3 hc hd hcd)
-    · obtain ⟨c, d, hc, hd, hcd⟩ := hfix.r5 x y hxy hne
-      exact Joinable_symm (joinable_of_clamp_node_left hconv h3 hc hd hcd)
-  · rintro rfl hk2
-    have hpair : (({x, x} : Monomial n), (0 : Monomial n)) ∈ st.rules ∪ L.axRules :=
-      Or.inr (hinv x x hxy)
-    have hred := rtg_replicate_mod_two hpair (k - 2)
-    by_cases hpar : (k - 2) % 2 = 0
-    · rw [hpar, Multiset.replicate_zero] at hred
-      exact ⟨0, ReflTransGen.refl, hred⟩
-    · have hodd : (k - 2) % 2 = 1 := by omega
-      rw [hodd, Multiset.replicate_one] at hred
-      obtain ⟨c, d, hc, hd, hcd⟩ := hfix.r4 x x hxy
-      rw [hself x hxy hk2 (by omega)] at hc
-      have h0 : st.rhs (st.find c) = 0 :=
-        (rtg_of_normal (Rw_zero_normal (rules_oriented st)) (nodes_reduce_all hconv h3 _ c hc)).symm
-      have hx : ReflTransGen (RwAx L st.rules) {x} 0 := by
-        have := Rw_rtg_embed (nodes_reduce_all hconv h3 _ d hd)
-        rwa [← hcd, h0] at this
-      exact ⟨0, ReflTransGen.refl, hred.trans hx⟩
 
 /-! ## The engine's clamp on a self-inverse power -/
 
@@ -330,94 +246,63 @@ theorem combined_clamp_eq (u : Fin n) (k : ℕ) (hk : 2 ≤ k) (inv : Fin n → 
     (cancel : Prop) (hu : InvUnitFree inv u) :
     (Laws.combined u k hk inv cancel hu).clamp = combinedClamp u k inv := rfl
 
-/-! ## The engine-level completeness theorems -/
+/-- The engine's composite clamp without a nilpotent order, as a function
+(as `combinedClamp`). -/
+def identityInverseClamp (u : Fin n) (inv : Fin n → Option (Fin n)) (M : Monomial n) :
+    Monomial n :=
+  invWalk inv (M.filter (· ≠ u))
 
-/-- `completion_complete_inverse` with `hmatch` and `hax` replaced by a
-fixed round under R1 and R3 (`hfixinv`), `inv` reading the `g`-nodes
-(`hinv`), and the retirement discipline `I3` (`h3`: a retired node
-rewrites to a node of its class; needed because a node asserted by R3
-may have been retired since). -/
+theorem identityInverse_clamp_eq (u : Fin n) (inv : Fin n → Option (Fin n)) (cancel : Prop)
+    (hu : InvUnitFree inv u) :
+    (Laws.identityInverse u inv cancel hu).clamp = identityInverseClamp u inv := rfl
+
+/-! ## The engine-level completeness theorems
+
+Each theorem concludes completeness for its law set from lattice closure of
+the state (`hlat`) and the asserted pairs being pairs of active classmates
+(`hS`). The engine establishes `hlat` by `lattice_round`, which it runs for
+every cancellative operator after a completion round that changes nothing,
+and it treats every `:inverse` operator as cancellative; at the fixpoint
+of `lattice_round` the state is lattice-closed
+(`Lattice.latticeClosed_of_engineFixed`). Lattice closure needs no
+cancellation and no critical pair: `E_mem_lattice` holds for every law
+set. -/
+
+/-- **Completeness for the inverse law set at a lattice-closed state.** Two
+active nodes `=_E`-equal under `Laws.inverse inv cancel` are in one class. -/
 theorem completion_complete_inverse_engine (inv : Fin n → Option (Fin n)) (cancel : Prop)
-    {S : Set (Monomial n × Monomial n)} {st : State n} {ss₀ ss : SlotState n}
-    {gnodes : Set (Fin n × Fin n)}
-    (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
-    (h0 : I0Active st) (hcanon : ∀ c, (Laws.inverse inv cancel).clamp (st.rhs c) = st.rhs c)
-    (hfix : RoundFixed (Laws.inverse inv cancel) st)
-    (h3 : I3 (Laws.inverse inv cancel) st)
-    (hfixinv : RoundFixedInv (invWalk inv) inv st)
-    (hinv : InvNodes st gnodes inv)
-    (hRR : RuleRuleCP (Laws.inverse inv cancel) st.rules)
-    (hlhs : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hlat : Lattice.LatticeClosed (Laws.inverse inv cancel) st)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
-    (hcancel : cancel → ∀ M N X,
-      Joinable (Rw (plain n) (st.rules ∪ (Laws.inverse inv cancel).axRules)) (M + X) (N + X) →
-      Joinable (Rw (plain n) (st.rules ∪ (Laws.inverse inv cancel).axRules)) M N)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
-    (hMN : E (Laws.inverse inv cancel) S M N) : st.find c = st.find d := by
-  have h5 : I5 st := SlotState.state_I5_of_slot (SlotState.reachable_I5 h5₀ hrun) ha
-  have hconv : Converged (Laws.inverse inv cancel) st :=
-    roundFixed_converged (I0_of_active h0) h5 hcanon hfix
-  exact completion_complete_inverse inv cancel h5₀ hrun ha h0 hcanon hfix hRR
-    (invMatching_of_fixed hfixinv hinv) hlhs (inverseAxiomCP_of_fixed hconv h3 hfixinv)
-    hcc hS hcancel hM hN hMN
+    (hMN : E (Laws.inverse inv cancel) S M N) : st.find c = st.find d :=
+  Lattice.complete_of_latticeClosed hlat hS hM hN (Lattice.E_union_left hMN)
 
-/-- `completion_complete_combined` with `hu`, `hmatch`, `hax_inv` and
-`hnilinv` replaced by a fixed round under R1-R5 (`hfixinv`, `hfixu`,
-`hfixk`), `inv` reading the `g`-nodes (`hinv`), the unit class canonical
-(`hurep`) and the retirement discipline `I3` (`h3`). The law set is
-`Laws.combined` at the `InvUnitFree` proof that R2 supplies. -/
+/-- **Completeness for the combined law set (unit, nilpotent order,
+inverse) at a lattice-closed state.** `hu` is the proof that
+`Laws.combined` carries; the engine's fixed round under R2 supplies it
+(`invUnitFree_of_fixed`). -/
 theorem completion_complete_combined_engine (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
-    (inv : Fin n → Option (Fin n)) (cancel : Prop)
-    {S : Set (Monomial n × Monomial n)} {st : State n} {ss₀ ss : SlotState n}
-    {gnodes : Set (Fin n × Fin n)}
-    (hurep : st.find u = u)
-    (hfixu : RoundFixedInvUnit inv u st)
-    (hinv : InvNodes st gnodes inv)
-    (hfixinv : RoundFixedInv (combinedClamp u k inv) inv st)
-    (hfixk : RoundFixedInvNil (combinedClamp u k inv) inv k st)
-    (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
-    (h0 : I0Active st)
-    (hcanon : ∀ c, (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).clamp
-      (st.rhs c) = st.rhs c)
-    (hfix : RoundFixed (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) st)
-    (h3 : I3 (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) st)
-    (hRR : RuleRuleCP (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep))
-      st.rules)
-    (hlhs_u : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
-    (hlhs_k : ∀ A B, (A, B) ∈ st.rules → ∀ a, A.count a < k)
-    (hlhs_inv : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A)
-    (hax_nil : ∀ A B, (A, B) ∈ st.rules → ∀ a ∈ A,
-      Joinable (Rw (plain n) (st.rules ∪
-          (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).axRules))
-        (B + Multiset.replicate (k - A.count a) a) (A.filter (· ≠ a)))
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (inv : Fin n → Option (Fin n)) (cancel : Prop) (hu : InvUnitFree inv u)
+    {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hlat : Lattice.LatticeClosed (Laws.combined u k hk inv cancel hu) st)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
-    (hcancel : (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).cancellative →
-      ∀ M N X,
-      Joinable (Rw (plain n) (st.rules ∪
-          (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).axRules))
-        (M + X) (N + X) →
-      Joinable (Rw (plain n) (st.rules ∪
-          (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)).axRules)) M N)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
-    (hMN : E (Laws.combined u k hk inv cancel (invUnitFree_of_fixed hfixu hinv hurep)) S M N) :
-    st.find c = st.find d := by
-  set hu := invUnitFree_of_fixed hfixu hinv hurep
-  set L := Laws.combined u k hk inv cancel hu with hL
-  have h5 : I5 st := SlotState.state_I5_of_slot (SlotState.reachable_I5 h5₀ hrun) ha
-  have hconv : Converged L st := roundFixed_converged (I0_of_active h0) h5 hcanon hfix
-  have hclamp : L.clamp = combinedClamp u k inv := rfl
-  have hfixinv' : RoundFixedInv L.clamp inv st := by rw [hclamp]; exact hfixinv
-  have hfixk' : RoundFixedInvNil L.clamp inv k st := by rw [hclamp]; exact hfixk
-  exact completion_complete_combined u k hk inv cancel hu h5₀ hrun ha h0 hcanon hfix hRR
-    (invMatching_of_fixed hfixinv hinv) hlhs_u hlhs_k hlhs_inv hax_nil
-    (inverseAxiomCP_of_fixed hconv h3 hfixinv')
-    (nilpotentInverseCP_of_fixed hconv h3 (combined_hasInv u k hk inv cancel hu) hfixk'
-      (fun x hxx hk2 hodd =>
-        combined_clamp_replicate_self u k hk cancel hu hxx (by omega) (by omega)))
-    hcc hS hcancel hM hN hMN
+    (hMN : E (Laws.combined u k hk inv cancel hu) S M N) : st.find c = st.find d :=
+  Lattice.complete_of_latticeClosed hlat hS hM hN (Lattice.E_union_left hMN)
+
+/-- **Completeness for the unit-and-inverse law set at a lattice-closed
+state.** `hu` as in `completion_complete_combined_engine`. -/
+theorem completion_complete_identityInverse_engine (u : Fin n) (inv : Fin n → Option (Fin n))
+    (cancel : Prop) (hu : InvUnitFree inv u)
+    {S : Set (Monomial n × Monomial n)} {st : State n}
+    (hlat : Lattice.LatticeClosed (Laws.identityInverse u inv cancel hu) st)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
+    (hMN : E (Laws.identityInverse u inv cancel hu) S M N) : st.find c = st.find d :=
+  Lattice.complete_of_latticeClosed hlat hS hM hN (Lattice.E_union_left hMN)
 
 end SemperProofs.CC

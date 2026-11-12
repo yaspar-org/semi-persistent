@@ -22,6 +22,15 @@ engine's: the retired node is reducible, so its normal form, a strictly
 smaller active node, has been merged into the class before the flag is set.
 Under I5 the slot is then at most that normal form, hence not the retired
 node, and I5 survives.
+
+Un-retirement (`materialize` and the recanonization path clear
+`FLAG_AC_COLLAPSED`) puts a monomial back into the active set. With the
+stored minimal monomial untouched (`unretireNoRefresh`) I5 fails when the node
+is below it: `unretireNoRefresh_breaks_I5` is the repro
+`ac_reactivate_min_monomial.egg`. The fix folds the monomial into the stored
+minimal monomial (`unretire`, the engine's
+`refresh_min_monomial` after the flag is cleared); `unretire_I5` needs no
+condition on the monomial, and `reachable_I5` covers the new operation.
 -/
 
 namespace SemperProofs.CC
@@ -91,6 +100,23 @@ def shrinkRefresh (c : Fin n) (M M' : Monomial n) : SlotState n :=
 def retire (c : Fin n) (M : Monomial n) : SlotState n :=
   ⟨fun x => if x = c then (st.active x).erase M else st.active x, st.slot⟩
 
+/-- Un-retire a node of class `c` (clear `FLAG_AC_COLLAPSED`) with the stored
+minimal monomial untouched: the engine before the fix, in `materialize` and in the
+recanonization path, which called the refresh before clearing the flag. -/
+def unretireNoRefresh (c : Fin n) (M : Monomial n) : SlotState n :=
+  ⟨fun x => if x = c then insert M (st.active x) else st.active x, st.slot⟩
+
+/-- The fix: the same un-retire with the monomial folded into the stored
+minimal monomial (`refresh_min_monomial` after the flag is cleared). In this
+model it is `mintInto`: a monomial joins the class's active set, and the
+stored minimal monomial is the fold. -/
+def unretire (c : Fin n) (M : Monomial n) : SlotState n :=
+  ⟨fun x => if x = c then insert M (st.active x) else st.active x,
+   fun x => if x = c then omin (st.slot x) (some M) else st.slot x⟩
+
+theorem unretire_eq_mintInto (c : Fin n) (M : Monomial n) : st.unretire c M = st.mintInto c M :=
+  rfl
+
 /-- The operations of the fixed engine, with the engine's preconditions. -/
 inductive Op : SlotState n → SlotState n → Prop
   | mint {st : SlotState n} {c : Fin n} {M : Monomial n} :
@@ -103,6 +129,8 @@ inductive Op : SlotState n → SlotState n → Prop
       M ∈ st.active c → degLex M M' → Op st (st.shrinkRefresh c M M')
   | retire {st : SlotState n} {c : Fin n} {M : Monomial n} :
       M ∈ st.active c → (∃ N ∈ st.active c, degLex M N) → Op st (st.retire c M)
+  | unretire {st : SlotState n} {c : Fin n} {M : Monomial n} :
+      Op st (st.unretire c M)
 
 /-- Runs of the fixed engine. -/
 def OpsStar : SlotState n → SlotState n → Prop := ReflTransGen Op
@@ -248,6 +276,14 @@ theorem retire_I5 {st : SlotState n} (h : I5 st) {c : Fin n} {M : Monomial n}
   · subst hx; simp only [retire, ite_true]; exact good_retire (h x) hM hN
   · simp only [retire, hx, ite_false]; exact h x
 
+/-- Un-retiring with the refresh keeps I5, with no condition on the monomial:
+the fold takes the lesser of the stored minimal monomial and the node active
+again. -/
+theorem unretire_I5 {st : SlotState n} (h : I5 st) (c : Fin n) (M : Monomial n) :
+    I5 (st.unretire c M) := by
+  rw [unretire_eq_mintInto]
+  exact mintInto_I5 h c M
+
 theorem op_I5 {st st' : SlotState n} (h : I5 st) (hop : Op st st') : I5 st' := by
   cases hop with
   | mint hc => exact mint_I5 h hc _
@@ -255,6 +291,7 @@ theorem op_I5 {st st' : SlotState n} (h : I5 st) (hop : Op st st') : I5 st' := b
   | merge hcd => exact merge_I5 h hcd
   | shrink hM hMM' => exact shrinkRefresh_I5 h hM hMM'
   | retire hM hN => exact retire_I5 h hM hN
+  | unretire => exact unretire_I5 h _ _
 
 /-- I5 is an invariant of every run of the fixed engine. -/
 theorem reachable_I5 {st₀ st : SlotState n} (h₀ : I5 st₀) (hrun : OpsStar st₀ st) : I5 st := by
@@ -305,6 +342,42 @@ theorem shrinkRefresh_keeps_I5_repro :
     I5 (reproBefore.shrinkRefresh 5 {0, 1, 4} {0, 1}) :=
   shrinkRefresh_I5 repro_I5_before (by simp [reproBefore]) (by decide)
 
+/-! ## The repro: without the refresh, un-retiring breaks I5 -/
+
+/-- `ac_reactivate_min_monomial.egg`: classes `C1 = 1`, `C3 = 3`; class `5`
+holds `Add{C3, C3, C3}` alone, its stored minimal monomial, after `Add{C3, C1, C1}` was
+collapsed against `Add{C1, C1} → Add{C3, C3}`. -/
+def unretireBefore : SlotState 7 :=
+  ⟨fun x => if x = 5 then {({3, 3, 3} : Monomial 7)} else ∅,
+   fun x => if x = 5 then some ({3, 3, 3} : Monomial 7) else none⟩
+
+theorem unretire_I5_before : I5 unretireBefore := by
+  intro x
+  by_cases hx : x = 5
+  · subst hx; simp only [unretireBefore, ite_true]; exact good_singleton _
+  · simp only [unretireBefore, hx, ite_false]; exact good_empty
+
+/-- The merge `C1 = C2` reorients the rule to `Add{C3, C3} → Add{C1, C1}`, and
+the next round normalizes `Add{C3, C3, C3}` to `Add{C3, C1, C1}`: the collapsed
+node, active again. It is `degLex`-below `Add{C3, C3, C3}` (equal size, count
+of `C3`). With the stored minimal monomial untouched I5 fails. -/
+theorem unretireNoRefresh_breaks_I5 :
+    I5 unretireBefore ∧ ¬ I5 (unretireBefore.unretireNoRefresh 5 {3, 1, 1}) := by
+  refine ⟨unretire_I5_before, fun h => ?_⟩
+  have hgood := h 5
+  simp only [unretireNoRefresh, unretireBefore, ite_true] at hgood
+  obtain ⟨m, hm, hmin⟩ := hgood.1 ⟨{3, 1, 1}, Finset.mem_insert_self _ _⟩
+  have hm' : m = ({3, 3, 3} : Monomial 7) := by
+    injection hm with hm; exact hm.symm
+  subst hm'
+  rcases hmin.2 {3, 1, 1} (Finset.mem_insert_self _ _) with h' | h'
+  · exact absurd h' (by decide)
+  · exact absurd h' (by decide)
+
+/-- With the refresh, the same un-retire keeps I5. -/
+theorem unretire_keeps_I5_repro : I5 (unretireBefore.unretire 5 {3, 1, 1}) :=
+  unretire_I5 unretire_I5_before 5 _
+
 /-! ## Bridge to the completion state and the completeness theorem -/
 
 /-- A completion state agrees with a slot state when active nodes of a class
@@ -342,7 +415,7 @@ theorem fix_sufficient {L : Laws n} {S : Set (Monomial n × Monomial n)}
     (hjoin : ∀ M N, E L S M N → Joinable (Rw L st.rules) M N)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
     (hMN : E L S M N) : st.find c = st.find d :=
-  same_class (roundFixed_converged h0 (state_I5_of_slot (reachable_I5 h5₀ hrun) ha) hcanon hfix)
+  same_class (roundFixed_converged (I0On_of_I0 h0) (state_I5_of_slot (reachable_I5 h5₀ hrun) ha) hcanon hfix)
     hconf h0 hnf hcc hjoin hM hN hMN
 
 end SlotState

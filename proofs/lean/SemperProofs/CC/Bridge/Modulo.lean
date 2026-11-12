@@ -1,4 +1,6 @@
 import SemperProofs.CC.Bridge.Represents
+import SemperProofs.CC.Atoms
+import SemperProofs.CC.Laws.AxiomCP
 
 /-!
 # Bridge: matching modulo the AC theory
@@ -9,7 +11,15 @@ e-matching engine (`engine_plan_sound` / `engine_plan_complete`) on the
 graph `represents st f A`.
 
 * `CompleteHyps L S st` packages the hypotheses of
-  `completion_complete_at_convergence` verbatim.
+  `completion_complete_cancellative_engine`: those of
+  `completion_complete_at_convergence` with `hcancel` replaced by
+  `LatticeClosed` and `hcp` by its part involving a law instance
+  (`AxiomCP`, required for a non-cancellative operator only; the
+  rule-rule part follows from `RoundFixed`). `CompleteHyps.ofLaws` builds
+  it for a law set the model names (`LawSpec`) from the per-law conditions
+  in place of `AxiomCP`; `CompleteHyps.ofLattice` builds it for a
+  cancellative one from lattice closure, with no condition on the critical
+  pairs.
 * `ac_equal_same_class`: two `=_E`-equal active nodes are in one class;
   `ac_equal_same_class_graph` restates it on the graph.
 * `Term` / `ETerm`: the binary ground terms of the operator over the class
@@ -29,9 +39,17 @@ variable {n : ℕ}
 
 /-! ## The hypotheses of completeness at convergence -/
 
-/-- The hypotheses of `completion_complete_at_convergence`, verbatim, on
-the converged state `st` for the laws `L` and the asserted equations `S`.
-See `CC/Main.lean` and `CC/Assemble.lean` for their reading. -/
+/-- The hypotheses of `completion_complete_cancellative_engine`
+(`CC/Lattice.lean`) on the converged state `st` for the laws `L` and the
+asserted equations `S`: those of `completion_complete_at_convergence` with
+`hcancel` replaced by lattice closure for a cancellative operator, which is
+what the engine's `lattice_round` establishes at its fixpoint, and `hcp`
+replaced by `AxiomCP`, the critical pairs involving a law instance; the
+rule-rule pairs follow from the fixed round (`hcp_of_fixed`). `AxiomCP`
+is required for a non-cancellative operator only: completeness for a
+cancellative one, every `:inverse` operator among them, goes through
+lattice closure. See `CC/Main.lean` and `CC/Assemble.lean` for their
+reading. -/
 structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : State n) :
     Prop where
   slots : ∃ ss₀ ss : SlotState n,
@@ -41,35 +59,120 @@ structure CompleteHyps (L : Laws n) (S : Set (Monomial n × Monomial n)) (st : S
   hfix : RoundFixed L st
   hlaw : ∀ P Q, L.lawRel P Q → degLex P Q
   hnf_ax : ∀ M N, ¬ Rw (plain n) L.axRules (L.clamp M) N
-  hcp : ∀ r₁ r₂, r₁ ∈ st.rules ∪ L.axRules → r₂ ∈ st.rules ∪ L.axRules → r₁ ≠ r₂ →
-    Overlap r₁.1 r₂.1 →
-    Joinable (Rw (plain n) (st.rules ∪ L.axRules))
-      (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2
-  hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d
+  hcp_ax : ¬ L.cancellative → AxiomCP L st.rules
+  hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d
   hS : ∀ M N, (M, N) ∈ S →
     ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d
-  hcancel : L.cancellative → ∀ M N X,
-    Joinable (Rw (plain n) (st.rules ∪ L.axRules)) (M + X) (N + X) →
-    Joinable (Rw (plain n) (st.rules ∪ L.axRules)) M N
+  hlat : L.cancellative → Lattice.LatticeClosed L st
+
+/-- The hypotheses of `completion_complete_atoms` give those of
+`completion_complete_at_convergence` on the completion view: the fixed
+round with the one-element collapse is a fixed round of the view, and
+congruence on the stored nodes is congruence on the view. -/
+theorem CompleteHyps.ofAtoms {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    {X : Set (Fin n)} {u : Option (Fin n)} (h : CompleteAtoms L S st X u) :
+    CompleteHyps L S (st.withAtoms X u) where
+  slots := h.slots
+  h0 := h.h0
+  hcanon := h.hcanon
+  hfix := h.hfix.roundFixed
+  hlaw := h.hlaw
+  hnf_ax := h.hnf_ax
+  hcp_ax := h.hcp_ax
+  hcc := h.hfix.congr h.hcc
+  hS := h.hS
+  hlat := h.hlat
+
+/-- **`CompleteHyps` from the per-law conditions.** For a law set the model
+names, the bundle is built from the engine-side hypotheses and the
+conditions `LawSpec.Conds` on the rules; `hlaw` and `hnf_ax` are the law's,
+and `hcp_ax` is `axiomCP_of_laws` at the fixed round. -/
+theorem CompleteHyps.ofLaws (sp : LawSpec n) {S : Set (Monomial n × Monomial n)} {st : State n}
+    (slots : ∃ ss₀ ss : SlotState n,
+      SlotState.I5 ss₀ ∧ SlotState.OpsStar ss₀ ss ∧ SlotState.Agrees st ss)
+    (h0 : I0Active st) (hcanon : ∀ c, sp.laws.clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixed sp.laws st) (hc : sp.Conds st.rules)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    (hlat : sp.laws.cancellative → Lattice.LatticeClosed sp.laws st) :
+    CompleteHyps sp.laws S st where
+  slots := slots
+  h0 := h0
+  hcanon := hcanon
+  hfix := hfix
+  hlaw := sp.hlaw
+  hnf_ax := sp.hnf_ax
+  hcp_ax := fun _ => axiomCP_of_laws sp hfix hc
+  hcc := hcc
+  hS := hS
+  hlat := hlat
+
+/-- **`CompleteHyps` from lattice closure, for a cancellative law set.**
+For a law set the model names whose operator is cancellative (every
+`:inverse` law set at the engine, which treats an `:inverse` operator as
+cancellative), the bundle needs no condition on the critical pairs:
+completeness goes through lattice closure (`hlat`, what `lattice_round`
+establishes at its fixpoint, `Lattice.latticeClosed_of_engineFixed`), and
+`AxiomCP` is required for a non-cancellative operator only. -/
+theorem CompleteHyps.ofLattice (sp : LawSpec n) {S : Set (Monomial n × Monomial n)}
+    {st : State n}
+    (slots : ∃ ss₀ ss : SlotState n,
+      SlotState.I5 ss₀ ∧ SlotState.OpsStar ss₀ ss ∧ SlotState.Agrees st ss)
+    (h0 : I0Active st) (hcanon : ∀ c, sp.laws.clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixed sp.laws st)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    (hcancel : sp.laws.cancellative) (hlat : Lattice.LatticeClosed sp.laws st) :
+    CompleteHyps sp.laws S st where
+  slots := slots
+  h0 := h0
+  hcanon := hcanon
+  hfix := hfix
+  hlaw := sp.hlaw
+  hnf_ax := sp.hnf_ax
+  hcp_ax := fun h => absurd hcancel h
+  hcc := hcc
+  hS := hS
+  hlat := fun _ => hlat
+
+/-- The graph of the completion view is the graph of the stored state: the
+view changes the node set, and the graph reads only `find` and the
+enumeration. -/
+theorem represents_withAtoms (st : State n) (X : Set (Fin n)) (u : Option (Fin n)) (f : Sym)
+    (A : Finset (Monomial n × Fin n)) : represents (st.withAtoms X u) f A = represents st f A :=
+  rfl
+
+theorem mkNode_withAtoms (st : State n) (X : Set (Fin n)) (u : Option (Fin n)) (f : Sym)
+    (p : Monomial n × Fin n) : mkNode (st.withAtoms X u) f p = mkNode st f p :=
+  rfl
+
+/-- An enumeration of the stored active nodes lies within the view. -/
+theorem Enumerates.within_withAtoms {st : State n} {A : Finset (Monomial n × Fin n)}
+    (h : Enumerates st A) (X : Set (Fin n)) (u : Option (Fin n)) : Within (st.withAtoms X u) A :=
+  fun p hp => State.active_withAtoms ((h p).1 hp)
 
 /-- Two `=_E`-equal active nodes of a converged state are in one class. -/
 theorem ac_equal_same_class {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
     (h : CompleteHyps L S st) {M N : Monomial n} {c d : Fin n}
     (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active) (hMN : E L S M N) :
     st.find c = st.find d := by
-  obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
-  exact completion_complete_at_convergence h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw h.hnf_ax
-    h.hcp h.hcc h.hS h.hcancel hM hN hMN
+  by_cases hc : L.cancellative
+  · exact Lattice.complete_of_latticeClosed (h.hlat hc) h.hS hM hN (Lattice.E_union_left hMN)
+  · obtain ⟨ss₀, ss, h5₀, hrun, ha⟩ := h.slots
+    exact Lattice.completion_complete_cancellative_engine h5₀ hrun ha h.h0 h.hcanon h.hfix h.hlaw
+      h.hnf_ax (hcp_of_fixed h.hfix (h.hcp_ax hc)) h.hcc h.hS h.hlat hM hN hMN
 
 /-- On the graph: two `mset` nodes whose monomials are `=_E`-equal are in
 one class. -/
 theorem ac_equal_same_class_graph {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) (f : Sym) {p q : Monomial n × Fin n} (hp : p ∈ A) (hq : q ∈ A)
+    (hA : Within st A) (f : Sym) {p q : Monomial n × Fin n} (hp : p ∈ A) (hq : q ∈ A)
     (hpq : E L S p.1 q.1) :
     (represents st f A).find (nodeId p) = (represents st f A).find (nodeId q) := by
   rw [represents_find, represents_find]
-  exact congrArg clsId (ac_equal_same_class h ((hA p).1 hp) ((hA q).1 hq) hpq)
+  exact congrArg clsId (ac_equal_same_class h (hA p hp) (hA q hq) hpq)
 
 /-! ## Ground terms of the operator and the theory on patterns -/
 
@@ -108,7 +211,7 @@ matching `P` at `p'`'s node matches `P` at `p`'s class. The root of the
 pattern binds the class `find p`, not the node `p`. -/
 theorem matches_closed_under_theory {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) {f : Sym} {p p' : Monomial n × Fin n} (hp : p ∈ A) (hp' : p' ∈ A)
+    (hA : Within st A) {f : Sym} {p p' : Monomial n × Fin n} (hp : p ∈ A) (hp' : p' ∈ A)
     (hE : E L S p.1 p'.1) {P : Pat} (hhead : P.head = some f) {σ : Binding}
     (hm : MatchN (represents st f A) P (mkNode st f p') σ) :
     MatchC (represents st f A) P ((represents st f A).find (nodeId p)) σ := by
@@ -119,7 +222,7 @@ theorem matches_closed_under_theory {L : Laws n} {S : Set (Monomial n × Monomia
 of the node's monomial. -/
 theorem classMatches_congr {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) (f : Sym) {p p' : Monomial n × Fin n} (hp : p ∈ A) (hp' : p' ∈ A)
+    (hA : Within st A) (f : Sym) {p p' : Monomial n × Fin n} (hp : p ∈ A) (hp' : p' ∈ A)
     (hE : E L S p.1 p'.1) (P : Pat) :
     ClassMatches (represents st f A) P ((represents st f A).find (nodeId p)) =
       ClassMatches (represents st f A) P ((represents st f A).find (nodeId p')) := by
@@ -129,7 +232,7 @@ theorem classMatches_congr {L : Laws n} {S : Set (Monomial n × Monomial n)}
 every match at its node is a match at `p`'s class. -/
 theorem eterm_matches {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) {f : Sym} {p : Monomial n × Fin n} (hp : p ∈ A) {t : Term n}
+    (hA : Within st A) {f : Sym} {p : Monomial n × Fin n} (hp : p ∈ A) {t : Term n}
     (ht : t ∈ ETerm L S p) {c' : Fin n} (hc' : (t.flatten, c') ∈ A) {P : Pat}
     (hhead : P.head = some f) {σ : Binding}
     (hm : MatchN (represents st f A) P (mkNode st f (t.flatten, c')) σ) :
@@ -248,7 +351,7 @@ e-matching over e-classes: a pattern matches an e-class, and a class
 represents a term when it holds one node spelling it. -/
 theorem engine_match_modulo_complete {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) {f : Sym} {sig : Sym → Kind} (hf : sig f = .ac) {P : Pat} {r : Var}
+    (hA : Within st A) {f : Sym} {sig : Sym → Kind} (hf : sig f = .ac) {P : Pat} {r : Var}
     {plan : Plan} (hwk : PatWK sig P) (hnd : P.restVars.Nodup) (hr : r ∉ P.vars)
     (hP : P.head.isSome = true) (hplan : PlanOK ((atoms P r).map QAtom.scan) plan)
     {p : Monomial n × Fin n} (hp : p ∈ A) {t : Term n} (ht : t ∈ ETerm L S p) {c' : Fin n}
@@ -270,7 +373,7 @@ matches `P` at the node of some active `p'`, binds the root class to
 is `=_E`-equal to `p'`'s. -/
 theorem engine_match_modulo_sound {L : Laws n} {S : Set (Monomial n × Monomial n)}
     {st : State n} {A : Finset (Monomial n × Fin n)} (h : CompleteHyps L S st)
-    (hA : Enumerates st A) {f : Sym} {sig : Sym → Kind} (hf : sig f = .ac) {P : Pat} {r : Var}
+    (hA : Within st A) {f : Sym} {sig : Sym → Kind} (hf : sig f = .ac) {P : Pat} {r : Var}
     {plan : Plan} (hwk : PatWK sig P) (hnd : P.restVars.Nodup) (hr : r ∉ P.vars)
     (hP : P.head.isSome = true) (hplan : PlanOK ((atoms P r).map QAtom.scan) plan)
     {σ : Binding} (hσ : σ ∈ run (represents st f A) plan Binding.empty) :

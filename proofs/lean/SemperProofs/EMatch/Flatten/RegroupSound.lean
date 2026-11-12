@@ -464,7 +464,8 @@ end Assoc
 /-! ## Folds: only the spine end regroups -/
 
 /-- **Regrouping the prefix of a left fold keeps the left fold.** -/
-theorem regroup_step_sound_left {ctx : Ctx} {den : C → BTm} (hc : ConsistentL ctx den)
+theorem regroup_step_sound_left {M : Type*} [Mul M] {ctx : Ctx}
+    {den : C → M} (hc : ConsistentL ctx den)
     {id : NodeId} {m : Node} {g : C} (hm : ctx.IsMember id m g) {view raw : List (C × Nat)}
     (h : raw ∈ fitsR .assoc .left view g (kids .assoc m.children)) :
     lfold ((raw.map Prod.fst).map den) = lfold ((view.map Prod.fst).map den) := by
@@ -487,7 +488,8 @@ theorem regroup_step_sound_left {ctx : Ctx} {den : C → BTm} (hc : ConsistentL 
   rw [hraw, lfold_splice hl', ← List.map_append, ← List.map_append, List.take_append_drop]
 
 /-- **Regrouping the suffix of a right fold keeps the right fold.** -/
-theorem regroup_step_sound_right {ctx : Ctx} {den : C → BTm} (hc : ConsistentR ctx den)
+theorem regroup_step_sound_right {M : Type*} [Mul M] {ctx : Ctx}
+    {den : C → M} (hc : ConsistentR ctx den)
     {id : NodeId} {m : Node} {g : C} (hm : ctx.IsMember id m g) {view raw : List (C × Nat)}
     (h : raw ∈ fitsR .assoc .right view g (kids .assoc m.children)) :
     rfold ((raw.map Prod.fst).map den) = rfold ((view.map Prod.fst).map den) := by

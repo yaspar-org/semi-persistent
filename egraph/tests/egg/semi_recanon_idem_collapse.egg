@@ -1,0 +1,21 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Rebuild under an idempotent operator: the first round builds `Or{A,B}` and `Or{A,B,C}` and
+;; merges `A` with `B` in the same action phase. Dedup shrinks `Or{A,B}` to `Or{A}`, which
+;; collapses to the class of `A`, and `Or{A,B,C}` to `Or{A,C}`, which collides with the node
+;; built before the run. Every surviving `Or` node has its `G` image. Semi-naive and naive
+;; agree.
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E)
+(function P () E)
+(function Or (E) E :assoc-comm-idem)
+(function G (E E) E)
+(let p (P))
+(let s (Or (A) (C)))
+(rule ((P)) ((Or (A) (B)) (Or (A) (B) (C)) (Or (B) (D)) (union (A) (B))))
+(rewrite (Or x y) (G x y))
+(run 10)
+(check-eq (Or (A) (B)) (A))
+(check-eq (Or (A) (C)) (G (A) (C)))
+(check-eq (Or (B) (D)) (G (A) (D)))
+(check-eq (Or (A) (B) (C)) (G (A) (C)))

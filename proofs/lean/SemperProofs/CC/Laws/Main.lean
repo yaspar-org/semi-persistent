@@ -5,8 +5,9 @@ import SemperProofs.CC.Laws.CriticalPairs
 
 Instantiations of `completion_complete_at_convergence` with the laws the
 engine implements. `hlaw` and `hnf_ax` are discharged by the law; `hcp`
-is reduced to the rule-rule critical pairs plus the law-specific
-rule-side hypothesis of `CriticalPairs.lean`.
+is reduced to the rule-rule critical pairs, which the fixed round gives
+(`ruleRuleCP_of_fixed`), plus the law-specific rule-side hypothesis of
+`CriticalPairs.lean`.
 -/
 
 namespace SemperProofs.CC
@@ -19,16 +20,15 @@ variable {n : ℕ}
 Beyond the engine-level hypotheses of `completion_complete_at_convergence`
 (slot maintenance, canonical and active right-hand sides, a round that
 changed nothing, congruence closure, the asserted equations present), the
-law contributes: rule-rule critical pairs joinable (`hRR`) and no rule
-left side carries the unit (`hu`). -/
+law contributes: no rule left side carries the unit (`hu`); the rule-rule
+critical pairs come from the fixed round. -/
 theorem completion_complete_identity (u : Fin n) (cancel : Prop)
     {S : Set (Monomial n × Monomial n)} {st : State n} {ss₀ ss : SlotState n}
     (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
     (h0 : I0Active st) (hcanon : ∀ c, (Laws.identity u cancel).clamp (st.rhs c) = st.rhs c)
     (hfix : RoundFixed (Laws.identity u cancel) st)
-    (hRR : RuleRuleCP (Laws.identity u cancel) st.rules)
     (hu : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : cancel → ∀ M N X,
@@ -37,13 +37,13 @@ theorem completion_complete_identity (u : Fin n) (cancel : Prop)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
     (hMN : E (Laws.identity u cancel) S M N) : st.find c = st.find d :=
   completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix (identity_hlaw u cancel)
-    (identity_hnf_ax u cancel) (hcp_identity u cancel (rules_oriented st) hRR hu) hcc hS hcancel
+    (identity_hnf_ax u cancel) (hcp_identity u cancel (rules_oriented st) (ruleRuleCP_of_fixed hfix) hu) hcc hS hcancel
     hM hN hMN
 
 /-- Completeness at convergence for a nilpotent AC operator of order `k`
 (`xᵏ = e`; the engine's `:nilpotent k`, counts reduced mod `k`). The law
-contributes: rule-rule pairs joinable (`hRR`), left sides with counts
-below `k` (`hfix`, what `nary_canon` stores), and the engine's axiom
+contributes: left sides with counts below `k` (`hlhs`, what `nary_canon`
+stores), and the engine's axiom
 critical pairs `(B ⊎ {a : k − m}, A − {a : m})` joinable (`hax`,
 `egraph.rs:3047-3066`). -/
 theorem completion_complete_nilpotent (k : ℕ) (hk : 2 ≤ k) (cancel : Prop)
@@ -51,12 +51,11 @@ theorem completion_complete_nilpotent (k : ℕ) (hk : 2 ≤ k) (cancel : Prop)
     (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
     (h0 : I0Active st) (hcanon : ∀ c, (Laws.nilpotent k hk cancel).clamp (st.rhs c) = st.rhs c)
     (hfix : RoundFixed (Laws.nilpotent k hk cancel) st)
-    (hRR : RuleRuleCP (Laws.nilpotent k hk cancel) st.rules)
     (hlhs : ∀ A B, (A, B) ∈ st.rules → ∀ a, A.count a < k)
     (hax : ∀ A B, (A, B) ∈ st.rules → ∀ a ∈ A,
       Joinable (Rw (plain n) (st.rules ∪ (Laws.nilpotent k hk cancel).axRules))
         (B + Multiset.replicate (k - A.count a) a) (A.filter (· ≠ a)))
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : cancel → ∀ M N X,
@@ -65,11 +64,11 @@ theorem completion_complete_nilpotent (k : ℕ) (hk : 2 ≤ k) (cancel : Prop)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
     (hMN : E (Laws.nilpotent k hk cancel) S M N) : st.find c = st.find d :=
   completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix nilpotent_hlaw nilpotent_hnf_ax
-    (hcp_nilpotent k hk cancel (rules_oriented st) hRR hlhs hax) hcc hS hcancel hM hN hMN
+    (hcp_nilpotent k hk cancel (rules_oriented st) (ruleRuleCP_of_fixed hfix) hlhs hax) hcc hS hcancel hM hN hMN
 
 /-- Completeness at convergence for an ACI operator (`x ∘ x = x`; the
-engine's `Set` partition, dedup). The law contributes: rule-rule pairs
-joinable (`hRR`), left sides without duplicates (`hlhs`), and the axiom
+engine's `Set` partition, dedup). The law contributes: left sides without
+duplicates (`hlhs`), and the axiom
 critical pairs `(B ⊎ {a}, A)` joinable (`hax`; implied by the engine's
 `(dedup(B ⊎ {a}), B)`, `egraph.rs:3035-3046`, see `idempotent_engine_pair`). -/
 theorem completion_complete_idempotent (cancel : Prop)
@@ -77,11 +76,10 @@ theorem completion_complete_idempotent (cancel : Prop)
     (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
     (h0 : I0Active st) (hcanon : ∀ c, (Laws.idempotent cancel).clamp (st.rhs c) = st.rhs c)
     (hfix : RoundFixed (Laws.idempotent cancel) st)
-    (hRR : RuleRuleCP (Laws.idempotent cancel) st.rules)
     (hlhs : ∀ A B, (A, B) ∈ st.rules → A.Nodup)
     (hax : ∀ A B, (A, B) ∈ st.rules → ∀ a ∈ A,
       Joinable (Rw (plain n) (st.rules ∪ (Laws.idempotent cancel).axRules)) (B + {a}) A)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : cancel → ∀ M N X,
@@ -90,11 +88,11 @@ theorem completion_complete_idempotent (cancel : Prop)
     {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
     (hMN : E (Laws.idempotent cancel) S M N) : st.find c = st.find d :=
   completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix idempotent_hlaw idempotent_hnf_ax
-    (hcp_idempotent cancel (rules_oriented st) hRR hlhs hax) hcc hS hcancel hM hN hMN
+    (hcp_idempotent cancel (rules_oriented st) (ruleRuleCP_of_fixed hfix) hlhs hax) hcc hS hcancel hM hN hMN
 
 /-- Completeness at convergence for an AC operator with an inverse
-(`x ∘ inv x = e`, pair cancellation only). The law contributes: rule-rule
-pairs joinable (`hRR`), the inverse graph a matching (`hmatch`), left sides
+(`x ∘ inv x = e`, pair cancellation only). The law contributes: the
+inverse graph a matching (`hmatch`), left sides
 cancellation-normal (`hlhs`), and the inverse axiom critical pairs
 `(B ⊎ {y}, A ∖ x)` joinable (`hax`). The engine generates neither the
 law-law nor the rule-law inverse pairs (`egraph.rs:3068`); `hmatch` and
@@ -104,11 +102,10 @@ theorem completion_complete_inverse (inv : Fin n → Option (Fin n)) (cancel : P
     (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
     (h0 : I0Active st) (hcanon : ∀ c, (Laws.inverse inv cancel).clamp (st.rhs c) = st.rhs c)
     (hfix : RoundFixed (Laws.inverse inv cancel) st)
-    (hRR : RuleRuleCP (Laws.inverse inv cancel) st.rules)
     (hmatch : InvMatching inv)
     (hlhs : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A)
     (hax : InverseAxiomCP (Laws.inverse inv cancel) inv st.rules)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : cancel → ∀ M N X,
@@ -118,7 +115,7 @@ theorem completion_complete_inverse (inv : Fin n → Option (Fin n)) (cancel : P
     (hMN : E (Laws.inverse inv cancel) S M N) : st.find c = st.find d :=
   completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix (inverse_hlaw inv cancel)
     (inverse_hnf_ax inv cancel)
-    (hcp_inverse inv cancel (rules_oriented st) hRR hmatch hlhs hax) hcc hS hcancel hM hN hMN
+    (hcp_inverse inv cancel (rules_oriented st) (ruleRuleCP_of_fixed hfix) hmatch hlhs hax) hcc hS hcancel hM hN hMN
 
 /-- Completeness at convergence for the engine's composition identity,
 nilpotent, inverse (`nary_canon.rs:122-137`), under `InvUnitFree` (the
@@ -132,7 +129,6 @@ theorem completion_complete_combined (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
     (h0 : I0Active st)
     (hcanon : ∀ c, (Laws.combined u k hk inv cancel hu).clamp (st.rhs c) = st.rhs c)
     (hfix : RoundFixed (Laws.combined u k hk inv cancel hu) st)
-    (hRR : RuleRuleCP (Laws.combined u k hk inv cancel hu) st.rules)
     (hmatch : InvMatching inv)
     (hlhs_u : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
     (hlhs_k : ∀ A B, (A, B) ∈ st.rules → ∀ a, A.count a < k)
@@ -142,7 +138,7 @@ theorem completion_complete_combined (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
         (B + Multiset.replicate (k - A.count a) a) (A.filter (· ≠ a)))
     (hax_inv : InverseAxiomCP (Laws.combined u k hk inv cancel hu) inv st.rules)
     (hnilinv : NilpotentInverseCP (st.rules ∪ (Laws.combined u k hk inv cancel hu).axRules) k inv)
-    (hcc : ∀ P c d, (P, c) ∈ st.nodes → (P, d) ∈ st.nodes → st.find c = st.find d)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
     (hS : ∀ M N, (M, N) ∈ S →
       ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
     (hcancel : (Laws.combined u k hk inv cancel hu).cancellative → ∀ M N X,
@@ -153,7 +149,63 @@ theorem completion_complete_combined (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
     (hMN : E (Laws.combined u k hk inv cancel hu) S M N) : st.find c = st.find d :=
   completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix
     (combined_hlaw u k hk inv cancel hu) (combined_hnf_ax u k hk inv cancel hu)
-    (hcp_combined u k hk inv cancel hu (rules_oriented st) hRR hmatch hlhs_u hlhs_k hlhs_inv
-      hax_nil hax_inv hnilinv) hcc hS hcancel hM hN hMN
+    (hcp_combined u k hk inv cancel hu (rules_oriented st) (ruleRuleCP_of_fixed hfix) hmatch
+      hlhs_u hlhs_k hlhs_inv hax_nil hax_inv hnilinv) hcc hS hcancel hM hN hMN
+
+/-- Completeness at convergence for the composition identity, inverse
+(`:identity :inverse` without `:nilpotent`), under `InvUnitFree`. The law
+contributes the hypotheses of `hcp_identityInverse`. -/
+theorem completion_complete_identityInverse (u : Fin n) (inv : Fin n → Option (Fin n))
+    (cancel : Prop) (hu : InvUnitFree inv u)
+    {S : Set (Monomial n × Monomial n)} {st : State n} {ss₀ ss : SlotState n}
+    (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
+    (h0 : I0Active st)
+    (hcanon : ∀ c, (Laws.identityInverse u inv cancel hu).clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixed (Laws.identityInverse u inv cancel hu) st)
+    (hmatch : InvMatching inv)
+    (hlhs_u : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
+    (hlhs_inv : ∀ A B, (A, B) ∈ st.rules → InvNormal inv A)
+    (hax_inv : InverseAxiomCP (Laws.identityInverse u inv cancel hu) inv st.rules)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    (hcancel : (Laws.identityInverse u inv cancel hu).cancellative → ∀ M N X,
+      Joinable (Rw (plain n) (st.rules ∪ (Laws.identityInverse u inv cancel hu).axRules))
+        (M + X) (N + X) →
+      Joinable (Rw (plain n) (st.rules ∪ (Laws.identityInverse u inv cancel hu).axRules)) M N)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
+    (hMN : E (Laws.identityInverse u inv cancel hu) S M N) : st.find c = st.find d :=
+  completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix
+    (identityInverse_hlaw u inv cancel hu) (identityInverse_hnf_ax u inv cancel hu)
+    (hcp_identityInverse u inv cancel hu (rules_oriented st) (ruleRuleCP_of_fixed hfix) hmatch
+      hlhs_u hlhs_inv hax_inv) hcc hS hcancel hM hN hMN
+
+/-- Completeness at convergence for an ACI operator with an identity
+(`:idempotent :identity`). The law contributes: no left side carries the
+unit (`hlhs_u`), left sides without duplicates (`hlhs`), and the
+idempotent axiom pairs `(B ⊎ {a}, A)` joinable (`hax`). -/
+theorem completion_complete_idempotentIdentity (u : Fin n) (cancel : Prop)
+    {S : Set (Monomial n × Monomial n)} {st : State n} {ss₀ ss : SlotState n}
+    (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss) (ha : SlotState.Agrees st ss)
+    (h0 : I0Active st)
+    (hcanon : ∀ c, (Laws.idempotentIdentity u cancel).clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixed (Laws.idempotentIdentity u cancel) st)
+    (hlhs_u : ∀ A B, (A, B) ∈ st.rules → u ∉ A)
+    (hlhs : ∀ A B, (A, B) ∈ st.rules → A.Nodup)
+    (hax : ∀ A B, (A, B) ∈ st.rules → ∀ a ∈ A,
+      Joinable (Rw (plain n) (st.rules ∪ (Laws.idempotentIdentity u cancel).axRules)) (B + {a}) A)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S →
+      ∃ c d, (M, c) ∈ st.active ∧ (N, d) ∈ st.active ∧ st.find c = st.find d)
+    (hcancel : cancel → ∀ M N X,
+      Joinable (Rw (plain n) (st.rules ∪ (Laws.idempotentIdentity u cancel).axRules))
+        (M + X) (N + X) →
+      Joinable (Rw (plain n) (st.rules ∪ (Laws.idempotentIdentity u cancel).axRules)) M N)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ st.active) (hN : (N, d) ∈ st.active)
+    (hMN : E (Laws.idempotentIdentity u cancel) S M N) : st.find c = st.find d :=
+  completion_complete_at_convergence h5₀ hrun ha h0 hcanon hfix
+    (idempotentIdentity_hlaw u cancel) (idempotentIdentity_hnf_ax u cancel)
+    (hcp_idempotentIdentity u cancel (rules_oriented st) (ruleRuleCP_of_fixed hfix) hlhs_u hlhs
+      hax) hcc hS hcancel hM hN hMN
 
 end SemperProofs.CC

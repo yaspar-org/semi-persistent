@@ -336,6 +336,19 @@ because they opened a fold's nested child off its spine; until commits `d95883f5
 Completeness of the corrected rule is a Lean theorem for a model,
 `demand_engine_complete_{ac,aci,assoc}`; [§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten).)
 
+Regrouped views under the operator's laws are sound in every model of the laws and are
+exactly the views chains of regroupings reach (`RegroupLaws.lean`). A needed class
+that the normalization drops (the unit, a clamp to zero, a cancelled inverse) used to
+leave a record no match satisfied; a regrouped record now needs only the classes its
+view holds (`regroup_drop_need_unit`, `flatten_regroup_laws_drop_need.egg`). Relative
+to the laws, a normal form reached only by inserting the unit, a cancel pair or `k`
+nilpotent copies is not reached by any chain (`regroup_insert_unit_lost`); a set group kept
+beside its class is not reached by a chain either (`regroup_idem_overlap_loop_lost`), and the
+overlap stage for idempotent operators forms it, soundly in every join semilattice
+(`overlap_step_sound_aci_laws`, `regroup_idem_overlap_found`, `RegroupOverlap.lean`).
+[§7.5](07-rules-and-pattern-matching.md#flattened-matching-flatten), "Regrouped
+views", "Laws".
+
 ### 3.4 Conditional completion claims by operator family
 
 C canonicalization is complete on its own relative to the current ground
@@ -392,8 +405,8 @@ Inverse support is narrower: the implementation cancels explicit
 signed coefficients, triangular reduction, or full Abelian-group completion.
 (Corrected 2026-11-04: since commit `e1e6aec8` it also asserts the five cross-node
 consequences R1-R5 of the inverse law, and `completion_complete_inverse_engine` proves
-completion complete under `:inverse` for a model with those rules; the remaining limits of
-this paragraph stand.)
+completion complete under `:inverse` at a fixpoint of `lattice_round`; the remaining limits
+of this paragraph stand.)
 `CompletionOutcome::Converged` therefore reports the implementation's
 full-round fixpoint, not completeness for the general Abelian-group word
 problem.
@@ -448,13 +461,36 @@ confirm the rule set is reduced at a fixpoint are in the
   ways. (H1) The hypothesis `I0Active` (`CC/Assemble.lean`) quantifies over every class of
   `Fin n`, so the theorems cover graphs where every class holds an active node of the
   operator; a graph with a leaf constant, whose class holds no such node, is outside them.
+  (H1 resolved 2026-11-06.) `I0Active` now constrains only the classes that hold an active
+  node, and `hcc` only the active nodes; the former statement is
+  `completion_complete_at_convergence_of_all`. `CC/Atoms.lean` reads a leaf constant `x` as
+  its one-element monomial `{x}` and the unit's class as the empty monomial, as the engine
+  does (`Normal::Single`, `Normal::Unit`, `degeneracy_pair`, `class_rhs_into`):
+  `completion_complete_atoms`, `completion_complete_{cancellative,inverse,combined}_engine_atoms`
+  and `saturation_modulo_complete_atoms` cover graphs with leaf constants, under a fixed round
+  that includes the one-element collapse (`RoundFixedA`: a node whose normal form is `{x}` is
+  in `x`'s class) and congruence on the stored nodes; that a stored one-element node is in its
+  child's class is derived (`RoundFixedA.materialized`). The set of atomic classes is a
+  parameter of these theorems, not derived from the engine's `atomic` bit. A concrete
+  converged state with four leaf constants meets every hypothesis
+  (`AtomsWitness.witness_complete`, by hand and `decide`), so the theorems are not vacuous
+  on it (M6).
   (H2) The theory `E` relates monomials over class ids and does not identify two child
   classes that a merge joined, so the statements of the `CC/Bridge/` theorems are about the
   monomials as the state stores them. (H3) The hypothesis that the stored minimal monomials
   reach the final state by `SlotState.OpsStar` from a state satisfying I5 is met with the
   initial state equal to the final one, so the main theorems in effect assume I5 at the final
   state. (M5) The effects of rule actions are fields of `ActRound`
-  (`EMatch/Engine/Saturate/ActRound.lean`), assumed, not modelled from `apply.rs`. Chapters 6
+  (`EMatch/Engine/Saturate/ActRound.lean`), assumed, not modelled from `apply.rs`. (H4) The
+  final theorem equated the fixpoint graph with the graph of the active `f`-multiset nodes and
+  read right-hand sides literally, so it held vacuously for any rule set with a match whose
+  right-hand side builds a node of another operator, a leaf constant or a one-element term.
+  (H4 resolved 2026-11-06.) `saturation_modulo_complete_store_atoms` reads matches on the
+  index and right-hand sides as the normal forms `add` builds, on the store, and takes the
+  graph of the completion state as a part of the index (`SubRep`); `Final/Witness.lean` proves
+  all its hypotheses on two rounds of `(rewrite (+ x y) (g x y))` over leaf constants. The
+  executor refinement `env_refine` now covers every scheduled plan, nested patterns included
+  (`planOK_envWF`, `exec_matches`). Chapters 6
   §9c, 7 §7.5 and 9 §9.2 point here where they cite these theorems.
 - **Tested against the Lean model on generated programs** (added 2026-11-05). Five generators
   in `proofs/lean/Conform` write programs the engine must agree with: `semper-conform`

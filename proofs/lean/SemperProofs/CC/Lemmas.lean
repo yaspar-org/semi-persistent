@@ -174,6 +174,62 @@ theorem Step_rtg_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : S
   | refl => exact E.refl _
   | tail _ hstep ih => exact E.trans ih (Step_sound h hstep)
 
+/-! ## Steps by a rule or a law (`State.RwL`) -/
+
+/-- A transitive chain passes to a larger relation. -/
+theorem transGen_imp {α : Type*} {r p : α → α → Prop} (h : ∀ a b, r a b → p a b) {a b : α}
+    (hab : TransGen r a b) : TransGen p a b := by
+  induction hab with
+  | single h' => exact TransGen.single (h _ _ h')
+  | tail _ h' ih => exact ih.tail (h _ _ h')
+
+theorem reflTransGen_imp {α : Type*} {r p : α → α → Prop} (h : ∀ a b, r a b → p a b) {a b : α}
+    (hab : ReflTransGen r a b) : ReflTransGen p a b := by
+  induction hab with
+  | refl => exact ReflTransGen.refl
+  | tail _ h' ih => exact ih.tail (h _ _ h')
+
+/-- A rule step is a step. -/
+theorem RwL_of_Rw {L : Laws n} {st : State n} {M N : Monomial n} (h : Rw L st.rules M N) :
+    st.RwL L M N := Or.inl h
+
+/-- A step by a rule or a law is `≫`-decreasing: the rules of a state are
+oriented by definition and `clamp` only removes children. -/
+theorem RwL_degLex {L : Laws n} {st : State n} {M N : Monomial n} (h : st.RwL L M N) :
+    degLex M N := by
+  rcases h with h | ⟨rfl, hne⟩
+  · exact Rw_degLex (R := st.rules) (fun _ _ hr => hr.choose_spec.choose_spec.2.2.1) h
+  · exact degLex_of_lt (lt_of_le_of_ne (L.clamp_le M) hne)
+
+theorem RwL_wf (L : Laws n) (st : State n) :
+    WellFounded (fun N M : Monomial n => st.RwL L M N) :=
+  Subrelation.wf (fun h => RwL_degLex h) degLex_wf
+
+/-- A step by a rule or a law of a sound state is an `=_E`-consequence. -/
+theorem RwL_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (h : I2 L S st) {M N : Monomial n} (hs : st.RwL L M N) : E L S M N := by
+  rcases hs with hs | ⟨rfl, hne⟩
+  · exact Rw_sound (rules_sound h) hs
+  · rcases L.clamp_law M with hc | hc
+    · exact absurd hc hne
+    · exact E.law hc
+
+theorem RwL_rtg_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (h : I2 L S st) {M N : Monomial n} (hs : ReflTransGen (st.RwL L) M N) : E L S M N := by
+  induction hs with
+  | refl => exact E.refl _
+  | tail _ hstep ih => exact E.trans ih (RwL_sound h hstep)
+
+/-- The retirement discipline stated over rule steps alone gives `I3`: a
+rule step is a step. -/
+theorem I3_of_rw {L : Laws n} {st : State n}
+    (h : ∀ M c, (M, c) ∈ st.retired →
+      ∃ M' c', TransGen (Rw L st.rules) M M' ∧ (M', c') ∈ st.nodes ∧ st.find c' = st.find c) :
+    I3 L st := by
+  intro M c hM
+  obtain ⟨M', c', hMM', hM', hc'⟩ := h M c hM
+  exact ⟨M', c', transGen_imp (fun _ _ h => RwL_of_Rw h) hMM', hM', hc'⟩
+
 /-! ## L6: every inference preserves I2 -/
 
 /-- Merging two classes that hold `=_E`-equal nodes preserves I2. -/
@@ -194,11 +250,78 @@ theorem merge_I2 {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n
     exact E.trans h₁ (E.trans (E.symm hMN) h₂)
   · exact h P a Q b hP hQ hab
 
+/-- `E` is monotone in the asserted equalities. -/
+theorem E.mono {L : Laws n} {S S' : Set (Monomial n × Monomial n)} (hS : S ⊆ S')
+    {M N : Monomial n} (h : E L S M N) : E L S' M N := by
+  induction h with
+  | ax h => exact E.ax (hS h)
+  | refl M => exact E.refl M
+  | symm _ ih => exact E.symm ih
+  | trans _ _ ih₁ ih₂ => exact E.trans ih₁ ih₂
+  | congr X _ ih => exact E.congr X ih
+  | law h => exact E.law h
+  | cancel hc _ ih => exact E.cancel hc ih
+
+/-- Under I2 the theory of the state's own classes is contained in `=_E`:
+every equality the state asserts is an `=_E`-consequence. -/
+theorem E_eqs_sound {L : Laws n} {S : Set (Monomial n × Monomial n)} {st : State n}
+    (h : I2 L S st) {M N : Monomial n} (hMN : E L st.eqs M N) : E L S M N := by
+  induction hMN with
+  | ax h' => obtain ⟨c, c', hc, hc', hcc⟩ := h'; exact h _ c _ c' hc hc' hcc
+  | refl M => exact E.refl M
+  | symm _ ih => exact E.symm ih
+  | trans _ _ ih₁ ih₂ => exact E.trans ih₁ ih₂
+  | congr X _ ih => exact E.congr X ih
+  | law h' => exact E.law h'
+  | cancel hc _ ih => exact E.cancel hc ih
+
+/-- A rule of a state is an equality the state asserts. -/
+theorem rules_eqs {st : State n} {A B : Monomial n} (h : (A, B) ∈ st.rules) :
+    (A, B) ∈ st.eqs := by
+  obtain ⟨c, c', hA, hB, -, hBn, hcc⟩ := h
+  have hB' : B = st.rhs (st.find c) := hB
+  subst hB'
+  exact ⟨c, c', hA.1, hBn, hcc.symm⟩
+
+/-- Every step the loop takes is derivable from the state's own classes. -/
+theorem Step_eqs {L : Laws n} {st : State n} {a b : Monomial n} (hs : st.Step L a b) :
+    E L st.eqs a b := by
+  rcases hs with hs | hs | hs | ⟨c, c', ha, hb, hcc⟩
+  · exact Rw_sound (fun A B h => E.ax (rules_eqs h)) hs
+  · exact E.law hs
+  · exact E.symm (E.law hs)
+  · exact E.ax ⟨c, c', ha, hb, hcc⟩
+
+/-- A chain of steps, in either direction, is derivable from the state's own
+classes. -/
+theorem Step_eqvGen_eqs {L : Laws n} {st : State n} {a b : Monomial n}
+    (hs : EqvGen (st.Step L) a b) : E L st.eqs a b := by
+  induction hs with
+  | rel _ _ h => exact Step_eqs h
+  | refl a => exact E.refl a
+  | symm _ _ _ ih => exact E.symm ih
+  | trans _ _ _ _ _ ih₁ ih₂ => exact E.trans ih₁ ih₂
+
+/-- A merge of two nodes joined by a chain of steps in either direction is a
+`joinMerge`. -/
+theorem Infer.joinMerge_of_steps {L : Laws n} {st : State n} {M N : Monomial n} {c d : Fin n}
+    (hM : (M, c) ∈ st.nodes) (hN : (N, d) ∈ st.nodes) (hs : EqvGen (st.Step L) M N) :
+    Infer L st (st.merge c d) :=
+  Infer.joinMerge hM hN (Step_eqvGen_eqs hs)
+
+/-- Cancel-close of two present nodes is a `joinMerge`: `M + X` and `N + X`
+share a class, the operator is cancellative, so `M` and `N` are merged. -/
+theorem Infer.cancelMerge {L : Laws n} {st : State n} {M N X : Monomial n} {c d c' d' : Fin n}
+    (hc : L.cancellative) (hMX : (M + X, c) ∈ st.nodes) (hNX : (N + X, d) ∈ st.nodes)
+    (hcd : st.find c = st.find d) (hM : (M, c') ∈ st.nodes) (hN : (N, d') ∈ st.nodes) :
+    Infer L st (st.merge c' d') :=
+  Infer.joinMerge hM hN (E.cancel hc (E.ax ⟨c, d, hMX, hNX, hcd⟩))
+
 /-- L6: each inference maps a state satisfying I2 to one satisfying I2. -/
 theorem Infer_I2 {L : Laws n} {S : Set (Monomial n × Monomial n)} {st st' : State n}
     (hinf : Infer L st st') (h : I2 L S st) : I2 L S st' := by
   cases hinf with
-  | mint hM hMN hfresh =>
+  | mint _ hfresh =>
     intro P a Q b hP hQ hab
     simp only [State.addNode, Set.mem_insert_iff, Prod.mk.injEq] at hP hQ
     rcases hP with ⟨rfl, rfl⟩ | hP <;> rcases hQ with ⟨rfl, rfl⟩ | hQ
@@ -206,10 +329,9 @@ theorem Infer_I2 {L : Laws n} {S : Set (Monomial n × Monomial n)} {st st' : Sta
     · exact absurd hab.symm (hfresh Q b hQ)
     · exact absurd hab (hfresh P a hP)
     · exact h P a Q b hP hQ hab
-  | joinMerge hM hN hsteps => exact merge_I2 h hM hN (Step_rtg_sound h hsteps)
-  | cancelMerge hc hMX hNX hcd hM hN =>
-    exact merge_I2 h hM hN (E.cancel hc (h _ _ _ _ hMX hNX hcd))
-  | retire _ => exact h
+  | joinMerge hM hN hMN => exact merge_I2 h hM hN (E_eqs_sound h hMN)
+  | retire _ _ => exact h
+  | unretire _ => exact h
   | setRhs _ => exact h
 
 /-! ## L7: soundness -/
@@ -323,16 +445,24 @@ statement is false, see `stub_counterexample` there. -/
 
 /-! ## L12-L13: convergence and completeness -/
 
-/-- L12: a state whose round changes nothing, with I0, I5 and canonical
-right-hand sides, is converged. -/
-theorem roundFixed_converged {L : Laws n} {st : State n} (h0 : I0 st) (h5 : I5 st)
+/-- I0 on the classes that hold an active node: such a class's stored
+right-hand side is a node of the class. A class with no active node (a leaf
+constant, or a class of another operator) is unconstrained. -/
+def I0On (st : State n) : Prop :=
+  ∀ M c, (M, c) ∈ st.active → ∃ c', (st.rhs (st.find c), c') ∈ st.nodes ∧ st.find c' = st.find c
+
+theorem I0On_of_I0 {st : State n} (h : I0 st) : I0On st := fun _ c _ => h c
+
+/-- L12: a state whose round changes nothing, with I0 on the classes holding
+an active node, I5 and canonical right-hand sides, is converged. -/
+theorem roundFixed_converged {L : Laws n} {st : State n} (h0 : I0On st) (h5 : I5 st)
     (hcanon : ∀ c, L.clamp (st.rhs c) = st.rhs c) (hfix : RoundFixed L st) :
     Converged L st := by
-  refine ⟨hfix.cp_joinable, ?_⟩
+  refine ⟨hfix.cp_joinable_all, ?_⟩
   intro M c hM
   rcases h5 M c hM with h | h
   · rw [h]
-  · obtain ⟨c', hc', hcc⟩ := h0 c
+  · obtain ⟨c', hc', hcc⟩ := h0 M c hM
     have hrule : (M, st.rhs (st.find c)) ∈ st.rules := ⟨c, c', hM, rfl, h, hc', hcc⟩
     refine ReflTransGen.single ⟨M, st.rhs (st.find c), hrule, le_rfl, ?_⟩
     rw [tsub_self, zero_add, hcanon]
@@ -463,20 +593,161 @@ theorem Rw_rtg_mem {L : Laws n} {st : State n} {pool : Finset (Fin n)} (h : I4 p
   | tail _ hstep ih => exact Rw_mem h ih hstep
 
 /-- L15: the fixed summand pool I4 is preserved by every inference, since a
-minted monomial is built from the children of existing nodes. -/
+minted monomial is built from classes that already occur as children. -/
 theorem Infer_I4 {L : Laws n} {st st' : State n} {pool : Finset (Fin n)}
     (hinf : Infer L st st') (h : I4 pool st) : I4 pool st' := by
   cases hinf with
-  | mint hM hMN _ =>
+  | mint hN _ =>
     intro P a hP
     simp only [State.addNode, Set.mem_insert_iff, Prod.mk.injEq] at hP
     rcases hP with ⟨rfl, rfl⟩ | hP
-    · exact Rw_rtg_mem h (h _ _ hM) hMN
+    · intro x hx
+      obtain ⟨M, c, hM, hxM⟩ := hN x hx
+      exact h M c hM x hxM
     · exact h P a hP
   | joinMerge _ _ _ => exact h
-  | cancelMerge _ _ _ _ _ _ => exact h
-  | retire _ => exact h
+  | retire _ _ => exact h
+  | unretire _ => exact h
   | setRhs _ => exact h
+
+/-! ## Un-retirement
+
+The engine clears `FLAG_AC_COLLAPSED` on a node that completion materializes
+again or that recanonization changes, and refreshes the class's stored
+minimal monomial with it (`materialize`, `recanonize_node`:
+`refresh_min_monomial`). Modelled as `Infer.unretire` followed by
+`Infer.setRhs (st.refreshRhs M c)`. Nodes and partition do not change, so I2
+and I4 pass through (`Infer_I2`, `Infer_I4`); I0 and I5 need the refresh. -/
+
+/-- Un-retiring keeps I0: nodes, partition and right-hand sides are unchanged. -/
+theorem unretire_I0 {st : State n} (h : I0 st) (M : Monomial n) (c : Fin n) :
+    I0 (st.unretire M c) := h
+
+/-- The refresh keeps I0 when the node active again is a node: the class of
+`c` stores `M`, a node of that class, or keeps its own right-hand side. -/
+theorem refreshRhs_I0 {st : State n} (h : I0 st) {M : Monomial n} {c : Fin n}
+    (hM : (M, c) ∈ st.nodes) : I0 { st with rhs := st.refreshRhs M c } := by
+  intro d
+  simp only [State.refreshRhs]
+  by_cases hd : st.find d = st.find c ∧ degLex (st.rhs (st.find c)) M
+  · rw [if_pos hd]
+    exact ⟨c, hM, hd.1.symm⟩
+  · rw [if_neg hd]
+    exact h d
+
+/-- Un-retiring without the refresh can break I5: the node active again may be
+below the stored right-hand side. With the refresh I5 holds again. The
+right-hand side of the class of `c` is `M` when `M` is below the old one, and
+every active node of that class was at or above the old one. -/
+theorem unretire_refresh_I5 {st : State n} (h5 : I5 st) (M : Monomial n) (c : Fin n) :
+    I5 { st.unretire M c with rhs := st.refreshRhs M c } := by
+  intro N d hN
+  have hnodes : (N, d) ∈ st.nodes := hN.1
+  have hcase : (N, d) ∈ st.retired → N = M ∧ d = c := by
+    intro hret
+    have hnot : (N, d) ∉ st.retired \ {(M, c)} := hN.2
+    by_contra hne
+    exact hnot ⟨hret, fun hmem => hne (Prod.mk.inj (Set.mem_singleton_iff.mp hmem))⟩
+  show st.refreshRhs M c (st.find d) = N ∨ degLex N (st.refreshRhs M c (st.find d))
+  unfold State.refreshRhs
+  by_cases hdc : st.find d = st.find c
+  · by_cases hlt : degLex (st.rhs (st.find c)) M
+    · rw [if_pos ⟨hdc, hlt⟩]
+      by_cases hret : (N, d) ∈ st.retired
+      · exact Or.inl (hcase hret).1.symm
+      · rcases h5 N d ⟨hnodes, hret⟩ with h | h
+        · rw [hdc] at h; rw [← h]; exact Or.inr hlt
+        · rw [hdc] at h; exact Or.inr (degLex_trans h hlt)
+    · rw [if_neg (fun hh => hlt hh.2)]
+      by_cases hret : (N, d) ∈ st.retired
+      · obtain ⟨rfl, rfl⟩ := hcase hret
+        rcases degLex_trichotomous N (st.rhs (st.find d)) with h | h | h
+        · exact Or.inr h
+        · exact Or.inl h.symm
+        · exact absurd h hlt
+      · exact h5 N d ⟨hnodes, hret⟩
+  · rw [if_neg (fun hh => hdc hh.1)]
+    by_cases hret : (N, d) ∈ st.retired
+    · exact absurd (congrArg st.find (hcase hret).2) hdc
+    · exact h5 N d ⟨hnodes, hret⟩
+
+/-- The engine's un-retire is two inference steps. -/
+theorem unretire_refresh_reachable {L : Laws n} {st : State n} {M : Monomial n} {c : Fin n}
+    (hret : (M, c) ∈ st.retired) :
+    Reachable L st { st.unretire M c with rhs := st.refreshRhs M c } :=
+  Relation.ReflTransGen.tail (Relation.ReflTransGen.single (Infer.unretire hret))
+    (Infer.setRhs (st.refreshRhs M c))
+
+/-! ## Retired nodes stay covered
+
+`RetiredCovered` holds of every reachable state from one with no retired
+node: `retire` brings its own active classmate, a merge only joins
+classes, `mint` and `unretire` only add active nodes, and a node retired
+later that was some retired node's witness leaves the smaller classmate
+`retire` required in its place. -/
+
+theorem retiredCovered_of_empty {st : State n} (h : st.retired = ∅) : RetiredCovered st := by
+  intro M c hM
+  rw [h] at hM
+  exact absurd hM (Set.notMem_empty _)
+
+/-- Each inference keeps `RetiredCovered`. -/
+theorem Infer_retiredCovered {L : Laws n} {st st' : State n} (hinf : Infer L st st')
+    (h : RetiredCovered st) : RetiredCovered st' := by
+  cases hinf with
+  | mint _ hfresh =>
+    intro M c hM
+    obtain ⟨hn, K, c', hK, hc⟩ := h M c hM
+    exact ⟨Set.mem_insert_of_mem _ hn, K, c', ⟨Set.mem_insert_of_mem _ hK.1, hK.2⟩, hc⟩
+  | joinMerge _ _ _ =>
+    intro M c hM
+    obtain ⟨hn, K, c', hK, hc⟩ := h M c hM
+    refine ⟨hn, K, c', hK, ?_⟩
+    simp only [State.merge, hc]
+  | @retire M₀ c₀ hM₀ hK₀ =>
+    obtain ⟨K₀, d₀, hK₀a, hd₀, hlt₀⟩ := hK₀
+    have hne₀ : (K₀, d₀) ≠ (M₀, c₀) := fun e => degLex_irrefl _ ((Prod.mk.inj e).1 ▸ hlt₀)
+    have hK₀' : (K₀, d₀) ∈ (st.retire M₀ c₀).active :=
+      ⟨hK₀a.1, fun h' => (Set.mem_insert_iff.1 h').elim hne₀ hK₀a.2⟩
+    intro M c hM
+    rcases Set.mem_insert_iff.1 hM with e | hM
+    · obtain ⟨rfl, rfl⟩ := Prod.mk.inj e
+      exact ⟨hM₀, K₀, d₀, hK₀', hd₀⟩
+    · obtain ⟨hn, K, c', hK, hc⟩ := h M c hM
+      by_cases e : (K, c') = (M₀, c₀)
+      · obtain ⟨rfl, rfl⟩ := Prod.mk.inj e
+        exact ⟨hn, K₀, d₀, hK₀', hd₀.trans hc⟩
+      · exact ⟨hn, K, c', ⟨hK.1, fun h' => (Set.mem_insert_iff.1 h').elim e hK.2⟩, hc⟩
+  | unretire _ =>
+    intro M c hM
+    obtain ⟨hn, K, c', hK, hc⟩ := h M c hM.1
+    exact ⟨hn, K, c', ⟨hK.1, fun h' => hK.2 h'.1⟩, hc⟩
+  | setRhs _ => exact h
+
+/-- **`RetiredCovered` along a run.** -/
+theorem reachable_retiredCovered {L : Laws n} {st₀ st : State n} (hrun : Reachable L st₀ st)
+    (h₀ : RetiredCovered st₀) : RetiredCovered st := by
+  induction hrun with
+  | refl => exact h₀
+  | tail _ hstep ih => exact Infer_retiredCovered hstep ih
+
+/-- From a state with no retired node, every reachable state's retired nodes
+are covered. -/
+theorem retiredCovered_of_reachable {L : Laws n} {st₀ st : State n}
+    (hrun : Reachable L st₀ st) (h₀ : st₀.retired = ∅) : RetiredCovered st :=
+  reachable_retiredCovered hrun (retiredCovered_of_empty h₀)
+
+/-- On a sound state, a covered stored node is `=_E`-equal to an active
+node of its class: an active node is itself, a retired one is in one class
+with the active node `RetiredCovered` names, and `I2` relates the two. No
+reduction and no confluence. -/
+theorem node_equal_active_covered {L : Laws n} {S : Set (Monomial n × Monomial n)}
+    {st : State n} (h2 : I2 L S st) (hcov : RetiredCovered st) {M : Monomial n} {c : Fin n}
+    (hM : (M, c) ∈ st.nodes) : ∃ q ∈ st.active, E L S M q.1 ∧ st.find q.2 = st.find c := by
+  by_cases hr : (M, c) ∈ st.retired
+  · obtain ⟨-, K, c', hK, hc⟩ := hcov M c hr
+    exact ⟨(K, c'), hK, h2 M c K c' hM hK.1 hc.symm, hc⟩
+  · exact ⟨(M, c), ⟨hM, hr⟩, E.refl _, rfl⟩
 
 /-! L16 (round termination) is proved in `Proofs/RunStabilizes.lean`
 (`run_stabilizes'`) and re-exported from `Main.lean`. -/

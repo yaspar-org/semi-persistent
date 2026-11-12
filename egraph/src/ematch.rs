@@ -500,6 +500,9 @@ pub struct MatchPool<Cfg: EGraphConfig> {
     /// Nodes whose regrouping stopped at a bound (`crate::flatten::REGROUP_TRUNCATED`),
     /// for the query just run.
     flatten_regroup_truncated: usize,
+    /// The bounds the `Flatten` steps' enumerators stop at (`crate::flatten::FlattenBounds`),
+    /// the module's constants unless a test lowered them.
+    flatten_bounds: crate::flatten::FlattenBounds,
 }
 
 impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
@@ -531,6 +534,7 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
             flatten_overflowed: 0,
             first_flatten_overflow: None,
             flatten_regroup_truncated: 0,
+            flatten_bounds: crate::flatten::FlattenBounds::DEFAULT,
         }
     }
 
@@ -557,8 +561,20 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
         self.first_flatten_overflow.as_ref()
     }
 
+    /// Lower the bounds the `Flatten` steps' enumerators stop at, for the queries this
+    /// pool runs: a test's way of reaching the stops (`flatten_skipped`,
+    /// `flatten_regroup_truncated`) on a small graph.
+    pub fn set_flatten_bounds(&mut self, bounds: crate::flatten::FlattenBounds) {
+        self.flatten_bounds = bounds;
+        for s in &mut self.flatten_scratch {
+            s.set_bounds(bounds);
+        }
+    }
+
     fn take_flatten_scratch(&mut self) -> crate::flatten::FlattenScratch<Cfg::G, Cfg::M> {
-        self.flatten_scratch.pop().unwrap_or_default()
+        let mut s = self.flatten_scratch.pop().unwrap_or_default();
+        s.set_bounds(self.flatten_bounds);
+        s
     }
 
     fn give_flatten_scratch(&mut self, s: crate::flatten::FlattenScratch<Cfg::G, Cfg::M>) {
@@ -1232,6 +1248,8 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     let exec = Exec::<Cfg, L, S>::static_plan(&plan.steps);
     run_step(&exec, 0, eg, index, globals, &mut env, pool);
     add_match_steps(pool.steps);
+    #[cfg(test)]
+    mirror_cursor(plan, eg, index, globals, pool);
 }
 
 /// Collect all matches of `rq` into `pool`, choosing the atom order at plan time
@@ -1628,7 +1646,7 @@ where
     if candidates.count_ones() == 1 {
         let ai = candidates.trailing_zeros() as usize;
         #[cfg(test)]
-        ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, ai)));
+        log_choice(ad, exec, eg, index, globals, env, ai);
         return Some(ai);
     }
     let mut best: Option<(usize, usize)> = None;
@@ -1644,7 +1662,7 @@ where
     }
     #[cfg(test)]
     if let Some((_, ai)) = best {
-        ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, ai)));
+        log_choice(ad, exec, eg, index, globals, env, ai);
     }
     best.map(|(_, ai)| ai)
 }
@@ -1662,6 +1680,394 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn take_atom_choices() -> Vec<(u64, usize)> {
     ATOM_CHOICE_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// One phase-B decision beside the model's answer for it: the atoms already
+/// scheduled, how many were candidates, the atom `choose_atom` took, and the
+/// atom `model_choice` takes from the same bindings and bucket lengths
+/// (`None` when a candidate is an atom kind the model has no lookups for).
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChoiceRecord {
+    pub used: u64,
+    pub candidates: u32,
+    pub engine: usize,
+    pub model: Option<usize>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// One `ChoiceRecord` per phase-B decision, for the conformance test of
+    /// `choose_atom` against the model.
+    static MODEL_CHOICE_LOG: std::cell::RefCell<Vec<ChoiceRecord>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Take and clear this thread's record of decisions with the model's answers.
+#[cfg(test)]
+pub(crate) fn take_model_choices() -> Vec<ChoiceRecord> {
+    MODEL_CHOICE_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// One static plan `run_query_into` ran while the cursor mirror was on: whether the plan
+/// is one the cursor executes (`compared`), whether the cursor's match set is the
+/// recursive executor's with no repeat (`agree`), the two counts, and the first
+/// difference.
+#[cfg(test)]
+pub(crate) struct CursorRecord {
+    pub compared: bool,
+    pub agree: bool,
+    pub recursive: usize,
+    pub cursor: usize,
+    pub detail: String,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether `run_query_into` also runs the cursor and compares.
+    static CURSOR_MIRROR: Cell<bool> = const { Cell::new(false) };
+    /// One `CursorRecord` per static plan run with the mirror on.
+    static CURSOR_LOG: std::cell::RefCell<Vec<CursorRecord>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_cursor_mirror(on: bool) {
+    CURSOR_MIRROR.with(|c| c.set(on));
+}
+
+/// Take and clear this thread's cursor records.
+#[cfg(test)]
+pub(crate) fn take_cursor_records() -> Vec<CursorRecord> {
+    CURSOR_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// A match as text from its canonical parts: every node binding, then every sequence,
+/// set and multiset rest (sets and multisets sorted).
+#[cfg(test)]
+pub(crate) fn key_of_parts(
+    nodes: &[Option<usize>],
+    seqs: &[Vec<usize>],
+    sets: &[Vec<usize>],
+    msets: &[Vec<(usize, u64)>],
+) -> String {
+    let mut parts: Vec<String> = nodes
+        .iter()
+        .map(|g| g.map_or("_".to_string(), |c| c.to_string()))
+        .collect();
+    for s in seqs {
+        parts.push(format!("seq{s:?}"));
+    }
+    for s in sets {
+        let mut v = s.clone();
+        v.sort_unstable();
+        parts.push(format!("set{v:?}"));
+    }
+    for s in msets {
+        let mut v = s.clone();
+        v.sort_unstable();
+        parts.push(format!("mset{v:?}"));
+    }
+    parts.join(" ")
+}
+
+/// A match, canonized through `find_const`, as text (the key of `cursor_shapes.rs`).
+#[cfg(test)]
+pub(crate) fn match_key<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    m: &Match<Cfg>,
+    shape: &crate::resolve::MatchShape,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+) -> String
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    use crate::containers::DenseId;
+    let canon = |g: Cfg::G| eg.find_const(g).to_usize();
+    let nodes: Vec<Option<usize>> = m.nodes.iter().map(|g| g.map(canon)).collect();
+    let seqs: Vec<Vec<usize>> = (0..shape.seqs.len())
+        .map(|i| {
+            m.seq_slice(SeqVarId::new(u16::try_from(i).expect("index")))
+                .iter()
+                .map(|&g| canon(g))
+                .collect()
+        })
+        .collect();
+    let sets: Vec<Vec<usize>> = (0..shape.sets.len())
+        .map(|i| {
+            m.set_slice(SetVarId::new(u16::try_from(i).expect("index")))
+                .iter()
+                .map(|&g| canon(g))
+                .collect()
+        })
+        .collect();
+    let msets: Vec<Vec<(usize, u64)>> = (0..shape.msets.len())
+        .map(|i| {
+            m.mset_slice(MsetVarId::new(u16::try_from(i).expect("index")))
+                .iter()
+                .map(|c| {
+                    (
+                        canon(Cfg::mset_child_id(c)),
+                        Cfg::mset_child_mult(c).to_u64().expect("count"),
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    key_of_parts(&nodes, &seqs, &sets, &msets)
+}
+
+/// Run the cursor (`MatchIterator`) on the plan the recursive executor just ran into
+/// `pool`, and record whether the two match sets agree. A plan with a step the cursor
+/// does not execute (`Collect`, `Flatten`, a regrouped view) is recorded as not compared.
+#[cfg(test)]
+fn mirror_cursor<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    pool: &MatchPool<Cfg>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    if !CURSOR_MIRROR.with(|c| c.get()) {
+        return;
+    }
+    let outside = plan.steps.iter().any(|s| {
+        matches!(
+            s,
+            Step::Collect { .. }
+                | Step::Flatten { .. }
+                | Step::ExpandA { view: Some(_), .. }
+                | Step::DecomposeAC { view: Some(_), .. }
+                | Step::DecomposeACI { view: Some(_), .. }
+        )
+    });
+    let record = if outside {
+        CursorRecord {
+            compared: false,
+            agree: true,
+            recursive: pool.len(),
+            cursor: 0,
+            detail: String::new(),
+        }
+    } else {
+        // Compared as multisets: a residual with two entries of one class (a commutative
+        // pair's equal children) gives both executors the same assignment twice.
+        let mut recursive: Vec<String> = (0..pool.len())
+            .map(|j| match_key(&pool.clone_match(j), &plan.shape, eg))
+            .collect();
+        recursive.sort();
+        let mut it = MatchIterator::new(plan, eg, index, globals);
+        let mut cursor = Vec::new();
+        while it.next_match() {
+            cursor.push(match_key(it.env(), &plan.shape, eg));
+        }
+        cursor.sort();
+        let detail = if cursor == recursive {
+            String::new()
+        } else {
+            let first = recursive
+                .iter()
+                .zip(cursor.iter())
+                .find(|(r, c)| r != c)
+                .map_or_else(
+                    || format!("counts {} and {}", recursive.len(), cursor.len()),
+                    |(r, c)| format!("recursive {r} against cursor {c}"),
+                );
+            format!("{first}; plan {:?}", plan.steps)
+        };
+        CursorRecord {
+            compared: true,
+            agree: detail.is_empty(),
+            recursive: pool.len(),
+            cursor: cursor.len(),
+            detail,
+        }
+    };
+    CURSOR_LOG.with(|l| l.borrow_mut().push(record));
+}
+
+/// Record one decision in both logs.
+#[cfg(test)]
+fn log_choice<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    ad: &Adaptive<'_, Cfg, L, S>,
+    exec: &Exec<'_, Cfg, L, S>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+    engine: usize,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, engine)));
+    let rec = ChoiceRecord {
+        used: exec.used,
+        candidates: (ad.costed & !exec.used).count_ones(),
+        engine,
+        model: model_choice(ad, exec, eg, index, globals, env),
+    };
+    MODEL_CHOICE_LOG.with(|l| l.borrow_mut().push(rec));
+}
+
+/// `chooseEngine` of the Lean model
+/// (`proofs/lean/SemperProofs/EMatch/Engine/Choose.lean`), transliterated:
+/// the cheapest unused scanning atom in index order, a later one replacing
+/// the best so far only when strictly cheaper (`chooseStep`); the price of an
+/// atom is the shortest bucket among the lookups of its join
+/// (`cursorLen`, from `usize::MAX`) in the store its mode reads (`bucketLen`:
+/// the delta store for `Delta`, the full store otherwise).
+///
+/// What this computes independently of `choose_atom`: the join's lookups
+/// from the atom and the bindings in hand (`engineJoinLookups`, with a
+/// variable bound iff its environment slot is set, `boundSet`, rather than
+/// read from the `bound` mask), and the selection over them. The bucket
+/// lengths come from the index, as the model's `Lookup.bucket` reads an
+/// abstract index (its exactness is `Fidelity/Index.lean`). A global in a
+/// child position is bound (`pv_is_bound`); the model has no globals. An atom
+/// kind the model has no lookups for (a literal) makes the answer `None`.
+#[cfg(test)]
+fn model_choice<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    ad: &Adaptive<'_, Cfg, L, S>,
+    exec: &Exec<'_, Cfg, L, S>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+) -> Option<usize>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
+{
+    use crate::resolve::RAtom;
+    let pv_bound = |pv: &PatVar| match pv {
+        PatVar::Local(v) => env.get_opt(*v).is_some(),
+        PatVar::Global(_) => true,
+    };
+    // `joinLookups` for a node already bound: the re-join in its class.
+    let rejoin = |node: &VarId, op: Cfg::O| -> Vec<IndexLookup<Cfg::O, Cfg::Index>> {
+        vec![
+            IndexLookup::ByRepr { repr: *node },
+            IndexLookup::ByOp { op },
+        ]
+    };
+    // `containsLookups`: `byOp` and `byContains` per bound element.
+    let contains = |node: &VarId, op: Cfg::O, elems: &[PatVar]| {
+        if env.get_opt(*node).is_some() {
+            rejoin(node, op)
+        } else {
+            let mut ls = vec![IndexLookup::ByOp { op }];
+            for &pv in elems {
+                if pv_bound(&pv) {
+                    ls.push(IndexLookup::ByContains { child: pv });
+                }
+            }
+            ls
+        }
+    };
+    // `engineJoinLookups`.
+    let lookups = |atom: &RAtom<Cfg::O, S, L>| -> Option<Vec<IndexLookup<Cfg::O, Cfg::Index>>> {
+        match atom {
+            RAtom::Plain { node, op, children } => {
+                if env.get_opt(*node).is_some() {
+                    return Some(rejoin(node, *op));
+                }
+                let mut ls = vec![IndexLookup::ByOp { op: *op }];
+                for (pos, cv) in children.iter().enumerate() {
+                    if pv_bound(cv) {
+                        ls.push(IndexLookup::ByChildPos {
+                            child: *cv,
+                            pos: Cfg::Index::try_from_usize(pos)?,
+                        });
+                    }
+                }
+                Some(ls)
+            }
+            RAtom::Comm { node, op, elems }
+            | RAtom::ACExact { node, op, elems }
+            | RAtom::ACSub {
+                node, op, elems, ..
+            } => {
+                let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
+                Some(contains(node, *op, &evs))
+            }
+            RAtom::ACIExact { node, op, elems }
+            | RAtom::ACISub {
+                node, op, elems, ..
+            } => Some(contains(node, *op, elems)),
+            RAtom::AExact {
+                node, op, children, ..
+            } => Some(contains(node, *op, children)),
+            RAtom::APrefix {
+                node, op, fixed, ..
+            }
+            | RAtom::ASuffix {
+                node, op, fixed, ..
+            }
+            | RAtom::ABoth {
+                node, op, fixed, ..
+            } => Some(contains(node, *op, fixed)),
+            _ => None,
+        }
+    };
+    // `bucketLen`: the length of the bucket a lookup reads in a store.
+    let bucket_len = |store: &IndexStore<Cfg>, l: &IndexLookup<Cfg::O, Cfg::Index>| -> usize {
+        match l {
+            IndexLookup::ByOp { op } => store.nodes_by_op(*op).len(),
+            IndexLookup::ByChildPos { child, pos } => store
+                .nodes_by_child_pos(canon(index, eg, env.resolve_pv(*child, globals)), *pos)
+                .len(),
+            IndexLookup::ByRepr { repr } => {
+                store.nodes_by_repr(canon(index, eg, env.get(*repr))).len()
+            }
+            IndexLookup::ByContains { child } => store
+                .nodes_by_contains(canon(index, eg, env.resolve_pv(*child, globals)))
+                .len(),
+        }
+    };
+    let candidates = ad.costed & !exec.used;
+    let mut best: Option<(usize, usize)> = None;
+    for ai in 0..ad.atoms.len() {
+        if candidates & (1 << ai) == 0 {
+            continue;
+        }
+        let ls = lookups(&ad.atoms[ai])?;
+        let store = match index.mode(ai) {
+            IndexMode::Delta => index.delta,
+            IndexMode::Full | IndexMode::FullMinusDelta => index.full,
+        };
+        // `cursorLen`.
+        let mut len = usize::MAX;
+        for l in &ls {
+            let n = bucket_len(store, l);
+            if n < len {
+                len = n;
+            }
+        }
+        // `chooseStep`.
+        best = match best {
+            None => Some((len, ai)),
+            Some((b, j)) => {
+                if len < b {
+                    Some((len, ai))
+                } else {
+                    Some((b, j))
+                }
+            }
+        };
+    }
+    best.map(|(_, ai)| ai)
 }
 
 /// Shortest bucket the block's join would open, in the slice this atom's
@@ -3074,6 +3480,15 @@ enum FrameKind<'a, Cfg: EGraphConfig> {
         /// ones this frame unbinds when it advances or is dropped.
         bound: BoundHere,
     },
+    /// A sequence pattern with at most one rest, which binds once per node: the frame
+    /// exists so that `backtrack` unbinds the children and pops the rest before the
+    /// join below moves to its next node (a single-shot step that left them bound made
+    /// `bind_fixed` check the next node's children against the previous node's).
+    Once {
+        pre: Option<SeqVarId>,
+        suf: Option<SeqVarId>,
+        bound: BoundHere,
+    },
     ACDecompose {
         elems: Vec<(PatVar, RMult)>,
         rest: Option<MsetVarId>,
@@ -3082,6 +3497,10 @@ enum FrameKind<'a, Cfg: EGraphConfig> {
         /// Per element, whether the scan bound its variable, which is the condition for
         /// the undo to unbind it.
         bound: Vec<bool>,
+        /// Per element, whether the scan bound its multiplicity variable, which is the
+        /// condition for the undo to clear it. The variable is interned per query, so an
+        /// earlier atom or an earlier element may have bound it.
+        mult_bound: Vec<bool>,
         ei: usize,
     },
     ACIDecompose {
@@ -3328,7 +3747,9 @@ where
             } => {
                 let node_id = self.env.get(*node);
                 let mut residual = Vec::new();
-                self.eg.mset_children(node_id, &mut residual);
+                // As `run_step`: `ac_children`, not `mset_children`, which panics on an
+                // AC node the store keeps in another shape.
+                self.eg.ac_children(node_id, &mut residual);
                 for e in &mut residual {
                     e.0 = canon(self.index, self.eg, e.0);
                 }
@@ -3470,7 +3891,8 @@ where
                 Enter::Pushed(true)
             }
             _ => {
-                // Single-shot cases: no generator needed.
+                // Single-shot cases: one window per node, held by a `Once` frame so
+                // that the bindings are undone when the search leaves the node.
                 let mut bound = BoundHere::new();
                 if pre.is_none() && suf.is_none() {
                     if seq.len() != nfixed {
@@ -3479,8 +3901,6 @@ where
                     if !self.bind_fixed(children, &seq, 0, &mut bound) {
                         return Enter::Failed;
                     }
-                    self.cursor += 1;
-                    Enter::Advanced
                 } else if let (Some(p), None) = (pre, suf) {
                     if seq.len() < nfixed {
                         return Enter::Failed;
@@ -3491,8 +3911,6 @@ where
                         self.env.pop_seq(p);
                         return Enter::Failed;
                     }
-                    self.cursor += 1;
-                    Enter::Advanced
                 } else {
                     // (None, Some(s))
                     let s = suf.unwrap();
@@ -3504,9 +3922,12 @@ where
                         self.env.pop_seq(s);
                         return Enter::Failed;
                     }
-                    self.cursor += 1;
-                    Enter::Advanced
                 }
+                self.frames.push(Frame {
+                    kind: FrameKind::Once { pre, suf, bound },
+                    step_idx: self.cursor,
+                });
+                Enter::Pushed(true)
             }
         }
     }
@@ -3537,7 +3958,15 @@ where
         }
         let mut ri_at = vec![0usize; elems.len()];
         let mut bound = vec![false; elems.len()];
-        let mut valid = self.ac_find_first(elems, &mut residual, &mut ri_at, &mut bound, 0);
+        let mut mult_bound = vec![false; elems.len()];
+        let mut valid = self.ac_find_first(
+            elems,
+            &mut residual,
+            &mut ri_at,
+            &mut bound,
+            &mut mult_bound,
+            0,
+        );
         if valid {
             if let Some(rv) = rest {
                 let zero = Cfg::M::ZERO;
@@ -3556,7 +3985,14 @@ where
                 let zero = Cfg::M::ZERO;
                 if !residual.iter().all(|&(_, m)| m == zero) {
                     for e in (0..elems.len()).rev() {
-                        self.ac_undo(elems, &mut residual, e, ri_at[e], &mut bound);
+                        self.ac_undo(
+                            elems,
+                            &mut residual,
+                            e,
+                            ri_at[e],
+                            &mut bound,
+                            &mut mult_bound,
+                        );
                     }
                     valid = false;
                 }
@@ -3573,6 +4009,7 @@ where
                 residual,
                 ri_at,
                 bound,
+                mult_bound,
                 ei,
             },
             step_idx: self.cursor,
@@ -3702,6 +4139,16 @@ where
                     }
                     // exhausted, frame dropped
                 }
+                FrameKind::Once { pre, suf, bound } => {
+                    unbind(&mut self.env, bound);
+                    if let Some(s) = *suf {
+                        self.env.pop_seq(s);
+                    }
+                    if let Some(p) = *pre {
+                        self.env.pop_seq(p);
+                    }
+                    // exhausted, frame dropped
+                }
                 FrameKind::SlidingWindow {
                     children,
                     pre,
@@ -3737,6 +4184,7 @@ where
                     residual,
                     ri_at,
                     bound,
+                    mult_bound,
                     ei,
                 } => {
                     if *ei == elems.len()
@@ -3745,7 +4193,7 @@ where
                         self.env.pop_mset(rv);
                     }
                     loop {
-                        if !self.ac_advance(elems, residual, ri_at, bound, ei) {
+                        if !self.ac_advance(elems, residual, ri_at, bound, mult_bound, ei) {
                             break;
                         }
                         if let Some(rv) = *rest {
@@ -3820,15 +4268,25 @@ where
         residual: &mut [(Cfg::G, Cfg::M)],
         ri_at: &mut [usize],
         bound: &mut [bool],
+        mult_bound: &mut [bool],
         from: usize,
     ) -> bool {
+        // `ri_at[ei]` is the entry to resume from: the caller's index for `from`, the
+        // index advanced by a backtrack for an earlier element, and 0 for an element
+        // entered afresh (reset below on the forward move). Scanning every element but
+        // `from` from 0 instead ignored the advanced index after a backtrack, so the
+        // element re-took the entry just undone and the search never terminated
+        // (`cursor_shapes.rs`, `exact_decompositions_backtrack_without_a_rest`).
         let mut ei = from;
         while ei < elems.len() {
-            let start = if ei == from { ri_at[ei] } else { 0 };
-            match self.ac_scan(elems, residual, ei, start, bound) {
+            let start = ri_at[ei];
+            match self.ac_scan(elems, residual, ei, start, bound, mult_bound) {
                 Some(ri) => {
                     ri_at[ei] = ri;
                     ei += 1;
+                    if ei < elems.len() {
+                        ri_at[ei] = 0;
+                    }
                 }
                 None => {
                     ri_at[ei] = 0;
@@ -3836,7 +4294,7 @@ where
                         return false;
                     }
                     ei -= 1;
-                    self.ac_undo(elems, residual, ei, ri_at[ei], bound);
+                    self.ac_undo(elems, residual, ei, ri_at[ei], bound, mult_bound);
                     ri_at[ei] += 1;
                 }
             }
@@ -3845,9 +4303,10 @@ where
     }
 
     /// Take one residual entry for element `ei`, recording in `bound[ei]` whether this
-    /// scan bound the element variable. A variable already bound is matched against the
-    /// residual and left alone, and [`Self::ac_undo`] must leave it alone too; see
-    /// [`unbind`].
+    /// scan bound the element variable and in `mult_bound[ei]` whether it bound the
+    /// multiplicity variable. A variable already bound, by an earlier element or an
+    /// earlier atom, is matched against the residual and left alone, and
+    /// [`Self::ac_undo`] must leave it alone too; see [`unbind`].
     fn ac_scan(
         &mut self,
         elems: &[(PatVar, RMult)],
@@ -3855,9 +4314,11 @@ where
         ei: usize,
         start: usize,
         bound: &mut [bool],
+        mult_bound: &mut [bool],
     ) -> Option<usize> {
         let (var, mult) = &elems[ei];
         bound[ei] = false;
+        mult_bound[ei] = false;
 
         let bound_repr = match *var {
             PatVar::Global(gid) => Some(canon(self.index, self.eg, self.globals.binding(gid))),
@@ -3865,22 +4326,28 @@ where
         };
 
         if let Some(repr) = bound_repr {
-            for ri in start..residual.len() {
-                if residual[ri].0 == repr
-                    && mult_matches(mult, residual[ri].1, bound_mult_val(mult, &self.env))
-                {
-                    let take: Cfg::M = match mult {
-                        // Matched at the surface width, so the literal equals
-                        // this entry's multiplicity; reuse it.
-                        RMult::Exact(_) => residual[ri].1,
-                        RMult::Var { var: mv, .. } => {
-                            self.env.set_mult(*mv, residual[ri].1);
-                            residual[ri].1
-                        }
-                    };
-                    residual[ri].1 = residual[ri].1.saturating_sub(take);
-                    return Some(ri);
-                }
+            // The one entry a bound element can take is the first of its class that
+            // matches, as in `decompose_ac_elem`; a later entry of the same class (a
+            // commutative pair's equal children) is not a second assignment. The scan
+            // from `start` therefore finds it only when it is at or past `start`.
+            let found = residual.iter().position(|&(r, m)| {
+                r == repr && mult_matches(mult, m, bound_mult_val(mult, &self.env))
+            });
+            if let Some(ri) = found
+                && ri >= start
+            {
+                let take: Cfg::M = match mult {
+                    // Matched at the surface width, so the literal equals
+                    // this entry's multiplicity; reuse it.
+                    RMult::Exact(_) => residual[ri].1,
+                    RMult::Var { var: mv, .. } => {
+                        mult_bound[ei] = self.env.get_mult(*mv) == Cfg::M::ZERO;
+                        self.env.set_mult(*mv, residual[ri].1);
+                        residual[ri].1
+                    }
+                };
+                residual[ri].1 = residual[ri].1.saturating_sub(take);
+                return Some(ri);
             }
             return None;
         }
@@ -3899,6 +4366,7 @@ where
                 // See the bound-repr path above.
                 RMult::Exact(_) => avail,
                 RMult::Var { var: mv, .. } => {
+                    mult_bound[ei] = self.env.get_mult(*mv) == Cfg::M::ZERO;
                     self.env.set_mult(*mv, avail);
                     avail
                 }
@@ -3916,6 +4384,7 @@ where
         ei: usize,
         ri: usize,
         bound: &mut [bool],
+        mult_bound: &mut [bool],
     ) {
         let (var, mult) = &elems[ei];
         let restore: Cfg::M = match mult {
@@ -3939,69 +4408,46 @@ where
             self.env.clear(vid);
         }
         bound[ei] = false;
-        if let RMult::Var { var: mv, .. } = mult {
-            // Only clear if no earlier element uses the same mult variable
-            let earlier_uses = elems[..ei]
-                .iter()
-                .any(|(_, m)| matches!(m, RMult::Var { var: v, .. } if *v == *mv));
-            if !earlier_uses {
-                self.env.set_mult(*mv, Cfg::M::ZERO);
-            }
+        // Clear the multiplicity variable only if this element's scan bound it, as
+        // `decompose_ac_elem` does with `was_unbound`. The variable is interned per
+        // query: clearing it whenever no earlier element of this frame carried it reset
+        // a count an earlier atom bound, so the next scan took an entry of another count.
+        if let RMult::Var { var: mv, .. } = mult
+            && mult_bound[ei]
+        {
+            self.env.set_mult(*mv, Cfg::M::ZERO);
         }
+        mult_bound[ei] = false;
     }
 
+    /// Move to the next assignment in entry order: undo the last element, advance its
+    /// index, and resume the search from it with [`Self::ac_find_first`], which
+    /// backtracks into the earlier elements when no entry is left. Completing the later
+    /// elements greedily here instead (the first entry each accepts, with no retry on a
+    /// later failure) missed assignments when a later element is bound, and its retry
+    /// path undid the moved element twice, the second time at an index it never took
+    /// (`cursor_shapes.rs`, `decompositions_with_a_bound_element`).
     fn ac_advance(
         &mut self,
         elems: &[(PatVar, RMult)],
         residual: &mut [(Cfg::G, Cfg::M)],
         ri_at: &mut [usize],
         bound: &mut [bool],
+        mult_bound: &mut [bool],
         ei: &mut usize,
     ) -> bool {
         if elems.is_empty() || *ei != elems.len() {
             return false;
         }
-        // Undo last element, try next residual entry. If exhausted, undo previous, etc.
-        let mut e = elems.len() - 1;
-        loop {
-            self.ac_undo(elems, residual, e, ri_at[e], bound);
-            ri_at[e] += 1;
-            // Try to find a valid entry for element e and all subsequent elements.
-            // ac_scan only looks at element e; if it succeeds we try e+1.. from scratch.
-            if let Some(ri) = self.ac_scan(elems, residual, e, ri_at[e], bound) {
-                ri_at[e] = ri;
-                // Now try to bind e+1..end from scratch.
-                let mut ok = true;
-                for e2 in (e + 1)..elems.len() {
-                    ri_at[e2] = 0;
-                    match self.ac_scan(elems, residual, e2, 0, bound) {
-                        Some(ri2) => ri_at[e2] = ri2,
-                        None => {
-                            // Undo e2-1..=e+1 that we just bound, then undo e and try next.
-                            for undo in (e + 1..e2).rev() {
-                                self.ac_undo(elems, residual, undo, ri_at[undo], bound);
-                            }
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                if ok {
-                    *ei = elems.len();
-                    return true;
-                }
-                // ac_scan for e succeeded but downstream failed. Undo e and try next ri.
-                self.ac_undo(elems, residual, e, ri_at[e], bound);
-                ri_at[e] += 1;
-                continue;
-            }
-            // No more entries for element e. Backtrack to e-1.
-            ri_at[e] = 0;
-            if e == 0 {
-                *ei = 0;
-                return false;
-            }
-            e -= 1;
+        let e = elems.len() - 1;
+        self.ac_undo(elems, residual, e, ri_at[e], bound, mult_bound);
+        ri_at[e] += 1;
+        if self.ac_find_first(elems, residual, ri_at, bound, mult_bound, e) {
+            *ei = elems.len();
+            true
+        } else {
+            *ei = 0;
+            false
         }
     }
 
@@ -4016,13 +4462,17 @@ where
         bound: &mut [bool],
         from: usize,
     ) -> bool {
+        // Same resume discipline as `ac_find_first`.
         let mut ei = from;
         while ei < elems.len() {
-            let start = if ei == from { ri_at[ei] } else { 0 };
+            let start = ri_at[ei];
             match self.aci_scan(elems, residual, used, ei, start, bound) {
                 Some(ri) => {
                     ri_at[ei] = ri;
                     ei += 1;
+                    if ei < elems.len() {
+                        ri_at[ei] = 0;
+                    }
                 }
                 None => {
                     ri_at[ei] = 0;
@@ -4096,6 +4546,7 @@ where
         bound[ei] = false;
     }
 
+    /// See [`Self::ac_advance`].
     fn aci_advance(
         &mut self,
         elems: &[PatVar],
@@ -4108,40 +4559,15 @@ where
         if elems.is_empty() || *ei != elems.len() {
             return false;
         }
-        let mut e = elems.len() - 1;
-        loop {
-            self.aci_undo(elems, used, e, ri_at[e], bound);
-            ri_at[e] += 1;
-            if let Some(ri) = self.aci_scan(elems, residual, used, e, ri_at[e], bound) {
-                ri_at[e] = ri;
-                let mut ok = true;
-                for e2 in (e + 1)..elems.len() {
-                    ri_at[e2] = 0;
-                    match self.aci_scan(elems, residual, used, e2, 0, bound) {
-                        Some(ri2) => ri_at[e2] = ri2,
-                        None => {
-                            for undo in (e + 1..e2).rev() {
-                                self.aci_undo(elems, used, undo, ri_at[undo], bound);
-                            }
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                if ok {
-                    *ei = elems.len();
-                    return true;
-                }
-                self.aci_undo(elems, used, e, ri_at[e], bound);
-                ri_at[e] += 1;
-                continue;
-            }
-            ri_at[e] = 0;
-            if e == 0 {
-                *ei = 0;
-                return false;
-            }
-            e -= 1;
+        let e = elems.len() - 1;
+        self.aci_undo(elems, used, e, ri_at[e], bound);
+        ri_at[e] += 1;
+        if self.aci_find_first(elems, residual, used, ri_at, bound, e) {
+            *ei = elems.len();
+            true
+        } else {
+            *ei = 0;
+            false
         }
     }
 }
@@ -6582,6 +7008,98 @@ mod tests {
         );
     }
 
+    /// `choose_atom` and the model's `chooseEngine`
+    /// (`proofs/lean/SemperProofs/EMatch/Engine/Choose.lean`, transliterated as
+    /// `model_choice`) pick the same atom at every phase-B decision of the
+    /// multi-round conformance corpus, run naive and semi-naive under runtime
+    /// scheduling. The corpus is the one `tests/conform.rs` runs; the Lean
+    /// generator wrote it from the engine's own dumps, so the Lean side cannot
+    /// replay the decisions (they depend on the partial bindings), and the
+    /// comparison is made here, at the decision, against the transliteration.
+    #[test]
+    fn atom_choice_agrees_with_the_model_on_the_rounds_corpus() {
+        use crate::interpret::Interpreter;
+        use crate::model::{MachineLit, MachineModel};
+        use crate::saturate::SaturationStrategy;
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/egg/conform-rounds");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+            .map(|e| e.expect("directory entry").path())
+            .filter(|p| p.extension().is_some_and(|x| x == "egg"))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "{} holds no .egg file", dir.display());
+
+        let (mut decisions, mut agree, mut contested, mut outside) =
+            (0usize, 0usize, 0usize, 0usize);
+        let mut disagreements = Vec::new();
+        let _ = take_model_choices();
+        set_runtime_scheduling(true);
+        for path in &paths {
+            let src = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {
+                let cmds = crate::parser::parse_program_v2(&src)
+                    .unwrap_or_else(|e| panic!("{}: parse error: {e}", path.display()));
+                let mut interp =
+                    Interpreter::<DefaultConfig, MachineLit, MachineModel, true, false>::new(
+                        MachineModel,
+                    );
+                interp.set_strategy(strategy);
+                let mut globals = crate::resolve::GlobalCtx::new();
+                let checked = crate::sortcheck::sortcheck_program(
+                    cmds,
+                    &mut interp.eg,
+                    &interp.model,
+                    &mut globals,
+                )
+                .unwrap_or_else(|e| panic!("{}: sort error: {e}", path.display()));
+                interp
+                    .run_checked(&checked)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                for rec in take_model_choices() {
+                    decisions += 1;
+                    if rec.candidates > 1 {
+                        contested += 1;
+                    }
+                    match rec.model {
+                        None => outside += 1,
+                        Some(m) if m == rec.engine => agree += 1,
+                        Some(m) => disagreements.push(format!(
+                            "{} [{strategy:?}] used={:#b} candidates={}: engine {} model {m}",
+                            path.display(),
+                            rec.used,
+                            rec.candidates,
+                            rec.engine
+                        )),
+                    }
+                }
+            }
+        }
+        set_runtime_scheduling(false);
+        let summary = format!(
+            "{} files, {decisions} decisions ({contested} with several candidates): \
+             {agree} agree, {} disagree, {outside} outside the model",
+            paths.len(),
+            disagreements.len()
+        );
+        eprintln!("atom choice against the model: {summary}");
+        assert!(
+            decisions > 0 && contested > 0,
+            "the corpus exercised no choice: {summary}"
+        );
+        assert_eq!(
+            outside, 0,
+            "the corpus has atoms outside the model: {summary}"
+        );
+        assert!(
+            disagreements.is_empty(),
+            "{summary}\n{}",
+            disagreements.join("\n")
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Operator-restriction policy
     // -----------------------------------------------------------------------
@@ -6800,5 +7318,758 @@ mod tests {
             }
         }
         set_op_filter_policy(OpFilterPolicy::Adaptive);
+    }
+
+    // ===================================================================
+    // The cursor against the recursive executor and against the Lean model
+    // ===================================================================
+
+    /// The cursor (`run_query_iter`'s `MatchIterator`) finds the recursive executor's
+    /// match set, with no repeat, on every static plan the multi-round conformance
+    /// corpus runs (naive and semi-naive). The comparison is made inside
+    /// `run_query_into` (`mirror_cursor`), on the plan and index of the round; a plan
+    /// with a step the cursor does not execute (`Collect`, `Flatten`, a regrouped view)
+    /// is counted outside the model. The property is `acFrame_eq_decomposeAC` and
+    /// `aciFrame_eq_decomposeACI` (`EMatch/Engine/Cursor.lean`) for the decompositions,
+    /// and the frame stack for the rest, which no theorem covers (GUIDE.md Section 9).
+    #[test]
+    fn cursor_agrees_with_the_recursive_executor_on_the_rounds_corpus() {
+        use crate::interpret::Interpreter;
+        use crate::model::{MachineLit, MachineModel};
+        use crate::saturate::SaturationStrategy;
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/egg/conform-rounds");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+            .map(|e| e.expect("directory entry").path())
+            .filter(|p| p.extension().is_some_and(|x| x == "egg"))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "{} holds no .egg file", dir.display());
+
+        let (mut plans, mut compared, mut agree, mut outside, mut nonempty) =
+            (0usize, 0usize, 0usize, 0usize, 0usize);
+        let mut disagreements = Vec::new();
+        let _ = take_cursor_records();
+        set_runtime_scheduling(false);
+        set_cursor_mirror(true);
+        for path in &paths {
+            let src = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            // Naive only: the cursor reads the full index (`resolve_lookup`), so under
+            // semi-naive it finds the naive match set, not the variant's.
+            for strategy in [SaturationStrategy::Naive] {
+                let cmds = crate::parser::parse_program_v2(&src)
+                    .unwrap_or_else(|e| panic!("{}: parse error: {e}", path.display()));
+                let mut interp =
+                    Interpreter::<DefaultConfig, MachineLit, MachineModel, true, false>::new(
+                        MachineModel,
+                    );
+                interp.set_strategy(strategy);
+                let mut globals = crate::resolve::GlobalCtx::new();
+                let checked = crate::sortcheck::sortcheck_program(
+                    cmds,
+                    &mut interp.eg,
+                    &interp.model,
+                    &mut globals,
+                )
+                .unwrap_or_else(|e| panic!("{}: sort error: {e}", path.display()));
+                interp
+                    .run_checked(&checked)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                for rec in take_cursor_records() {
+                    plans += 1;
+                    if !rec.compared {
+                        outside += 1;
+                        continue;
+                    }
+                    compared += 1;
+                    if rec.recursive > 0 {
+                        nonempty += 1;
+                    }
+                    if rec.agree {
+                        agree += 1;
+                    } else {
+                        disagreements.push(format!(
+                            "{} [{strategy:?}]: recursive {} cursor {}: {}",
+                            path.display(),
+                            rec.recursive,
+                            rec.cursor,
+                            rec.detail
+                        ));
+                    }
+                }
+            }
+        }
+        set_cursor_mirror(false);
+        let summary = format!(
+            "{} files, {plans} plans: {compared} compared ({nonempty} with a match), \
+             {agree} agree, {} disagree, {outside} outside the model",
+            paths.len(),
+            disagreements.len()
+        );
+        eprintln!("cursor against the recursive executor: {summary}");
+        assert!(
+            compared > 0 && nonempty > 0,
+            "the corpus ran no plan the cursor executes: {summary}"
+        );
+        assert!(
+            disagreements.is_empty(),
+            "{summary}\n{}",
+            disagreements.join("\n")
+        );
+    }
+
+    /// `Cursor.lean`, transliterated: the generic frame over an entry store, with
+    /// `scan`, `findStep`, `findLoop`, `postYield` and `drive` as the Lean functions.
+    struct LeanOps<St> {
+        n: usize,
+        len: usize,
+        accept: Box<dyn Fn(&St, usize, usize) -> bool>,
+        apply: Box<dyn Fn(&St, usize, usize) -> St>,
+        undo: Box<dyn Fn(&St, usize, usize) -> St>,
+    }
+
+    #[derive(Clone)]
+    struct LeanState<St> {
+        a: St,
+        ri_at: Vec<usize>,
+        ei: usize,
+    }
+
+    enum LeanStep<St> {
+        Cont(LeanState<St>),
+        Done(bool, LeanState<St>),
+    }
+
+    /// `List.getD l i 0`.
+    fn getd(l: &[usize], i: usize) -> usize {
+        l.get(i).copied().unwrap_or(0)
+    }
+
+    /// `List.set l i v`, the identity past the end.
+    fn setl(l: &mut [usize], i: usize, v: usize) {
+        if let Some(slot) = l.get_mut(i) {
+            *slot = v;
+        }
+    }
+
+    impl<St: Clone> LeanOps<St> {
+        fn scan(&self, a: &St, e: usize, start: usize) -> Option<(usize, St)> {
+            (start..self.len).find_map(|ri| {
+                if (self.accept)(a, e, ri) {
+                    Some((ri, (self.apply)(a, e, ri)))
+                } else {
+                    None
+                }
+            })
+        }
+
+        fn find_step(&self, s: &LeanState<St>) -> LeanStep<St> {
+            if s.ei < self.n {
+                let start = getd(&s.ri_at, s.ei);
+                match self.scan(&s.a, s.ei, start) {
+                    Some((ri, a)) => {
+                        let mut ri_at = s.ri_at.clone();
+                        setl(&mut ri_at, s.ei, ri);
+                        setl(&mut ri_at, s.ei + 1, 0);
+                        LeanStep::Cont(LeanState {
+                            a,
+                            ri_at,
+                            ei: s.ei + 1,
+                        })
+                    }
+                    None => {
+                        let mut ri_at = s.ri_at.clone();
+                        setl(&mut ri_at, s.ei, 0);
+                        if s.ei == 0 {
+                            LeanStep::Done(
+                                false,
+                                LeanState {
+                                    a: s.a.clone(),
+                                    ri_at,
+                                    ei: 0,
+                                },
+                            )
+                        } else {
+                            let e = s.ei - 1;
+                            let r = getd(&ri_at, e);
+                            let a = (self.undo)(&s.a, e, r);
+                            setl(&mut ri_at, e, r + 1);
+                            LeanStep::Cont(LeanState { a, ri_at, ei: e })
+                        }
+                    }
+                }
+            } else {
+                LeanStep::Done(true, s.clone())
+            }
+        }
+
+        fn fuel(&self) -> usize {
+            (self.len + 1).pow(u32::try_from(self.n).expect("small")) * (self.n + 1) + 1
+        }
+
+        fn find_loop(&self, mut k: usize, mut s: LeanState<St>) -> Option<(bool, LeanState<St>)> {
+            loop {
+                if k == 0 {
+                    return None;
+                }
+                k -= 1;
+                match self.find_step(&s) {
+                    LeanStep::Done(ok, s2) => return Some((ok, s2)),
+                    LeanStep::Cont(s2) => s = s2,
+                }
+            }
+        }
+
+        fn post_yield(&self, s: &LeanState<St>) -> LeanState<St> {
+            let e = self.n - 1;
+            let r = getd(&s.ri_at, e);
+            let mut ri_at = s.ri_at.clone();
+            setl(&mut ri_at, e, r + 1);
+            LeanState {
+                a: (self.undo)(&s.a, e, r),
+                ri_at,
+                ei: e,
+            }
+        }
+
+        fn drive(&self, mut k: usize, mut s: LeanState<St>) -> Vec<St> {
+            let mut out = Vec::new();
+            while k > 0 {
+                k -= 1;
+                match self.find_loop(self.fuel(), s.clone()) {
+                    Some((true, s2)) => {
+                        out.push(s2.a.clone());
+                        s = self.post_yield(&s2);
+                    }
+                    _ => break,
+                }
+            }
+            out
+        }
+
+        fn init(&self, a: St) -> LeanState<St> {
+            LeanState {
+                a,
+                ri_at: vec![0; self.n],
+                ei: 0,
+            }
+        }
+    }
+
+    /// `ACStore`: the environment's class and multiplicity cells, the residual entries,
+    /// the `bound` and `mbound` flags.
+    #[derive(Clone)]
+    struct LeanAc {
+        sigma: Vec<Option<usize>>,
+        mult: Vec<Option<u64>>,
+        res: Vec<(usize, u64)>,
+        bound: Vec<bool>,
+        mbound: Vec<bool>,
+    }
+
+    /// `ACIStore`.
+    #[derive(Clone)]
+    struct LeanAci {
+        sigma: Vec<Option<usize>>,
+        used: Vec<bool>,
+        bound: Vec<bool>,
+    }
+
+    /// A `Mult` the transliteration reads: an exact count, or a multiplicity variable with
+    /// no constraint (`var k 1 none`).
+    #[derive(Clone, Copy)]
+    enum LeanMult {
+        Exact(u64),
+        Var(usize),
+    }
+
+    /// `multMatches σ μ m`, as a test: the exact count, or a positive count equal to the
+    /// variable's binding when it has one.
+    fn lean_mult_matches(a: &LeanAc, mu: LeanMult, m: u64) -> bool {
+        match mu {
+            LeanMult::Exact(k) => m == k,
+            LeanMult::Var(k) => m >= 1 && a.mult[k].is_none_or(|b| b == m),
+        }
+    }
+
+    /// `acOps elems len` (`acAccept`, `acApply`, `acUndo`).
+    fn lean_ac_ops(elems: Vec<(usize, LeanMult)>, len: usize) -> LeanOps<LeanAc> {
+        let n = elems.len();
+        let e1 = elems.clone();
+        let e2 = elems.clone();
+        LeanOps {
+            n,
+            len,
+            accept: Box::new(move |a, e, ri| {
+                let Some(&(x, mu)) = elems.get(e) else {
+                    return false;
+                };
+                match a.sigma[x] {
+                    Some(c2) => {
+                        a.res
+                            .iter()
+                            .position(|&(c, m)| c == c2 && lean_mult_matches(a, mu, m))
+                            == Some(ri)
+                    }
+                    None => lean_mult_matches(a, mu, a.res.get(ri).copied().unwrap_or((0, 0)).1),
+                }
+            }),
+            apply: Box::new(move |a, e, ri| {
+                let (x, mu) = e1.get(e).copied().unwrap_or((0, LeanMult::Exact(1)));
+                let (c, m) = a.res.get(ri).copied().unwrap_or((0, 0));
+                let mut a = a.clone();
+                let free = a.sigma[x].is_none();
+                if free {
+                    a.sigma[x] = Some(c);
+                }
+                let mb = match mu {
+                    LeanMult::Exact(_) => false,
+                    LeanMult::Var(k) => {
+                        let unbound = a.mult[k].is_none();
+                        a.mult[k] = Some(m);
+                        unbound
+                    }
+                };
+                if let Some(slot) = a.res.get_mut(ri) {
+                    *slot = (c, 0);
+                }
+                if let Some(b) = a.bound.get_mut(e) {
+                    *b = free;
+                }
+                if let Some(b) = a.mbound.get_mut(e) {
+                    *b = mb;
+                }
+                a
+            }),
+            undo: Box::new(move |a, e, ri| {
+                let (x, mu) = e2.get(e).copied().unwrap_or((0, LeanMult::Exact(1)));
+                let mut a = a.clone();
+                let restore = match mu {
+                    LeanMult::Exact(k) => k,
+                    LeanMult::Var(k) => a.mult[k].unwrap_or(0),
+                };
+                if let Some(slot) = a.res.get_mut(ri) {
+                    slot.1 += restore;
+                }
+                if a.bound.get(e).copied().unwrap_or(false) {
+                    a.sigma[x] = None;
+                }
+                if let LeanMult::Var(k) = mu
+                    && a.mbound.get(e).copied().unwrap_or(false)
+                {
+                    a.mult[k] = None;
+                }
+                if let Some(b) = a.bound.get_mut(e) {
+                    *b = false;
+                }
+                if let Some(b) = a.mbound.get_mut(e) {
+                    *b = false;
+                }
+                a
+            }),
+        }
+    }
+
+    /// `aciOps elems res₀` (`aciAccept`, `aciApply`, `aciUndo`).
+    fn lean_aci_ops(elems: Vec<usize>, res0: Vec<usize>) -> LeanOps<LeanAci> {
+        let n = elems.len();
+        let len = res0.len();
+        let e1 = elems.clone();
+        let e2 = elems.clone();
+        let r1 = res0.clone();
+        LeanOps {
+            n,
+            len,
+            accept: Box::new(move |a, e, ri| {
+                let Some(&x) = elems.get(e) else { return false };
+                !a.used.get(ri).copied().unwrap_or(true)
+                    && match a.sigma[x] {
+                        Some(c) => res0.get(ri).copied().unwrap_or(0) == c,
+                        None => true,
+                    }
+            }),
+            apply: Box::new(move |a, e, ri| {
+                let x = e1.get(e).copied().unwrap_or(0);
+                let c = r1.get(ri).copied().unwrap_or(0);
+                let mut a = a.clone();
+                let free = a.sigma[x].is_none();
+                if free {
+                    a.sigma[x] = Some(c);
+                }
+                if let Some(u) = a.used.get_mut(ri) {
+                    *u = true;
+                }
+                if let Some(b) = a.bound.get_mut(e) {
+                    *b = free;
+                }
+                a
+            }),
+            undo: Box::new(move |a, e, ri| {
+                let x = e2.get(e).copied().unwrap_or(0);
+                let mut a = a.clone();
+                if let Some(u) = a.used.get_mut(ri) {
+                    *u = false;
+                }
+                if a.bound.get(e).copied().unwrap_or(false) {
+                    a.sigma[x] = None;
+                }
+                if let Some(b) = a.bound.get_mut(e) {
+                    *b = false;
+                }
+                a
+            }),
+        }
+    }
+
+    /// A small xorshift, so the test needs no dependency.
+    struct Xorshift(u64);
+    impl Xorshift {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+        fn below(&mut self, n: usize) -> usize {
+            usize::try_from(self.next() % u64::try_from(n).expect("n")).expect("n")
+        }
+    }
+
+    /// The decomposition frames of `Cursor.lean` (`findFirst`, `advance`, transliterated
+    /// above) against the engine's cursor on random residuals: random multiset and set
+    /// nodes over four constants, patterns with one to three free elements, with and
+    /// without a bound constant element and a rest, and multiset patterns whose elements
+    /// carry multiplicity variables, alone or shared with an earlier atom that binds them
+    /// before the frame. The model runs the plan's steps as the engine runs them (the
+    /// node joins, the constants bound before or re-joined after, each decomposition
+    /// through the transliterated frame from the environment the earlier steps leave) on
+    /// the node's residual as `mset_children` / `set_children` give it; the match sets
+    /// must agree and the model's list must have no repeat (`acFrame_eq_decomposeAC`,
+    /// `decomposeAC_nodup` and the ACI twins).
+    #[test]
+    fn cursor_frames_agree_with_the_lean_model_on_random_residuals() {
+        let mut rng = Xorshift(0x9E37_79B9_7F4A_7C15);
+        let consts = ["a", "b", "c", "d"];
+        let (mut compared, mut skipped, mut mult_shared) = (0usize, 0usize, 0usize);
+        for graph in 0..12 {
+            let mut eg = EG::from_model(&NiraModel);
+            let e = eg.intern_sort("IExpr");
+            for c in consts {
+                eg.register_op0(c, e);
+            }
+            eg.register_mset("add", e, e);
+            eg.register_set("union", e, e);
+            let cids: Vec<_> = consts
+                .iter()
+                .map(|c| eg.add(eg.ops().id_by_name(c).unwrap(), &[]))
+                .collect();
+            for op in ["add", "union"] {
+                let opid = eg.ops().id_by_name(op).unwrap();
+                for _ in 0..(3 + graph % 3) {
+                    let size = 1 + rng.below(4 + graph % 3);
+                    let children: Vec<_> =
+                        (0..size).map(|_| cids[rng.below(consts.len())]).collect();
+                    eg.add(opid, &children);
+                }
+            }
+            let mut patterns: Vec<String> = Vec::new();
+            for op in ["add", "union"] {
+                for free in 1..=3usize {
+                    for bound in [None, Some(0usize), Some(1), Some(2), Some(3)] {
+                        for rest in [false, true] {
+                            let vars = ["x", "y", "z"];
+                            let mut pat = format!("({op}");
+                            for v in &vars[..free] {
+                                pat.push(' ');
+                                pat.push_str(v);
+                            }
+                            if let Some(b) = bound {
+                                pat.push_str(&format!(" ({})", consts[b]));
+                            }
+                            if rest {
+                                pat.push_str(" ..r");
+                            }
+                            pat.push(')');
+                            patterns.push(pat);
+                        }
+                    }
+                }
+            }
+            // Multiplicity variables: within one atom, and shared with an earlier atom,
+            // whose decomposition binds the variable before the frame that reads it.
+            for pat in [
+                "(add x:k ..r)",
+                "(add x:k y:k ..r)",
+                "(add x:k y ..r)",
+                "(add x:k y:j)",
+                "(add x:k y:k)",
+                "(add x:k ..r) (add y:k ..s)",
+                "(add x:k ..r) (add y:k z:k ..s)",
+                "(add x:k y ..r) (add z:k w ..s)",
+                "(add x:k y:j ..r) (add z:j w:k ..s)",
+                "(add x:k y:j) (add z:k w:j)",
+                "(add x:k ..r) (add y:k (a) ..s)",
+                "(add x:k ..r) (add (b) y:k ..s)",
+            ] {
+                patterns.push(pat.to_string());
+            }
+            for pat in &patterns {
+                match compare_frame_with_model(&eg, pat) {
+                    Some(decomps) => {
+                        compared += 1;
+                        if decomps > 1 && pat.contains(":k") {
+                            mult_shared += 1;
+                        }
+                    }
+                    None => skipped += 1,
+                }
+            }
+        }
+        eprintln!(
+            "cursor frames against the Lean model: {compared} patterns compared \
+             ({mult_shared} with a multiplicity variable bound by an earlier atom), \
+             {skipped} outside"
+        );
+        assert!(
+            compared >= 800,
+            "too few patterns compared: {compared} ({skipped} skipped)"
+        );
+        assert!(
+            mult_shared >= 80,
+            "too few patterns with a shared multiplicity variable: {mult_shared}"
+        );
+    }
+
+    /// The model's environment along the plan: node classes (canonical) and the node each
+    /// node variable names, multiplicity cells, and the rests pushed.
+    #[derive(Clone)]
+    struct ModelEnv {
+        nodes: Vec<Option<usize>>,
+        node_ids: Vec<Option<ENodeId>>,
+        mult: Vec<Option<u64>>,
+        sets: Vec<Vec<usize>>,
+        msets: Vec<Vec<(usize, u64)>>,
+    }
+
+    /// One pattern on one graph: the engine's cursor against the transliterated frames.
+    /// `None` when the plan has a step the model does not read; otherwise the number of
+    /// decomposition steps.
+    fn compare_frame_with_model(eg: &EG, pat: &str) -> Option<usize> {
+        let ops = eg.ops();
+        let sorts = eg.sorts();
+        let pats = crate::test_helpers::parse_patterns(pat);
+        let fq = flatten(&pats, ops).unwrap();
+        let rq = resolve(
+            &fq,
+            ops,
+            sorts,
+            &NiraModel,
+            &crate::resolve::GlobalCtx::<_, ()>::new(),
+        )
+        .unwrap();
+        let plan = schedule(&rq);
+        let store = IndexStore::build(eg);
+        let index = VariantIndex::naive(&store);
+        let shape = &plan.shape;
+        let decomps = plan
+            .steps
+            .iter()
+            .filter(|s| matches!(s, Step::DecomposeAC { .. } | Step::DecomposeACI { .. }))
+            .count();
+        if decomps == 0 {
+            return None;
+        }
+        let env = ModelEnv {
+            nodes: vec![None; shape.num_vars()],
+            node_ids: vec![None; shape.num_vars()],
+            mult: vec![None; shape.num_mult_vars()],
+            sets: vec![Vec::new(); shape.sets.len()],
+            msets: vec![Vec::new(); shape.msets.len()],
+        };
+        let mut model: Vec<String> = Vec::new();
+        model_steps(eg, &store, &plan.steps, 0, env, &mut model)?;
+        let model_set: std::collections::BTreeSet<String> = model.iter().cloned().collect();
+        assert_eq!(
+            model.len(),
+            model_set.len(),
+            "{pat}: the model repeated a match: {model:?}"
+        );
+        let cursor: std::collections::BTreeSet<String> = run_query_iter(&plan, eg, &index)
+            .iter()
+            .map(|m| match_key(m, shape, eg))
+            .collect();
+        assert_eq!(
+            cursor, model_set,
+            "{pat}: the cursor and the model disagree"
+        );
+        Some(decomps)
+    }
+
+    /// The plan from step `i` under `env`, pushing the key of every match into `out`:
+    /// a join of an unbound node by operator enumerates the operator's nodes, a join of a
+    /// bound one (a constant re-joined) checks it, and a decomposition runs the
+    /// transliterated frame from `env`. `None` on a step the model does not read.
+    fn model_steps(
+        eg: &EG,
+        store: &IndexStore<DefaultConfig>,
+        steps: &[Step<OpId, u32, NiraLitVal>],
+        i: usize,
+        env: ModelEnv,
+        out: &mut Vec<String>,
+    ) -> Option<()> {
+        let canon = |g: ENodeId| eg.find_const(g).to_usize();
+        let Some(step) = steps.get(i) else {
+            out.push(key_of_parts(&env.nodes, &[], &env.sets, &env.msets));
+            return Some(());
+        };
+        match step {
+            Step::Join {
+                target, lookups, ..
+            } => match env.nodes[target.idx()] {
+                None => {
+                    // The operator's nodes. A `ByContains` lookup of a bound element is a
+                    // prefilter: the decomposition reads that element and rejects a node
+                    // without it, so the model leaves it to the frame.
+                    let mut op = None;
+                    for l in lookups {
+                        match l {
+                            IndexLookup::ByOp { op: o } => op = Some(*o),
+                            IndexLookup::ByContains { .. } => {}
+                            _ => return None,
+                        }
+                    }
+                    for &g in store.nodes_by_op(op?) {
+                        let mut env = env.clone();
+                        env.nodes[target.idx()] = Some(canon(g));
+                        env.node_ids[target.idx()] = Some(g);
+                        model_steps(eg, store, steps, i + 1, env, out)?;
+                    }
+                    Some(())
+                }
+                Some(class) => {
+                    let mut repr_ok = false;
+                    let mut found = None;
+                    for l in lookups {
+                        match l {
+                            IndexLookup::ByRepr { repr } if repr == target => repr_ok = true,
+                            IndexLookup::ByOp { op } => {
+                                found =
+                                    Some(store.nodes_by_op(*op).iter().any(|&g| canon(g) == class));
+                            }
+                            _ => return None,
+                        }
+                    }
+                    if !repr_ok {
+                        return None;
+                    }
+                    if found? {
+                        model_steps(eg, store, steps, i + 1, env, out)?;
+                    }
+                    Some(())
+                }
+            },
+            Step::DecomposeAC {
+                node,
+                elems,
+                rest,
+                idempotent: false,
+                view: None,
+            } => {
+                let g = env.node_ids[node.idx()]?;
+                let mut res = Vec::new();
+                eg.mset_children(g, &mut res);
+                let res: Vec<(usize, u64)> = res
+                    .iter()
+                    .map(|&(c, m)| (canon(c), m.to_u64().expect("count")))
+                    .collect();
+                let mut es = Vec::new();
+                for (pv, mu) in elems {
+                    let PatVar::Local(v) = pv else { return None };
+                    let mu = match mu {
+                        RMult::Exact(k) => LeanMult::Exact(*k),
+                        RMult::Var {
+                            var,
+                            constraint: None,
+                        } => LeanMult::Var(var.idx()),
+                        RMult::Var { .. } => return None,
+                    };
+                    es.push((v.idx(), mu));
+                }
+                if es.is_empty() {
+                    return None;
+                }
+                let lops = lean_ac_ops(es, res.len());
+                let a0 = LeanAc {
+                    sigma: env.nodes.clone(),
+                    mult: env.mult.clone(),
+                    res,
+                    bound: vec![false; lops.n],
+                    mbound: vec![false; lops.n],
+                };
+                for a in lops.drive(lops.fuel(), lops.init(a0)) {
+                    let left: Vec<(usize, u64)> =
+                        a.res.iter().copied().filter(|e| e.1 != 0).collect();
+                    let mut env = env.clone();
+                    match rest {
+                        None if !left.is_empty() => continue,
+                        None => {}
+                        Some(rv) => env.msets[rv.idx()] = left,
+                    }
+                    env.nodes = a.sigma;
+                    env.mult = a.mult;
+                    model_steps(eg, store, steps, i + 1, env, out)?;
+                }
+                Some(())
+            }
+            Step::DecomposeACI {
+                node,
+                elems,
+                rest,
+                view: None,
+                ..
+            } => {
+                let g = env.node_ids[node.idx()]?;
+                let mut res = Vec::new();
+                eg.set_children(g, &mut res);
+                let res: Vec<usize> = res.iter().map(|&c| canon(c)).collect();
+                let mut es = Vec::new();
+                for pv in elems {
+                    let PatVar::Local(v) = pv else { return None };
+                    es.push(v.idx());
+                }
+                if es.is_empty() {
+                    return None;
+                }
+                let lops = lean_aci_ops(es, res.clone());
+                let a0 = LeanAci {
+                    sigma: env.nodes.clone(),
+                    used: vec![false; res.len()],
+                    bound: vec![false; lops.n],
+                };
+                for a in lops.drive(lops.fuel(), lops.init(a0)) {
+                    let rem: Vec<usize> = res
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .filter(|(i, _)| !a.used[*i])
+                        .map(|(_, c)| c)
+                        .collect();
+                    let mut env = env.clone();
+                    match rest {
+                        None if !rem.is_empty() => continue,
+                        None => {}
+                        Some(rv) => env.sets[rv.idx()] = rem,
+                    }
+                    env.nodes = a.sigma;
+                    model_steps(eg, store, steps, i + 1, env, out)?;
+                }
+                Some(())
+            }
+            _ => None,
+        }
     }
 }

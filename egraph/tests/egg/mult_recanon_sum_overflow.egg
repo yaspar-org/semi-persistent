@@ -1,0 +1,15 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; TYPES: machine
+;; MESSAGE: multiplicity overflow
+;; A merge that makes two children of an AC node one class, with counts that sum past the
+;; 32-bit multiplicity width: recanonizing Plus{a:4294967295, b} at `a = b` reads a:2^32
+;; (`recanonize_parent`, `Normal::Overflow`). The rebuild records the width error and the
+;; run stops with it, instead of wrapping the count to zero.
+(sort E)
+(function a () E) (function b () E)
+(function Plus (E) E :assoc-comm)
+(let t (Plus (a):4294967295 (b)))
+(union (a) (b))
+(check-eq (a) (b))

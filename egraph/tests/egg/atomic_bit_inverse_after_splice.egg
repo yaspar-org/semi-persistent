@@ -1,0 +1,32 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; Atomic bit, transition (d): a class turns atomic by becoming `Neg`'s child after its
+;; monomial was spliced into a parent (compare `inverse_cancel_keeps_atomic_pair.egg`,
+;; where the class is atomic before any parent is built). `c = {A, B}` is spliced into
+;; `t = {A, B, D}`; then `Neg c` makes `c` atomic and its rule `{A, B} -> {c}` must
+;; rewrite the flat spellings so that the pair `{c, Neg c}` cancels in them.
+(sort E)
+(constructor A () E)
+(constructor B () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(let c (Add (A) (B)))
+(let t (Add c (D)))
+(let n (Neg c))
+;; The pair is built as two summands and cancels at build.
+(let z (Add c n))
+(check-eq z (Zero))
+;; The flat spelling: A + B + Neg(A + B) = 0 needs the rule, then the cancellation.
+(let w (Add (A) (B) n))
+(check-eq w (Zero))
+;; A + B + D + Neg(A + B) = D.
+(let w2 (Add t n))
+(check-eq w2 (D))
+(check-neq t (D))
+(check-neq c (Zero))

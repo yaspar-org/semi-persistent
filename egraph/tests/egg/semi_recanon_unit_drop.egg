@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Rebuild under :identity: the first round builds `Add{A,E}` and `Add{A,B,E}` and merges
+;; `E` with the unit in the same action phase. Recanonicalization drops `E`: `Add{A,E}`
+;; collapses to the class of `A` (no two-element node survives) and `Add{A,B,E}` shrinks to
+;; `Add{A,B}`, which collides with the node built before the run. Completeness is relative
+;; to the nodes present at the fixpoint: every surviving `Add` node has its `G` image, and the
+;; collapsed node is the leaf it collapsed to. Semi-naive and naive agree.
+(sort E)
+(function A () E) (function B () E) (function C () E) (function E () E) (function Zero () E)
+(function P () E)
+(function Add (E) E :assoc-comm :identity (Zero))
+(function G (E E) E)
+(let p (P))
+(let s (Add (A) (B)))
+(rule ((P)) ((Add (A) (E)) (Add (A) (B) (E)) (Add (B) (C) (E)) (union (E) (Zero))))
+(rewrite (Add x y) (G x y))
+(run 10)
+(check-eq (Add (A) (E)) (A))
+(check-eq (Add (A) (B)) (G (A) (B)))
+(check-eq (Add (B) (C)) (G (B) (C)))
+(check-eq (Add (A) (B) (E)) (G (A) (B)))

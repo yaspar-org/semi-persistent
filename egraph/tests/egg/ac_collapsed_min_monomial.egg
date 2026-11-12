@@ -1,0 +1,25 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; The absorbed-uses sweep of `rebuild_congruence` reactivates a collapsed node it
+;; recanonicalizes, so a class's stored minimal monomial is never a collapsed node (I5).
+;; The merge `C3 = C4` turns a collapsed node and an active node of one class into the
+;; same monomial `c³`. The collapsed one was the stored minimal monomial; the sweep kept
+;; its flag, and the refresh of the active copy kept the stored one (equal, not less), so
+;; the debug check `check_min_monomial_invariant` failed: "stored minimal monomial ... is
+;; collapsed". Cancellation gives `C1 = C3` from `c1c3 = c3²` and then `C2 = C3`.
+;; Expected: ok. Reduced from `semper-conform-cc-cert` seed 911, case 985.
+(sort E)
+(function C0 () E)
+(function C1 () E)
+(function C2 () E)
+(function C3 () E)
+(function C4 () E)
+(function Add (E) E :assoc-comm :cancellative)
+(set-option :completion eager)
+(union (Add (C1) (C3)) (Add (C4):2))
+(union (Add (C3):2 (C4):2) (C3))
+(union (Add (C1) (C3):2) (Add (C2) (C3):2))
+(union (C3) (C4))
+(check-eq (C1) (C3))
+(check-eq (C2) (C3))
+(check-eq (Add (C3):4) (C3))

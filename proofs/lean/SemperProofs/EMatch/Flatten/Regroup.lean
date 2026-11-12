@@ -258,8 +258,8 @@ theorem mem_regroupRec {ctx : Ctx} {dir : Dir} {laws : Laws} {r r' : RecR}
     (h : r' ∈ regroupRec ctx dir laws r) :
     ∃ g grp raw, (g, grp) ∈ groupsOf ctx ∧ raw ∈ fitsR ctx.κ dir r.1 g grp ∧
       normalize ctx.κ laws raw = .node r'.1 ∧
-      r'.2.1 = r.2.1.map (addG g (grp.map Prod.fst)) ∧
-      r'.2.2 = needsAfter g (grp.map Prod.fst) r.2.2 := by
+      r'.2.1 = r.2.1.map (addG g (grp.map Prod.fst) (r'.1.map Prod.fst)) ∧
+      r'.2.2 = needsAfter g (grp.map Prod.fst) (r'.1.map Prod.fst) r.2.2 := by
   unfold regroupRec at h
   obtain ⟨⟨g, grp⟩, hgg, h⟩ := List.mem_flatMap.1 h
   obtain ⟨raw, hraw, h⟩ := List.mem_filterMap.1 h
@@ -274,7 +274,8 @@ theorem mem_regroupRec {ctx : Ctx} {dir : Dir} {laws : Laws} {r r' : RecR}
 theorem regroupRec_of {ctx : Ctx} {dir : Dir} {laws : Laws} {r : RecR} {g : C}
     {grp raw w : List (C × Nat)} (hgg : (g, grp) ∈ groupsOf ctx)
     (hraw : raw ∈ fitsR ctx.κ dir r.1 g grp) (hn : normalize ctx.κ laws raw = .node w) :
-    (w, r.2.1.map (addG g (grp.map Prod.fst)), needsAfter g (grp.map Prod.fst) r.2.2) ∈
+    (w, r.2.1.map (addG g (grp.map Prod.fst) (w.map Prod.fst)),
+        needsAfter g (grp.map Prod.fst) (w.map Prod.fst) r.2.2) ∈
       regroupRec ctx dir laws r := by
   unfold regroupRec
   refine List.mem_flatMap.2 ⟨(g, grp), hgg, List.mem_filterMap.2 ⟨raw, hraw, ?_⟩⟩
@@ -289,18 +290,26 @@ def KidOf (ctx : Ctx) (a b : C) : Prop :=
 /-- `b` lies below `a` through `f`-members. -/
 def Desc (ctx : Ctx) : C → C → Prop := Relation.ReflTransGen (KidOf ctx)
 
-/-- A regrouped leaf of the walk's leaf `l₀`: same opened class and flag, and
-every class it holds lies above a class of `l₀`. -/
-def LeafRel (ctx : Ctx) (l₀ l : LeafF) : Prop :=
-  l.1.X = l₀.1.X ∧ l.2 = l₀.2 ∧ ∀ c ∈ l.1.g, ∃ c₀ ∈ l₀.1.g, Desc ctx c c₀
+/-- Whether the laws can drop a class from a normal form: an identity, or, on
+a multiset, `:nilpotent` or `:inverse`. -/
+def canDrop (κ : FlatKind) (laws : Laws) : Bool :=
+  laws.unit.isSome || (κ == .ac && (laws.nilpotent.isSome || laws.inv.isSome))
+
+/-- A regrouped leaf of the walk's leaf `l₀`: same opened class, the same
+flag unless the laws can drop a class (a regrouping whose class they drop
+flags the leaf, `addG`), and every class it holds lies above a class of
+`l₀`. -/
+def LeafRel (ctx : Ctx) (laws : Laws) (l₀ l : LeafF) : Prop :=
+  l.1.X = l₀.1.X ∧ (l.2 = l₀.2 ∨ canDrop ctx.κ laws = true) ∧
+    ∀ c ∈ l.1.g, ∃ c₀ ∈ l₀.1.g, Desc ctx c c₀
 
 /-- A record derived from `r₀`: its leaves are `r₀`'s, each regrouped. -/
-def RecRel (ctx : Ctx) (r₀ r : RecR) : Prop :=
-  ∃ φ : LeafF → LeafF, r.2.1 = r₀.2.1.map φ ∧ ∀ l, LeafRel ctx l (φ l)
+def RecRel (ctx : Ctx) (laws : Laws) (r₀ r : RecR) : Prop :=
+  ∃ φ : LeafF → LeafF, r.2.1 = r₀.2.1.map φ ∧ ∀ l, LeafRel ctx laws l (φ l)
 
-theorem addG_g {g : C} {grp : List C} {l : LeafF} :
-    (addG g grp l).1.g = l.1.g ∨
-      ((addG g grp l).1.g = l.1.g ++ [g] ∧ ∃ c ∈ l.1.g, c ∈ grp) := by
+theorem addG_g {g : C} {grp ws : List C} {l : LeafF} :
+    (addG g grp ws l).1.g = l.1.g ∨
+      ((addG g grp ws l).1.g = l.1.g ++ [g] ∧ ∃ c ∈ l.1.g, c ∈ grp) := by
   unfold addG
   split
   · rename_i h
@@ -309,17 +318,103 @@ theorem addG_g {g : C} {grp : List C} {l : LeafF} :
     simpa using h
   · exact Or.inl rfl
 
-theorem addG_X (g : C) (grp : List C) (l : LeafF) : (addG g grp l).1.X = l.1.X := by
+theorem addG_X (g : C) (grp ws : List C) (l : LeafF) : (addG g grp ws l).1.X = l.1.X := by
   unfold addG; split <;> rfl
 
-theorem addG_flag (g : C) (grp : List C) (l : LeafF) : (addG g grp l).2 = l.2 := by
-  unfold addG; split <;> rfl
+/-- The flag is kept, unless the leaf gains `g` and the view does not hold it. -/
+theorem addG_flag (g : C) (grp ws : List C) (l : LeafF) :
+    (addG g grp ws l).2 = (l.2 || decide (g ∉ ws ∧ g ∉ l.1.g ∧
+      l.1.g.any (fun c => decide (c ∈ grp)) = true)) := by
+  unfold addG
+  by_cases h : g ∉ l.1.g ∧ l.1.g.any (fun c => decide (c ∈ grp)) = true
+  · rw [if_pos h]
+    by_cases hw : g ∈ ws <;> simp [hw, h.1, h.2]
+  · rw [if_neg h]
+    have hn : ¬ (g ∉ ws ∧ g ∉ l.1.g ∧ l.1.g.any (fun c => decide (c ∈ grp)) = true) :=
+      fun h' => h ⟨h'.2.1, h'.2.2⟩
+    simp only [hn, decide_false, Bool.or_false]
 
-theorem leafRel_addG {ctx : Ctx} {g : C} {grp : List (C × Nat)} (hgg : (g, grp) ∈ groupsOf ctx)
-    {l₀ l : LeafF} (h : LeafRel ctx l₀ l) : LeafRel ctx l₀ (addG g (grp.map Prod.fst) l) := by
+/-- The flag is kept when `g` stays in the view. -/
+theorem addG_flag_of_mem {g : C} {grp ws : List C} (hg : g ∈ ws) (l : LeafF) :
+    (addG g grp ws l).2 = l.2 := by
+  rw [addG_flag]; simp [hg]
+
+/-- Every fit holds the group's class. -/
+theorem g_mem_fitsR {κ : FlatKind} {dir : Dir} {view : List (C × Nat)} {g : C}
+    {grp raw : List (C × Nat)} (h : raw ∈ fitsR κ dir view g grp) : (g, 1) ∈ raw := by
+  unfold fitsR at h
+  split at h
+  · simp at h
+  · cases κ with
+    | assoc =>
+        dsimp only at h
+        split at h
+        · simp at h
+        · obtain ⟨p, -, h⟩ := List.mem_filterMap.1 h
+          split at h
+          · simp only [Option.some.injEq] at h; subst h; simp
+          · simp at h
+    | ac | aci =>
+        dsimp only at h
+        split at h
+        · simp at h
+        · revert h
+          split
+          · intro h; rw [List.mem_singleton] at h; subst h; simp
+          · simp
+
+theorem normalizeList_of_not_canDrop {κ : FlatKind} {laws : Laws} (h : canDrop κ laws = false)
+    (v : List (C × Nat)) : normalizeList κ laws v = canonK κ v := by
+  obtain ⟨u, k, inv⟩ := laws
+  cases u with
+  | some _ => simp [canDrop] at h
+  | none =>
+      cases κ with
+      | assoc => rfl
+      | aci => rfl
+      | ac =>
+          cases k with
+          | some _ => simp [canDrop] at h
+          | none =>
+              cases inv with
+              | some _ => simp [canDrop] at h
+              | none => rfl
+
+/-- A regrouping whose class the normal form does not hold has laws that drop classes. -/
+theorem canDrop_of_gone {κ : FlatKind} {dir : Dir} {laws : Laws} {view : List (C × Nat)} {g : C}
+    {grp raw w : List (C × Nat)} (h : raw ∈ fitsR κ dir view g grp)
+    (hn : normalize κ laws raw = .node w) (hg : g ∉ w.map Prod.fst) : canDrop κ laws = true := by
+  by_contra hc
+  rw [Bool.not_eq_true] at hc
+  apply hg
+  have hw : w = normalizeList κ laws raw := by
+    unfold normalize at hn; exact ((classify_node_iff _ _ _).1 hn).1.symm
+  rw [hw, normalizeList_of_not_canDrop hc]
+  have hm := g_mem_fitsR h
+  cases κ with
+  | assoc => exact List.mem_map_of_mem (f := Prod.fst) hm
+  | ac =>
+      show g ∈ (Multiset.entries (ofEntries raw)).map Prod.fst
+      unfold Multiset.entries
+      rw [List.map_map]
+      simp only [Function.comp_def, List.map_id', Finset.mem_sort, Multiset.mem_toFinset]
+      refine mem_ofEntries.2 ⟨(g, 1), hm, rfl, Nat.one_pos⟩
+  | aci =>
+      show g ∈ (((raw.map Prod.fst).toFinset.sort (· ≤ ·)).map (fun c => (c, 1))).map Prod.fst
+      rw [List.map_map]
+      simp only [Function.comp_def, List.map_id', Finset.mem_sort, List.mem_toFinset]
+      exact List.mem_map_of_mem (f := Prod.fst) hm
+
+theorem leafRel_addG {ctx : Ctx} {laws : Laws} {g : C} {grp : List (C × Nat)} {ws : List C}
+    (hgg : (g, grp) ∈ groupsOf ctx) (hws : g ∉ ws → canDrop ctx.κ laws = true)
+    {l₀ l : LeafF} (h : LeafRel ctx laws l₀ l) :
+    LeafRel ctx laws l₀ (addG g (grp.map Prod.fst) ws l) := by
   obtain ⟨hX, hf, hc⟩ := h
-  refine ⟨(addG_X _ _ _).trans hX, (addG_flag _ _ _).trans hf, ?_⟩
-  rcases addG_g (g := g) (grp := grp.map Prod.fst) (l := l) with he | ⟨he, c, hcl, hcg⟩
+  refine ⟨(addG_X _ _ _ _).trans hX, ?_, ?_⟩
+  · by_cases hg : g ∈ ws
+    · rw [addG_flag_of_mem hg]; exact hf
+    · exact Or.inr (hws hg)
+  rcases addG_g (g := g) (grp := grp.map Prod.fst) (ws := ws) (l := l) with he | ⟨he, c, hcl, hcg⟩
   · rw [he]; exact hc
   · rw [he]
     intro c' hc'
@@ -331,21 +426,22 @@ theorem leafRel_addG {ctx : Ctx} {g : C} {grp : List (C × Nat)} (hgg : (g, grp)
       obtain ⟨id, m, hm, rfl⟩ := mem_groupsOf hgg
       exact ⟨c₀, hc₀, Relation.ReflTransGen.head ⟨id, m, hm, hcg⟩ hd⟩
 
-theorem recRel_refl (ctx : Ctx) (r : RecR) : RecRel ctx r r :=
-  ⟨id, by simp, fun l => ⟨rfl, rfl, fun c hc => ⟨c, hc, Relation.ReflTransGen.refl⟩⟩⟩
+theorem recRel_refl (ctx : Ctx) (laws : Laws) (r : RecR) : RecRel ctx laws r r :=
+  ⟨id, by simp, fun l => ⟨rfl, Or.inl rfl, fun c hc => ⟨c, hc, Relation.ReflTransGen.refl⟩⟩⟩
 
 theorem recRel_step {ctx : Ctx} {dir : Dir} {laws : Laws} {r₀ r r' : RecR}
-    (h : RecRel ctx r₀ r) (h' : r' ∈ regroupRec ctx dir laws r) : RecRel ctx r₀ r' := by
-  obtain ⟨g, grp, -, hgg, -, -, hl, -⟩ := mem_regroupRec h'
+    (h : RecRel ctx laws r₀ r) (h' : r' ∈ regroupRec ctx dir laws r) : RecRel ctx laws r₀ r' := by
+  obtain ⟨g, grp, raw, hgg, hraw, hn, hl, -⟩ := mem_regroupRec h'
   obtain ⟨φ, hφ, hrel⟩ := h
-  refine ⟨addG g (grp.map Prod.fst) ∘ φ, ?_, fun l => leafRel_addG hgg (hrel l)⟩
+  refine ⟨addG g (grp.map Prod.fst) (r'.1.map Prod.fst) ∘ φ, ?_,
+    fun l => leafRel_addG hgg (fun hg => canDrop_of_gone hraw hn hg) (hrel l)⟩
   rw [hl, hφ, List.map_map]
 
 theorem recRel_of_mem {ctx : Ctx} {dir : Dir} {laws : Laws} {F : Nat} {r₀ r : RecR}
-    (h : r ∈ regroupLevels ctx dir laws F [r₀]) : RecRel ctx r₀ r :=
-  regroupLevels_induction ctx dir laws (P := RecRel ctx r₀)
+    (h : r ∈ regroupLevels ctx dir laws F [r₀]) : RecRel ctx laws r₀ r :=
+  regroupLevels_induction ctx dir laws (P := RecRel ctx laws r₀)
     (fun _ _ h h' => recRel_step h h') F [r₀]
-    (fun r hr => by rw [List.mem_singleton] at hr; subst hr; exact recRel_refl ctx _) r h
+    (fun r hr => by rw [List.mem_singleton] at hr; subst hr; exact recRel_refl ctx laws _) r h
 
 /-! ## The takeable set is closed downwards -/
 
@@ -419,11 +515,20 @@ theorem mem_baseRecsR {ctx : Ctx} {dir : Dir} {laws : Laws} {n : Node} {r : RecR
       exact ⟨raw.1, raw.2, hn, rfl, rfl⟩
   | _ => simp
 
+/-- Laws that can drop a class keep every leaf of the walk. -/
+theorem mayNonInert_of_canDrop {κ : FlatKind} {laws : Laws} {l : LeafL}
+    (h : canDrop κ laws = true) : mayNonInert κ laws l = true := by
+  unfold canDrop at h
+  unfold mayNonInert mayNonInertLeaf
+  cases κ with
+  | ac => simp_all; tauto
+  | _ => simp_all
+
 /-- A regrouped record that a match taking `taken` inside a downward-closed
 `T` accepts derives from a walk record the pruning by `T` keeps. -/
 theorem keepRec_of_accept {ctx : Ctx} {laws : Laws} {T : C → Bool} (hT : DownClosed ctx T)
     {taken : List C} (htk : ∀ c ∈ taken, T c = true) {v : List (C × Nat)} {ls : List LeafL}
-    {r₀ r : RecR} (h₀ : r₀.2.1 = flagLeaves ctx.κ laws v ls) (hrel : RecRel ctx r₀ r)
+    {r₀ r : RecR} (h₀ : r₀.2.1 = flagLeaves ctx.κ laws v ls) (hrel : RecRel ctx laws r₀ r)
     (hacc : ∀ l ∈ r.2.1, l.okE ctx.κ taken) : keepRec ctx.κ T laws r₀ = true := by
   obtain ⟨φ, hφ, hrl⟩ := hrel
   unfold keepRec
@@ -438,10 +543,12 @@ theorem keepRec_of_accept {ctx : Ctx} {laws : Laws} {T : C → Bool} (hT : DownC
     exact Or.inl (Or.inr ⟨hm, htk _ hXt⟩)
   · obtain ⟨c₀, hc₀, hd⟩ := hc c hcg
     exact Or.inl (Or.inl ⟨c₀, hc₀, hT.desc hd (htk c hct)⟩)
-  · rw [hf] at hfl
-    rw [h₀] at hl₀
+  · rw [h₀] at hl₀
     obtain ⟨l, -, rfl⟩ := List.mem_map.1 hl₀
-    exact Or.inr (nonInertB_imp_mayNonInert hfl)
+    rcases hf with hf | hd
+    · rw [hf] at hfl
+      exact Or.inr (nonInertB_imp_mayNonInert hfl)
+    · exact Or.inr (mayNonInert_of_canDrop hd)
 
 /-- **Pruning is match-preserving with regrouped views**: for `taken` inside a
 downward-closed `T`, a view accepts `taken` through the pruned and
