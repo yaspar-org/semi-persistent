@@ -1,0 +1,6 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: sort 'Int': :domains needs :interp
+;; A domain set needs a carrier: :domains without :interp is rejected.
+(sort Int :domains (interval))

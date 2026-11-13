@@ -567,7 +567,12 @@ pub enum CompletionOption {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
-    Sort(String),
+    // TODO(abs-surface-syntax): carry the sort's `:interp` carrier and `:domains` list (absent, empty, or names), e.g. `Sort(SortDecl)`, and add `Refine { term: Term, value: AbsValueLit, span: Span }` to this enum, see egraph/doc/future/abstract-syntax-task.md §4
+    Sort {
+        name: String,
+        interp: Option<String>,
+        domains: Option<Vec<String>>,
+    },
     /// `(function …)` and `(constructor …)`: the same declaration, distinguished only by
     /// `meta.is_constructor`. Both register an operator with identical congruence and
     /// matching behavior; a constructor additionally carries the extraction semantics
@@ -578,6 +583,13 @@ pub enum Command {
         ret_sort: String,
         tags: Vec<AlgTag>,
         meta: OpMeta,
+        interp: Option<String>,
+        range: Option<(String, String)>,
+    },
+    Refine {
+        term: Term,
+        value: crate::abs_syntax::AbsValueLit,
+        span: Span,
     },
     Datatype {
         name: String,
@@ -661,6 +673,8 @@ pub enum Command {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
+    // TODO(abs-surface-syntax): add `Refine(RhsTerm, AbsValueLit)` for the rule action `(refine t VALUE)`, see egraph/doc/future/abstract-syntax-task.md §4
+    Refine(RhsTerm, crate::abs_syntax::AbsValueLit),
     Union(RhsTerm, RhsTerm),
     Insert(RhsTerm),
     Set {

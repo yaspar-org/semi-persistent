@@ -1,0 +1,7 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: function 'add': :interp does not combine with :assoc
+;; Transfers for flattened associative nodes are future work (eclass-analysis.md 13.4).
+(sort Int :interp int)
+(function add (Int Int) Int :interp + :assoc-comm)

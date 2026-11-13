@@ -1,0 +1,9 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: within: 'z' is not bound by an earlier pattern
+;; An abstract guard reads an e-class that a pattern written before it binds.
+(sort Int :interp int)
+(constructor F (Int) Int)
+(constructor G (Int) Int)
+(rule ((= r (F y)) (within z 0 9)) ((union r (G y))))

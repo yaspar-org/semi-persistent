@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; WARNING: none
+;; `:domains ()` disables the analysis on a sort. With no domain enabled anywhere, the
+;; program declares no analysis, so the not-active warning is not raised.
+(sort Int  :interp int         :domains ())
+(sort BV8  :interp (bitvec 8)  :domains ())
+(sort Bool :interp bool        :domains ())
+(sort Expr)
+(constructor a () Int)
+(constructor f (Int) Expr)
+(let t (f (a)))
+(check-eq t (f (a)))

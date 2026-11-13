@@ -164,6 +164,7 @@ fn compile_rhs_arg<O: Clone, S, V: Clone>(child: &RRhsChild<O, S, V>) -> RhsArg<
 pub enum CompiledAction<O, V> {
     Union(crate::id::RuleId, RhsOp<O, V>, RhsOp<O, V>),
     Insert(RhsOp<O, V>),
+    Refine(RhsOp<O, V>, crate::abs_syntax::AbsValueLit),
     Set {
         func: O,
         args: Vec<RhsOp<O, V>>,
@@ -249,6 +250,7 @@ pub fn check_mult_literals<Cfg: crate::config::EGraphConfig, O, S, V>(
                 check_op_mults::<Cfg, _, _>(a)?;
                 check_op_mults::<Cfg, _, _>(b)?;
             }
+            CompiledAction::Refine(_, _) => todo!("abs-surface-syntax: extract_lhs_from_action for Refine"),
             CompiledAction::Insert(t) => check_op_mults::<Cfg, _, _>(t)?,
             CompiledAction::Set { args, value, .. } => {
                 for a in args {
@@ -317,6 +319,7 @@ pub fn compile_action<O: Clone, S, V: Clone>(
 ) -> CompiledAction<O, V> {
     use crate::resolve::ResolvedAction;
     match action {
+        // TODO(abs-surface-syntax): compile `ResolvedAction::Refine` to an action that builds its term and leaves every abstract value unchanged until abs-saturation-engine lands, see egraph/doc/future/abstract-syntax-task.md §5
         ResolvedAction::Union(a, b) => {
             CompiledAction::Union(rule_id, compile_rhs(a), compile_rhs(b))
         }
@@ -326,6 +329,9 @@ pub fn compile_action<O: Clone, S, V: Clone>(
             args: args.iter().map(|a| compile_rhs(a)).collect(),
             value: compile_rhs(value),
         },
+        ResolvedAction::Refine(term, value) => {
+            CompiledAction::Refine(compile_rhs(term), value.clone())
+        }
     }
 }
 
@@ -1221,6 +1227,7 @@ pub fn check_rhs_mult_exprs<O, S, V>(rule: &PreparedRule<O, S, V>) -> Result<(),
                 walk_op(a, iv)?;
                 walk_op(b, iv)?;
             }
+            CompiledAction::Refine(_, _) => todo!("abs-surface-syntax: subsume_substs for Refine"),
             CompiledAction::Insert(t) => walk_op(t, iv)?,
             CompiledAction::Set { args, value, .. } => {
                 for a in args {
@@ -1286,6 +1293,7 @@ where
                 0
             }
         }
+        CompiledAction::Refine(_, _) => todo!("abs-surface-syntax: apply_action for Refine"),
         CompiledAction::Insert(t) => {
             // A change only when a node was created: on a hash-cons hit the
             // graph is as before, and counting it would keep the saturation

@@ -1,0 +1,7 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: function 'h': :range needs a bounds domain on sort 'Int'
+;; The result sort has a carrier but its domain set leaves out interval.
+(sort Int :interp int :domains (congruence))
+(function h (Int) Int :range (0 9))

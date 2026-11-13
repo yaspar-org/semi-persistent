@@ -1,0 +1,28 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; WARNING: the analysis is not active
+;; Top-level refine with every value form, on built terms, on globals, and on a term
+;; refine builds itself. Until the engine lands, refine leaves every value at top.
+(sort Int  :interp int)
+(sort BV32 :interp (bitvec 32))
+(sort Bool :interp bool)
+(constructor x () Int)
+(constructor n () Int)
+(constructor f (Int) Int)
+(constructor w () BV32)
+(constructor c () Bool)
+(constructor d () Bool)
+(let g (x))
+(refine g (interval 0 9))
+(refine (x) (congruence 1 2))
+(refine (x) (nonzero))
+(refine (n) (interval -5 5))
+(refine (f (n)) (interval -123456789012345678901234567890 123456789012345678901234567890))
+(refine (w) (interval 0 4294967295))
+(refine (w) (bits :val 4 :mask 3))
+(refine (w) (congruence 0 4))
+(refine (c) (true))
+(refine (d) (false))
+(check-eq g (x))
+(check-eq (f (n)) (f (n)))

@@ -1,0 +1,9 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: known-bits: domain 'bits' is not enabled on sort 'Int'
+;; An abstract guard tests a domain enabled on its variable's sort.
+(sort Int :interp int)
+(constructor F (Int) Int)
+(constructor G (Int) Int)
+(rule ((= r (F y)) (known-bits y 1 2)) ((union r (G y))))
