@@ -48,7 +48,7 @@ pub enum Justification<G: DenseId> {
     Filler,
     Rewrite { rule_id: RuleId, inst: u32 },
     Congruence { node_a: G, node_b: G },
-    Axiom { axiom_id: AxiomId },
+    Axiom { axiom_id: <G as DenseId>::Index },
     Normalize { node: G, normal: G },
     Build { node: G, inst: u32 },
     ACSuperposition { node_a: G, node_b: G },
@@ -75,7 +75,11 @@ pub enum Justification<G: DenseId> {
   splicing a node of its class, and normalizes under the operator's laws;
   `inst` names the splices, and whether the build collapsed to a class.
 - `Axiom`: two nodes were merged by an explicit `(union ...)` command or
-  another caller-supplied axiom merge.
+  another caller-supplied axiom merge. The axiom id is the configuration's
+  `EGraphConfig::A` (31 bits in the 32-bit configurations, 63 in the 64-bit
+  ones), because every `union` registers one and the count grows with the
+  program; the step stores its index word, as `Assumption` stores its literal,
+  and `Justification::axiom` / `axiom_id` convert to and from the typed id.
 - The five AC-specific variants identify critical-pair, inter-reduction,
   semantic-axiom, cancellative, and inverse-cancellation merges.
 - `Assumption`: a companion solver (the `satcore` crate's EUF layer) asserted an

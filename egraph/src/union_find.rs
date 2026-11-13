@@ -30,8 +30,13 @@ pub enum Justification<G: DenseId> {
         node_a: G,
         node_b: G,
     },
+    /// An axiom: a `union` command or another caller-supplied equality.
+    /// `axiom_id` is the index word of the configuration's axiom id
+    /// (`EGraphConfig::A`), so its width follows the id family's, as
+    /// `Assumption`'s does; [`Justification::axiom`] and
+    /// [`Justification::axiom_id`] convert to and from the typed id.
     Axiom {
-        axiom_id: crate::id::AxiomId,
+        axiom_id: <G as DenseId>::Index,
     },
     /// A node equal to its normal form under the operator's laws, where the
     /// normal form is one child's class (`and(a, a) = a`, `x + 0 = x`) or the
@@ -97,6 +102,24 @@ pub enum Justification<G: DenseId> {
     },
 }
 
+impl<G: DenseId> Justification<G> {
+    /// The `Axiom` step for axiom `a`.
+    pub fn axiom<A: DenseId<Index = G::Index>>(a: A) -> Self {
+        Justification::Axiom {
+            axiom_id: a.to_index(),
+        }
+    }
+
+    /// The axiom an `Axiom` step names, as the typed id `A`; `None` for any
+    /// other step.
+    pub fn axiom_id<A: DenseId<Index = G::Index>>(&self) -> Option<A> {
+        match *self {
+            Justification::Axiom { axiom_id } => Some(crate::id::id_at_index::<A>(axiom_id)),
+            _ => None,
+        }
+    }
+}
+
 impl<G: DenseId> Tagged for Justification<G> {
     type Repr = crate::containers::BoolTagged<Justification<G>>;
 
@@ -143,6 +166,34 @@ mod tests {
             uf.make_set(ENodeId::new(i));
         }
         uf
+    }
+
+    /// The axiom id follows the configuration's word: the 64-bit
+    /// configurations use the 63-bit `AxiomId63`, and an axiom step carries an
+    /// id above `u32::MAX` intact.
+    #[test]
+    fn axiom_id_has_the_configurations_width() {
+        use crate::config::EGraphConfig;
+        use crate::nodes::{Config64, DefaultConfig, ENodeId64};
+        assert_eq!(
+            std::mem::size_of::<<DefaultConfig as EGraphConfig>::A>(),
+            std::mem::size_of::<u32>()
+        );
+        assert_eq!(
+            std::mem::size_of::<<Config64 as EGraphConfig>::A>(),
+            std::mem::size_of::<u64>()
+        );
+        let big = crate::id::AxiomId63::new(1u64 << 40);
+        let j = Justification::<ENodeId64>::axiom(big);
+        assert_eq!(j.axiom_id::<crate::id::AxiomId63>(), Some(big));
+        assert_eq!(
+            Justification::<ENodeId64>::Congruence {
+                node_a: ENodeId64::new(0),
+                node_b: ENodeId64::new(1)
+            }
+            .axiom_id::<crate::id::AxiomId63>(),
+            None
+        );
     }
 
     #[test]

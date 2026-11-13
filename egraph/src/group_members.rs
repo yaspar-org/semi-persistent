@@ -36,7 +36,7 @@ pub(crate) struct EGraphMembers<
     pub sorts: &'a mut SortRegistry<Cfg::S, TRACK>,
     pub ops: &'a mut OpRegistry<Cfg::O, Cfg::S, TRACK>,
     pub rules: &'a mut RuleRegistry<TRACK>,
-    pub axioms: &'a mut AxiomRegistry<Cfg::G, TRACK>,
+    pub axioms: &'a mut AxiomRegistry<Cfg::G, Cfg::A, TRACK>,
     pub lits: &'a mut LitValStore<L, Cfg::V, TRACK>,
     pub classes:
         &'a mut EClasses<Cfg::G, Cfg::ClassKey, Cfg::UL, Cfg::UN, TRACK, PROOFS, Cfg::Policy>,
@@ -84,7 +84,7 @@ where
         f_sorts: impl FnOnce(&mut SortRegistry<Cfg::S, TRACK>) + Send,
         f_ops: impl FnOnce(&mut OpRegistry<Cfg::O, Cfg::S, TRACK>) + Send,
         f_rules: impl FnOnce(&mut RuleRegistry<TRACK>) + Send,
-        f_axioms: impl FnOnce(&mut AxiomRegistry<Cfg::G, TRACK>) + Send,
+        f_axioms: impl FnOnce(&mut AxiomRegistry<Cfg::G, Cfg::A, TRACK>) + Send,
         f_lits: impl FnOnce(&mut LitValStore<L, Cfg::V, TRACK>) + Send,
     ) {
         if self.par {

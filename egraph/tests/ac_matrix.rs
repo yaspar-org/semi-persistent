@@ -21,9 +21,7 @@ use semi_persistent_egraph::union_find::{Justification, ProofBuf};
 type Eg<const TRACK: bool, const PROOFS: bool> = EGraph31<NiraLitVal, TRACK, PROOFS>;
 
 fn axiom(i: u32) -> Justification<semi_persistent_egraph::ENodeId> {
-    Justification::Axiom {
-        axiom_id: AxiomId::new(i),
-    }
+    Justification::axiom(AxiomId::new(i))
 }
 
 /// Assert a ≡ b, and under PROOFS also reconstruct the class-level proof chain.

@@ -792,7 +792,7 @@ where
         self.eg.set_basis_checks(enabled);
     }
 
-    fn alloc_axiom_id(&mut self, lhs: Cfg::G, rhs: Cfg::G) -> crate::id::AxiomId {
+    fn alloc_axiom_id(&mut self, lhs: Cfg::G, rhs: Cfg::G) -> Cfg::A {
         let name = format!("axiom_{}", self.eg.axioms().len());
         self.eg.register_axiom(&name, lhs, rhs)
     }
@@ -923,7 +923,7 @@ where
                 if PROOFS {
                     let axiom_id = self.alloc_axiom_id(a_id, b_id);
                     self.eg
-                        .merge_justified(a_id, b_id, Justification::Axiom { axiom_id });
+                        .merge_justified(a_id, b_id, Justification::axiom(axiom_id));
                 } else {
                     self.eg.merge(a_id, b_id);
                 }

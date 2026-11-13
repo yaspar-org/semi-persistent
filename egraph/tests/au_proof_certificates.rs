@@ -253,8 +253,9 @@ fn reason<const T: bool, const P: bool>(
     terms: &HashMap<usize, String>,
 ) -> String {
     match just {
-        Justification::Axiom { axiom_id } => {
-            format!("axiom {:?} \"{}\"", axiom_id, eg.axioms().name(*axiom_id))
+        Justification::Axiom { .. } => {
+            let axiom_id: AxiomId = just.axiom_id().expect("an axiom step");
+            format!("axiom {:?} \"{}\"", axiom_id, eg.axioms().name(axiom_id))
         }
         Justification::Congruence { node_a, node_b } => format!(
             "congruence({}, {})",
@@ -323,9 +324,9 @@ fn has_axiom(buf: &ProofBuf<ENodeId>) -> bool {
 /// Every `Axiom` step must reference an id in `registered`.
 fn assert_axioms_registered(buf: &ProofBuf<ENodeId>, registered: &[AxiomId], what: &str) {
     for (_, _, j) in &buf.steps {
-        if let Justification::Axiom { axiom_id } = j {
+        if let Some(axiom_id) = j.axiom_id::<AxiomId>() {
             assert!(
-                registered.contains(axiom_id),
+                registered.contains(&axiom_id),
                 "{what}: chain references unregistered axiom id {axiom_id:?}"
             );
         }
@@ -394,8 +395,8 @@ fn certificate_trace_free_operators() {
     // Mark BEFORE the merges: phase B restores to here.
     let token = eg.mark(ShrinkPolicy::Never);
 
-    eg.merge_justified(h1a, c, Justification::Axiom { axiom_id: ax1 });
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax2 });
+    eg.merge_justified(h1a, c, Justification::axiom(ax1));
+    eg.merge_justified(h2b, d, Justification::axiom(ax2));
     eg.rebuild();
     assert_ne!(eg.find_const(t1), eg.find_const(t2));
 
@@ -479,8 +480,8 @@ fn certificate_trace_free_operators() {
     let terms = snapshot_terms(&eg);
 
     // Re-apply the same justified merges and close congruence.
-    eg.merge_justified(h1a, c, Justification::Axiom { axiom_id: ax1 });
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax2 });
+    eg.merge_justified(h1a, c, Justification::axiom(ax1));
+    eg.merge_justified(h2b, d, Justification::axiom(ax2));
     eg.rebuild();
 
     assert_eq!(eg.find_const(inst_l2), eg.find_const(t1));
@@ -643,9 +644,9 @@ fn certificate_trace_with_rewrite_step() {
     let fired = apply_rule(&rule, &mut eg, &index, &stats, &model, &globals)
         .expect("the rule's RHS applies no primitive");
     assert!(fired > 0, "rule (h1 x) -> (c) must fire on h1(a)");
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax_h2 });
-    eg.merge_justified(k1u, p, Justification::Axiom { axiom_id: ax_k1 });
-    eg.merge_justified(k2w, q, Justification::Axiom { axiom_id: ax_k2 });
+    eg.merge_justified(h2b, d, Justification::axiom(ax_h2));
+    eg.merge_justified(k1u, p, Justification::axiom(ax_k1));
+    eg.merge_justified(k2w, q, Justification::axiom(ax_k2));
     eg.rebuild();
     assert_eq!(eg.find_const(h1a), eg.find_const(c), "rule merge missing");
     assert_ne!(eg.find_const(t1), eg.find_const(t2));
@@ -687,9 +688,9 @@ fn certificate_trace_with_rewrite_step() {
     let fired = apply_rule(&rule, &mut eg, &index, &stats, &model, &globals)
         .expect("the rule's RHS applies no primitive");
     assert!(fired > 0, "rule must fire again after restore");
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax_h2 });
-    eg.merge_justified(k1u, p, Justification::Axiom { axiom_id: ax_k1 });
-    eg.merge_justified(k2w, q, Justification::Axiom { axiom_id: ax_k2 });
+    eg.merge_justified(h2b, d, Justification::axiom(ax_h2));
+    eg.merge_justified(k1u, p, Justification::axiom(ax_k1));
+    eg.merge_justified(k2w, q, Justification::axiom(ax_k2));
     eg.rebuild();
 
     assert_eq!(eg.find_const(inst_l), eg.find_const(t1));
@@ -778,8 +779,8 @@ fn certificate_trace_ac_projection() {
     let len_premerge = eg.len();
     let token = eg.mark(ShrinkPolicy::Never);
 
-    eg.merge_justified(h1a, c, Justification::Axiom { axiom_id: ax1 });
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax2 });
+    eg.merge_justified(h1a, c, Justification::axiom(ax1));
+    eg.merge_justified(h2b, d, Justification::axiom(ax2));
     eg.rebuild();
     assert_ne!(eg.find_const(t1), eg.find_const(t2));
 
@@ -819,8 +820,8 @@ fn certificate_trace_ac_projection() {
 
     let terms = snapshot_terms(&eg);
 
-    eg.merge_justified(h1a, c, Justification::Axiom { axiom_id: ax1 });
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax2 });
+    eg.merge_justified(h1a, c, Justification::axiom(ax1));
+    eg.merge_justified(h2b, d, Justification::axiom(ax2));
     eg.rebuild();
 
     assert_eq!(eg.find_const(inst_l), eg.find_const(t1));
@@ -971,7 +972,7 @@ fn degeneracy_merge_is_a_normalize_step() {
     let terms = snapshot_terms(&eg);
 
     let ax = eg.register_axiom("a=b", a, b);
-    eg.merge_justified(a, b, Justification::Axiom { axiom_id: ax });
+    eg.merge_justified(a, b, Justification::axiom(ax));
     eg.rebuild();
 
     // Recanonization coalesced {a, b} to the singleton {a}, and the
@@ -1002,7 +1003,7 @@ fn degeneracy_merge_is_a_normalize_step() {
     assert!(
         buf.steps
             .iter()
-            .any(|(_, _, j)| matches!(j, Justification::Axiom { axiom_id } if *axiom_id == ax)),
+            .any(|(_, _, j)| j.axiom_id::<AxiomId>() == Some(ax)),
         "the deep chain must cite a = b: {:?}",
         buf.steps
     );

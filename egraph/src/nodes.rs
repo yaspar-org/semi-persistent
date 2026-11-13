@@ -67,6 +67,7 @@ impl crate::config::EGraphConfig for DefaultConfig {
     type O = crate::id::OpId;
     type S = crate::id::SortId;
     type V = LitValId;
+    type A = crate::id::AxiomId;
     type UL = crate::id::UseListId;
     type UN = crate::id::UseNodeId;
     type C = crate::node_store::MSetChild<crate::id::ENodeId>;
@@ -95,6 +96,7 @@ impl crate::config::EGraphConfig for Smt32 {
     type O = crate::id::OpId;
     type S = crate::id::SortId;
     type V = LitValId;
+    type A = crate::id::AxiomId;
     type UL = crate::id::UseListId;
     type UN = crate::id::UseNodeId;
     type C = crate::node_store::MSetChild<crate::id::ENodeId>;
@@ -154,6 +156,7 @@ impl crate::config::EGraphConfig for Config64 {
     type O = crate::id::OpId;
     type S = crate::id::SortId;
     type V = LitValId64;
+    type A = crate::id::AxiomId63;
     type UL = UseListId64;
     type UN = UseNodeId64;
     type C = crate::node_store::MSetChild<ENodeId64, crate::multiplicity::Multiplicity64>;
@@ -184,6 +187,7 @@ impl crate::config::EGraphConfig for Smt64 {
     type O = OpId64;
     type S = SortId64;
     type V = LitValId64;
+    type A = crate::id::AxiomId63;
     type UL = UseListId64;
     type UN = UseNodeId64;
     type C = crate::node_store::MSetChild<ENodeId64, crate::multiplicity::Multiplicity64>;
@@ -217,6 +221,7 @@ impl crate::config::EGraphConfig for ConfigM16 {
     type O = crate::id::OpId;
     type S = crate::id::SortId;
     type V = LitValId;
+    type A = crate::id::AxiomId;
     type UL = crate::id::UseListId;
     type UN = crate::id::UseNodeId;
     type C = crate::node_store::MSetChild<crate::id::ENodeId, crate::multiplicity::Multiplicity16>;

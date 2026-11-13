@@ -167,7 +167,7 @@ pub struct EGraph<
     sorts: SortRegistry<Cfg::S, TRACK>,
     ops: OpRegistry<Cfg::O, Cfg::S, TRACK>,
     rules: RuleRegistry<TRACK>,
-    axioms: AxiomRegistry<Cfg::G, TRACK>,
+    axioms: AxiomRegistry<Cfg::G, Cfg::A, TRACK>,
     lits: LitValStore<L, Cfg::V, TRACK>,
     classes: EClasses<Cfg::G, Cfg::ClassKey, Cfg::UL, Cfg::UN, TRACK, PROOFS, Cfg::Policy>,
     nodes: NodeStore<Cfg::G, Cfg::O, Cfg::V, Cfg::C, Cfg::Ids, TRACK, PROOFS, Cfg::Policy>,
@@ -854,10 +854,10 @@ where
         self.rules.register(name, lhs, rhs)
     }
 
-    pub fn axioms(&self) -> &AxiomRegistry<Cfg::G, TRACK> {
+    pub fn axioms(&self) -> &AxiomRegistry<Cfg::G, Cfg::A, TRACK> {
         &self.axioms
     }
-    pub fn register_axiom(&mut self, name: &str, lhs: Cfg::G, rhs: Cfg::G) -> crate::id::AxiomId {
+    pub fn register_axiom(&mut self, name: &str, lhs: Cfg::G, rhs: Cfg::G) -> Cfg::A {
         self.axioms.register(name, lhs, rhs)
     }
 
@@ -2491,7 +2491,7 @@ where
         )?;
         writeln!(out, "axioms {}", self.axioms.len())?;
         for i in 0..self.axioms.len() {
-            let id = crate::id::AxiomId::new(i as u32);
+            let id: Cfg::A = crate::id::id_at(i);
             let info = self.axioms.info(id);
             writeln!(
                 out,
@@ -2638,7 +2638,7 @@ where
                 node_b.to_usize()
             ),
             Justification::Axiom { axiom_id } => {
-                write!(out, "axiom id={}", axiom_id.to_usize())
+                write!(out, "axiom id={}", axiom_id.as_usize())
             }
             Justification::ACSuperposition { node_a, node_b } => write!(
                 out,
@@ -7770,19 +7770,14 @@ mod tests {
         let (ref mut eg, th) = eg::<false, true>();
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(42),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(42)));
         let mut buf = ProofBuf::new();
         eg.explain(x, y, &mut buf);
-        assert!(buf.steps.iter().any(|&(_, _, j)| j
-            == Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(42)
-            }));
+        assert!(
+            buf.steps
+                .iter()
+                .any(|&(_, _, j)| j == Justification::axiom(crate::id::AxiomId::new(42)))
+        );
     }
 
     #[test]
@@ -7791,20 +7786,8 @@ mod tests {
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
         let z = eg.add(th.z, &[]);
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(1),
-            },
-        );
-        eg.merge_justified(
-            y,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(2),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(1)));
+        eg.merge_justified(y, z, Justification::axiom(crate::id::AxiomId::new(2)));
         let mut buf = ProofBuf::new();
         eg.explain(x, z, &mut buf);
         for (from, to, just) in &buf.steps {
@@ -7833,9 +7816,7 @@ mod tests {
             eg.merge_justified(
                 a,
                 b,
-                Justification::Axiom {
-                    axiom_id: crate::id::AxiomId::new(i as u32),
-                },
+                Justification::axiom(crate::id::AxiomId::new(i as u32)),
             );
         }
 
@@ -7867,20 +7848,8 @@ mod tests {
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
         let z = eg.add(th.z, &[]);
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(7),
-            },
-        );
-        eg.merge_justified(
-            y,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(8),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(7)));
+        eg.merge_justified(y, z, Justification::axiom(crate::id::AxiomId::new(8)));
 
         let mut dump = Vec::new();
         let stats = eg.dump_all_proofs(&mut dump).expect("proof dump");
@@ -7917,13 +7886,7 @@ mod tests {
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
         let token = eg.mark(ShrinkPolicy::Never);
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(0),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(0)));
         let mut buf = ProofBuf::new();
         assert!(eg.explain(x, y, &mut buf));
         eg.restore(token);
@@ -7952,15 +7915,15 @@ mod tests {
         let z = eg.add(th.z, &[]);
         let ax1 = crate::id::AxiomId::new(10);
         let ax2 = crate::id::AxiomId::new(20);
-        eg.merge_justified(x, y, Justification::Axiom { axiom_id: ax1 });
-        eg.merge_justified(y, z, Justification::Axiom { axiom_id: ax2 });
+        eg.merge_justified(x, y, Justification::axiom(ax1));
+        eg.merge_justified(y, z, Justification::axiom(ax2));
         let mut buf = ProofBuf::new();
         eg.explain(x, z, &mut buf);
         for &(_, _, just) in &buf.steps {
             match just {
                 Justification::Axiom { axiom_id } => {
                     assert!(
-                        axiom_id == ax1 || axiom_id == ax2,
+                        axiom_id == ax1.to_index() || axiom_id == ax2.to_index(),
                         "unexpected axiom_id {axiom_id:?} in proof step"
                     );
                 }
@@ -8506,8 +8469,8 @@ mod dual_config_tests {
             let x = eg.add(th.x, &[]);
             let y = eg.add(th.y, &[]);
             let z = eg.add(th.z, &[]);
-            eg.merge_justified(x, y, Justification::Axiom { axiom_id: crate::id::AxiomId::new(1) });
-            eg.merge_justified(y, z, Justification::Axiom { axiom_id: crate::id::AxiomId::new(2) });
+            eg.merge_justified(x, y, Justification::axiom(crate::id::id_at::<Cfg::A>(1)));
+            eg.merge_justified(y, z, Justification::axiom(crate::id::id_at::<Cfg::A>(2)));
             let mut buf = ProofBuf::new();
             eg.explain(x, z, &mut buf);
             assert!(buf.steps.len() >= 2);
@@ -8519,13 +8482,13 @@ mod dual_config_tests {
             let y = eg.add(th.y, &[]);
             let fx = eg.add(th.f, &[x]);
             let fy = eg.add(th.f, &[y]);
-            eg.merge_justified(x, y, Justification::Axiom { axiom_id: crate::id::AxiomId::new(10) });
+            eg.merge_justified(x, y, Justification::axiom(crate::id::id_at::<Cfg::A>(10)));
             eg.rebuild();
             assert_eq!(eg.find(fx), eg.find(fy));
             let mut buf = ProofBuf::new();
             assert!(eg.explain_deep(fx, fy, &mut buf));
             assert!(buf.steps.iter().any(|(_, _, j)| matches!(j, Justification::Congruence { .. })));
-            assert!(buf.steps.iter().any(|(_, _, j)| *j == Justification::Axiom { axiom_id: crate::id::AxiomId::new(10) }));
+            assert!(buf.steps.iter().any(|(_, _, j)| *j == Justification::axiom(crate::id::id_at::<Cfg::A>(10))));
         }
 
         fn plain_n_congruence<Cfg>() {

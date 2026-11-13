@@ -855,27 +855,27 @@ pub struct AxiomInfo<G: Copy> {
 }
 
 /// Append-only axiom registry backed by `SpMap`.
-pub struct AxiomRegistry<G: Copy + DenseId, const TRACK: bool> {
-    /// Positions in this log ARE axiom ids, so the log's index word is `AxiomId`'s — a
-    /// `u16`, since `AxiomId` is 15-bit. Note this is NOT `G::Index`: `G` is the id type
-    /// of the *terms* an axiom relates, not of the axiom.
-    map: SpUniqueMap<String, AxiomInfo<G>, <crate::id::AxiomId as DenseId>::Index, TRACK>,
+pub struct AxiomRegistry<G: Copy + DenseId, A: DenseId, const TRACK: bool> {
+    /// Positions in this log ARE axiom ids `A`, so the log's index word is `A`'s:
+    /// the configuration's word (`EGraphConfig::A`), because the axiom count scales
+    /// with the program's `union` commands.
+    map: SpUniqueMap<String, AxiomInfo<G>, <A as DenseId>::Index, TRACK>,
 }
 
-impl<G: Copy + DenseId, const TRACK: bool> Default for AxiomRegistry<G, TRACK> {
+impl<G: Copy + DenseId, A: DenseId, const TRACK: bool> Default for AxiomRegistry<G, A, TRACK> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
+impl<G: Copy + DenseId, A: DenseId, const TRACK: bool> AxiomRegistry<G, A, TRACK> {
     pub fn new() -> Self {
         Self {
             map: SpUniqueMap::new(),
         }
     }
 
-    pub fn register(&mut self, name: &str, lhs: G, rhs: G) -> crate::id::AxiomId {
+    pub fn register(&mut self, name: &str, lhs: G, rhs: G) -> A {
         // Unique-keyed, as the rule registry: a repeated axiom name is refused.
         let id = match self.map.try_insert(
             name.to_owned(),
@@ -889,14 +889,14 @@ impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
             Err(ContainerError::DuplicateKey) => panic!("axiom '{name}' already registered"),
             Err(_) => panic!("registry id space exhausted for its index word"),
         };
-        id_at::<crate::id::AxiomId>(id.as_usize())
+        id_at::<A>(id.as_usize())
     }
 
-    pub fn info(&self, id: crate::id::AxiomId) -> &AxiomInfo<G> {
+    pub fn info(&self, id: A) -> &AxiomInfo<G> {
         self.map.get_val(id.to_index())
     }
 
-    pub fn name(&self, id: crate::id::AxiomId) -> &str {
+    pub fn name(&self, id: A) -> &str {
         self.map.key(id.to_index())
     }
 

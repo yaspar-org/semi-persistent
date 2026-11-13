@@ -31,10 +31,15 @@ semi_persistent_containers::define_id31! {
 }
 
 semi_persistent_containers::define_id31! {
-    /// A 31-bit axiom identifier. Every `union` command of a program run with
-    /// proofs registers one, so a 15-bit id capped a proof-mode program at
-    /// 32,767 unions.
+    /// A 31-bit axiom identifier, the 32-bit configurations' `EGraphConfig::A`.
+    /// Every `union` command of a program run with proofs registers one, so the
+    /// count scales with the input like a node id's.
     pub struct AxiomId / StoredAxiomId, "ax";
+}
+
+semi_persistent_containers::define_id63! {
+    /// The 63-bit axiom identifier, the 64-bit configurations' `EGraphConfig::A`.
+    pub struct AxiomId63 / StoredAxiomId63, "ax63_";
 }
 
 /// Mint the dense id for an arena or log position, checked.

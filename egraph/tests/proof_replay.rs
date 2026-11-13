@@ -218,8 +218,11 @@ fn replay(
             let ok = match j {
                 Justification::Filler => false,
                 Justification::Assumption { .. } => true,
-                Justification::Axiom { axiom_id } => {
-                    let info = interp.eg.axioms().info(axiom_id);
+                Justification::Axiom { .. } => {
+                    let info = interp
+                        .eg
+                        .axioms()
+                        .info(j.axiom_id().expect("an axiom step"));
                     (info.lhs, info.rhs) == (from, to) || (info.lhs, info.rhs) == (to, from)
                 }
                 Justification::Congruence { node_a, node_b } => {
@@ -757,7 +760,7 @@ fn proofs_hold_more_than_32767_unions() {
     assert!(
         buf.steps.iter().any(|(_, _, j)| matches!(
             j,
-            Justification::Axiom { axiom_id } if axiom_id.to_usize() == n - 1
+            Justification::Axiom { axiom_id } if *axiom_id as usize == n - 1
         )),
         "the last union's step: {:?}",
         buf.steps
@@ -865,7 +868,7 @@ fn superposition_cites_the_unions_of_its_rules() {
         .steps
         .iter()
         .filter_map(|(_, _, j)| match j {
-            Justification::Axiom { axiom_id } => Some(axiom_id.to_usize()),
+            Justification::Axiom { axiom_id } => Some(*axiom_id as usize),
             _ => None,
         })
         .collect();
