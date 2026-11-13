@@ -1,11 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Verified equivalence-class aggregate: the e-graph's class layer with
-//! W1-W7 as its machine-checked `wf()`.
+//! W1-W8 as its machine-checked `wf()`.
 //!
-//! The module composes five verified structures: `CircularList` ring,
+//! The module composes six verified structures: `CircularList` ring,
 //! `SparseSet` class-key set, `UnionFind`, `ListArena` use-lists, `Vec`
-//! min-monomial pool. Their agreement is `eg_model_wf`, a predicate over the
+//! min-monomial and abstract-value pools. Their agreement is `eg_model_wf`, a predicate over the
 //! components' specification views. This table is the authoritative
 //! W-invariant numbering; every other document cites it.
 //!
@@ -28,6 +28,8 @@
 //!     stated at the ring member that is the class's root. The archive
 //!     invariant (`eg_archive_agrees`) asserts `eg_model_wf` per frame, so
 //!     W7 holds in every archived mark and `restore` preserves it.
+//!   - W8: the abstract-value pool is whole entries; live handles are
+//!     allocated and pairwise distinct.
 //!
 //! Terminology: a "class key" is the `SparseSet` id a root's ring payload
 //! carries; "live" is the key's state while its class exists. The prose
@@ -35,7 +37,7 @@
 //! same thing: one archived mark level. The key stored in a ring payload is a
 //! configured bit-stealing `DenseId`, so the key and successor occupy one word
 //! each;
-//! the 16-byte class payload (`ClassData`) is pinned by the consumer's
+//! the 20-byte class payload representation at 31-bit ids (`ClassData`) is pinned by the consumer's
 //! compile-time asserts. This kernel is the production e-graph class layer:
 //! `egraph::EClasses` and `egraph::UnionFind` are type aliases of it.
 
@@ -64,6 +66,7 @@ verus! {
 pub struct ClassData<L: DenseId, T: DenseId> {
     pub use_list: L,
     pub min_row: Option<<T as DenseId>::Index>,
+    pub abs: Option<<T as DenseId>::Index>,
     pub atomic: bool,
     /// Whether this class participates in e-matching. `true` by default (a fresh
     /// singleton matches as today); a client sets it `false` to shield the whole
@@ -96,14 +99,25 @@ impl<L: DenseId, T: DenseId> crate::value_compressor::EqSpec for ClassData<L, T>
             (Option::Some(a), Option::Some(b)) => a.as_usize() == b.as_usize(),
             _ => false,
         };
+        let ab = match (self.abs, other.abs) {
+            (Option::None, Option::None) => true,
+            (Option::Some(a), Option::Some(b)) => a.as_usize() == b.as_usize(),
+            _ => false,
+        };
         let sz = self.size.as_usize() == other.size.as_usize();
-        let r = ul && mr && sz && (self.atomic == other.atomic)
+        let r = ul && mr && ab && sz && (self.atomic == other.atomic)
             && (self.matchable == other.matchable);
         proof {
             if r {
                 L::lemma_as_nat_injective(self.use_list, other.use_list);
                 <T as DenseId>::Index::lemma_as_nat_injective(self.size, other.size);
                 match (self.min_row, other.min_row) {
+                    (Option::Some(a), Option::Some(b)) => {
+                        <T as DenseId>::Index::lemma_as_nat_injective(a, b);
+                    }
+                    _ => {}
+                }
+                match (self.abs, other.abs) {
                     (Option::Some(a), Option::Some(b)) => {
                         <T as DenseId>::Index::lemma_as_nat_injective(a, b);
                     }
@@ -119,6 +133,7 @@ impl<L: DenseId, T: DenseId> crate::value_compressor::EqSpec for ClassData<L, T>
                     assert(ul);
                     assert(sz);
                     assert(mr);
+                    assert(ab);
                     assert(false);
                 }
                 assert(*self != *other);
@@ -142,6 +157,7 @@ impl<L: DenseId, T: DenseId> core::default::Default for ClassData<L, T> {
         ClassData {
             use_list: L::default(),
             min_row: None,
+            abs: None,
             atomic: false,
             matchable: true,
             size: <T::Index as IndexLike>::min(),
@@ -150,7 +166,7 @@ impl<L: DenseId, T: DenseId> core::default::Default for ClassData<L, T> {
 }
 
 /// Repr for `ClassData`: the use-list word carries the capture tag
-/// (production's ordering); `min_row` is stored as `(row, present)` because
+/// (production's ordering); `min_row` and `abs` each use a `(word, present)` pair because
 /// `T::Index` has no spare niche. A named struct because Verus's
 /// trait-conflict checker rejects `Tagged` on tuples (the `ListNodeRepr`
 /// limitation).
@@ -159,6 +175,8 @@ pub struct ClassDataRepr<LR, I> {
     pub a: LR,
     pub row: I,
     pub present: bool,
+    pub abs_handle: I,
+    pub abs_present: bool,
     pub atomic: bool,
     pub matchable: bool,
     pub size: I,
@@ -173,8 +191,8 @@ impl<LR: Copy, I: Copy> Clone for ClassDataRepr<LR, I> {
 }
 
 /// `Tagged` for `ClassData`, delegating the capture tag to the use-list
-/// word. `repr_wf` pins the absent-row encoding to a canonical `(min, false)`
-/// — without that, two reprs differing only in a hidden dead `row` word would
+/// word. `repr_wf` pins absent rows and handles to canonical `(min, false)` pairs
+/// — without that, two reprs differing only in a hidden dead word would
 /// decode equal, violating the extensionality law.
 impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
     type Repr = ClassDataRepr<<L as Tagged>::Repr, <T as DenseId>::Index>;
@@ -183,6 +201,7 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
         ClassData {
             use_list: L::value_of(r.a),
             min_row: if r.present { Some(r.row) } else { None },
+            abs: if r.abs_present { Some(r.abs_handle) } else { None },
             atomic: r.atomic,
             matchable: r.matchable,
             size: r.size,
@@ -194,6 +213,7 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
     open spec fn repr_wf(r: Self::Repr) -> bool {
         &&& L::repr_wf(r.a)
         &&& (!r.present ==> r.row == <T::Index as IndexLike>::min_spec())
+        &&& (!r.abs_present ==> r.abs_handle == <T::Index as IndexLike>::min_spec())
     }
 
     proof fn lemma_repr_extensional(r1: Self::Repr, r2: Self::Repr) {
@@ -203,6 +223,19 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
         if r1.present {
             assert(Self::value_of(r1).min_row == Some(r1.row));
         }
+        // Equal abstract-value options pin presence and the live handle;
+        // repr_wf pins both absent handles to the canonical min.
+        if r1.abs_present {
+            assert(Self::value_of(r1).abs == Some(r1.abs_handle));
+            assert(r2.abs_present);
+            assert(r1.abs_handle == r2.abs_handle);
+        } else {
+            assert(!r2.abs_present);
+            assert(r1.abs_handle == <T::Index as IndexLike>::min_spec());
+            assert(r2.abs_handle == <T::Index as IndexLike>::min_spec());
+        }
+        assert(r1.abs_present == r2.abs_present);
+        assert(r1.abs_handle == r2.abs_handle);
     }
 
     fn into_repr(self) -> (r: Self::Repr) {
@@ -210,11 +243,17 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
             Some(r) => (r, true),
             None => (<T::Index as IndexLike>::min(), false),
         };
+        let (abs_handle, abs_present) = match self.abs {
+            Some(h) => (h, true),
+            None => (<T::Index as IndexLike>::min(), false),
+        };
         proof { <T::Index as IndexLike>::lemma_min_as_nat(); }
         ClassDataRepr {
             a: self.use_list.into_repr(),
             row,
             present,
+            abs_handle,
+            abs_present,
             atomic: self.atomic,
             matchable: self.matchable,
             size: self.size,
@@ -224,6 +263,7 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
         ClassData {
             use_list: L::from_repr(&r.a),
             min_row: if r.present { Some(r.row) } else { None },
+            abs: if r.abs_present { Some(r.abs_handle) } else { None },
             atomic: r.atomic,
             matchable: r.matchable,
             size: r.size,
@@ -261,18 +301,32 @@ pub open(crate) spec fn ss_value<V, Idx: IndexLike>(
     dense[sparse[id as int].as_nat() as int]
 }
 
-/// W2-W7 over the components' views (the module header holds the invariant
+/// The abstract value of class key `id` in one state of the repr set and the
+/// abstract-value pool: None without a handle, else the entry its handle
+/// names. `abs_value_spec` is this over the live views; the restore theorem
+/// states it over an archived frame.
+pub open(crate) spec fn abs_value_of<L: DenseId, T: DenseId, A>(
+    dense: Seq<ClassData<L, T>>, sparse: Seq<<T as DenseId>::Index>, abs_pool: Seq<A>, id: nat,
+) -> Option<A> {
+    match ss_value(dense, sparse, id).abs {
+        Some(h) => Some(abs_pool[h.as_nat() as int]),
+        None => None,
+    }
+}
+
+/// W2-W8 over the components' views (the module header holds the invariant
 /// table). `ring_model`/`payloads` are the
 /// `CircularList`'s ghost rings and payload cells; `roots` is the
 /// `UnionFind`'s ghost root map; the three `reprs_*` sequences are the
 /// `SparseSet` columns (`live` its element count); `uses_model`/`uses_nodes`
 /// are the `ListArena`'s ghost lists and node cells; `pool_len`/`min_width`
-/// the pool geometry.
+/// the pool geometry; `abs_pool` the abstract-value pool W8 reads.
 pub open(crate) spec fn eg_model_wf<
     T: DenseId,
     K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged,
+    A,
 >(
     ring_model: Seq<Seq<usize>>,
     payloads: Seq<Opt<K>>,
@@ -284,6 +338,7 @@ pub open(crate) spec fn eg_model_wf<
     uses_nodes: Seq<ListNode<T, N>>,
     pool: Seq<Opt<T>>,
     min_width: nat,
+    abs_pool: Seq<A>,
 ) -> bool {
     let n = payloads.len();
     let live = reprs_dense.len();
@@ -367,6 +422,21 @@ pub open(crate) spec fn eg_model_wf<
                 && #[trigger] ss_value(reprs_dense, reprs_sparse, id2).min_row is Some
                 ==> ss_value(reprs_dense, reprs_sparse, id1).min_row->Some_0.as_nat()
                     != ss_value(reprs_dense, reprs_sparse, id2).min_row->Some_0.as_nat())
+    // W8a: whole entries. One cell holds one entry of type A, so the pool
+    // length counts entries and no write splits an entry.
+    // W8b: live handles are allocated
+    &&& (forall|id: nat| #[trigger] ss_contains(reprs_sparse, reprs_indices, live, id)
+            && ss_value(reprs_dense, reprs_sparse, id).abs is Some
+            ==> ss_value(reprs_dense, reprs_sparse, id).abs->Some_0.as_nat()
+                < abs_pool.len())
+    // W8c: live handles are pairwise distinct
+    &&& (forall|id1: nat, id2: nat|
+            ss_contains(reprs_sparse, reprs_indices, live, id1)
+                && ss_contains(reprs_sparse, reprs_indices, live, id2) && id1 != id2
+                && #[trigger] ss_value(reprs_dense, reprs_sparse, id1).abs is Some
+                && #[trigger] ss_value(reprs_dense, reprs_sparse, id2).abs is Some
+                ==> ss_value(reprs_dense, reprs_sparse, id1).abs->Some_0.as_nat()
+                    != ss_value(reprs_dense, reprs_sparse, id2).abs->Some_0.as_nat())
 }
 
 
@@ -391,6 +461,7 @@ pub open(crate) spec fn eg_archive_agrees<
     K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged,
+    A,
 >(
     ring_models: Seq<Seq<Seq<usize>>>,
     ring_cells: Seq<Seq<CircularListNode<Opt<K>, T>>>,
@@ -402,6 +473,7 @@ pub open(crate) spec fn eg_archive_agrees<
     uses_nodes_snaps: Seq<Seq<ListNode<T, N>>>,
     pool_snaps: Seq<Seq<Opt<T>>>,
     min_width: nat,
+    abs_snaps: Seq<Seq<A>>,
 ) -> bool {
     let f = ring_models.len();
     &&& ring_cells.len() == f
@@ -412,23 +484,39 @@ pub open(crate) spec fn eg_archive_agrees<
     &&& uses_models.len() == f
     &&& uses_nodes_snaps.len() == f
     &&& pool_snaps.len() == f
-    &&& (forall|k: int| 0 <= k < f ==> eg_model_wf::<T, K, L, N>(
+    &&& abs_snaps.len() == f
+    &&& (forall|k: int| 0 <= k < f ==> eg_model_wf::<T, K, L, N, A>(
             ring_models[k], ring_payloads(#[trigger] ring_cells[k]), roots_arch[k],
             dense_snaps[k], sparse_snaps[k], indices_snaps[k],
-            uses_models[k], uses_nodes_snaps[k], pool_snaps[k], min_width))
+            uses_models[k], uses_nodes_snaps[k], pool_snaps[k], min_width, abs_snaps[k]))
     &&& (forall|k: int| 0 <= k < f ==> crate::sparse_set::sparse_set_snap_wf(
             #[trigger] dense_snaps[k], sparse_snaps[k], indices_snaps[k]))
     &&& (forall|k1: int, k2: int| 0 <= k1 <= k2 < f
             ==> (#[trigger] pool_snaps[k1]).len() <= (#[trigger] pool_snaps[k2]).len())
+    &&& (forall|k1: int, k2: int| 0 <= k1 <= k2 < f
+            ==> (#[trigger] abs_snaps[k1]).len() <= (#[trigger] abs_snaps[k2]).len())
 }
 
 // ---------------------------------------------------------------------------
 // EClasses
 // ---------------------------------------------------------------------------
 
+/// The empty abstract-value entry: the default `A` of `EClasses`, for
+/// instantiations that carry no abstract values. Zero-sized, so its pool
+/// stores nothing.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct NoAbs;
+
+impl core::default::Default for NoAbs {
+    fn default() -> (r: NoAbs) {
+        NoAbs
+    }
+}
+
 /// Verified equivalence classes: ring + union-find + repr set + use-lists +
 /// min-monomial pool, with the agreement clauses as `wf`.
-pub struct EClasses<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P = HotFirst>
+pub struct EClasses<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P = HotFirst,
+    A = NoAbs>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -443,7 +531,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
     /// The class ring; a root cell carries the class's configured-width key
     /// while the class is live, absent once absorbed.
@@ -472,10 +562,14 @@ where
     pub(crate) min_pool: SpVec<Opt<T>, usize, <P as PlainFamily<Opt<T>, usize, TRACK>>::Store, TRACK>,
     /// Fixed row width; 0 until `set_min_width`.
     pub(crate) min_width: usize,
+    /// Abstract-value pool: one opaque entry per cell, addressed by a class's
+    /// `abs` handle. A plain-family column, as `min_pool`; the class layer
+    /// stores, copies and restores entries and never inspects them.
+    pub(crate) abs_pool: SpVec<A, usize, <P as PlainFamily<A, usize, TRACK>>::Store, TRACK>,
 }
 
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P>
-    EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A>
+    EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -490,7 +584,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
     /// Convert the public, packed class-key type to the sparse set's full-word
     /// internal key. The numeric identity is unchanged.
@@ -641,6 +737,20 @@ where
         self.min_pool.snapshots_view()
     }
 
+    pub open(crate) spec fn abs_pool_view(&self) -> Seq<A> {
+        self.abs_pool.view()
+    }
+
+    pub open(crate) spec fn abs_pool_archive(&self) -> Seq<Seq<A>> {
+        self.abs_pool.snapshots_view()
+    }
+
+    /// The value of live class `id`: None without a handle, else the pool
+    /// entry its handle names.
+    pub open(crate) spec fn abs_value_spec(&self, id: nat) -> Option<A> {
+        abs_value_of(self.reprs.dense_view(), self.reprs.sparse_view(), self.abs_pool.view(), id)
+    }
+
     /// Mark depth (spec): the number of live frames.
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.min_pool.snapshots_view().len()
@@ -656,8 +766,9 @@ where
         &&& self.uf.wf()
         &&& self.uses.wf()
         &&& self.min_pool.wf()
+        &&& self.abs_pool.wf()
         &&& self.uf.n_spec() == self.n_spec()
-        &&& eg_model_wf::<T, K, L, N>(
+        &&& eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(),
                 self.entries.payload_seq(),
                 self.uf.roots_view(),
@@ -667,9 +778,9 @@ where
                 self.uses.model_view(),
                 self.uses.nodes_view(),
                 self.min_pool.view(),
-                self.min_width as nat)
+                self.min_width as nat, self.abs_pool.view())
         // Joint archive over the component snapshot stacks.
-        &&& eg_archive_agrees::<T, K, L, N>(
+        &&& eg_archive_agrees::<T, K, L, N, A>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
                 self.uf.roots_snapshots_view(),
@@ -679,13 +790,18 @@ where
                 self.uses.model_snapshots_view(),
                 self.uses.nodes_snapshots_view(),
                 self.min_pool.snapshots_view(),
-                self.min_width as nat)
+                self.min_width as nat, self.abs_pool.snapshots_view())
         // archived pool lengths never exceed the live pool (outside the
         // opaque predicate: the live length changes on row allocation, and
         // an opaque argument change would not transfer by congruence).
         &&& (forall|k: int| 0 <= k < self.min_pool.snapshots_view().len()
                 ==> (#[trigger] self.min_pool.snapshots_view()[k]).len()
                     <= self.min_pool.view().len())
+        // the same bound for the abstract-value pool, whose first-use
+        // allocation grows the live length.
+        &&& (forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                ==> (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len())
     }
 
     pub fn new() -> (e: Self)
@@ -706,6 +822,7 @@ where
             uses: ListArena::new(),
             min_pool: SpVec::with_store(<P as PlainFamily<Opt<T>, usize, TRACK>>::empty()),
             min_width: 0,
+            abs_pool: SpVec::with_store(<P as PlainFamily<A, usize, TRACK>>::empty()),
         };
         proof {
             T::lemma_id_bound_word_relation();
@@ -865,7 +982,7 @@ where
             None => crate::guard::refuse("EClasses::add_singleton: index width below 1"),
         };
         let raw_key = match self.reprs.try_add(ClassData {
-            use_list: list_id, min_row: None, atomic: false, matchable: true, size: one,
+            use_list: list_id, min_row: None, abs: None, atomic: false, matchable: true, size: one,
         }) {
             Ok(k) => k,
             Err(_) => crate::guard::refuse("EClasses::add_singleton: repr capacity exhausted"),
@@ -924,7 +1041,7 @@ where
             assert(self.reprs.contains_spec(raw_key));
             assert(ss_contains(sparse, indices, live, kn));
             assert(ss_value(dense, sparse, kn)
-                == ClassData::<L, T> { use_list: list_id, min_row: None, atomic: false, matchable: true, size: one });
+                == ClassData::<L, T> { use_list: list_id, min_row: None, abs: None, atomic: false, matchable: true, size: one });
 
             // survivors: old liveness and values carry over, id-for-nat
             assert forall|kk: nat| #[trigger] ss_contains(osparse, oindices, olive, kk)
@@ -1110,11 +1227,11 @@ where
                 assert(ss_value(dense, sparse, k1) == ss_value(odense, osparse, k1));
                 assert(ss_value(dense, sparse, k2) == ss_value(odense, osparse, k2));
             }
-            assert(eg_model_wf::<T, K, L, N>(rm, pay, roots, dense, sparse, indices,
-                um, un, self.min_pool.view(), self.min_width as nat));
+            assert(eg_model_wf::<T, K, L, N, A>(rm, pay, roots, dense, sparse, indices,
+                um, un, self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             // the archive transfers by congruence: every snapshot stack is
             // framed by the component contracts.
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
                 self.uf.roots_snapshots_view(),
@@ -1124,7 +1241,7 @@ where
                 self.uses.model_snapshots_view(),
                 self.uses.nodes_snapshots_view(),
                 self.min_pool.snapshots_view(),
-                self.min_width as nat))
+                self.min_width as nat, self.abs_pool.snapshots_view()))
             by {
                 assert(self.entries.model_snapshots_view()
                     == o.entries.model_snapshots_view());
@@ -1205,11 +1322,12 @@ pub struct MergeInfo<T: DenseId, L: DenseId> {
     pub absorbed: T,
     pub absorbed_uses: L,
     pub absorbed_min_row: Option<<T as DenseId>::Index>,
+    pub absorbed_abs: Option<<T as DenseId>::Index>,
     pub absorbed_atomic: bool,
 }
 
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P>
-    EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A>
+    EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -1224,7 +1342,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
 
     /// Re-establishes `eg_model_wf` after a merge's three mutations (union,
@@ -1286,8 +1406,8 @@ where
                             k.as_nat())
                         == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
                             k.as_nat()),
-            // the survivor's key stays live with only its size folded:
-            // new size = old survivor size + absorbed size.
+            // The survivor's key stays live with size summed and matchable folded;
+            // use_list, min_row, abs, and atomic are preserved.
             forall|k: <T as DenseId>::Index| #[trigger] o.reprs.contains_spec(k)
                 && k.as_nat() == skey
                 ==> self.reprs.contains_spec(k),
@@ -1295,6 +1415,8 @@ where
                 == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).use_list,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey).min_row
                 == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).min_row,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey).abs
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).abs,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey).atomic
                 == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).atomic,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey)
@@ -1306,14 +1428,15 @@ where
             self.uses.model_view() == o.uses.model_view(),
             self.uses.nodes_view() == o.uses.nodes_view(),
             self.min_pool.view() == o.min_pool.view(),
+            self.abs_pool.view() == o.abs_pool.view(),
             self.min_width == o.min_width,
         ensures
-            eg_model_wf::<T, K, L, N>(
+            eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat),
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()),
             self.reprs.cap_spec() <= self.n_spec(),
     {
         let n = o.n_spec();
@@ -1393,7 +1516,7 @@ where
         }
 
         // survivors + dead-stay-dead, in the nat form the clauses use: values
-        // carry field-for-field, fully except the survivor key's folded size.
+        // carry field-for-field, except the survivor key's size and matchable.
         assert forall|kk: nat| #[trigger] ss_contains(osparse, oindices, olive, kk)
             && kk != key_ab
             implies ss_contains(sparse, indices, live, kk)
@@ -1401,6 +1524,8 @@ where
                     == ss_value(odense, osparse, kk).use_list
                 && ss_value(dense, sparse, kk).min_row
                     == ss_value(odense, osparse, kk).min_row
+                && ss_value(dense, sparse, kk).abs
+                    == ss_value(odense, osparse, kk).abs
                 && (kk != skey ==> ss_value(dense, sparse, kk)
                     == ss_value(odense, osparse, kk)) by {
             let kw = oindices[osparse[kk as int].as_nat() as int];
@@ -1610,6 +1735,29 @@ where
             assert(ss_value(dense, sparse, k2).min_row
                 == ss_value(odense, osparse, k2).min_row);
         }
+        // --- W8: surviving handles and the abstract-value pool are unchanged.
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            && ss_value(dense, sparse, kk).abs is Some
+            implies ss_value(dense, sparse, kk).abs->Some_0.as_nat()
+                < self.abs_pool.view().len() by {
+            assert(ss_contains(osparse, oindices, olive, kk) && kk != key_ab);
+            assert(ss_value(dense, sparse, kk).abs
+                == ss_value(odense, osparse, kk).abs);
+        }
+        assert forall|k1: nat, k2: nat|
+            ss_contains(sparse, indices, live, k1)
+                && ss_contains(sparse, indices, live, k2) && k1 != k2
+                && #[trigger] ss_value(dense, sparse, k1).abs is Some
+                && #[trigger] ss_value(dense, sparse, k2).abs is Some
+            implies ss_value(dense, sparse, k1).abs->Some_0.as_nat()
+                != ss_value(dense, sparse, k2).abs->Some_0.as_nat() by {
+            assert(ss_contains(osparse, oindices, olive, k1) && k1 != key_ab);
+            assert(ss_contains(osparse, oindices, olive, k2) && k2 != key_ab);
+            assert(ss_value(dense, sparse, k1).abs
+                == ss_value(odense, osparse, k1).abs);
+            assert(ss_value(dense, sparse, k2).abs
+                == ss_value(odense, osparse, k2).abs);
+        }
         // --- W7: the stored class size is the ring length.
         // s sits on the merged ring: rotate(orm[cs], ps+1)[lcs-1] == orm[cs][ps].
         let lcs = orm[cs].len() as int;
@@ -1658,8 +1806,8 @@ where
                 assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
             }
         }
-        assert(eg_model_wf::<T, K, L, N>(rm, pay, roots, dense, sparse, indices,
-            um, un, self.min_pool.view(), self.min_width as nat));
+        assert(eg_model_wf::<T, K, L, N, A>(rm, pay, roots, dense, sparse, indices,
+            um, un, self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
     }
 
     /// Merge the classes of `a` and `b`: union-find link, ring splice with
@@ -1691,6 +1839,8 @@ where
             },
         ensures
             final(self).wf(),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
             final(self).n_spec() == old(self).n_spec(),
             final(self).min_width_spec() == old(self).min_width_spec(),
             a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
@@ -1714,6 +1864,12 @@ where
                                 old(self).key_of(mi.absorbed.id_nat() as int)).use_list
                         &&& mi.absorbed_min_row == old(self).class_data_spec(
                                 old(self).key_of(mi.absorbed.id_nat() as int)).min_row
+                        &&& mi.absorbed_abs == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).abs
+                        &&& final(self).class_data_spec(
+                                final(self).key_of(mi.survivor.id_nat() as int)).abs
+                            == old(self).class_data_spec(
+                                old(self).key_of(mi.survivor.id_nat() as int)).abs
                         &&& mi.absorbed_atomic == old(self).class_data_spec(
                                 old(self).key_of(mi.absorbed.id_nat() as int)).atomic
                     })
@@ -1811,7 +1967,7 @@ where
         // Matchable is class-closed (relevant if any member is): fold survivor
         // ||= absorbed, so a class stays shielded only if both sides were. This
         // rides the survivor payload write below; `lemma_merge_wf` constrains the
-        // survivor's use_list/min_row/atomic/size but not matchable, and
+        // survivor's use_list/min_row/abs/atomic/size but not matchable, and
         // `eg_model_wf` reads neither atomic nor matchable, so the fold preserves
         // wf for free (soundness-free: shielding only removes matches).
         sdata.matchable = sdata.matchable || data.matchable;
@@ -1850,7 +2006,7 @@ where
             assert(self.reprs.id_set() =~= o.reprs.id_set().remove(key.as_nat()));
             // set_live changed only skey's dense slot: distinct live class keys sit
             // at distinct dense positions, so every other survivor's value is
-            // o's, and skey's is `sdata` (o's value with the size folded).
+            // o's, and skey's is `sdata` (o's value with size and matchable folded).
             assert forall|k: <T as DenseId>::Index| #[trigger] o.reprs.contains_spec(k)
                 && k.as_nat() != key.as_nat() && k.as_nat() != skey.as_nat()
                 implies self.reprs.contains_spec(k)
@@ -1888,6 +2044,7 @@ where
             absorbed: ab,
             absorbed_uses: data.use_list,
             absorbed_min_row: data.min_row,
+            absorbed_abs: data.abs,
             absorbed_atomic: data.atomic,
         })
     }
@@ -2000,10 +2157,10 @@ where
                     assert(un[um[l][p] as int].payload == oun[oum[l][p] as int].payload);
                 }
             }
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices, um, un,
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
         }
     }
 
@@ -2038,21 +2195,21 @@ where
                 let si = absorbed_list.id_nat() as int;
                 assert(um == oum.update(di, oum[di] + oum[si]).update(si, Seq::<usize>::empty()));
                 lemma_splice_uses_w5::<T, N>(oum, um, oun, un, di, si, n);
-                assert(eg_model_wf::<T, K, L, N>(
+                assert(eg_model_wf::<T, K, L, N, A>(
                     self.entries.model_view(), self.entries.payload_seq(),
                     self.uf.roots_view(), self.reprs.dense_view(),
                     self.reprs.sparse_view(), self.reprs.indices_view(),
-                    um, un, self.min_pool.view(), self.min_width as nat));
+                    um, un, self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             } else {
                 // the arena refused (equal or out-of-range handles diverge
                 // before mutation) or the ensures' conditional guards fired;
                 // in every returning case the views are unchanged.
                 assert(um == oum && un == oun);
-                assert(eg_model_wf::<T, K, L, N>(
+                assert(eg_model_wf::<T, K, L, N, A>(
                     self.entries.model_view(), self.entries.payload_seq(),
                     self.uf.roots_view(), self.reprs.dense_view(),
                     self.reprs.sparse_view(), self.reprs.indices_view(),
-                    um, un, self.min_pool.view(), self.min_width as nat));
+                    um, un, self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             }
         }
     }
@@ -2105,17 +2262,17 @@ where
                     assert((0 as nat) % (width as nat) == 0);
                 }
             }
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices,
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), width as nat));
+                self.min_pool.view(), width as nat, self.abs_pool.view()));
             // the archive under the NEW width: the live pool is empty and
             // archived pool lengths are bounded by it, so every archived
             // frame's pool is empty, W6 is vacuous at any width, and no
             // other clause reads the width.
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -2125,9 +2282,9 @@ where
                 o.uses.model_snapshots_view(),
                 o.uses.nodes_snapshots_view(),
                 o.min_pool.snapshots_view(),
-                o.min_width as nat));
+                o.min_width as nat, o.abs_pool.snapshots_view()));
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, K, L, N>(
+                implies eg_model_wf::<T, K, L, N, A>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -2137,7 +2294,7 @@ where
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
                     self.min_pool.snapshots_view()[k],
-                    width as nat) by {
+                    width as nat, self.abs_pool.snapshots_view()[k]) by {
                 let pool_k = self.min_pool.snapshots_view()[k];
                 assert(pool_k.len() <= self.min_pool.view().len());
                 assert(pool_k.len() == 0);
@@ -2145,14 +2302,14 @@ where
                 let ix_k = self.reprs.indices_snapshots_view()[k];
                 let de_k = self.reprs.dense_snapshots_view()[k];
                 // old-width frame invariant
-                assert(eg_model_wf::<T, K, L, N>(
+                assert(eg_model_wf::<T, K, L, N, A>(
                     self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
                     de_k, sp_k, ix_k,
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
-                    pool_k, o.min_width as nat));
+                    pool_k, o.min_width as nat, self.abs_pool.snapshots_view()[k]));
                 // no archived live class key can hold a row: the old-width W6
                 // bound reads (r+1)*old_w <= 0 with old_w > 0, or forces
                 // old_w > 0 when a row exists.
@@ -2169,7 +2326,7 @@ where
                     assert((pool_k.len() as nat) % (width as nat) == 0);
                 }
             }
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
                 self.uf.roots_snapshots_view(),
@@ -2179,7 +2336,7 @@ where
                 self.uses.model_snapshots_view(),
                 self.uses.nodes_snapshots_view(),
                 self.min_pool.snapshots_view(),
-                width as nat));
+                width as nat, self.abs_pool.snapshots_view()));
         }
     }
 
@@ -2226,6 +2383,192 @@ where
                     assert(cell.wf());
                 }
                 cell.to_option()
+            }
+        }
+    }
+
+    /// Write a live class's abstract value, allocating one pool entry on first
+    /// use. Refuses a dead key, an unrepresentable handle, or pool exhaustion.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(120)]
+    pub fn set_abs_value(&mut self, key: K, v: A)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).abs_value_spec(key.as_nat()) == Some(v),
+            final(self).contains_key_spec(key),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).roots_view() == old(self).roots_view(),
+            final(self).num_classes_spec() == old(self).num_classes_spec(),
+            final(self).min_width_spec() == old(self).min_width_spec(),
+            final(self).depth_spec() == old(self).depth_spec(),
+            // Unchanged components frame both their live views and archives.
+            final(self).entries_ref() == old(self).entries_ref(),
+            final(self).uses_ref() == old(self).uses_ref(),
+            final(self).roots_archive_view() == old(self).roots_archive_view(),
+            final(self).pool_view() == old(self).pool_view(),
+            final(self).pool_archive() == old(self).pool_archive(),
+            final(self).reprs_sparse_view() == old(self).reprs_sparse_view(),
+            final(self).reprs_indices_view() == old(self).reprs_indices_view(),
+            forall|k: K| final(self).contains_key_spec(k) == old(self).contains_key_spec(k),
+            final(self).reprs_dense_archive() == old(self).reprs_dense_archive(),
+            final(self).reprs_sparse_archive() == old(self).reprs_sparse_archive(),
+            final(self).reprs_indices_archive() == old(self).reprs_indices_archive(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
+            ({
+                let before = old(self).class_data_spec(key.as_nat());
+                let after = final(self).class_data_spec(key.as_nat());
+                &&& after == ClassData::<L, T> {
+                    use_list: before.use_list, min_row: before.min_row, abs: after.abs,
+                    atomic: before.atomic, matchable: before.matchable, size: before.size,
+                }
+                &&& match before.abs {
+                    None => {
+                        &&& after.abs is Some
+                        &&& after.abs->Some_0.as_nat() == old(self).abs_pool_view().len()
+                        &&& final(self).abs_pool_view() == old(self).abs_pool_view().push(v)
+                    },
+                    Some(h) => {
+                        &&& after.abs == Some(h)
+                        &&& final(self).abs_pool_view()
+                            == old(self).abs_pool_view().update(h.as_nat() as int, v)
+                    },
+                }
+            }),
+            forall|id: nat| #[trigger] ss_contains(old(self).reprs_sparse_view(),
+                    old(self).reprs_indices_view(), old(self).num_classes_spec(), id)
+                && id != key.as_nat()
+                ==> final(self).class_data_spec(id) == old(self).class_data_spec(id)
+                    && final(self).abs_value_spec(id) == old(self).abs_value_spec(id),
+    {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
+            crate::guard::refuse("EClasses::set_abs_value: class key is not live");
+        }
+        let ghost o = *old(self);
+        let mut data = self.reprs.get_live(raw_key);
+        proof {
+            assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
+                o.reprs.n_spec(), key.as_nat()));
+            assert(data == o.class_data_spec(key.as_nat()));
+        }
+        let handle = match data.abs {
+            None => {
+                let len = self.abs_pool.len();
+                let h = match <T::Index as IndexLike>::try_from_usize(len) {
+                    Some(h) => h,
+                    None => crate::guard::refuse(
+                        "EClasses::set_abs_value: handle exceeds the id index range"),
+                };
+                match self.abs_pool.try_push(v) {
+                    Ok(()) => (),
+                    Err(_) => crate::guard::refuse(
+                        "EClasses::set_abs_value: abstract-value pool exhausted"),
+                }
+                data.abs = Some(h);
+                self.reprs.set_live(raw_key, data);
+                h
+            },
+            Some(h) => {
+                proof {
+                    // W8b bounds the existing handle before the tracked write.
+                    assert(h.as_nat() < o.abs_pool.view().len());
+                    <T::Index as IndexLike>::lemma_max_nat_fits_usize();
+                }
+                self.abs_pool.set_index(h.as_usize(), v);
+                h
+            },
+        };
+        proof {
+            let dense = self.reprs.dense_view();
+            let sparse = self.reprs.sparse_view();
+            let indices = self.reprs.indices_view();
+            let live = self.reprs.n_spec();
+            let odense = o.reprs.dense_view();
+            let osparse = o.reprs.sparse_view();
+            let oindices = o.reprs.indices_view();
+            assert(sparse == osparse && indices == oindices && live == o.reprs.n_spec());
+            assert(self.class_data_spec(key.as_nat()).abs == Some(handle));
+            assert(handle.as_nat() < self.abs_pool.view().len());
+            // Distinct live keys occupy distinct dense positions. The payload
+            // write therefore changes only the target's abstract-value handle.
+            assert forall|id: nat| #[trigger] ss_contains(sparse, indices, live, id)
+                && id != key.as_nat()
+                implies ss_value(dense, sparse, id) == ss_value(odense, osparse, id) by {
+                assert(osparse[id as int].as_nat()
+                    != osparse[key.as_nat() as int].as_nat()) by {
+                    if osparse[id as int].as_nat() == osparse[key.as_nat() as int].as_nat() {
+                        assert(oindices[osparse[id as int].as_nat() as int].as_nat() == id);
+                    }
+                }
+            }
+            // These are exactly the payload projections read by W1-W7.
+            assert forall|id: nat| #[trigger] ss_contains(sparse, indices, live, id)
+                implies ss_value(dense, sparse, id).use_list == ss_value(odense, osparse, id).use_list
+                    && ss_value(dense, sparse, id).min_row == ss_value(odense, osparse, id).min_row
+                    && ss_value(dense, sparse, id).size == ss_value(odense, osparse, id).size by {}
+            // W8b: the target is allocated; every other handle keeps its old
+            // bound, and neither path shrinks the pool.
+            assert forall|id: nat| #[trigger] ss_contains(sparse, indices, live, id)
+                && ss_value(dense, sparse, id).abs is Some
+                implies ss_value(dense, sparse, id).abs->Some_0.as_nat()
+                    < self.abs_pool.view().len() by {
+                if id != key.as_nat() {
+                    assert(ss_value(dense, sparse, id) == ss_value(odense, osparse, id));
+                    assert(ss_value(odense, osparse, id).abs->Some_0.as_nat()
+                        < o.abs_pool.view().len());
+                }
+            }
+            // An old handle is below the fresh tail index on allocation;
+            // on overwrite, old W8c separates it from the target's handle.
+            assert forall|id: nat| #[trigger] ss_contains(sparse, indices, live, id)
+                && id != key.as_nat() && ss_value(dense, sparse, id).abs is Some
+                implies ss_value(dense, sparse, id).abs->Some_0.as_nat() != handle.as_nat() by {
+                assert(ss_value(dense, sparse, id) == ss_value(odense, osparse, id));
+                assert(ss_value(odense, osparse, id).abs->Some_0.as_nat()
+                    < o.abs_pool.view().len());
+            }
+            // W8c, split into target/other, other/target, and two old handles.
+            assert forall|id1: nat, id2: nat|
+                ss_contains(sparse, indices, live, id1)
+                    && ss_contains(sparse, indices, live, id2) && id1 != id2
+                    && #[trigger] ss_value(dense, sparse, id1).abs is Some
+                    && #[trigger] ss_value(dense, sparse, id2).abs is Some
+                implies ss_value(dense, sparse, id1).abs->Some_0.as_nat()
+                    != ss_value(dense, sparse, id2).abs->Some_0.as_nat() by {
+                if id1 == key.as_nat() {
+                    assert(ss_value(dense, sparse, id2).abs->Some_0.as_nat() != handle.as_nat());
+                } else if id2 == key.as_nat() {
+                    assert(ss_value(dense, sparse, id1).abs->Some_0.as_nat() != handle.as_nat());
+                } else {
+                    assert(ss_value(dense, sparse, id1) == ss_value(odense, osparse, id1));
+                    assert(ss_value(dense, sparse, id2) == ss_value(odense, osparse, id2));
+                }
+            }
+            assert(eg_model_wf::<T, K, L, N, A>(
+                self.entries.model_view(), self.entries.payload_seq(),
+                self.uf.roots_view(), dense, sparse, indices,
+                self.uses.model_view(), self.uses.nodes_view(),
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
+            // Append preserves the old prefix; update preserves every cell
+            // other than handle. W8c turns that cell frame into a class frame.
+            assert forall|id: nat| #[trigger] ss_contains(osparse, oindices, o.reprs.n_spec(), id)
+                && id != key.as_nat()
+                implies self.class_data_spec(id) == o.class_data_spec(id)
+                    && self.abs_value_spec(id) == o.abs_value_spec(id) by {
+                if let Some(h) = o.class_data_spec(id).abs {
+                    assert(h.as_nat() < o.abs_pool.view().len());
+                    assert(h.as_nat() != handle.as_nat());
+                    assert(self.abs_pool.view()[h.as_nat() as int]
+                        == o.abs_pool.view()[h.as_nat() as int]);
+                }
+            }
+            // All snapshot arguments of the opaque archive predicate are
+            // unchanged. Only its external live-length bound needs transport.
+            assert forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len() by {
+                assert(self.abs_pool.snapshots_view()[k].len() <= o.abs_pool.view().len());
             }
         }
     }
@@ -2393,12 +2736,12 @@ where
         self.min_pool.set_index(base + col, cell);
         proof {
             assert(self.min_pool.view().len() == mid.min_pool.view().len());
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             // the pool only grew, so the archived-length bound carries.
             assert(self.min_pool.snapshots_view() == o.min_pool.snapshots_view());
             assert(o.min_pool.view().len() <= self.min_pool.view().len());
@@ -2422,6 +2765,7 @@ where
             self.entries == o.entries,
             self.uf == o.uf,
             self.uses == o.uses,
+            self.abs_pool.view() == o.abs_pool.view(),
             self.min_width == o.min_width,
             (o.min_width as nat) > 0,
             self.reprs.wf(),
@@ -2442,6 +2786,10 @@ where
                 .size
                 == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), key.as_nat())
                     .size,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
+                .abs
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), key.as_nat())
+                    .abs,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
                 .min_row is Some,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
@@ -2469,12 +2817,12 @@ where
                         .min_row->Some_0.as_nat() + 1) * (o.min_width as nat)
                         <= self.min_pool.view().len(),
         ensures
-            eg_model_wf::<T, K, L, N>(
+            eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat),
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()),
     {
         let dense = self.reprs.dense_view();
         let sparse = self.reprs.sparse_view();
@@ -2489,7 +2837,9 @@ where
             implies ss_value(dense, sparse, kk).use_list
                     == ss_value(odense, osparse, kk).use_list
                 && ss_value(dense, sparse, kk).size
-                    == ss_value(odense, osparse, kk).size by {
+                    == ss_value(odense, osparse, kk).size
+                && ss_value(dense, sparse, kk).abs
+                    == ss_value(odense, osparse, kk).abs by {
             if kk != key.as_nat() {
                 assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
             }
@@ -2497,11 +2847,34 @@ where
         assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
             && kk != key.as_nat()
             implies ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk) by {}
-        assert(eg_model_wf::<T, K, L, N>(
+        // --- W8: live membership, handles, and the abstract-value pool are unchanged.
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            && ss_value(dense, sparse, kk).abs is Some
+            implies ss_value(dense, sparse, kk).abs->Some_0.as_nat()
+                < self.abs_pool.view().len() by {
+            assert(ss_contains(osparse, oindices, o.reprs.n_spec(), kk));
+            assert(ss_value(dense, sparse, kk).abs
+                == ss_value(odense, osparse, kk).abs);
+        }
+        assert forall|k1: nat, k2: nat|
+            ss_contains(sparse, indices, live, k1)
+                && ss_contains(sparse, indices, live, k2) && k1 != k2
+                && #[trigger] ss_value(dense, sparse, k1).abs is Some
+                && #[trigger] ss_value(dense, sparse, k2).abs is Some
+            implies ss_value(dense, sparse, k1).abs->Some_0.as_nat()
+                != ss_value(dense, sparse, k2).abs->Some_0.as_nat() by {
+            assert(ss_contains(osparse, oindices, o.reprs.n_spec(), k1));
+            assert(ss_contains(osparse, oindices, o.reprs.n_spec(), k2));
+            assert(ss_value(dense, sparse, k1).abs
+                == ss_value(odense, osparse, k1).abs);
+            assert(ss_value(dense, sparse, k2).abs
+                == ss_value(odense, osparse, k2).abs);
+        }
+        assert(eg_model_wf::<T, K, L, N, A>(
             self.entries.model_view(), self.entries.payload_seq(),
             self.uf.roots_view(), dense, sparse, indices,
             self.uses.model_view(), self.uses.nodes_view(),
-            self.min_pool.view(), self.min_width as nat));
+            self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
     }
 
     /// Whether class `key` is atomic (referenced as a child). Refuses a
@@ -2590,11 +2963,11 @@ where
                     assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
                 }
             }
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices,
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
         }
     }
 
@@ -2650,11 +3023,11 @@ where
                     assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
                 }
             }
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices,
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
         }
     }
 
@@ -2733,6 +3106,51 @@ where
         self.reprs.get_live(raw_key).size.as_usize()
     }
 
+    /// Read the optional abstract-value handle of live class `key`.
+    /// Refuses a dead key.
+    pub fn abs_handle(&self, key: K) -> (h: Option<<T as DenseId>::Index>)
+        requires self.wf(),
+        ensures h == self.class_data_spec(key.as_nat()).abs,
+    {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
+            crate::guard::refuse("EClasses::abs_handle: class key is not live");
+        }
+        self.reprs.get_live(raw_key).abs
+    }
+
+    /// Read an abstract-value entry through a handle, including one carried
+    /// by an absorbed class's MergeInfo. Refuses an unallocated handle.
+    pub fn abs_value_at(&self, h: Option<<T as DenseId>::Index>) -> (r: Option<A>)
+        requires self.wf(),
+        ensures
+            h matches Some(i) ==> r == Some(self.abs_pool_view()[i.as_nat() as int]),
+            h is None ==> r is None,
+    {
+        match h {
+            None => None,
+            Some(handle) => {
+                proof { <T::Index as IndexLike>::lemma_max_nat_fits_usize(); }
+                let index = handle.as_usize();
+                let len = self.abs_pool.len();
+                if !(index < len) {
+                    crate::guard::refuse("EClasses::abs_value_at: handle is not allocated");
+                }
+                Some(self.abs_pool.get_index(index))
+            }
+        }
+    }
+
+    /// Read live class `key`'s abstract value, or None without a handle.
+    /// Refuses a dead key.
+    pub fn abs_value(&self, key: K) -> (r: Option<A>)
+        requires self.wf(),
+        ensures r == self.abs_value_spec(key.as_nat()),
+    {
+        let h = self.abs_handle(key);
+        self.abs_value_at(h)
+    }
+
     /// Read completion column `col` of a pool row number carried in
     /// `MergeInfo` (production's `min_monomial_at_row`): `None` when the row
     /// is absent or the cell is empty. Refuses an out-of-range column or an
@@ -2784,6 +3202,8 @@ where
         requires old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
             final(self).n_spec() == old(self).n_spec(),
             final(self).min_width_spec() == old(self).min_width_spec(),
             a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
@@ -2800,6 +3220,12 @@ where
                                 mi.absorbed.id_nat())
                         &&& final(self).num_classes_spec()
                             == old(self).num_classes_spec() - 1
+                        &&& mi.absorbed_abs == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).abs
+                        &&& final(self).class_data_spec(
+                                final(self).key_of(mi.survivor.id_nat() as int)).abs
+                            == old(self).class_data_spec(
+                                old(self).key_of(mi.survivor.id_nat() as int)).abs
                     })
             },
     {
@@ -2827,6 +3253,7 @@ where
             final(self).reprs == old(self).reprs,
             final(self).uses == old(self).uses,
             final(self).min_pool == old(self).min_pool,
+            final(self).abs_pool == old(self).abs_pool,
             // Returning at all means the range check passed (it refuses
             // otherwise), so the facts are unconditional.
             a.id_nat() < old(self).n_spec(),
@@ -2865,6 +3292,8 @@ where
         requires old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
             final(self).n_spec() == old(self).n_spec(),
             a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
                 let ra = old(self).roots_view()[a.id_nat() as int] as nat;
@@ -2876,6 +3305,12 @@ where
                         &&& final(self).roots_view() == crate::union_find::merge_roots(
                                 old(self).roots_view(), mi.survivor.id_nat(),
                                 mi.absorbed.id_nat())
+                        &&& mi.absorbed_abs == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).abs
+                        &&& final(self).class_data_spec(
+                                final(self).key_of(mi.survivor.id_nat() as int)).abs
+                            == old(self).class_data_spec(
+                                old(self).key_of(mi.survivor.id_nat() as int)).abs
                     })
             },
     {
@@ -2895,6 +3330,8 @@ where
         requires old(self).wf(),
         ensures
             final(self).wf(),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive(),
             final(self).n_spec() == old(self).n_spec(),
             a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
                 let ra = old(self).roots_view()[a.id_nat() as int] as nat;
@@ -2906,6 +3343,12 @@ where
                         &&& final(self).roots_view() == crate::union_find::merge_roots(
                                 old(self).roots_view(), mi.survivor.id_nat(),
                                 mi.absorbed.id_nat())
+                        &&& mi.absorbed_abs == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).abs
+                        &&& final(self).class_data_spec(
+                                final(self).key_of(mi.survivor.id_nat() as int)).abs
+                            == old(self).class_data_spec(
+                                old(self).key_of(mi.survivor.id_nat() as int)).abs
                     })
             },
     {
@@ -2917,8 +3360,8 @@ where
 // Semi-persistence: compose from the five components
 // ---------------------------------------------------------------------------
 
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P>
-    EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A>
+    EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -2933,7 +3376,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
 
     /// Push a frame on every component without minting (what a typed group
@@ -2963,6 +3408,8 @@ where
             final(self).reprs_indices_archive() == old(self).reprs_indices_archive().push(old(self).reprs_indices_view()),
             final(self).uses_model_archive() == old(self).uses_model_archive().push(old(self).uses_model_view()),
             final(self).pool_archive() == old(self).pool_archive().push(old(self).pool_view()),
+            final(self).abs_pool_view() == old(self).abs_pool_view(),
+            final(self).abs_pool_archive() == old(self).abs_pool_archive().push(old(self).abs_pool_view()),
     {
         let ghost o = *old(self);
         let d = self.min_pool.depth_exec();
@@ -2973,7 +3420,8 @@ where
             && self.uf.parent.depth_exec() == d
             && self.uf.rank.depth_exec() == d
             && self.uses.heads.depth_exec() == d
-            && self.uses.nodes.depth_exec() == d)
+            && self.uses.nodes.depth_exec() == d
+            && self.abs_pool.depth_exec() == d)
         {
             crate::guard::refuse("EClasses: components out of step");
         }
@@ -3010,14 +3458,18 @@ where
         if !self.min_pool.can_mark() {
             crate::guard::refuse("EClasses::push_frames: pool cannot open another frame");
         }
+        if !self.abs_pool.can_mark() {
+            crate::guard::refuse("EClasses::push_frames: abstract-value pool cannot open another frame");
+        }
         self.entries.push_frames(shrink);
         self.reprs.push_frames(shrink);
         self.uf.push_frames(shrink);
         self.uses.push_frames(shrink);
         self.min_pool.push_frame(shrink);
+        self.abs_pool.push_frame(shrink);
         proof {
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -3027,14 +3479,14 @@ where
                 o.uses.model_snapshots_view(),
                 o.uses.nodes_snapshots_view(),
                 o.min_pool.snapshots_view(),
-                o.min_width as nat));
+                o.min_width as nat, o.abs_pool.snapshots_view()));
             let k_new = self.entries.model_snapshots_view().len() - 1;
             // the pushed frame archives the live views; the live joint
             // invariant IS eg_model_wf over them. The payload projection of
             // the pushed cell snapshot is the live payload_seq.
             assert(ring_payloads(self.entries.entries_snapshots_view()[k_new])
                 =~= o.entries.payload_seq());
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_snapshots_view()[k_new],
                 ring_payloads(self.entries.entries_snapshots_view()[k_new]),
                 self.uf.roots_snapshots_view()[k_new],
@@ -3044,13 +3496,13 @@ where
                 self.uses.model_snapshots_view()[k_new],
                 self.uses.nodes_snapshots_view()[k_new],
                 self.min_pool.snapshots_view()[k_new],
-                self.min_width as nat));
+                self.min_width as nat, self.abs_pool.snapshots_view()[k_new]));
             assert(crate::sparse_set::sparse_set_snap_wf(
                 self.reprs.dense_snapshots_view()[k_new],
                 self.reprs.sparse_snapshots_view()[k_new],
                 self.reprs.indices_snapshots_view()[k_new]));
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, K, L, N>(
+                implies eg_model_wf::<T, K, L, N, A>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -3060,7 +3512,7 @@ where
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
                     self.min_pool.snapshots_view()[k],
-                    self.min_width as nat)
+                    self.min_width as nat, self.abs_pool.snapshots_view()[k])
                 && crate::sparse_set::sparse_set_snap_wf(
                     self.reprs.dense_snapshots_view()[k],
                     self.reprs.sparse_snapshots_view()[k],
@@ -3104,6 +3556,31 @@ where
                         <= o.min_pool.view().len());
                 }
             }
+            // the same two facts for the abstract-value pool.
+            assert forall|k1: int, k2: int|
+                0 <= k1 <= k2 < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k1]).len()
+                    <= (#[trigger] self.abs_pool.snapshots_view()[k2]).len() by {
+                if k2 < k_new {
+                    assert(self.abs_pool.snapshots_view()[k1]
+                        == o.abs_pool.snapshots_view()[k1]);
+                    assert(self.abs_pool.snapshots_view()[k2]
+                        == o.abs_pool.snapshots_view()[k2]);
+                } else if k1 < k_new {
+                    assert(self.abs_pool.snapshots_view()[k1]
+                        == o.abs_pool.snapshots_view()[k1]);
+                    assert(self.abs_pool.snapshots_view()[k1].len()
+                        <= o.abs_pool.view().len());
+                }
+            }
+            assert forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len() by {
+                if k < k_new {
+                    assert(self.abs_pool.snapshots_view()[k]
+                        == o.abs_pool.snapshots_view()[k]);
+                }
+            }
         }
     }
 
@@ -3143,6 +3620,12 @@ where
                 &&& final(self).uses_model_archive() == old(self).uses_model_archive().subrange(0, f + 1)
                 &&& final(self).pool_view() == old(self).pool_archive()[f]
                 &&& final(self).pool_archive() == old(self).pool_archive().subrange(0, f + 1)
+                &&& final(self).abs_pool_view() == old(self).abs_pool_archive()[f]
+                &&& final(self).abs_pool_archive() == old(self).abs_pool_archive().subrange(0, f + 1)
+                // every class's abstract value is its value at mark `target`.
+                &&& forall|id: nat| #[trigger] final(self).abs_value_spec(id) == abs_value_of(
+                        old(self).reprs_dense_archive()[f], old(self).reprs_sparse_archive()[f],
+                        old(self).abs_pool_archive()[f], id)
             }),
     {
         let d = self.min_pool.depth_exec();
@@ -3153,7 +3636,8 @@ where
             && self.uf.parent.depth_exec() == d
             && self.uf.rank.depth_exec() == d
             && self.uses.heads.depth_exec() == d
-            && self.uses.nodes.depth_exec() == d)
+            && self.uses.nodes.depth_exec() == d
+            && self.abs_pool.depth_exec() == d)
         {
             crate::guard::refuse("EClasses: components out of step");
         }
@@ -3174,7 +3658,7 @@ where
         let ghost f = target as int;
         proof {
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -3184,7 +3668,7 @@ where
                 o.uses.model_snapshots_view(),
                 o.uses.nodes_snapshots_view(),
                 o.min_pool.snapshots_view(),
-                o.min_width as nat));
+                o.min_width as nat, o.abs_pool.snapshots_view()));
             // the archived frame f is a jointly-valid state; in particular
             // the repr triple is sparse-set well-formed, which is
             // SparseSet::restore's precondition.
@@ -3198,6 +3682,7 @@ where
         self.uf.reset_frames(target);
         self.uses.reset_frames(target);
         self.min_pool.reset_frame(target);
+        self.abs_pool.reset_frame(target);
         proof {
             reveal(eg_archive_agrees);
             // restored views are the archived frame-f views.
@@ -3205,15 +3690,15 @@ where
             assert(self.entries.payload_seq()
                 =~= ring_payloads(o.entries.entries_snapshots_view()[f]));
             assert(self.uf.roots_view() == o.uf.roots_snapshots_view()[f]);
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             // truncated stacks agree per frame below f.
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, K, L, N>(
+                implies eg_model_wf::<T, K, L, N, A>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -3223,7 +3708,7 @@ where
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
                     self.min_pool.snapshots_view()[k],
-                    self.min_width as nat)
+                    self.min_width as nat, self.abs_pool.snapshots_view()[k])
                 && crate::sparse_set::sparse_set_snap_wf(
                     self.reprs.dense_snapshots_view()[k],
                     self.reprs.sparse_snapshots_view()[k],
@@ -3263,6 +3748,24 @@ where
                     <= self.min_pool.view().len() by {
                 assert(o.min_pool.snapshots_view()[k].len()
                     <= o.min_pool.snapshots_view()[f].len());
+            }
+            // the same two facts for the abstract-value pool.
+            assert forall|k1: int, k2: int|
+                0 <= k1 <= k2 < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k1]).len()
+                    <= (#[trigger] self.abs_pool.snapshots_view()[k2]).len() by {
+                assert(self.abs_pool.snapshots_view()[k1]
+                    == o.abs_pool.snapshots_view()[k1]);
+                assert(self.abs_pool.snapshots_view()[k2]
+                    == o.abs_pool.snapshots_view()[k2]);
+            }
+            assert forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len() by {
+                assert(self.abs_pool.snapshots_view()[k]
+                    == o.abs_pool.snapshots_view()[k]);
+                assert(o.abs_pool.snapshots_view()[k].len()
+                    <= o.abs_pool.snapshots_view()[f].len());
             }
         }
     }
@@ -3301,6 +3804,13 @@ where
                 &&& final(self).uses_model_archive() == old(self).uses_model_archive().subrange(0, f)
                 &&& final(self).pool_view() == old(self).pool_archive()[f]
                 &&& final(self).pool_archive() == old(self).pool_archive().subrange(0, f)
+                &&& final(self).abs_pool_view() == old(self).abs_pool_archive()[f]
+                &&& final(self).abs_pool_archive() == old(self).abs_pool_archive().subrange(0, f)
+                // the semi-persistence theorem for abstract values: every
+                // class's handle and pool entry are those at mark `target`.
+                &&& forall|id: nat| #[trigger] final(self).abs_value_spec(id) == abs_value_of(
+                        old(self).reprs_dense_archive()[f], old(self).reprs_sparse_archive()[f],
+                        old(self).abs_pool_archive()[f], id)
             }),
     {
         let d = self.min_pool.depth_exec();
@@ -3311,7 +3821,8 @@ where
             && self.uf.parent.depth_exec() == d
             && self.uf.rank.depth_exec() == d
             && self.uses.heads.depth_exec() == d
-            && self.uses.nodes.depth_exec() == d)
+            && self.uses.nodes.depth_exec() == d
+            && self.abs_pool.depth_exec() == d)
         {
             crate::guard::refuse("EClasses: components out of step");
         }
@@ -3332,7 +3843,7 @@ where
         let ghost f = target as int;
         proof {
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, K, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N, A>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -3342,7 +3853,7 @@ where
                 o.uses.model_snapshots_view(),
                 o.uses.nodes_snapshots_view(),
                 o.min_pool.snapshots_view(),
-                o.min_width as nat));
+                o.min_width as nat, o.abs_pool.snapshots_view()));
             // the archived frame f is a jointly-valid state; in particular
             // the repr triple is sparse-set well-formed, which is
             // SparseSet::restore's precondition.
@@ -3356,6 +3867,7 @@ where
         self.uf.restore_frames(target);
         self.uses.restore_frames(target);
         self.min_pool.restore_frame(target);
+        self.abs_pool.restore_frame(target);
         proof {
             reveal(eg_archive_agrees);
             // restored views are the archived frame-f views.
@@ -3363,15 +3875,15 @@ where
             assert(self.entries.payload_seq()
                 =~= ring_payloads(o.entries.entries_snapshots_view()[f]));
             assert(self.uf.roots_view() == o.uf.roots_snapshots_view()[f]);
-            assert(eg_model_wf::<T, K, L, N>(
+            assert(eg_model_wf::<T, K, L, N, A>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat, self.abs_pool.view()));
             // truncated stacks agree per frame below f.
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, K, L, N>(
+                implies eg_model_wf::<T, K, L, N, A>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -3381,7 +3893,7 @@ where
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
                     self.min_pool.snapshots_view()[k],
-                    self.min_width as nat)
+                    self.min_width as nat, self.abs_pool.snapshots_view()[k])
                 && crate::sparse_set::sparse_set_snap_wf(
                     self.reprs.dense_snapshots_view()[k],
                     self.reprs.sparse_snapshots_view()[k],
@@ -3422,6 +3934,24 @@ where
                 assert(o.min_pool.snapshots_view()[k].len()
                     <= o.min_pool.snapshots_view()[f].len());
             }
+            // the same two facts for the abstract-value pool.
+            assert forall|k1: int, k2: int|
+                0 <= k1 <= k2 < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k1]).len()
+                    <= (#[trigger] self.abs_pool.snapshots_view()[k2]).len() by {
+                assert(self.abs_pool.snapshots_view()[k1]
+                    == o.abs_pool.snapshots_view()[k1]);
+                assert(self.abs_pool.snapshots_view()[k2]
+                    == o.abs_pool.snapshots_view()[k2]);
+            }
+            assert forall|k: int| 0 <= k < self.abs_pool.snapshots_view().len()
+                implies (#[trigger] self.abs_pool.snapshots_view()[k]).len()
+                    <= self.abs_pool.view().len() by {
+                assert(self.abs_pool.snapshots_view()[k]
+                    == o.abs_pool.snapshots_view()[k]);
+                assert(o.abs_pool.snapshots_view()[k].len()
+                    <= o.abs_pool.snapshots_view()[f].len());
+            }
         }
     }
 
@@ -3439,8 +3969,8 @@ where
 // the union-find's glue — doc/design/egraph-class-layer.md).
 // ---------------------------------------------------------------------------
 
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P>
-    EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A>
+    EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -3455,7 +3985,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
     /// Merge with justification (records the proof edge `a—b`).
     pub fn merge_justified(&mut self, a: T, b: T, just: J) -> Option<MergeInfo<T, L>> {
@@ -3517,8 +4049,8 @@ where
 }
 
 // Production-surface parity (the pre-swap class layer shipped Default).
-impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P> Default
-    for EClasses<T, K, L, N, J, TRACK, PROOFS, P>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool, P, A> Default
+    for EClasses<T, K, L, N, J, TRACK, PROOFS, P, A>
 where
     T: DenseId,
     K: DenseId<Index = T::Index>,
@@ -3533,7 +4065,9 @@ where
         + TaggedFamily<J, T::Index, TRACK>
         + TaggedFamily<ListHead<N>, L::Index, TRACK>
         + TaggedFamily<ListNode<T, N>, N::Index, TRACK>
-        + PlainFamily<Opt<T>, usize, TRACK>,
+        + PlainFamily<Opt<T>, usize, TRACK>
+        + PlainFamily<A, usize, TRACK>,
+    A: Copy + core::default::Default,
 {
     fn default() -> Self {
         Self::new()

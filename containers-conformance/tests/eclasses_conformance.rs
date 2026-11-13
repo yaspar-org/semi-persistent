@@ -54,16 +54,15 @@ fn ring_cell_is_two_words_at_both_id_widths() {
 
 #[cfg(target_pointer_width = "64")]
 #[test]
-/// The slot was 12 bytes until the verified member-count word landed for the
-/// `--union-by size`/`sum` survivor policy. `egraph/src/classes.rs` pins the
-/// same 16 on the production side.
-fn class_slot_is_16_bytes_at_31_bit_ids() {
+/// Option A adds an abstract-value handle and presence flag to the former
+/// 16-byte slot. `egraph/src/classes.rs` pins the same 20-byte representation.
+fn class_slot_is_20_bytes_at_31_bit_ids() {
     use verus::tagged::Tagged;
     assert_eq!(
         core::mem::size_of::<<verus::eclasses::ClassData<CL, CE> as Tagged>::Repr>(),
-        16,
+        20,
         "per-class slot: use-list word (4) + row number (4) + member count (4) \
-         + two flags, padded to 16"
+         + abstract-value handle (4) + four flags (4)"
     );
 }
 

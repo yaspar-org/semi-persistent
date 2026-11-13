@@ -47,24 +47,32 @@ const _: () = assert!(
     "e-class ring cell must stay two words at 31-bit ids"
 );
 
-// The per-class slot: a use-list head, `min_row`, the member-count word (the
-// `--union-by` policy input, `T::Index`-wide so it follows the id
-// configuration), and two flags — 16 bytes at 31-bit ids. Was 12 before the
-// verified size counter landed; the count word is the deliberate growth.
+// The per-class slot has four configured-width words: use-list head, min-row,
+// abstract-value handle, and member count; plus four flags (row presence,
+// handle presence, atomic, matchable). Option A grows the 31-bit slot from
+// 16 to 20 bytes (21-abstract-value-pool.md §5). Measured against f8276da
+// on the corpus programs (release, Apple M4, median of 10 interleaved runs,
+// peak RSS from `/usr/bin/time -l`): RSS changes by -0.6%/+4.1% on
+// math-microbenchmark rules/native (243/226 MB before), +0.07% on acgen
+// rules (916 MB), within +-2% on every smaller program; wall time is within
+// run-to-run spread (under 1%) everywhere.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
     core::mem::size_of::<<ClassData<crate::id::UseListId, crate::id::ENodeId> as Tagged>::Repr>()
-        == 16,
-    "per-class slot must stay 16 bytes at 31-bit ids"
+        == 20,
+    "per-class slot must stay 20 bytes at 31-bit ids"
 );
 
-// The 63-bit configuration's slot: the same fields at 8-byte words.
+// The 63-bit configuration uses the same fields at 8-byte words, padded to
+// 40 bytes (previously 32). Measured as above with `--bits 64` (median of 6):
+// RSS +8.6%/+3.2% on math-microbenchmark rules/native (409/380 MB before),
+// +0.17% on acgen rules (1655 MB), -0.7% on eqsolve; wall time within 4%.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
     core::mem::size_of::<
         <ClassData<crate::nodes::UseListId64, crate::nodes::ENodeId64> as Tagged>::Repr,
-    >() <= 32,
-    "per-class slot exceeds 32 bytes at 63-bit ids"
+    >() <= 40,
+    "per-class slot exceeds 40 bytes at 63-bit ids"
 );
 
 #[cfg(test)]

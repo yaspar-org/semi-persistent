@@ -175,7 +175,7 @@ Canonical terms; other phrasings defer to these.
   is its state adjective.
 - **spelling**: one of a class's `Seq` nodes, the A-only analogue of an
   AC monomial (Chapter 6 §14).
-- **W-invariants** (W1-W7): defined and proved in
+- **W-invariants** (W1-W8): defined and proved in
   `containers-verus/src/eclasses.rs`; every citation points there.
 
 ---
