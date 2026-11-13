@@ -939,48 +939,22 @@ mod tests {
     type SR = SortRegistry<SortId, false>;
     type OR = OpRegistry<OpId, SortId, false>;
 
-    // -- Id-space exhaustion --
+    // -- Id space --
     //
-    // `RuleId` is 15-bit while its log's index word is `u16`, so the log can hold a
-    // position (up to 65534) that no `RuleId` can name. That gap is why the mint has
-    // to be checked before mutation: position 32768 must be rejected without adding
-    // an unnameable registry entry.
+    // `RuleId` is 31-bit. It was 15-bit, which capped a program at 32,767 rules; a
+    // registry filled past that bound must keep every id distinct.
 
-    /// `RuleId`'s id bound, asserted rather than assumed: `id_bound()` is a spec
-    /// function, so exec code reads the bound off `try_new`'s boundary.
-    fn rule_id_bound() -> usize {
-        let bound = 1usize << 15; // define_id15!
-        assert!(RuleId::try_new(bound - 1).is_some(), "bound is too high");
-        assert!(RuleId::try_new(bound).is_none(), "bound is too low");
-        bound
-    }
-
-    /// Every position below the id bound mints its own distinct id.
+    /// 40,000 rules, past the former 15-bit bound, mint distinct ids in order.
     #[test]
-    fn rule_registry_fills_its_id_space_without_aliasing() {
-        let bound = rule_id_bound();
+    fn rule_registry_holds_more_than_32767_rules() {
+        let n = 40_000usize;
         let mut r: RuleRegistry<false> = RuleRegistry::new();
-        for i in 0..bound {
+        for i in 0..n {
             assert_eq!(r.register(&format!("r{i}"), "l", "r").to_usize(), i);
         }
-        assert_eq!(r.len(), bound);
-        // The last id round-trips, so no earlier entry was overwritten.
-        assert_eq!(
-            r.name(id_at::<RuleId>(bound - 1)),
-            format!("r{}", bound - 1)
-        );
+        assert_eq!(r.len(), n);
+        assert_eq!(r.name(id_at::<RuleId>(n - 1)), format!("r{}", n - 1));
         assert_eq!(r.id_by_name("r0").unwrap().to_usize(), 0);
-    }
-
-    /// One past the bound panics rather than aliasing rule 0.
-    #[test]
-    #[should_panic(expected = "the id space is exhausted")]
-    fn rule_registry_past_its_id_space_panics() {
-        let bound = rule_id_bound();
-        let mut r: RuleRegistry<false> = RuleRegistry::new();
-        for i in 0..=bound {
-            r.register(&format!("r{i}"), "l", "r");
-        }
     }
 
     #[test]

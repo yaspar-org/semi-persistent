@@ -20,7 +20,7 @@ use semi_persistent_egraph::union_find::{Justification, ProofBuf};
 
 type Eg<const TRACK: bool, const PROOFS: bool> = EGraph31<NiraLitVal, TRACK, PROOFS>;
 
-fn axiom(i: u16) -> Justification<semi_persistent_egraph::ENodeId> {
+fn axiom(i: u32) -> Justification<semi_persistent_egraph::ENodeId> {
     Justification::Axiom {
         axiom_id: AxiomId::new(i),
     }

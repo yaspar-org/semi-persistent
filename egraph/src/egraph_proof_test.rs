@@ -23,7 +23,7 @@ mod test {
                 nodes[i],
                 nodes[i + 1],
                 Justification::Axiom {
-                    axiom_id: crate::id::AxiomId::new(i as u16),
+                    axiom_id: crate::id::AxiomId::new(i as u32),
                 },
             );
         }
@@ -417,7 +417,7 @@ mod kind_proof_tests {
     fn has_axiom(buf: &ProofBuf<ENodeId>, id: u32) -> bool {
         buf.steps.iter().any(|(_, _, j)| {
             *j == Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(id as u16),
+                axiom_id: crate::id::AxiomId::new(id as u32),
             }
         })
     }
@@ -825,7 +825,7 @@ mod stress_proof_test {
             }
             let a = ENodeId::new(a_idx as u32);
             let b = ENodeId::new(b_idx as u32);
-            let axiom_id = crate::id::AxiomId::new(i as u16);
+            let axiom_id = crate::id::AxiomId::new(i as u32);
             if eg
                 .merge_justified(a, b, Justification::Axiom { axiom_id })
                 .is_some()
@@ -954,7 +954,7 @@ mod stress_proof_test {
             }
             let a = ENodeId::new(a_idx as u32);
             let b = ENodeId::new(b_idx as u32);
-            let axiom_id = crate::id::AxiomId::new(i as u16);
+            let axiom_id = crate::id::AxiomId::new(i as u32);
             eg.merge_justified(a, b, Justification::Axiom { axiom_id });
         }
         eprintln!("[completion] seed={seed} starting rebuild");
@@ -1029,7 +1029,7 @@ mod stress_proof_test {
             }
             let a = ENodeId::new(a_idx as u32);
             let b = ENodeId::new(b_idx as u32);
-            let axiom_id = crate::id::AxiomId::new(i as u16);
+            let axiom_id = crate::id::AxiomId::new(i as u32);
             eg.merge_justified(a, b, Justification::Axiom { axiom_id });
         }
         eg.rebuild();
@@ -1168,7 +1168,7 @@ mod aci_deep_proof_test {
                 left_only[i],
                 right_only[i],
                 Justification::Axiom {
-                    axiom_id: crate::id::AxiomId::new(i as u16),
+                    axiom_id: crate::id::AxiomId::new(i as u32),
                 },
             );
         }
@@ -1230,7 +1230,7 @@ mod aci_deep_proof_test {
             assert!(
                 buf.steps.iter().any(|(_, _, j)| *j
                     == Justification::Axiom {
-                        axiom_id: crate::id::AxiomId::new(i as u16)
+                        axiom_id: crate::id::AxiomId::new(i as u32)
                     }),
                 "missing axiom #{i}"
             );
@@ -1327,7 +1327,7 @@ mod bench_overhead {
                     a,
                     b,
                     Justification::Axiom {
-                        axiom_id: crate::id::AxiomId::new(i as u16),
+                        axiom_id: crate::id::AxiomId::new(i as u32),
                     },
                 );
             } else {

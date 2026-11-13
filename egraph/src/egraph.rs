@@ -2190,7 +2190,7 @@ where
         )?;
         writeln!(out, "axioms {}", self.axioms.len())?;
         for i in 0..self.axioms.len() {
-            let id = crate::id::AxiomId::new(i as u16);
+            let id = crate::id::AxiomId::new(i as u32);
             let info = self.axioms.info(id);
             writeln!(
                 out,
@@ -7094,7 +7094,7 @@ mod tests {
                 a,
                 b,
                 Justification::Axiom {
-                    axiom_id: crate::id::AxiomId::new(i as u16),
+                    axiom_id: crate::id::AxiomId::new(i as u32),
                 },
             );
         }

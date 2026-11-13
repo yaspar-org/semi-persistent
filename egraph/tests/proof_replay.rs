@@ -588,3 +588,34 @@ fn nilpotent_collapse_cites_the_union() {
     let zero = term(&mut interp, "Zero", &[]);
     assert_cites_union(&interp, s, zero, "xor(a, b) = 0");
 }
+
+/// A program with more `union` commands than a 15-bit axiom id can name runs
+/// with proofs on, and the last union's explanation cites its own axiom.
+/// Every `union` registers an axiom under proofs; the id was 15-bit, so the
+/// 32,768th union exhausted the id space.
+#[test]
+fn proofs_hold_more_than_32767_unions() {
+    let n: usize = 40_000;
+    let mut src = String::from("(datatype T (K i64))\n");
+    for i in 0..n {
+        src.push_str(&format!("(union (K {}) (K {}))\n", 2 * i, 2 * i + 1));
+    }
+    src.push_str(&format!(
+        "(let x (K {})) (let y (K {}))\n",
+        2 * n - 2,
+        2 * n - 1
+    ));
+    let mut interp = run_src(&src);
+    assert_eq!(interp.eg.axioms().len(), n);
+    let (x, y) = (global(&mut interp, "x"), global(&mut interp, "y"));
+    let mut buf = ProofBuf::new();
+    assert!(interp.eg.explain(x, y, &mut buf));
+    assert!(
+        buf.steps.iter().any(|(_, _, j)| matches!(
+            j,
+            Justification::Axiom { axiom_id } if axiom_id.to_usize() == n - 1
+        )),
+        "the last union's step: {:?}",
+        buf.steps
+    );
+}
