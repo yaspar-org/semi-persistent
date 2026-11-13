@@ -1,0 +1,32 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Regrouped views under laws (design 07 §7.5, "Regrouped views"; Lean
+;; `regroup_insert_unit_lost`, `RegroupLaws.lean`). A chain of regroupings only opens and
+;; contracts. With zero ∋ add{B, D}, g = add{A, B} and k = add{C, D}, the node add{A, C} equals
+;; add{g, k}: A + C = A + C + (B + D) = (A + B) + (C + D). Reaching {g, k} needs the unit
+;; inserted and opened, which no chain does, so (add x y) never binds x = g, y = k. The inverse
+;; gives the same through a cancel pair: grp{A, C} equals grp{h, m} with h = grp{A, B} and
+;; m = grp{C, neg B}. The check-neq lines pin the loss; with `(set-option :completion eager)`
+;; both nodes equal OP{g, k} and OP{h, m}.
+(sort E)
+(function zero () E)
+(function A () E) (function B () E) (function C () E) (function D () E)
+(function neg (E) E)
+(function add (E) E :assoc :comm :identity (zero))
+(function grp (E) E :assoc :comm :identity (zero) :inverse neg)
+(function T2 (E E) E)
+(function N2 (E E) E)
+(union (add (B) (D)) (zero))
+(let g (add (A) (B)))
+(let k (add (C) (D)))
+(let t (add (A) (C)))
+(let h (grp (A) (B)))
+(let m (grp (C) (neg (B))))
+(let v (grp (A) (C)))
+(rewrite (add x y) (T2 x y) :flatten)
+(rewrite (grp x y) (N2 x y) :flatten)
+(run 2)
+(check-neq t (T2 g k))
+(check-neq v (N2 h m))

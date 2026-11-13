@@ -41,6 +41,10 @@ pub trait EGraphConfig: 'static {
     type S: DenseId + Send;
     /// Interned literal value id.
     type V: DenseId<Index = Self::Index> + Hash + Send;
+    /// Axiom id: one per `union` command registered under proofs, so the count
+    /// scales with the program like the literals', and the id shares the
+    /// configuration's word.
+    type A: DenseId<Index = Self::Index> + Send;
     /// Use-list id.
     type UL: DenseId<Index = Self::Index> + Send;
     /// Use-list node id.

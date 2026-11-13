@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; The collapse invariant behind TwoClassesL (proofs/lean, EngineComplete.lean,
+;; twoClassesL_of_members): a set node whose children, less the unit, hold one class is not
+;; stored as a set node but merged into that class. z = And{x, s} with x = And{a, b}; merging
+;; s with the unit Tru re-normalizes z's node to And{x}, which merges z with x, then
+;; n = And{x, z} to And{x}, which merges n with x: (And v ..r) matches only And{a, b}.
+(sort E)
+(function Tru () E)
+(function And (E) E :assoc-comm-idem :identity (Tru))
+(function a () E) (function b () E) (function s () E)
+(function P (E E) E)
+(let x (And (a) (b)))
+(let z (And x (s)))
+(let n (And x z))
+(union (s) (Tru))
+(rewrite (And v ..r) (P v (And ..r)) :flatten)
+(run 1)
+(check-eq z x)
+(check-eq n x)
+(check-eq n (P (a) (And (b))))
+(check-eq n (P (b) (And (a))))

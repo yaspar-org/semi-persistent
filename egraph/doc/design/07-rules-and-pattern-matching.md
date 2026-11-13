@@ -944,7 +944,8 @@ exception stands.
   lists by membership, not `Nodup` (`proofs/lean/STATUS.md`, "Not modelled"). The theorems
   modulo the theory, and `saturation_modulo_complete` below, have the scope limits stated in
   [Chapter 13 §4](13-soundness.md#4-what-is-proved-argued-and-assumed) (2026-11-05): every
-  class holds an active node of the operator (`I0Active`), the theory does not identify merged
+  class holds an active node of the operator (`I0Active`; resolved 2026-11-06 by
+  `saturation_modulo_complete_atoms`, which covers leaf constants), the theory does not identify merged
   child classes, so the statements are about monomials as stored, I5 is in effect assumed at
   the final state, and `ActRound` assumes the effects of rule actions.
 - Tested against the model on generated programs: `lake exe semper-conform`
@@ -958,8 +959,7 @@ exception stands.
   `tests/flatten_differential.rs` and `tests/seq_reference.rs` are a second, independent check.
 - Not modelled: the galloping cursor; faults inside sequence sub-queries; literals,
   sequence-filter patterns and predicates in the base model (`EMatch/Defs.lean` header);
-  the regrouping bounds (`MAX_REGROUP_VIEWS`, `MAX_REGROUP_WORK`, the cap on the takeable
-  closure); `:flatten` and sequence rules across
+  `:flatten` and sequence rules across
   rounds, which the engine matches against the full
   index each round (§9.2); and the correspondence of the model to `ematch.rs` and
   `flatten.rs`.
@@ -1299,7 +1299,9 @@ some opening tree giving its view has every leaf satisfied (`Demand::accepts`):
 The walk prunes with the same rule, so it must not prune a leaf that a later choice of the rest
 of the view could make non-inert (`FlattenScratch::may_be_non_inert`). The unit and sequence
 tests read the leaf alone; the clamp and cancel tests read the whole view, so under
-`:nilpotent` or `:inverse` no multiset leaf is pruned. Lean: `prune_engine`
+`:nilpotent` or `:inverse` no multiset leaf is pruned. Under an `:identity` no leaf is pruned
+either, since a regrouping whose class the normalization drops flags the leaves that gain it
+("Regrouped views", "Laws"). Lean: `prune_engine`
 (`Flatten/EngineRule.lean`). The reference in `tests/flatten_differential.rs` computes the
 same flag; `flattened_matches_reference_laws` fails at seed 18 with the flag forced off.
 
@@ -1390,16 +1392,56 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   and `G2 ∋ f[G1, c]`, within one needed class per step. The disjoint-group AC theorems
   (`regroup_view_complete_ac`, `regroup_match_complete_ac`) are the special case of
   groups over the walk's view, their sum within the view, none the whole view.
-  The generators run this enumeration (`runER` for `conform-flatten`, `regroupLevels` for
+  The engine's loop itself is modelled too (`RegroupSkipDefs.lean`): views by entry, the
+  largest not yet regrouped next (the latest entry among equal sizes), candidates by node
+  id, and its three skips: a target with an unconditional record (no opening, no needed
+  class) gains no record, a source with one derives from it alone, and a derived record
+  whose signature (leaves with opened class, flag and sorted classes; sorted needed
+  classes) the target already has is dropped. `regroupSkipG_iff` (`RegroupSkip.lean`)
+  proves that this loop accepts exactly the matches of the full enumeration on every view,
+  after the item limit, for any laws, kind and fold direction: a kept record *covers* each
+  skipped one (same view, an equal leaf for each of its leaves, a subset of its needed
+  classes), so it passes the demand rule and the item limit whenever the skipped one does,
+  and regrouping two records the same way preserves the cover. Regrouping shrinks a view
+  under any laws (`regroupRec_shrink`), so a target is never a view already regrouped: the
+  engine's skip of such a target never fires (the engine's sizes are `u128` sums of `u64`
+  counts and cannot saturate either). `regroupSkip_match_iff`, `regroupSkip_match_complete`,
+  `regroupSkip_plan_sound` and `regroupSkip_plan_complete` restate the theorems above for
+  `Enumerator.regroupSkip`.
+  The generators run the full enumeration (`runER` for `conform-flatten`, `regroupLevels` for
   the root views of `conform`), so the two samples hold matches through regrouped classes as
-  `check-eq`. Differences from `flatten.rs`: the model keeps every record, where the engine
-  skips a record whose acceptance another record of the same view implies; the bounds are not
-  modelled, and a generator gives up on a node past a budget of 45,000 records
+  `check-eq`. Run on the engine's loop instead, they emit the same `check-eq` sets in another
+  order, which changes the sampled `check-neq` candidates, so the generators stay on the full
+  enumeration. Differences from `flatten.rs`: a generator gives up on a node past a budget
+  of 45,000 records
   (`regroupCap`), saying so in the program. That budget is not the engine's: the engine
   counts the regrouped records it adds after its skips (`MAX_REGROUP_VIEWS`, 2^14) and the
   use-list entries and member children it examines (`MAX_REGROUP_WORK`, 2^20), the latter
   including views that receive no record. Completeness and soundness are proved for
   operators with no laws; the fold soundness lemmas are per step.
+  The bounds are modelled too (`RegroupBoundsDefs.lean`, `RegroupBounds.lean`): the loop
+  carries the engine's counters, incremented and checked where `flatten.rs` does (the views
+  counter before a record is stored, the work counter on the popped view's use lists and on
+  each candidate's children, the stored elements against `MAX_ELEMS`, the fits whose
+  normalization overflows the width), and stops at once, keeping its records. The run stops
+  iff the run without bounds ends with a counter past its bound, wherever it is crossed
+  (`regroupBounded_halt_iff`, `regroupBounded_truncated_iff`); a run that does not stop,
+  without overflow, ends with the records of the loop without bounds
+  (`regroupBounded_exact`); a truncated run keeps only records of that loop
+  (`regroupBounded_sub`). `takeableRCap` adds the cap on the takeable closure. At the
+  level of a query, `runB` sums `flatten_regroup_truncated`, `flatten_skipped` and
+  `flatten_overflowed` over the plan's `Flatten` evaluations: every binding emitted is a
+  match (`regroupBounded_plan_sound`), and with the three counters zero the bindings are
+  exactly those of `Enumerator.regroupSkip` (`regroupBounded_query_exact`), the matches
+  `regroupSkip_match_iff` characterizes (`regroupBounded_match_exact`). `enumerate`
+  regroups when the decomposition has items or the laws can drop a class (`laws_drop`):
+  with no item only a regrouped record needing no class can match, and only laws that drop
+  a class make one, so `(f ..r)` finds the view `{C, D}` of `add{A, B, C, D}` when
+  `zero ∋ add{A, B}` (`flatten_regroup_laws_no_item.egg`), and laws-free operators do not
+  regroup for it (`mem_base_of_reach`). A runtime check
+  therefore reads all three counters: `MAX_ELEMS` reports through `flatten_skipped`. The
+  model's counters match the engine's on every regrouping of the two conformance samples
+  (`c1_0052.egg` stops at 16,385 records in both).
 - **Evidence.** `tests/egg/flatten_regroup_{ac,assoc,assoc_left,assoc_right}.egg` pin the
   valid groupings with `check-eq`, and the off-spine fold groupings, the non-contiguous
   `:assoc` run and the groups no node spells with `check-neq`;
@@ -1411,6 +1453,71 @@ search of completion's `cc_round`; no sub-multiset is enumerated, and no node is
   every `f` member of the model, needs and the item limit on the final records included;
   over its 60 seeds, regrouping changes the matches of 352 (graph, pattern) pairs, and 273
   under laws, and the engine equals the reference on each.
+- **Laws** (2026-11-06, `proofs/lean/SemperProofs/EMatch/Flatten/RegroupLaws.lean`).
+  Regrouping reads normal forms and normalizes its result under the operator's laws, so a
+  group whose class is the unit, clamps to zero under `:nilpotent`, or cancels against its
+  inverse leaves a smaller view. Every such view denotes the node in a model of the laws
+  (`regroup_views_sound_{ac,aci,assoc}_laws`,
+  `regroupSkip_views_sound_{ac,aci,assoc}_laws`). The "Guarantee" bullet holds for any laws,
+  with chains whose steps normalize under the laws (`RegroupsToL`, `RegroupStepL`;
+  `regroup_match_iff_laws`, `regroupSkip_match_iff_laws`, `regroupSkip_plan_complete_laws`).
+  The generators already regroup under each case's laws. Relative to the laws, over the
+  classes present, three kinds of match are lost; `(set-option :completion eager)` proves
+  each equality below.
+  1. *A needed class the normalization drops* (fixed 2026-11-06). The record needed the
+     group's class, which its view no longer held, so no item could take it, and a leaf that
+     gained the class could be satisfied only through it. A regrouped record now needs only
+     the classes its normalized view holds, and a leaf that gains a dropped class is flagged
+     non-inert, in the record and in its signature (`FlattenScratch::regroup`); the walk
+     keeps every leaf under an `:identity` (`may_be_non_inert`), since a later regrouping
+     may flag it. With `zero ∋ add{A, B}`, `(add x y)` binds `x = C, y = D` in `add{A, B, C,
+     D}`; `flatten_regroup_laws_drop_need.egg` pins the same under `:nilpotent`, under
+     `:inverse`, and for a leaf of the walk (Lean:
+     `regroup_drop_need_{unit,nilpotent,inverse,leaf}`, `reach_needs_held`). The model
+     changed the same way (`addG`, `needsAfter`, `mayNonInert`), and the regenerated
+     conformance samples changed in four programs (`conform/c1_0030.egg`,
+     `conform-flatten/f2_0011.egg`, `f2_0035.egg`, `f2_0095.egg`), which hold the new
+     matches.
+  2. *A normal form reached only by inserting* the unit, a cancel pair, or `k` copies under
+     `:nilpotent k`: with `zero ∋ add{B, D}`, `add{A, C}` equals `add{add{A, B}, add{C, D}}`
+     (`regroup_insert_unit_lost`, `flatten_regroup_laws_insert.egg`). A chain opens and
+     contracts but never inserts, and insertions are unbounded: a limit of the guarantee.
+  3. *A set group kept beside its class* (fixed 2026-11-09, commit `b932241b`).
+     `S{A, B, C}` equals `S{A, C, sab}` by idempotence, but regrouping replaces the group
+     (`regroup_idem_overlap_loop_lost`, the former `regroup_idem_overlap_lost`), and keeping
+     every subset of the members would multiply the views by up to `2^|group|`. The overlap
+     stage below keeps as many as the pattern asks for (`regroup_idem_overlap_found`,
+     `flatten_regroup_laws_idem.egg`, whose last check is now `check-eq`).
+- **Overlap views under idempotence** (2026-11-09,
+  `proofs/lean/SemperProofs/EMatch/Flatten/RegroupOverlap*.lean`). After the regrouping
+  loop, for an `:assoc-comm-idem` operator and a decomposition with items, the matcher also
+  matches the *overlap views* of every view the loop ends with: the view with the class `G`
+  of an `f` node added and some members of its group dropped. The group's classes must number
+  at least two, lie in the view and not hold `G`; with `base` the view's entries plus one when
+  `G` is new, the stage drops `k = base - items` members, so the view has one entry per item
+  and a rest variable holds nothing, and it keeps at least one. The candidates are the loop's,
+  the matched node among them: a pattern with one item more than a node has children binds
+  that item to the node's own class (`S{s, A, B} = s` for `s = S{A, B}`). A dropped member is covered by
+  `G`, a kept one is absorbed, so the view spells a term equal to the view's in every join
+  semilattice (`overlap_step_sound_aci_laws`). The `k`-element subsets are enumerated in the
+  order of `List.sublists` (`next_colex`), each normalized and given the records of the
+  loop's view with the leaves and needs of a regrouping by the group, deduplicated by
+  signature; a target with an unconditional record gains nothing. The stage regroups
+  nothing and overlaps no overlap view, so an overlap view is one step from a view of the
+  loop; it derives from the loop's records only. Two items never bind the same class: the
+  view is a set and the set decomposition takes a distinct entry per item. The stage counts
+  the use lists of each view, the children of each candidate and one unit per subset against
+  `MAX_REGROUP_WORK`, and each record against `MAX_REGROUP_VIEWS`, so a family of
+  `C(|group|, k)` subsets truncates the node before it is enumerated (no fixture reaches
+  a bound inside the stage yet: `proofs/lean/GUIDE.md`, Section 10, item 20, and only
+    overlap views of the node are reported when one does, `regroupBoundedO_plan_sound`). Lean: `regroupSkipO_match_iff_laws` characterizes
+  the matches as chains of regroupings followed by at most one overlap step
+  (`RegroupChainO`), `regroupSkipO_iff` and `regroupAllSkipOAt_eq` the stage step for step,
+  `regroupBoundedO_query_exact` the bounds; the statements without the stage are unchanged
+  and hold of the loop alone. Not formed: a view with two overlap groups, and a kept member
+  in a rest variable. The brute-force reference of `flatten_differential.rs` has the same
+  stage. Cost: nothing for an operator without idempotence (the stage is guarded by the
+  kind); for a set operator, the suites were not re-timed in this round (the baseline is 155 s for `egg_tests.rs`, 126 s for `flatten_differential.rs` and 51 s for `conform.rs`, debug build, one thread, medians of three); the stage is guarded by the kind, so an operator without idempotence runs the same code as before.
 - **Cost** (release build, best of three runs per file, 2026-11-05). The 231 `:flatten`
   programs of `tests/egg` and `tests/egg/conform-flatten` other than
   `ac_lazy_budget_inconclusive.egg` take 0.590 s in total before and 0.604 s after.

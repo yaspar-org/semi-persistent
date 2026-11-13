@@ -105,6 +105,23 @@ pub trait VarCanon<G: DenseId, C> {
         find: impl Fn(G) -> G,
         mode: CanonMode<G>,
     ) -> crate::nary_canon::Normal<G>;
+
+    /// Whether `canonize` applied a law to the children in `start..end` (the unit's class
+    /// dropped, a count clamped) rather than only mapping them through `find`: the stored
+    /// node is then not the literal image of the old one, and a right-hand side built from
+    /// it may have changed value. `after` is the canonical form `canonize` produced. The
+    /// semi-naive loop re-matches the rules that build an AC term in full after such a
+    /// rebuild (`spelling_epoch`). Canonizers that apply no law answer `false`.
+    fn law_applied(
+        _start: usize,
+        _end: usize,
+        _get: impl Fn(usize) -> C,
+        _find: impl Fn(G) -> G,
+        _mode: CanonMode<G>,
+        _after: &[C],
+    ) -> bool {
+        false
+    }
 }
 
 /// Ordered: apply find, preserve order. (PlainN, A). No clamp; `mode` ignored.
@@ -185,6 +202,22 @@ impl<G: DenseId + Ord, M: crate::multiplicity::MultiplicityLike>
         // to `rebuild`, which records it for the caller to report (`take_width_error`).
         normal
     }
+
+    /// Coalescing preserves the sum of the multiplicities; the unit drop and the count
+    /// clamp lower it. So a law was applied exactly when the sum fell.
+    fn law_applied(
+        start: usize,
+        end: usize,
+        get: impl Fn(usize) -> crate::containers::Pair<G, M>,
+        _find: impl Fn(G) -> G,
+        _mode: CanonMode<G>,
+        after: &[crate::containers::Pair<G, M>],
+    ) -> bool {
+        let total = |m: M| m.to_u64().unwrap_or(u64::MAX);
+        let before: u128 = (start..end).map(|i| u128::from(total(get(i).b))).sum();
+        let now: u128 = after.iter().map(|p| u128::from(total(p.b))).sum();
+        now < before
+    }
 }
 
 /// ACI: find each child, then the one normalization (`crate::nary_canon::normalize_by`):
@@ -216,6 +249,21 @@ impl<G: DenseId + Ord> VarCanon<G, G> for SetCanon {
             |_, _| {},
             |_, _| None,
         )
+    }
+
+    /// Deduplication is the image of the children under `find`; only the unit drop
+    /// changes the set beyond it. A law was applied exactly when a child's class is the
+    /// unit's.
+    fn law_applied(
+        start: usize,
+        end: usize,
+        get: impl Fn(usize) -> G,
+        find: impl Fn(G) -> G,
+        mode: CanonMode<G>,
+        _after: &[G],
+    ) -> bool {
+        mode.unit
+            .is_some_and(|u| (start..end).any(|i| find(get(i)) == u))
     }
 }
 

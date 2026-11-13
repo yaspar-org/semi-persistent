@@ -26,6 +26,57 @@ def runVariant (G : Graph) (isNew : NodeId → Bool) (k : Nat) (ap : APlan) : Li
 /-- The naive run of the same plan. -/
 def runNaive (G : Graph) (ap : APlan) : List Binding := run G (ap.map (·.2)) Binding.empty
 
+/-- For a match, the mode condition of variant `k` says the node of atom
+`k` is new and the nodes of the scanning atoms before `k` are old. -/
+theorem modeOk_variant_iff {G : Graph} {isNew : NodeId → Bool} {atoms : List QAtom} {σ' : Binding}
+    {k : Nat} {ak : RAtom} (hk : atoms[k]? = some (.scan ak)) (hm : Matches G atoms σ') :
+    ModeOk isNew atoms (variantMode k) σ' ↔
+      (∃ id, σ'.node ak.node = some id ∧ isNew id = true) ∧
+        ∀ (j : Nat) (a : RAtom), j < k → atoms[j]? = some (.scan a) →
+          ∃ id, σ'.node a.node = some id ∧ isNew id = false := by
+  constructor
+  · intro hmode
+    refine ⟨?_, ?_⟩
+    · obtain ⟨id, hid, hok⟩ := hmode k ak hk
+      exact ⟨id, hid, by simpa [variantMode, modeOk] using hok⟩
+    · intro j a hj ha
+      obtain ⟨id, hid, hok⟩ := hmode j a ha
+      refine ⟨id, hid, ?_⟩
+      have hne : j ≠ k := by omega
+      simpa [variantMode, hne, hj, modeOk] using hok
+  · rintro ⟨⟨id, hid, hnew⟩, hold⟩
+    intro j a ha
+    by_cases hjk : j = k
+    · subst hjk
+      rw [hk] at ha
+      cases Option.some.inj ha
+      exact ⟨id, hid, by simp [variantMode, modeOk, hnew]⟩
+    · by_cases hlt : j < k
+      · obtain ⟨id', hid', hold'⟩ := hold j a hlt ha
+        exact ⟨id', hid', by simp [variantMode, hjk, hlt, modeOk, hold']⟩
+      · obtain ⟨id', hid'⟩ := (hm.node a.node).2 ⟨a, mem_of_getElem? ha, rfl⟩
+        exact ⟨id', hid', by simp [variantMode, hjk, hlt, modeOk]⟩
+
+/-- A match with a new scanning node satisfies the mode condition of the
+variant of its least new scanning atom. -/
+theorem matches_cover_new {G : Graph} {isNew : NodeId → Bool} {atoms : List QAtom} {σ' : Binding}
+    (hm : Matches G atoms σ')
+    (hex : ∃ (j : Nat) (a : RAtom), atoms[j]? = some (.scan a) ∧
+      ∃ id, σ'.node a.node = some id ∧ isNew id = true) :
+    ∃ (k : Nat) (ak : RAtom), atoms[k]? = some (.scan ak) ∧ ModeOk isNew atoms (variantMode k) σ' := by
+  classical
+  let P : Nat → Prop := fun j => ∃ a, atoms[j]? = some (.scan a) ∧ ∃ id, σ'.node a.node = some id ∧ isNew id = true
+  have hP : ∃ j, P j := by obtain ⟨j, a, ha, hid⟩ := hex; exact ⟨j, a, ha, hid⟩
+  let k := Nat.find hP
+  obtain ⟨ak, hk, hnew⟩ : P k := Nat.find_spec hP
+  refine ⟨k, ak, hk, (modeOk_variant_iff hk hm).2 ⟨hnew, ?_⟩⟩
+  intro j a hj ha
+  obtain ⟨id, hid⟩ := (hm.node a.node).2 ⟨a, mem_of_getElem? ha, rfl⟩
+  refine ⟨id, hid, ?_⟩
+  by_contra hnew'
+  have : P j := ⟨a, ha, id, hid, by simpa using hnew'⟩
+  exact Nat.find_min hP hj this
+
 /-- Spec §6, `variant_partition`. -/
 theorem variant_partition {G : Graph} {sig : Sym → Kind} {isNew : NodeId → Bool} {atoms : List QAtom}
     {ap : APlan} (hwf : AtomsWF G sig atoms) (h : SchedA atoms ∅ ∅ ap) {k : Nat} {ak : RAtom}
@@ -39,27 +90,9 @@ theorem variant_partition {G : Graph} {sig : Sym → Kind} {isNew : NodeId → B
   rw [schedA_matches hwf h, ← runA_full G isNew, schedA_matches hwf h]
   constructor
   · rintro ⟨hm, hmode⟩
-    refine ⟨⟨hm, modeOk_full _ _ _ hm⟩, ?_, ?_⟩
-    · obtain ⟨id, hid, hok⟩ := hmode k ak hk
-      exact ⟨id, hid, by simpa [variantMode, modeOk] using hok⟩
-    · intro j a hj ha
-      obtain ⟨id, hid, hok⟩ := hmode j a ha
-      refine ⟨id, hid, ?_⟩
-      have hne : j ≠ k := by omega
-      simpa [variantMode, hne, hj, modeOk] using hok
-  · rintro ⟨⟨hm, -⟩, ⟨id, hid, hnew⟩, hold⟩
-    refine ⟨hm, ?_⟩
-    intro j a ha
-    by_cases hjk : j = k
-    · subst hjk
-      rw [hk] at ha
-      cases Option.some.inj ha
-      exact ⟨id, hid, by simp [variantMode, modeOk, hnew]⟩
-    · by_cases hlt : j < k
-      · obtain ⟨id', hid', hold'⟩ := hold j a hlt ha
-        exact ⟨id', hid', by simp [variantMode, hjk, hlt, modeOk, hold']⟩
-      · obtain ⟨id', hid'⟩ := (hm.node a.node).2 ⟨a, mem_of_getElem? ha, rfl⟩
-        exact ⟨id', hid', by simp [variantMode, hjk, hlt, modeOk]⟩
+    exact ⟨⟨hm, modeOk_full _ _ _ hm⟩, (modeOk_variant_iff hk hm).1 hmode⟩
+  · rintro ⟨⟨hm, -⟩, hv⟩
+    exact ⟨hm, (modeOk_variant_iff hk hm).2 hv⟩
 
 /-- The variants are pairwise disjoint. -/
 theorem variants_disjoint {G : Graph} {sig : Sym → Kind} {isNew : NodeId → Bool} {atoms : List QAtom}
@@ -96,24 +129,13 @@ theorem variants_cover_new {G : Graph} {sig : Sym → Kind} {isNew : NodeId → 
     rw [variant_partition hwf h hk] at hv
     exact ⟨hv.1, k, ak, hk, hv.2.1⟩
   · rintro ⟨hn, hex⟩
-    -- the least new join atom
-    classical
-    let P : Nat → Prop := fun j => ∃ a, atoms[j]? = some (.scan a) ∧ ∃ id, σ'.node a.node = some id ∧ isNew id = true
-    have hP : ∃ j, P j := by obtain ⟨j, a, ha, hid⟩ := hex; exact ⟨j, a, ha, hid⟩
-    let k := Nat.find hP
-    obtain ⟨ak, hk, hnew⟩ : P k := Nat.find_spec hP
-    refine ⟨k, ak, hk, ?_⟩
-    rw [variant_partition hwf h hk]
-    refine ⟨hn, hnew, ?_⟩
-    intro j a hj ha
     have hm : Matches G atoms σ' := by
       unfold runNaive at hn
       rw [← runA_full G isNew, schedA_matches hwf h] at hn
       exact hn.1
-    obtain ⟨id, hid⟩ := (hm.node a.node).2 ⟨a, mem_of_getElem? ha, rfl⟩
-    refine ⟨id, hid, ?_⟩
-    by_contra hnew'
-    have : P j := ⟨a, ha, id, hid, by simpa using hnew'⟩
-    exact Nat.find_min hP hj this
+    obtain ⟨k, ak, hk, hmode⟩ := matches_cover_new hm hex
+    refine ⟨k, ak, hk, ?_⟩
+    unfold runVariant
+    exact (schedA_matches hwf h σ').2 ⟨hm, hmode⟩
 
 end Semper.EMatch

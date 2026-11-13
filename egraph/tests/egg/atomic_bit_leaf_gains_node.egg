@@ -1,0 +1,26 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; Atomic bit, transition (a): a leaf class gains an f-node. `C` is atomic from its
+;; registration (a node of another operator, `register_if_fresh`); `s = {A, B}` is not.
+;; The union joins the two, the survivor inherits the bit (`fold_min_monomial`), so the
+;; class's right-hand side is `{C}` and the rule `{A, B} -> {C}` rewrites every later sum.
+(sort E)
+(constructor A () E)
+(constructor B () E)
+(constructor C () E)
+(constructor D () E)
+(constructor Add (E) E :assoc :comm)
+(set-option :completion eager)
+(let s (Add (A) (B)))
+(union (C) s)
+(let t (Add (A) (B) (D)))
+(let v (Add (C) (D)))
+;; A + B = C gives A + B + D = C + D.
+(check-eq t v)
+;; `s` is atomic now, so a sum over it keeps it as one summand: `{C, D}` by hash-consing.
+(check-eq (Add s (D)) v)
+(check-eq (Add (A) (B) (A) (B)) (Add (C) (C)))
+(check-neq t (C))

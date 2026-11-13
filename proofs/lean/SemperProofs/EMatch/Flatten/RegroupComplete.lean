@@ -177,25 +177,27 @@ def groupSum (gs : List (C × List (C × Nat))) : Multiset C := (gs.map (fun p =
 /-- The regrouped classes, each once per group. -/
 def groupCls (gs : List (C × List (C × Nat))) : Multiset C := ((gs.map (fun p => p.1) : List C) : Multiset C)
 
-theorem needsAfter_length (g : C) (grp ns : List C) :
-    (needsAfter g grp ns).length ≤ ns.length + 1 := by
+theorem needsAfter_length (g : C) (grp ws ns : List C) :
+    (needsAfter g grp ws ns).length ≤ ns.length + 1 := by
   dsimp only [needsAfter]
+  refine (List.length_filter_le _ _).trans ?_
   split
   · exact (List.length_filter_le _ _).trans (Nat.le_succ _)
   · simp only [List.length_append, List.length_singleton]
     exact Nat.succ_le_succ (List.length_filter_le _ _)
 
-theorem mem_needsAfter {g : C} {grp ns : List C} {c : C} (h : c ∈ needsAfter g grp ns) :
+theorem mem_needsAfter {g : C} {grp ws ns : List C} {c : C} (h : c ∈ needsAfter g grp ws ns) :
     c ∈ ns ∨ c = g := by
   dsimp only [needsAfter] at h
+  replace h := (List.mem_filter.1 h).1
   split at h
   · exact Or.inl (List.mem_filter.1 h).1
   · rcases List.mem_append.1 h with h | h
     · exact Or.inl (List.mem_filter.1 h).1
     · exact Or.inr (List.mem_singleton.1 h)
 
-theorem g_mem_addG {g : C} {grp : List C} {l : LeafF} (h : ∃ c ∈ l.1.g, c ∈ grp) :
-    g ∈ (addG g grp l).1.g := by
+theorem g_mem_addG {g : C} {grp ws : List C} {l : LeafF} (h : ∃ c ∈ l.1.g, c ∈ grp) :
+    g ∈ (addG g grp ws l).1.g := by
   unfold addG
   split
   · simp [LeafL.g]
@@ -203,8 +205,9 @@ theorem g_mem_addG {g : C} {grp : List C} {l : LeafF} (h : ∃ c ∈ l.1.g, c �
     by_contra hg
     exact hn ⟨hg, by simpa using h⟩
 
-theorem g_subset_addG (g : C) (grp : List C) (l : LeafF) : l.1.g ⊆ (addG g grp l).1.g := by
-  rcases addG_g (g := g) (grp := grp) (l := l) with he | ⟨he, -⟩
+theorem g_subset_addG (g : C) (grp ws : List C) (l : LeafF) :
+    l.1.g ⊆ (addG g grp ws l).1.g := by
+  rcases addG_g (g := g) (grp := grp) (ws := ws) (l := l) with he | ⟨he, -⟩
   · rw [he]
   · rw [he]; exact List.subset_append_left _ _
 
@@ -285,12 +288,19 @@ theorem regroup_chain_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} :
         omega
       have hn : normalize ctx.κ Laws.free (v ++ [(g, 1)]) = .node (coalesce (v ++ [(g, 1)])) := by
         rw [hκ]; exact normalize_free_ac_node hcard
-      set r₁ : RecR := (coalesce (v ++ [(g, 1)]), r₀.2.1.map (addG g (grp.map Prod.fst)),
-        needsAfter g (grp.map Prod.fst) r₀.2.2) with hr₁
+      set W₁ := coalesce (v ++ [(g, 1)]) with hW₁
+      have hgW : g ∈ W₁.map Prod.fst := by
+        rw [hW₁]
+        unfold coalesce Multiset.entries
+        rw [List.map_map]
+        simp only [Function.comp_def, List.map_id', Finset.mem_sort, Multiset.mem_toFinset]
+        exact mem_ofEntries.2 ⟨(g, 1), by simp, rfl, Nat.one_pos⟩
+      set r₁ : RecR := (W₁, r₀.2.1.map (addG g (grp.map Prod.fst) (W₁.map Prod.fst)),
+        needsAfter g (grp.map Prod.fst) (W₁.map Prod.fst) r₀.2.2) with hr₁
       have hstep : r₁ ∈ regroupRec ctx dir Laws.free r₀ := regroupRec_of hgg hfit hn
       have hS : groupSum gs ≤ ofEntries r₀.1 - ofEntries grp := le_tsub_of_add_le_left hlt
       have hofr₁ : ofEntries r₁.1 = ofEntries r₀.1 - ofEntries grp + {g} := by
-        simp only [hr₁, ofEntries_coalesce, ofEntries_append]
+        simp only [hr₁, hW₁, ofEntries_coalesce, ofEntries_append]
         rw [eq_tsub_of_add_eq hsum]
         all_goals simp [ofEntries]
       have hlt₁ : groupSum gs < ofEntries r₁.1 := by
@@ -303,13 +313,13 @@ theorem regroup_chain_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} :
         rw [he] at h1
         exact absurd (lt_of_le_of_lt h1 hlt₁) (lt_irrefl _)
       have hcan₁ : Multiset.entries (ofEntries r₁.1) = r₁.1 := by
-        simp only [hr₁, ofEntries_coalesce]; rfl
+        simp only [hr₁, hW₁, ofEntries_coalesce]; rfl
       obtain ⟨r, hr, hof, hneeds, hlen, φ, hφ, hrel⟩ := regroup_chain_ac hκ gs r₁
         (fun p hp => hgs p (List.mem_cons_of_mem _ hp))
         (fun p hp => hself p (List.mem_cons_of_mem _ hp))
         (fun p hp => h2 p (List.mem_cons_of_mem _ hp)) hlt₁.le hne₁ hcan₁
-      refine ⟨r, mem_regroupLevels_succ hstep hr, ?_, ?_, ?_, φ ∘ addG g (grp.map Prod.fst), ?_,
-        ?_⟩
+      refine ⟨r, mem_regroupLevels_succ hstep hr, ?_, ?_, ?_,
+        φ ∘ addG g (grp.map Prod.fst) (W₁.map Prod.fst), ?_, ?_⟩
       · rw [hof, hofr₁]
         have e1 : groupSum ((g, grp) :: gs) = ofEntries grp + groupSum gs := by
           simp [groupSum]
@@ -322,20 +332,21 @@ theorem regroup_chain_ac {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} :
           · exact Or.inl hc
           · exact Or.inr (List.mem_cons_self ..)
         · exact Or.inr (List.mem_cons_of_mem _ hc)
-      · have := needsAfter_length g (grp.map Prod.fst) r₀.2.2
-        have e : r₁.2.2.length = (needsAfter g (grp.map Prod.fst) r₀.2.2).length := rfl
+      · have := needsAfter_length g (grp.map Prod.fst) (W₁.map Prod.fst) r₀.2.2
+        have e : r₁.2.2.length =
+            (needsAfter g (grp.map Prod.fst) (W₁.map Prod.fst) r₀.2.2).length := rfl
         simp only [List.length_cons]
         omega
       · rw [hφ, hr₁, List.map_map]
       · intro l
-        obtain ⟨hX, hf, hsub, hp⟩ := hrel (addG g (grp.map Prod.fst) l)
-        refine ⟨(addG_X _ _ _).symm.trans hX, (addG_flag _ _ _).symm.trans hf,
-          fun x hx => hsub (g_subset_addG g _ l hx), ?_⟩
+        obtain ⟨hX, hf, hsub, hp⟩ := hrel (addG g (grp.map Prod.fst) (W₁.map Prod.fst) l)
+        refine ⟨(addG_X _ _ _ _).symm.trans hX, (addG_flag_of_mem hgW l).symm.trans hf,
+          fun x hx => hsub (g_subset_addG g _ _ l hx), ?_⟩
         intro p hp' hc
         rcases List.mem_cons.1 hp' with rfl | hp'
         · exact hsub (g_mem_addG hc)
         · obtain ⟨c, hc, hcp⟩ := hc
-          exact hp p hp' ⟨c, g_subset_addG g _ l hc, hcp⟩
+          exact hp p hp' ⟨c, g_subset_addG g _ _ l hc, hcp⟩
 
 /-! ## The regrouped view is enumerated, and its demand accepts -/
 

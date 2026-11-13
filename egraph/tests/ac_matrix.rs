@@ -20,10 +20,8 @@ use semi_persistent_egraph::union_find::{Justification, ProofBuf};
 
 type Eg<const TRACK: bool, const PROOFS: bool> = EGraph31<NiraLitVal, TRACK, PROOFS>;
 
-fn axiom(i: u16) -> Justification<semi_persistent_egraph::ENodeId> {
-    Justification::Axiom {
-        axiom_id: AxiomId::new(i),
-    }
+fn axiom(i: u32) -> Justification<semi_persistent_egraph::ENodeId> {
+    Justification::axiom(AxiomId::new(i))
 }
 
 /// Assert a ≡ b, and under PROOFS also reconstruct the class-level proof chain.
@@ -455,6 +453,74 @@ fn aborted_growth_limit<const TRACK: bool, const PROOFS: bool>() {
     assert_eq_class(&mut eg, s_cd, s_ae, "post-recovery add(c,d)=add(a,e)");
 }
 
+/// A lazy decision whose completion rebuild stopped on the node budget is spent: a later
+/// rebuild of the same decision returns at once, keeping the reported outcome, and
+/// `decision_budget_exhausted` stays true until the decision closes. Closing it and
+/// restoring a real budget completes the same graph.
+fn decision_spent_short_circuits<const TRACK: bool, const PROOFS: bool>() {
+    use semi_persistent_egraph::{CompletionOutcome, DEFAULT_COMPLETION_NODE_BUDGET};
+    let mut eg = Eg::<TRACK, PROOFS>::new();
+    eg.set_cc(true);
+    eg.set_completion_node_budget(0);
+    let s = eg.intern_sort("E");
+    let a_op = eg.register_op0("a", s);
+    let b_op = eg.register_op0("b", s);
+    let c_op = eg.register_op0("c", s);
+    let d_op = eg.register_op0("d", s);
+    let e_op = eg.register_op0("e", s);
+    let add = eg.register_mset("add", s, s);
+    let a = eg.add(a_op, &[]);
+    let b = eg.add(b_op, &[]);
+    let c = eg.add(c_op, &[]);
+    let d = eg.add(d_op, &[]);
+    let e = eg.add(e_op, &[]);
+    let s_ab = eg.add(add, &[a, b]);
+    let s_bd = eg.add(add, &[b, d]);
+    eg.merge_justified(s_ab, c, axiom(0));
+    eg.merge_justified(s_bd, e, axiom(1));
+    eg.open_decision_budget();
+    eg.rebuild();
+    let first = eg.completion_outcome();
+    assert!(
+        matches!(first, Some(CompletionOutcome::AbortedGrowthLimit { .. })),
+        "expected AbortedGrowthLimit, got {first:?}"
+    );
+    assert!(
+        eg.decision_budget_exhausted(),
+        "the abort spends the decision"
+    );
+    let nodes = eg.node_count();
+    // Spent: the rebuild runs no round, mints nothing, and keeps the outcome.
+    eg.rebuild();
+    assert_eq!(
+        eg.completion_outcome(),
+        first,
+        "a spent decision keeps its outcome"
+    );
+    assert_eq!(eg.node_count(), nodes, "a spent decision mints nothing");
+    assert!(eg.decision_budget_exhausted());
+    assert_ne!(eg.find(a), eg.find(b), "nothing wrong was asserted");
+    eg.close_decision_budget();
+    assert!(
+        !eg.decision_budget_exhausted(),
+        "closing the decision clears it"
+    );
+    eg.set_completion_node_budget(DEFAULT_COMPLETION_NODE_BUDGET);
+    eg.rebuild();
+    assert!(
+        matches!(
+            eg.completion_outcome(),
+            Some(CompletionOutcome::Converged { .. })
+        ),
+        "expected Converged after the decision closed, got {:?}",
+        eg.completion_outcome()
+    );
+    let s_cd = eg.add(add, &[c, d]);
+    let s_ae = eg.add(add, &[a, e]);
+    eg.rebuild();
+    assert_eq_class(&mut eg, s_cd, s_ae, "post-decision add(c,d)=add(a,e)");
+}
+
 /// Kapur §4.1 idempotent axiom critical pair: or(a,b)=c ⟹ or(a,c)=c — the idempotent
 /// counterpart of `nilpotent_axiom_cp`, pinning the same `ACAxiomCP` label on the Set/ACI arm.
 fn idempotent_axiom_cp<const TRACK: bool, const PROOFS: bool>() {
@@ -527,6 +593,7 @@ fn run_all<const TRACK: bool, const PROOFS: bool>() {
     superposition_label::<TRACK, PROOFS>();
     inter_reduction_label::<TRACK, PROOFS>();
     aborted_growth_limit::<TRACK, PROOFS>();
+    decision_spent_short_circuits::<TRACK, PROOFS>();
 }
 
 #[test]

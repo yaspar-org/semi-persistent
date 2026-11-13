@@ -22,9 +22,7 @@ mod test {
             eg.merge_justified(
                 nodes[i],
                 nodes[i + 1],
-                Justification::Axiom {
-                    axiom_id: crate::id::AxiomId::new(i as u16),
-                },
+                Justification::axiom(crate::id::AxiomId::new(i as u32)),
             );
         }
 
@@ -111,13 +109,7 @@ mod test {
             a = eg.add(g, &[a, a]);
             b = eg.add(g, &[b, b]);
         }
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(7),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(7)));
         eg.rebuild();
         assert_eq!(eg.find(a), eg.find(b));
 
@@ -162,34 +154,10 @@ mod test {
             .collect();
 
         // Merge pairs at layer 0: c0≡c2, c1≡c3, c4≡c6, c5≡c7
-        eg.merge_justified(
-            c[0],
-            c[2],
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(0),
-            },
-        );
-        eg.merge_justified(
-            c[1],
-            c[3],
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(1),
-            },
-        );
-        eg.merge_justified(
-            c[4],
-            c[6],
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(2),
-            },
-        );
-        eg.merge_justified(
-            c[5],
-            c[7],
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(3),
-            },
-        );
+        eg.merge_justified(c[0], c[2], Justification::axiom(crate::id::AxiomId::new(0)));
+        eg.merge_justified(c[1], c[3], Justification::axiom(crate::id::AxiomId::new(1)));
+        eg.merge_justified(c[4], c[6], Justification::axiom(crate::id::AxiomId::new(2)));
+        eg.merge_justified(c[5], c[7], Justification::axiom(crate::id::AxiomId::new(3)));
         eg.rebuild();
 
         // Layer 1 congruences
@@ -202,20 +170,8 @@ mod test {
         assert_ne!(eg.find(gfc[0]), eg.find(gfc[2]));
 
         // Bridge: c0≡c4, c1≡c5 — cascades all the way up
-        eg.merge_justified(
-            c[0],
-            c[4],
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(4),
-            },
-        );
-        eg.merge_justified(
-            c[1],
-            c[5],
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(5),
-            },
-        );
+        eg.merge_justified(c[0], c[4], Justification::axiom(crate::id::AxiomId::new(4)));
+        eg.merge_justified(c[1], c[5], Justification::axiom(crate::id::AxiomId::new(5)));
         eg.rebuild();
 
         // Now everything collapses
@@ -297,20 +253,8 @@ mod deep_proof_test {
         assert_ne!(eg.find(gab), eg.find(gcd));
 
         // Merge leaves
-        eg.merge_justified(
-            a,
-            c,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(1),
-            },
-        );
-        eg.merge_justified(
-            b,
-            d,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(2),
-            },
-        );
+        eg.merge_justified(a, c, Justification::axiom(crate::id::AxiomId::new(1)));
+        eg.merge_justified(b, d, Justification::axiom(crate::id::AxiomId::new(2)));
         eg.rebuild();
 
         // Verify cascading congruence
@@ -336,6 +280,16 @@ mod deep_proof_test {
                 }
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
                 Justification::Assumption { lit } => format!("assumption {lit}"),
+                Justification::Build { node, .. } => {
+                    format!("build({})", eg.node_op_name(*node))
+                }
+                Justification::Normalize { node, normal } => {
+                    format!(
+                        "normalize({}, {})",
+                        eg.node_op_name(*node),
+                        eg.node_op_name(*normal)
+                    )
+                }
                 Justification::ACSuperposition { .. }
                 | Justification::ACInterReduction { .. }
                 | Justification::ACAxiomCP { .. }
@@ -408,11 +362,9 @@ mod kind_proof_tests {
     }
 
     fn has_axiom(buf: &ProofBuf<ENodeId>, id: u32) -> bool {
-        buf.steps.iter().any(|(_, _, j)| {
-            *j == Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(id as u16),
-            }
-        })
+        buf.steps
+            .iter()
+            .any(|(_, _, j)| *j == Justification::axiom(crate::id::AxiomId::new(id)))
     }
 
     fn print_proof(label: &str, buf: &ProofBuf<ENodeId>, eg: &EGraph31<NiraLitVal, false, true>) {
@@ -427,6 +379,16 @@ mod kind_proof_tests {
                 ),
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
                 Justification::Assumption { lit } => format!("assumption {lit}"),
+                Justification::Build { node, .. } => {
+                    format!("build({})", eg.node_op_name(*node))
+                }
+                Justification::Normalize { node, normal } => {
+                    format!(
+                        "normalize({}, {})",
+                        eg.node_op_name(*node),
+                        eg.node_op_name(*normal)
+                    )
+                }
                 Justification::ACSuperposition { .. }
                 | Justification::ACInterReduction { .. }
                 | Justification::ACAxiomCP { .. }
@@ -451,13 +413,7 @@ mod kind_proof_tests {
         let y = eg.add(th.y, &[]);
         let fx = eg.add(th.f, &[x]);
         let fy = eg.add(th.f, &[y]);
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(10),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(10)));
         eg.rebuild();
         assert_eq!(eg.find(fx), eg.find(fy));
 
@@ -479,20 +435,8 @@ mod kind_proof_tests {
         let w = eg.add(th.w, &[]);
         let gxy = eg.add(th.g, &[x, y]);
         let gzw = eg.add(th.g, &[z, w]);
-        eg.merge_justified(
-            x,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(20),
-            },
-        );
-        eg.merge_justified(
-            y,
-            w,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(21),
-            },
-        );
+        eg.merge_justified(x, z, Justification::axiom(crate::id::AxiomId::new(20)));
+        eg.merge_justified(y, w, Justification::axiom(crate::id::AxiomId::new(21)));
         eg.rebuild();
         assert_eq!(eg.find(gxy), eg.find(gzw));
 
@@ -516,20 +460,8 @@ mod kind_proof_tests {
         let w = eg.add(th.w, &[]);
         let eq_xy = eg.add(th.eq, &[x, y]);
         let eq_zw = eg.add(th.eq, &[z, w]);
-        eg.merge_justified(
-            x,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(30),
-            },
-        );
-        eg.merge_justified(
-            y,
-            w,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(31),
-            },
-        );
+        eg.merge_justified(x, z, Justification::axiom(crate::id::AxiomId::new(30)));
+        eg.merge_justified(y, w, Justification::axiom(crate::id::AxiomId::new(31)));
         eg.rebuild();
         assert_eq!(eg.find(eq_xy), eg.find(eq_zw));
 
@@ -552,20 +484,8 @@ mod kind_proof_tests {
         let w = eg.add(th.w, &[]);
         let sxy = eg.add(th.sub, &[x, y]);
         let szw = eg.add(th.sub, &[z, w]);
-        eg.merge_justified(
-            x,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(40),
-            },
-        );
-        eg.merge_justified(
-            y,
-            w,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(41),
-            },
-        );
+        eg.merge_justified(x, z, Justification::axiom(crate::id::AxiomId::new(40)));
+        eg.merge_justified(y, w, Justification::axiom(crate::id::AxiomId::new(41)));
         eg.rebuild();
         assert_eq!(eg.find(sxy), eg.find(szw));
 
@@ -588,20 +508,8 @@ mod kind_proof_tests {
         let w = eg.add(th.w, &[]);
         let pxy = eg.add(th.plus, &[x, y]);
         let pzw = eg.add(th.plus, &[z, w]);
-        eg.merge_justified(
-            x,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(50),
-            },
-        );
-        eg.merge_justified(
-            y,
-            w,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(51),
-            },
-        );
+        eg.merge_justified(x, z, Justification::axiom(crate::id::AxiomId::new(50)));
+        eg.merge_justified(y, w, Justification::axiom(crate::id::AxiomId::new(51)));
         eg.rebuild();
         assert_eq!(eg.find(pxy), eg.find(pzw));
 
@@ -624,20 +532,8 @@ mod kind_proof_tests {
         let w = eg.add(th.w, &[]);
         let axy = eg.add(th.and, &[x, y]);
         let azw = eg.add(th.and, &[z, w]);
-        eg.merge_justified(
-            x,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(60),
-            },
-        );
-        eg.merge_justified(
-            y,
-            w,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(61),
-            },
-        );
+        eg.merge_justified(x, z, Justification::axiom(crate::id::AxiomId::new(60)));
+        eg.merge_justified(y, w, Justification::axiom(crate::id::AxiomId::new(61)));
         eg.rebuild();
         assert_eq!(eg.find(axy), eg.find(azw));
 
@@ -676,20 +572,8 @@ mod kind_proof_tests {
         let azw = eg.add(th.and, &[z, w]);
 
         // Merge leaves
-        eg.merge_justified(
-            x,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(100),
-            },
-        );
-        eg.merge_justified(
-            y,
-            w,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(101),
-            },
-        );
+        eg.merge_justified(x, z, Justification::axiom(crate::id::AxiomId::new(100)));
+        eg.merge_justified(y, w, Justification::axiom(crate::id::AxiomId::new(101)));
         eg.rebuild();
 
         // Verify all congruences
@@ -811,9 +695,9 @@ mod stress_proof_test {
             }
             let a = ENodeId::new(a_idx as u32);
             let b = ENodeId::new(b_idx as u32);
-            let axiom_id = crate::id::AxiomId::new(i as u16);
+            let axiom_id = crate::id::AxiomId::new(i as u32);
             if eg
-                .merge_justified(a, b, Justification::Axiom { axiom_id })
+                .merge_justified(a, b, Justification::axiom(axiom_id))
                 .is_some()
             {
                 axioms_issued.insert(axiom_id);
@@ -835,9 +719,9 @@ mod stress_proof_test {
 
                     // Validate: every axiom step must be one we issued
                     for (_, _, just) in &buf.steps {
-                        if let Justification::Axiom { axiom_id } = just {
+                        if let Some(axiom_id) = just.axiom_id::<crate::id::AxiomId>() {
                             assert!(
-                                axioms_issued.contains(axiom_id),
+                                axioms_issued.contains(&axiom_id),
                                 "proof references axiom #{axiom_id} which was never issued"
                             );
                         }
@@ -940,8 +824,8 @@ mod stress_proof_test {
             }
             let a = ENodeId::new(a_idx as u32);
             let b = ENodeId::new(b_idx as u32);
-            let axiom_id = crate::id::AxiomId::new(i as u16);
-            eg.merge_justified(a, b, Justification::Axiom { axiom_id });
+            let axiom_id = crate::id::AxiomId::new(i as u32);
+            eg.merge_justified(a, b, Justification::axiom(axiom_id));
         }
         eprintln!("[completion] seed={seed} starting rebuild");
         eg.rebuild();
@@ -1015,8 +899,8 @@ mod stress_proof_test {
             }
             let a = ENodeId::new(a_idx as u32);
             let b = ENodeId::new(b_idx as u32);
-            let axiom_id = crate::id::AxiomId::new(i as u16);
-            eg.merge_justified(a, b, Justification::Axiom { axiom_id });
+            let axiom_id = crate::id::AxiomId::new(i as u32);
+            eg.merge_justified(a, b, Justification::axiom(axiom_id));
         }
         eg.rebuild();
         eg.node_count()
@@ -1153,9 +1037,7 @@ mod aci_deep_proof_test {
             eg.merge_justified(
                 left_only[i],
                 right_only[i],
-                Justification::Axiom {
-                    axiom_id: crate::id::AxiomId::new(i as u16),
-                },
+                Justification::axiom(crate::id::AxiomId::new(i as u32)),
             );
         }
         eg.rebuild();
@@ -1184,6 +1066,16 @@ mod aci_deep_proof_test {
                 ),
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
                 Justification::Assumption { lit } => format!("assumption {lit}"),
+                Justification::Build { node, .. } => {
+                    format!("build({})", eg.node_op_name(*node))
+                }
+                Justification::Normalize { node, normal } => {
+                    format!(
+                        "normalize({}, {})",
+                        eg.node_op_name(*node),
+                        eg.node_op_name(*normal)
+                    )
+                }
                 Justification::ACSuperposition { .. }
                 | Justification::ACInterReduction { .. }
                 | Justification::ACAxiomCP { .. }
@@ -1207,10 +1099,9 @@ mod aci_deep_proof_test {
         );
         for i in 0..(n - k) {
             assert!(
-                buf.steps.iter().any(|(_, _, j)| *j
-                    == Justification::Axiom {
-                        axiom_id: crate::id::AxiomId::new(i as u16)
-                    }),
+                buf.steps
+                    .iter()
+                    .any(|(_, _, j)| *j == Justification::axiom(crate::id::AxiomId::new(i as u32))),
                 "missing axiom #{i}"
             );
         }
@@ -1305,9 +1196,7 @@ mod bench_overhead {
                 eg.merge_justified(
                     a,
                     b,
-                    Justification::Axiom {
-                        axiom_id: crate::id::AxiomId::new(i as u16),
-                    },
+                    Justification::axiom(crate::id::AxiomId::new(i as u32)),
                 );
             } else {
                 eg.merge(a, b);
@@ -1398,13 +1287,7 @@ mod proof_restore_test {
         let token = eg.mark(ShrinkPolicy::Never);
 
         // Merge x≡y, rebuild → f(x)≡f(y) by congruence
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(1),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(1)));
         eg.rebuild();
         assert_eq!(eg.find(fx), eg.find(fy));
         assert_ne!(eg.find(fx), eg.find(fz));
@@ -1417,10 +1300,11 @@ mod proof_restore_test {
                 .iter()
                 .any(|(_, _, j)| matches!(j, Justification::Congruence { .. }))
         );
-        assert!(buf.steps.iter().any(|(_, _, j)| *j
-            == Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(1)
-            }));
+        assert!(
+            buf.steps
+                .iter()
+                .any(|(_, _, j)| *j == Justification::axiom(crate::id::AxiomId::new(1)))
+        );
 
         // Restore
         eg.restore(token);
@@ -1434,13 +1318,7 @@ mod proof_restore_test {
         assert!(!eg.explain_deep(fx, fy, &mut buf));
 
         // Now merge x≡z instead, rebuild → f(x)≡f(z)
-        eg.merge_justified(
-            x,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(2),
-            },
-        );
+        eg.merge_justified(x, z, Justification::axiom(crate::id::AxiomId::new(2)));
         eg.rebuild();
         assert_eq!(eg.find(fx), eg.find(fz));
         assert_ne!(eg.find(fx), eg.find(fy));
@@ -1448,14 +1326,16 @@ mod proof_restore_test {
         // New proof should reference axiom #2, not axiom #1
         buf.clear();
         assert!(eg.explain_deep(fx, fz, &mut buf));
-        assert!(buf.steps.iter().any(|(_, _, j)| *j
-            == Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(2)
-            }));
-        assert!(!buf.steps.iter().any(|(_, _, j)| *j
-            == Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(1)
-            }));
+        assert!(
+            buf.steps
+                .iter()
+                .any(|(_, _, j)| *j == Justification::axiom(crate::id::AxiomId::new(2)))
+        );
+        assert!(
+            !buf.steps
+                .iter()
+                .any(|(_, _, j)| *j == Justification::axiom(crate::id::AxiomId::new(1)))
+        );
 
         eprintln!("✓ proof_state_restored passed");
     }
@@ -1480,26 +1360,14 @@ mod proof_restore_test {
         let tok1 = eg.mark(ShrinkPolicy::Never);
 
         // Merge a≡b
-        eg.merge_justified(
-            a,
-            b,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(10),
-            },
-        );
+        eg.merge_justified(a, b, Justification::axiom(crate::id::AxiomId::new(10)));
         eg.rebuild();
         assert_eq!(eg.find(fa), eg.find(fb));
 
         let tok2 = eg.mark(ShrinkPolicy::Never);
 
         // Merge a≡c on top
-        eg.merge_justified(
-            a,
-            c,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(20),
-            },
-        );
+        eg.merge_justified(a, c, Justification::axiom(crate::id::AxiomId::new(20)));
         eg.rebuild();
         assert_eq!(eg.find(fa), eg.find(fc));
 

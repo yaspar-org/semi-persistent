@@ -115,10 +115,10 @@ decreases the measure. -/
 theorem Infer_measure {L : Laws n} {st st' : State n} (hinf : Infer L st st') :
     (st'.nodes = st.nodes ∧ st'.find = st.find) ∨ measure st' < measure st := by
   cases hinf with
-  | mint _ _ hd => exact Or.inr (measure_addNode_lt st hd)
+  | mint _ hd => exact Or.inr (measure_addNode_lt st hd)
   | joinMerge _ _ _ => exact measure_merge st _ _
-  | cancelMerge _ _ _ _ _ _ => exact measure_merge st _ _
-  | retire _ => exact Or.inl ⟨rfl, rfl⟩
+  | retire _ _ => exact Or.inl ⟨rfl, rfl⟩
+  | unretire _ => exact Or.inl ⟨rfl, rfl⟩
   | setRhs _ => exact Or.inl ⟨rfl, rfl⟩
 
 theorem Infer_measure_le {L : Laws n} {st st' : State n} (hinf : Infer L st st') :

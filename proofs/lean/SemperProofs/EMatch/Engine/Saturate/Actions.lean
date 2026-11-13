@@ -1,4 +1,4 @@
-import SemperProofs.EMatch.Engine.Rounds.Complete
+import SemperProofs.EMatch.Engine.Matcher
 
 /-!
 # Rule actions and fired instances (spec-actions §A-§C)
@@ -110,14 +110,49 @@ inductive Action where
   | union (a b : Pat)
   | subsume (x : Var)
 
-/-- A rule: its resolved query atoms, an annotated plan for them, and its
-head actions in order. `(rewrite L R)` is `[union (var root) R]` plus
-`subsume root` under `:subsume` (`apply.rs:377-384`); `(rule body head)` is
-the head in order (`apply.rs:431-434`). -/
+/-- A rule: its resolved query atoms, the procedure that matches them (the
+static plan or the adaptive scheduler, `Matcher`), and its head actions in
+order. `(rewrite L R)` is `[union (var root) R]` plus `subsume root` under
+`:subsume` (`apply.rs:377-384`); `(rule body head)` is the head in order
+(`apply.rs:431-434`). -/
 structure Rule where
   atoms : List QAtom
-  plan : APlan
+  matcher : Matcher
   actions : List Action
+
+mutual
+/-- Whether a right-hand side contains an n-ary application (`assoc`, `ac`
+or `aci`): the terms whose stored node `rebuild` may rewrite non-literally
+(unit drop, nilpotent clamp, degenerate arity, `recanonize_node`). A
+variable, a plain or a commutative application is kept literally. -/
+def Pat.hasNary : Pat → Bool
+  | .var _ => false
+  | .plain _ args => Pat.hasNaryList args
+  | .comm _ p q => p.hasNary || q.hasNary
+  | .assoc .. => true
+  | .ac .. => true
+  | .aci .. => true
+def Pat.hasNaryList : List Pat → Bool
+  | [] => false
+  | p :: ps => p.hasNary || Pat.hasNaryList ps
+end
+
+theorem Pat.hasNaryList_eq_false {args : List Pat} :
+    Pat.hasNaryList args = false ↔ ∀ p ∈ args, p.hasNary = false := by
+  induction args with
+  | nil => simp [Pat.hasNaryList]
+  | cons p ps ih => simp [Pat.hasNaryList, ih]
+
+/-- Whether an action builds an n-ary term. -/
+def Action.hasNary : Action → Bool
+  | .insert t => t.hasNary
+  | .union a b => a.hasNary || b.hasNary
+  | .subsume _ => false
+
+/-- Whether some action of the rule builds an n-ary term: the rules the
+semi-naive loop matches in full after a round whose rebuild rewrote a stored
+node non-literally (`respelled`, `saturate.rs`). -/
+def Rule.buildsNary (rule : Rule) : Bool := rule.actions.any Action.hasNary
 
 /-- The consequence of one action is present in `G` under `σ`. -/
 def ActFired (G : Graph) (σ : Binding) : Action → Prop

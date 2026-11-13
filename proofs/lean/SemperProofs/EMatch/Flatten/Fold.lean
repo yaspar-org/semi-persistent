@@ -11,18 +11,24 @@ walk opened a nested same-operator child at **every** position, so the view
 `[a, b, c]` of the node `f[a, K]`, `K ∋ f[b, c]`, matched `(f x y z)` as the
 term `f(f(a,b),c)`: an unsound match (reproducer `flatten_fold_spine.egg`).
 
-This file gives the term reading of a fold (`BTm`, `lfold`, `rfold`) and
-proves which side is right:
+This file reads a fold in any magma (`lfold`, `rfold` over a type with
+`Mul`; `BTm`, the free terms, is one instance) and proves which side is
+right:
 
 * `fold_open_off_spine_unsound`: in the opening-tree model of `Views.lean`
-  (every position may open), there is a graph whose class denotations are
-  consistent with the left fold and a raw view of a node whose left fold
-  differs from the node's (the reproducer, as a counter-model);
+  (every position may open), there is a graph whose class denotations into
+  the free magma are consistent with the left fold and a raw view of a node
+  whose left fold differs from the node's (the reproducer, as a
+  counter-model);
 * `OTLeft` / `OTRight`: the opening trees that open only the spine (the
   first, resp. last, position of the root and of every opened member), and
   `otLeft_sound` / `otRight_sound`: every such view denotes the node's term
-  when the denotation is consistent. This is the walk after the fix
-  (`flatten::spine`).
+  when the denotation is consistent, in every magma. This is the walk after
+  the fix (`flatten::spine`);
+* `consistentL_cyclic_satisfiable`: a class holding `Sub[X, c]` (what
+  `x - 0 = x` makes) has a consistent denotation into `ℕ`, though none into
+  the free magma (`consistentL_cyclic_free_unsat`), so the soundness
+  theorems are not vacuous on such graphs.
 
 The `:assoc` development (completeness of the demand rule, the plan theorems)
 is about the unrestricted trees; for a fold, the views are the restricted
@@ -34,25 +40,30 @@ namespace Semper.EMatch.Flatten
 
 open Semper.EMatch
 
-/-- Binary terms over classes. -/
-inductive BTm where
-  | leaf (c : C)
-  | node (l r : BTm)
-  deriving DecidableEq, Repr
+/-! ## Folds in a magma
 
-/-- The left fold of a nonempty list: `[t₁, …, tₙ] ↦ (…(t₁ t₂) …) tₙ`. -/
-def lfold : List BTm → Option BTm
+A fold reads in any type with a binary operation (`Mul M`, a magma: no law
+is assumed). The soundness theorems below are stated for every such `M` and
+every denotation; the free terms `BTm` are one instance, used where a
+counter-model needs two different groupings to denote different terms. -/
+
+section Magma
+
+variable {M : Type*} [Mul M]
+
+/-- The left fold of a nonempty list: `[t₁, …, tₙ] ↦ (…(t₁ * t₂) …) * tₙ`. -/
+def lfold : List M → Option M
   | [] => none
-  | t :: ts => some (ts.foldl .node t)
+  | t :: ts => some (ts.foldl (· * ·) t)
 
-/-- The right fold of a nonempty list: `[t₁, …, tₙ] ↦ t₁ (… (tₙ₋₁ tₙ))`. -/
-def rfold : List BTm → Option BTm
+/-- The right fold of a nonempty list: `[t₁, …, tₙ] ↦ t₁ * (… (tₙ₋₁ * tₙ))`. -/
+def rfold : List M → Option M
   | [] => none
   | [t] => some t
-  | t :: ts => (rfold ts).map (.node t)
+  | t :: ts => (rfold ts).map (t * ·)
 
 /-- Splicing a left fold at the head is the fold of the concatenation. -/
-theorem lfold_splice {xs : List BTm} {t : BTm} (h : lfold xs = some t) (ys : List BTm) :
+theorem lfold_splice {xs : List M} {t : M} (h : lfold xs = some t) (ys : List M) :
     lfold (t :: ys) = lfold (xs ++ ys) := by
   cases xs with
   | nil => simp [lfold] at h
@@ -61,13 +72,13 @@ theorem lfold_splice {xs : List BTm} {t : BTm} (h : lfold xs = some t) (ys : Lis
       subst h
       simp [List.foldl_append]
 
-theorem rfold_cons_of_ne {t : BTm} {ts : List BTm} (h : ts ≠ []) :
-    rfold (t :: ts) = (rfold ts).map (.node t) := by
+theorem rfold_cons_of_ne {t : M} {ts : List M} (h : ts ≠ []) :
+    rfold (t :: ts) = (rfold ts).map (t * ·) := by
   cases ts with
   | nil => exact absurd rfl h
   | cons _ _ => rfl
 
-theorem rfold_ne_none {ts : List BTm} (h : ts ≠ []) : rfold ts ≠ none := by
+theorem rfold_ne_none {ts : List M} (h : ts ≠ []) : rfold ts ≠ none := by
   induction ts with
   | nil => exact absurd rfl h
   | cons t ts ih =>
@@ -77,25 +88,95 @@ theorem rfold_ne_none {ts : List BTm} (h : ts ≠ []) : rfold ts ≠ none := by
         simpa using ih hts
 
 /-- Splicing a right fold at the tail is the fold of the concatenation. -/
-theorem rfold_splice {ys : List BTm} {t : BTm} (h : rfold ys = some t) :
-    ∀ xs : List BTm, rfold (xs ++ [t]) = rfold (xs ++ ys)
+theorem rfold_splice {ys : List M} {t : M} (h : rfold ys = some t) :
+    ∀ xs : List M, rfold (xs ++ [t]) = rfold (xs ++ ys)
   | [] => by simpa [rfold] using h.symm
   | x :: xs => by
       have hys : ys ≠ [] := by rintro rfl; simp [rfold] at h
       rw [List.cons_append, List.cons_append, rfold_cons_of_ne (by simp),
         rfold_cons_of_ne (by simp [hys]), rfold_splice h xs]
 
+end Magma
+
+/-- Binary terms over classes: the free magma, the instance in which two
+groupings of the same leaves denote different terms. -/
+inductive BTm where
+  | leaf (c : C)
+  | node (l r : BTm)
+  deriving DecidableEq, Repr
+
+instance : Mul BTm := ⟨BTm.node⟩
+
 /-! ## Consistent denotations -/
 
-/-- A denotation of the classes consistent with the left fold `f`: every
-`f`-member of `X` (a sequence node) denotes `den X` as the left fold of its
-children's denotations. -/
-def ConsistentL (ctx : Ctx) (den : C → BTm) : Prop :=
+/-- A denotation of the classes into a magma `M`, consistent with the left
+fold `f`: every `f`-member of `X` (a sequence node) denotes `den X` as the
+left fold of its children's denotations. -/
+def ConsistentL {M : Type*} [Mul M] (ctx : Ctx) (den : C → M) : Prop :=
   ∀ id m X cs, ctx.IsMember id m X → m.children = .seq cs → lfold (cs.map den) = some (den X)
 
 /-- The same for the right fold. -/
-def ConsistentR (ctx : Ctx) (den : C → BTm) : Prop :=
+def ConsistentR {M : Type*} [Mul M] (ctx : Ctx) (den : C → M) : Prop :=
   ∀ id m X cs, ctx.IsMember id m X → m.children = .seq cs → rfold (cs.map den) = some (den X)
+
+/-! ## Cyclic classes have consistent denotations
+
+`x - 0 = x` merges `Sub[X, c]` into `X`, so the class `X` holds a fold over
+itself; a class can also hold two spellings `Sub[a, b]` and `Sub[a, b, c]`.
+No denotation into the free magma is consistent with such a class
+(`consistentL_cyclic_free_unsat`), but one into `ℕ` with multiplication is
+(`consistentL_cyclic_satisfiable`), so the soundness theorems, stated for
+every magma, say something about these graphs. -/
+
+/-- `Sub` (op 7) a left fold, classes `a = 1, b = 2, c = 3, X = 4`, and the
+members `X ∋ Sub[X, c]` (node 10), `X ∋ Sub[a, b]` (node 11) and
+`X ∋ Sub[a, b, c]` (node 12). -/
+def exCyc : Ctx :=
+  ⟨⟨[(10, ⟨7, .seq [4, 3]⟩), (11, ⟨7, .seq [1, 2]⟩), (12, ⟨7, .seq [1, 2, 3]⟩)],
+    fun id => if id = 10 ∨ id = 11 ∨ id = 12 then 4 else id⟩, 7, .assoc, fun _ => true⟩
+
+/-- `c ↦ 1`, `a ↦ 2`, `b ↦ 3`, `X ↦ 6`. -/
+def exCycDen : C → ℕ := fun c => if c = 3 then 1 else if c = 1 then 2 else if c = 2 then 3 else 6
+
+theorem exCyc_consistent : ConsistentL exCyc exCycDen := by
+  intro id m X cs hm hcs
+  obtain ⟨hmem, -, hX, -⟩ := hm
+  simp only [exCyc, List.mem_cons, Prod.mk.injEq, List.not_mem_nil,
+    or_false] at hmem
+  rcases hmem with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+    simp only [exCyc] at hX <;> subst hX <;> simp only [Children.seq.injEq] at hcs <;>
+    subst hcs <;> decide
+
+/-- **A class holding a fold over itself has a consistent denotation.** In
+`exCyc` the class `X` holds `Sub[X, c]`, `Sub[a, b]` and `Sub[a, b, c]`, and
+`exCycDen` into `ℕ` (multiplication, `c ↦ 1`) is consistent with the left
+fold. -/
+theorem consistentL_cyclic_satisfiable :
+    ∃ (ctx : Ctx) (X c : C) (den : C → ℕ), ctx.κ = .assoc ∧
+      (∃ id m, ctx.IsMember id m X ∧ m.children = .seq [X, c]) ∧
+      (∃ a b id₁ m₁ id₂ m₂, ctx.IsMember id₁ m₁ X ∧ m₁.children = .seq [a, b] ∧
+        ctx.IsMember id₂ m₂ X ∧ m₂.children = .seq [a, b, c]) ∧
+      ConsistentL ctx den :=
+  ⟨exCyc, 4, 3, exCycDen, rfl,
+    ⟨10, ⟨7, .seq [4, 3]⟩, ⟨by simp [exCyc], rfl, by simp [exCyc], rfl⟩, rfl⟩,
+    ⟨1, 2, 11, ⟨7, .seq [1, 2]⟩, 12, ⟨7, .seq [1, 2, 3]⟩,
+      ⟨by simp [exCyc], rfl, by simp [exCyc], rfl⟩, rfl,
+      ⟨by simp [exCyc], rfl, by simp [exCyc], rfl⟩, rfl⟩,
+    exCyc_consistent⟩
+
+theorem BTm.node_ne_left : ∀ (t r : BTm), BTm.node t r ≠ t
+  | .leaf _, _, h => BTm.noConfusion h
+  | .node l r', _, h => by
+      injection h with h₁ _
+      exact BTm.node_ne_left l r' h₁
+
+/-- In the free magma no denotation is consistent with `exCyc`: the member
+`Sub[X, c]` would make `den X` a proper subterm of itself. -/
+theorem consistentL_cyclic_free_unsat (den : C → BTm) : ¬ ConsistentL exCyc den := by
+  intro hc
+  have h := hc 10 ⟨7, .seq [4, 3]⟩ 4 [4, 3] ⟨by simp [exCyc], rfl, by simp [exCyc], rfl⟩ rfl
+  simp only [List.map, lfold, List.foldl, Option.some.injEq] at h
+  exact BTm.node_ne_left _ _ h
 
 /-! ## The unrestricted trees are unsound for a fold -/
 
@@ -161,7 +242,7 @@ inductive OTRight (ctx : Ctx) : Finset C → List C → List C → Prop
       OTRight ctx (insert X P) cs v → OTRight ctx P (rest ++ [X]) (rest ++ v)
 
 /-- **The spine views of a left fold denote the node's term.** -/
-theorem otLeft_sound {ctx : Ctx} {den : C → BTm} (hc : ConsistentL ctx den) :
+theorem otLeft_sound {M : Type*} [Mul M] {ctx : Ctx} {den : C → M} (hc : ConsistentL ctx den) :
     ∀ {P : Finset C} {ks v : List C}, OTLeft ctx P ks v →
       lfold (v.map den) = lfold (ks.map den) := by
   intro P ks v h
@@ -174,7 +255,7 @@ theorem otLeft_sound {ctx : Ctx} {den : C → BTm} (hc : ConsistentL ctx den) :
       rfl
 
 /-- **The spine views of a right fold denote the node's term.** -/
-theorem otRight_sound {ctx : Ctx} {den : C → BTm} (hc : ConsistentR ctx den) :
+theorem otRight_sound {M : Type*} [Mul M] {ctx : Ctx} {den : C → M} (hc : ConsistentR ctx den) :
     ∀ {P : Finset C} {ks v : List C}, OTRight ctx P ks v →
       rfold (v.map den) = rfold (ks.map den) := by
   intro P ks v h

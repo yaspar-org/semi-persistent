@@ -16,6 +16,9 @@
 //!                                                         per expected warning), or none is raised
 //!   ;; CHECK_AC_BASIS: on                                 enable + assert the reduced-basis
 //!                                                         invariants post-run (default off)
+//!   ;; NODE_BUDGET: N                                     completion node-growth budget
+//!                                                         (`EGraph::set_completion_node_budget`,
+//!                                                         default 50,000)
 //!
 //! EVAL `both` runs the file under naive AND semi-naive, asserting the same EXPECT outcome.
 //! CHECK_AC_BASIS turns on `set_basis_checks` and, after a successful run, asserts the active
@@ -38,6 +41,8 @@ struct Directives {
     union_by: semi_persistent_egraph::UnionBy,
     /// `;; MESSAGE:`: text the outcome's message must contain.
     message: Option<String>,
+    /// `;; NODE_BUDGET:`: the completion node-growth budget, in nodes.
+    node_budget: Option<usize>,
     /// `;; WARNING:`: texts that each some warning must contain; `none` asks for no
     /// warning at all, recorded as `Some(vec![])`.
     warnings: Option<Vec<String>>,
@@ -52,6 +57,7 @@ fn parse_directives(src: &str) -> Directives {
         union_by: semi_persistent_egraph::UnionBy::Rank,
         message: None,
         warnings: None,
+        node_budget: None,
     };
     for line in src.lines().take(8) {
         let line = line.trim();
@@ -86,6 +92,13 @@ fn parse_directives(src: &str) -> Directives {
         }
         if let Some(rest) = line.strip_prefix(";; CHECK_AC_BASIS:") {
             d.check_ac_basis = rest.trim() == "on";
+        }
+        if let Some(rest) = line.strip_prefix(";; NODE_BUDGET:") {
+            d.node_budget = Some(
+                rest.trim()
+                    .parse()
+                    .unwrap_or_else(|e| panic!("NODE_BUDGET: {e}: {line}")),
+            );
         }
         if let Some(rest) = line.strip_prefix(";; UNION_BY:") {
             use semi_persistent_egraph::UnionBy;
@@ -140,6 +153,9 @@ fn run_with<
     interp.set_strategy(strategy);
     interp.set_union_by(d.union_by);
     interp.set_basis_checks(d.check_ac_basis);
+    if let Some(n) = d.node_budget {
+        interp.eg.set_completion_node_budget(n);
+    }
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         surface_cmds,
@@ -294,6 +310,7 @@ egg_test!(comm_match_nested, "comm_match_nested.egg");
 egg_test!(comm_match_no_false, "comm_match_no_false.egg");
 egg_test!(mult_rhs_max_width, "mult_rhs_max_width.egg");
 egg_test!(mult_rhs_sum_overflow, "mult_rhs_sum_overflow.egg");
+egg_test!(mult_recanon_sum_overflow, "mult_recanon_sum_overflow.egg");
 egg_test!(mult_rhs_splice_rest, "mult_rhs_splice_rest.egg");
 egg_test!(mult_rhs_splice_overflow, "mult_rhs_splice_overflow.egg");
 egg_test!(mult_rhs_computed_too_wide, "mult_rhs_computed_too_wide.egg");
@@ -420,6 +437,20 @@ egg_test!(
     flatten_regroup_nested_needs,
     "flatten_regroup_nested_needs.egg"
 );
+egg_test!(aci1, "aci1.egg");
+egg_test!(
+    flatten_regroup_laws_drop_need,
+    "flatten_regroup_laws_drop_need.egg"
+);
+egg_test!(
+    flatten_regroup_laws_no_item,
+    "flatten_regroup_laws_no_item.egg"
+);
+egg_test!(
+    flatten_regroup_laws_insert,
+    "flatten_regroup_laws_insert.egg"
+);
+egg_test!(flatten_regroup_laws_idem, "flatten_regroup_laws_idem.egg");
 egg_test!(checked_add_ok, "checked_add_ok.egg");
 // A partial primitive applied outside its domain is a reported program error,
 // not a panic: the engine cannot pick a value, but the caller has to be able to
@@ -544,7 +575,27 @@ egg_test!(
     ac_lazy_budget_inconclusive,
     "ac_lazy_budget_inconclusive.egg"
 );
+// Two ways a lazy decision reads the node budget: spent by its rule round, which the
+// rebuild that follows reads before its first completion round, and spent by the check's
+// own rebuild before the decision opened, which the decision reads before any rule round.
+// Both report the stop as inconclusive.
+egg_test!(lazy_budget_rules_growth, "lazy_budget_rules_growth.egg");
+egg_test!(lazy_budget_prior_abort, "lazy_budget_prior_abort.egg");
 egg_test!(semi_recanon_parent_delta, "semi_recanon_parent_delta.egg");
+egg_test!(semi_recanon_unit_drop, "semi_recanon_unit_drop.egg");
+egg_test!(semi_recanon_idem_collapse, "semi_recanon_idem_collapse.egg");
+egg_test!(
+    semi_recanon_inverse_cancel,
+    "semi_recanon_inverse_cancel.egg"
+);
+egg_test!(
+    semi_recanon_pending_collapse,
+    "semi_recanon_pending_collapse.egg"
+);
+// The counter-model of `denN_persist_fails` under eager completion: the semi-naive loop does
+// not re-match after the law applied, and completion joins the two spellings
+// (`proofs/lean/SemperProofs/Fidelity/RecanonComplete.lean`).
+egg_test!(semi_recanon_completion_on, "semi_recanon_completion_on.egg");
 egg_test!(semi_eq_global_local, "semi_eq_global_local.egg");
 egg_test!(
     semi_merge_membership_delta,
@@ -595,6 +646,29 @@ egg_test!(
     inverse_cancel_keeps_atomic_pair,
     "inverse_cancel_keeps_atomic_pair.egg"
 );
+// The `atomic` bit's transitions, one fixture each: a leaf class gains an f-node, the last
+// f-node of a class collapses to one element, an atomic and a non-atomic class merge after
+// the latter was spliced, a class turns atomic as `Neg`'s child after a splice, and a class
+// used as a child before and after it holds an f-node. The expected equalities are
+// consequences of the theory, checked against the bounded oracle of
+// `proofs/lean/Conform/CC/Oracle.lean`.
+egg_test!(atomic_bit_leaf_gains_node, "atomic_bit_leaf_gains_node.egg");
+egg_test!(
+    atomic_bit_last_node_collapses,
+    "atomic_bit_last_node_collapses.egg"
+);
+egg_test!(
+    atomic_bit_merge_spliced_side,
+    "atomic_bit_merge_spliced_side.egg"
+);
+egg_test!(
+    atomic_bit_inverse_after_splice,
+    "atomic_bit_inverse_after_splice.egg"
+);
+egg_test!(
+    atomic_bit_child_before_and_after_node,
+    "atomic_bit_child_before_and_after_node.egg"
+);
 // A-only associativity on a written nested application, in both statement orders and on a
 // rule right-hand side.
 egg_test!(
@@ -633,9 +707,16 @@ egg_test!(semi_naive_minmono, "semi_naive_minmono.egg");
 egg_test!(cancel_lattice, "cancel_lattice.egg");
 egg_test!(cancel_crit_pair, "cancel_crit_pair.egg");
 egg_test!(cancel_lattice_lazy, "cancel_lattice_lazy.egg");
+// Cancelative closure without an identity (Kapur §5.2(iii)(b)): an equation whose
+// cancelation empties one side closes against the op's whole summand pool.
+egg_test!(ac_cancel_pool_no_unit, "ac_cancel_pool_no_unit.egg");
 egg_test!(nilpotent_group_lattice, "nilpotent_group_lattice.egg");
 egg_test!(ac_collapsed_recanon, "ac_collapsed_recanon.egg");
+egg_test!(ac_collapsed_stuck, "ac_collapsed_stuck.egg");
+egg_test!(ac_collapsed_min_monomial, "ac_collapsed_min_monomial.egg");
+egg_test!(ac_collapsed_reoriented, "ac_collapsed_reoriented.egg");
 egg_test!(cc_disjoint_partner, "cc_disjoint_partner.egg");
+egg_test!(cc_containment_chain, "cc_containment_chain.egg");
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");
@@ -680,6 +761,9 @@ egg_test!(a_singleton_collapse, "a_singleton_collapse.egg");
 // `ematch.rs`'s `expand_a_checks_a_prebound_fixed_child` and its two decomposition
 // counterparts assert the match set directly.
 egg_test!(a_prebound_fixed_child, "a_prebound_fixed_child.egg");
+// The windows of a sequence pattern against a node shorter than its fixed children, and
+// against one where no window binds, in each of the four pre/suffix shapes.
+egg_test!(a_window_short_node, "a_window_short_node.egg");
 egg_test!(a_matrix_kron_fusion, "a_matrix_kron_fusion.egg");
 
 // ── AC congruence completeness (superposition + inter-reduction) ──
@@ -707,6 +791,8 @@ egg_test!(ac_inverse_cancel_control, "ac_inverse_cancel_control.egg");
 // The min-monomial slot refresh (I5) and the flatten demand refold, fixtures of the two
 // previous fixes on this branch that were never registered.
 egg_test!(ac_min_slot_refresh, "ac_min_slot_refresh.egg");
+// The refresh after a collapsed node is materialized again (I5).
+egg_test!(ac_reactivate_min_monomial, "ac_reactivate_min_monomial.egg");
 egg_test!(flatten_demand_refold, "flatten_demand_refold.egg");
 egg_test!(
     flatten_demand_refold_control,

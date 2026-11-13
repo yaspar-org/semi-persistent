@@ -1,0 +1,21 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; MESSAGE: inconclusive
+;; NODE_BUDGET: 0
+;; A lazy check whose own rebuild, before the decision opens, stops completion on the node
+;; budget: the superposition of `ab = c` and `bd = e` mints `add(c, d)`, past a budget of
+;; zero (`AbortedGrowthLimit`). The decision reads that stop from the completion outcome
+;; before running any rule round (`lazy_query_decide_budgeted`, the first `aborted` test)
+;; and reports the check as inconclusive instead of claiming the query has no match.
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E) (function E0 () E)
+(function W () E)
+(function Mark (E) E)
+(function Add (E) E :assoc-comm)
+(union (Add (A) (B)) (C))
+(union (Add (B) (D)) (E0))
+(rewrite (Mark x) (W))
+(let m (Mark (A)))
+(set-option :check-completion on)
+(check (W))

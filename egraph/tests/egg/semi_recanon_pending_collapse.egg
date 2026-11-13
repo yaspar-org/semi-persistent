@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; A node collapses to a leaf while the semi-naive delta still holds it. Round 0 fires the
+;; rewrite on `Add{A,B}` (its image `G(A,B)` joins the class) and builds `Add{A,B,C}`; the
+;; same action phase merges `B` with the unit. The rebuild collapses `Add{A,B}` to the class
+;; of `A`, so `G(A,B) = A`, and shrinks `Add{A,B,C}` to `Add{A,C}`: that node is in the delta
+;; of round 1 as a two-element node and gets its image `G(A,C)`. Semi-naive and naive agree.
+(sort E)
+(function A () E) (function B () E) (function C () E) (function Zero () E)
+(function P () E)
+(function Add (E) E :assoc-comm :identity (Zero))
+(function G (E E) E)
+(let p (P))
+(let s (Add (A) (B)))
+(rule ((P)) ((Add (A) (B) (C)) (union (B) (Zero))))
+(rewrite (Add x y) (G x y))
+(run 10)
+(check-eq (G (A) (B)) (A))
+(check-eq (Add (A) (C)) (G (A) (C)))
+(check-eq (Add (A) (B) (C)) (G (A) (C)))

@@ -62,6 +62,17 @@ noncomputable def represents (st : State n) (f : Sym) (A : Finset (Monomial n ×
 def Enumerates (st : State n) (A : Finset (Monomial n × Fin n)) : Prop :=
   ∀ p, p ∈ A ↔ p ∈ st.active
 
+/-- Every node of `A` is an active node of the state. The bridge theorems
+need only this half of `Enumerates`; it is what a state's completion view
+(`State.withAtoms`, which adds the implicit nodes of the leaf constants)
+and an enumeration of the stored active nodes satisfy. -/
+def Within (st : State n) (A : Finset (Monomial n × Fin n)) : Prop :=
+  ∀ p ∈ A, p ∈ st.active
+
+theorem Enumerates.within {st : State n} {A : Finset (Monomial n × Fin n)}
+    (h : Enumerates st A) : Within st A :=
+  fun p hp => (h p).1 hp
+
 /-- `st.find` returns representatives. The `State` development does not
 state this invariant (`merge` preserves it); it is taken as a hypothesis
 where the graph's canonicity is needed. -/

@@ -40,9 +40,11 @@ theorem regroupStep_ac_of {ctx : Ctx} (hκ : ctx.κ = .ac) {dir : Dir} {r : RecR
     {id : NodeId} {m : Node} {g : C} {M W : Multiset C} (hm : ctx.IsMember id m g)
     (hkids : m.children = .mset M) (hW : ofEntries r.1 = W) (hg : g ∉ M)
     (h2 : 2 ≤ Multiset.card M) (hle : M ≤ W) (hne : M ≠ W) {ns : List C}
-    (hns : needsAfter g ((Multiset.entries M).map Prod.fst) r.2.2 = ns) :
+    (hns : needsAfter g ((Multiset.entries M).map Prod.fst)
+      ((Multiset.entries (W - M + {g})).map Prod.fst) r.2.2 = ns) :
     RegroupStep ctx dir r
-      (Multiset.entries (W - M + {g}), r.2.1.map (addG g ((Multiset.entries M).map Prod.fst)), ns) := by
+      (Multiset.entries (W - M + {g}), r.2.1.map (addG g ((Multiset.entries M).map Prod.fst)
+        ((Multiset.entries (W - M + {g})).map Prod.fst)), ns) := by
   have hk : kids ctx.κ m.children = Multiset.entries M := by rw [hκ, hkids]; rfl
   have h := @RegroupStep.mk ctx dir r id m g (Multiset.entries (W - M + {g})) hm
   rw [hk, hκ, hns] at h
@@ -97,13 +99,13 @@ theorem regroup_nested_matches :
       ofEntries r.1 = {5, 6, 15} := by
     refine ⟨_, Relation.ReflTransGen.head
       (regroupStep_ac_of rfl hmem.1 rfl (ofEntries_entries _) (by decide) (by decide) (by decide)
-        (by decide) (ns := [11]) (by simp [needsAfter])) <|
+        (by decide) (ns := [11]) (by simp [needsAfter, mem_entries_fst, -List.mem_map])) <|
       Relation.ReflTransGen.head
       (regroupStep_ac_of rfl hmem.2.1 rfl (ofEntries_entries _) (by decide) (by decide) (by decide)
-        (by decide) (ns := [11, 13]) (by simp [needsAfter, mem_entries_fst])) <|
+        (by decide) (ns := [11, 13]) (by simp [needsAfter, mem_entries_fst, -List.mem_map])) <|
       Relation.ReflTransGen.head
       (regroupStep_ac_of rfl hmem.2.2 rfl (ofEntries_entries _) (by decide) (by decide) (by decide)
-        (by decide) (ns := [15]) (by simp [needsAfter, mem_entries_fst]))
+        (by decide) (ns := [15]) (by simp [needsAfter, mem_entries_fst, -List.mem_map]))
       Relation.ReflTransGen.refl, rfl, rfl, ?_⟩
     rw [ofEntries_entries]
     decide

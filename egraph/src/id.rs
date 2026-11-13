@@ -24,14 +24,22 @@ semi_persistent_containers::define_id31! {
     pub struct OpId / StoredOpId, "op";
 }
 
-semi_persistent_containers::define_id15! {
-    /// A 15-bit rule identifier (indexes into the rule registry).
+semi_persistent_containers::define_id31! {
+    /// A 31-bit rule identifier (indexes into the rule registry). 31 bits, not
+    /// 15: generated rule sets exceed 32,767 rules.
     pub struct RuleId / StoredRuleId, "r";
 }
 
-semi_persistent_containers::define_id15! {
-    /// A 15-bit axiom identifier (user-asserted equalities).
+semi_persistent_containers::define_id31! {
+    /// A 31-bit axiom identifier, the 32-bit configurations' `EGraphConfig::A`.
+    /// Every `union` command of a program run with proofs registers one, so the
+    /// count scales with the input like a node id's.
     pub struct AxiomId / StoredAxiomId, "ax";
+}
+
+semi_persistent_containers::define_id63! {
+    /// The 63-bit axiom identifier, the 64-bit configurations' `EGraphConfig::A`.
+    pub struct AxiomId63 / StoredAxiomId63, "ax63_";
 }
 
 /// Mint the dense id for an arena or log position, checked.
@@ -114,49 +122,53 @@ mod tests {
     use super::*;
     use crate::containers::DenseId;
 
-    /// `id_at` accepts exactly the positions that have an id. `RuleId` is 15-bit, so
-    /// the boundary is reachable in a test — see `registry::tests` for the registry
-    /// path that used to alias across it.
+    semi_persistent_containers::define_id15! {
+        /// A 15-bit id whose bound a test can reach (the engine's ids are 31-bit).
+        struct TestId15 / StoredTestId15, "t15_";
+    }
+
+    /// `id_at` accepts exactly the positions that have an id. `TestId15` is 15-bit, so
+    /// the boundary is reachable in a test.
     #[test]
     fn id_at_covers_the_whole_id_space() {
-        let bound = 1usize << 15; // RuleId is define_id15!
-        assert_eq!(id_at::<RuleId>(0).to_usize(), 0);
-        assert_eq!(id_at::<RuleId>(bound - 1).to_usize(), bound - 1);
+        let bound = 1usize << 15;
+        assert_eq!(id_at::<TestId15>(0).to_usize(), 0);
+        assert_eq!(id_at::<TestId15>(bound - 1).to_usize(), bound - 1);
     }
 
     #[test]
     #[should_panic(expected = "the id space is exhausted")]
     fn id_at_rejects_a_position_with_no_id() {
-        // Representable as a `u16` index word, but past `RuleId`'s 15-bit bound.
-        let _ = id_at::<RuleId>(1usize << 15);
+        // Representable as a `u16` index word, but past `TestId15`'s 15-bit bound.
+        let _ = id_at::<TestId15>(1usize << 15);
     }
 
     /// `id_at_index` is the same check, entered from a container's index word.
     #[test]
     fn id_at_index_agrees_with_id_at() {
-        let pos: <RuleId as DenseId>::Index = 7;
-        assert_eq!(id_at_index::<RuleId>(pos), id_at::<RuleId>(7));
+        let pos: <TestId15 as DenseId>::Index = 7;
+        assert_eq!(id_at_index::<TestId15>(pos), id_at::<TestId15>(7));
     }
 
     #[test]
     #[should_panic(expected = "the id space is exhausted")]
     fn id_at_index_rejects_a_position_with_no_id() {
-        let pos: <RuleId as DenseId>::Index = 1u16 << 15;
-        let _ = id_at_index::<RuleId>(pos);
+        let pos: <TestId15 as DenseId>::Index = 1u16 << 15;
+        let _ = id_at_index::<TestId15>(pos);
     }
 
     #[test]
     fn ids_upto_yields_every_position_in_order() {
-        let ids: Vec<usize> = ids_upto::<RuleId>(4).map(|r| r.to_usize()).collect();
+        let ids: Vec<usize> = ids_upto::<TestId15>(4).map(|r| r.to_usize()).collect();
         assert_eq!(ids, vec![0, 1, 2, 3]);
-        assert_eq!(ids_upto::<RuleId>(0).count(), 0);
+        assert_eq!(ids_upto::<TestId15>(0).count(), 0);
     }
 
     /// The whole id space scans, so the check is on the last position and not one past it.
     #[test]
     fn ids_upto_accepts_a_full_id_space() {
         let bound = 1usize << 15;
-        assert_eq!(ids_upto::<RuleId>(bound).count(), bound);
+        assert_eq!(ids_upto::<TestId15>(bound).count(), bound);
     }
 
     /// The panic lands before the first item, not partway through: an iterator that
@@ -164,6 +176,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "the id space is exhausted")]
     fn ids_upto_rejects_a_population_larger_than_the_id_space() {
-        let _ = ids_upto::<RuleId>((1usize << 15) + 1);
+        let _ = ids_upto::<TestId15>((1usize << 15) + 1);
     }
 }

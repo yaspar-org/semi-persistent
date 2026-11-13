@@ -855,27 +855,27 @@ pub struct AxiomInfo<G: Copy> {
 }
 
 /// Append-only axiom registry backed by `SpMap`.
-pub struct AxiomRegistry<G: Copy + DenseId, const TRACK: bool> {
-    /// Positions in this log ARE axiom ids, so the log's index word is `AxiomId`'s — a
-    /// `u16`, since `AxiomId` is 15-bit. Note this is NOT `G::Index`: `G` is the id type
-    /// of the *terms* an axiom relates, not of the axiom.
-    map: SpUniqueMap<String, AxiomInfo<G>, <crate::id::AxiomId as DenseId>::Index, TRACK>,
+pub struct AxiomRegistry<G: Copy + DenseId, A: DenseId, const TRACK: bool> {
+    /// Positions in this log ARE axiom ids `A`, so the log's index word is `A`'s:
+    /// the configuration's word (`EGraphConfig::A`), because the axiom count scales
+    /// with the program's `union` commands.
+    map: SpUniqueMap<String, AxiomInfo<G>, <A as DenseId>::Index, TRACK>,
 }
 
-impl<G: Copy + DenseId, const TRACK: bool> Default for AxiomRegistry<G, TRACK> {
+impl<G: Copy + DenseId, A: DenseId, const TRACK: bool> Default for AxiomRegistry<G, A, TRACK> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
+impl<G: Copy + DenseId, A: DenseId, const TRACK: bool> AxiomRegistry<G, A, TRACK> {
     pub fn new() -> Self {
         Self {
             map: SpUniqueMap::new(),
         }
     }
 
-    pub fn register(&mut self, name: &str, lhs: G, rhs: G) -> crate::id::AxiomId {
+    pub fn register(&mut self, name: &str, lhs: G, rhs: G) -> A {
         // Unique-keyed, as the rule registry: a repeated axiom name is refused.
         let id = match self.map.try_insert(
             name.to_owned(),
@@ -889,14 +889,14 @@ impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
             Err(ContainerError::DuplicateKey) => panic!("axiom '{name}' already registered"),
             Err(_) => panic!("registry id space exhausted for its index word"),
         };
-        id_at::<crate::id::AxiomId>(id.as_usize())
+        id_at::<A>(id.as_usize())
     }
 
-    pub fn info(&self, id: crate::id::AxiomId) -> &AxiomInfo<G> {
+    pub fn info(&self, id: A) -> &AxiomInfo<G> {
         self.map.get_val(id.to_index())
     }
 
-    pub fn name(&self, id: crate::id::AxiomId) -> &str {
+    pub fn name(&self, id: A) -> &str {
         self.map.key(id.to_index())
     }
 
@@ -939,48 +939,22 @@ mod tests {
     type SR = SortRegistry<SortId, false>;
     type OR = OpRegistry<OpId, SortId, false>;
 
-    // -- Id-space exhaustion --
+    // -- Id space --
     //
-    // `RuleId` is 15-bit while its log's index word is `u16`, so the log can hold a
-    // position (up to 65534) that no `RuleId` can name. That gap is why the mint has
-    // to be checked before mutation: position 32768 must be rejected without adding
-    // an unnameable registry entry.
+    // `RuleId` is 31-bit. It was 15-bit, which capped a program at 32,767 rules; a
+    // registry filled past that bound must keep every id distinct.
 
-    /// `RuleId`'s id bound, asserted rather than assumed: `id_bound()` is a spec
-    /// function, so exec code reads the bound off `try_new`'s boundary.
-    fn rule_id_bound() -> usize {
-        let bound = 1usize << 15; // define_id15!
-        assert!(RuleId::try_new(bound - 1).is_some(), "bound is too high");
-        assert!(RuleId::try_new(bound).is_none(), "bound is too low");
-        bound
-    }
-
-    /// Every position below the id bound mints its own distinct id.
+    /// 40,000 rules, past the former 15-bit bound, mint distinct ids in order.
     #[test]
-    fn rule_registry_fills_its_id_space_without_aliasing() {
-        let bound = rule_id_bound();
+    fn rule_registry_holds_more_than_32767_rules() {
+        let n = 40_000usize;
         let mut r: RuleRegistry<false> = RuleRegistry::new();
-        for i in 0..bound {
+        for i in 0..n {
             assert_eq!(r.register(&format!("r{i}"), "l", "r").to_usize(), i);
         }
-        assert_eq!(r.len(), bound);
-        // The last id round-trips, so no earlier entry was overwritten.
-        assert_eq!(
-            r.name(id_at::<RuleId>(bound - 1)),
-            format!("r{}", bound - 1)
-        );
+        assert_eq!(r.len(), n);
+        assert_eq!(r.name(id_at::<RuleId>(n - 1)), format!("r{}", n - 1));
         assert_eq!(r.id_by_name("r0").unwrap().to_usize(), 0);
-    }
-
-    /// One past the bound panics rather than aliasing rule 0.
-    #[test]
-    #[should_panic(expected = "the id space is exhausted")]
-    fn rule_registry_past_its_id_space_panics() {
-        let bound = rule_id_bound();
-        let mut r: RuleRegistry<false> = RuleRegistry::new();
-        for i in 0..=bound {
-            r.register(&format!("r{i}"), "l", "r");
-        }
     }
 
     #[test]

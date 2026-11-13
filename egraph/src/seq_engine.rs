@@ -1556,15 +1556,18 @@ where
     plans.sort_by_key(|(n, ri, _, _)| (crate::containers::DenseId::to_usize(*n), *ri));
     for (root, ri, m, lets) in plans {
         let r = rules[ri];
+        crate::collection::open_seq_instance(r, &m, eg, globals);
         let new =
             match crate::seq_rhs::build(&r.seq_rhs, lets, &r.seq_shape, &m, eg, model, globals) {
                 Ok(g) => g,
                 // "§Edge cases 1": a right-hand side with no value does not fire.
                 Err(e) if e == crate::seq_rhs::NO_FIRE => {
+                    eg.end_rule_instance();
                     report.no_value += 1;
                     continue;
                 }
                 Err(e) if e == crate::seq_rhs::TOO_WIDE => {
+                    eg.end_rule_instance();
                     eprintln!(
                         "warning: {}: a right-hand side of {} skipped",
                         r.name,
@@ -1573,18 +1576,24 @@ where
                     report.too_wide += 1;
                     continue;
                 }
-                Err(e) => return Err(format!("{}: {e}", r.name)),
+                Err(e) => {
+                    eg.end_rule_instance();
+                    return Err(format!("{}: {e}", r.name));
+                }
             };
         let merged = match r.rule_id {
-            Some(rule_id) if P => eg
-                .merge_justified(
+            Some(rule_id) if P => {
+                let inst = eg.open_rule_instance();
+                eg.merge_justified(
                     new,
                     root,
-                    crate::union_find::Justification::Rewrite { rule_id },
+                    crate::union_find::Justification::Rewrite { rule_id, inst },
                 )
-                .is_some(),
+                .is_some()
+            }
             _ => eg.merge(new, root).is_some(),
         };
+        eg.end_rule_instance();
         if merged {
             report.changed += 1;
         }

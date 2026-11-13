@@ -1,0 +1,19 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: check-failed
+;; MESSAGE: inconclusive
+;; NODE_BUDGET: 2
+;; A lazy check whose rule round spends the decision's node budget: `Grow` mints three
+;; nodes per match, past the budget of two, so the saturation loop stops after the rule
+;; (`decision_budget_exhausted`), and the rebuild that follows reads the growth before
+;; its first completion round (`rebuild`'s pre-round check, `abort_growth`). The check
+;; reports the stop as inconclusive instead of claiming the query has no match.
+(sort E)
+(function A () E) (function B () E)
+(function Grow (E) E)
+(function G (E) E)
+(let a (Grow (A)))
+(let b (Grow (B)))
+(rewrite (Grow x) (G (G (G x))))
+(set-option :check-completion on)
+(check (G (G (G (G (A))))))

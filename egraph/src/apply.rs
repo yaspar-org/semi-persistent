@@ -710,8 +710,20 @@ where
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
     Ok(match op {
-        RhsOp::FetchNode(node) => eg.find(env.node(*node)),
-        RhsOp::FetchGlobal(gid) => eg.find(globals.binding(*gid)),
+        RhsOp::FetchNode(node) => {
+            // The right-hand side is built over the class root: the instance needs the
+            // bound node equal to it.
+            let n = env.node(*node);
+            let r = eg.find(n);
+            eg.note_rule_premise(r, n);
+            r
+        }
+        RhsOp::FetchGlobal(gid) => {
+            let n = globals.binding(*gid);
+            let r = eg.find(n);
+            eg.note_rule_premise(r, n);
+            r
+        }
         RhsOp::Lit(op, val) => {
             let id = eg.lits_mut().intern(val.clone());
             eg.add_lit(*op, id)
@@ -1273,10 +1285,14 @@ where
             let vb = eval(b, env, eg, model, globals)?;
             if eg.find(va) != eg.find(vb) {
                 if P {
+                    let inst = eg.open_rule_instance();
                     eg.merge_justified(
                         va,
                         vb,
-                        crate::union_find::Justification::Rewrite { rule_id: *rule_id },
+                        crate::union_find::Justification::Rewrite {
+                            rule_id: *rule_id,
+                            inst,
+                        },
                     );
                 } else {
                     eg.merge(va, vb);
@@ -1314,6 +1330,245 @@ where
     })
 }
 
+/// Record, in the open rule instance, the equalities a match relies on: for
+/// each atom, every child of the matched node paired with the node the pattern
+/// binds at that position, and the two sides of each equality atom. Ordered
+/// atoms pair by position; commutative, AC and ACI atoms pair each pattern
+/// position with a child in its class. A position with no such child (a
+/// flattened view, whose elements come from nested nodes) marks the instance
+/// partial, as does a collected sequence: its premises are then not claimed
+/// complete.
+pub(crate) fn note_match_premises<Cfg, L, Q, S: Copy, const T: bool, const P: bool>(
+    query: &crate::resolve::ResolvedQuery<Cfg::O, S, L>,
+    m: &Q,
+    eg: &mut EGraph<Cfg, L, T, P>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    use crate::resolve::{PatVar, RAtom};
+    let bind = |v: &PatVar| match v {
+        PatVar::Local(id) => m.get(*id),
+        PatVar::Global(g) => globals.binding(*g),
+    };
+    let mut children: Vec<Cfg::G> = Vec::new();
+    let mut pattern: Vec<Cfg::G> = Vec::new();
+    for atom in &query.atoms {
+        pattern.clear();
+        let (node, ordered) = match atom {
+            RAtom::Plain { node, children, .. } | RAtom::AExact { node, children, .. } => {
+                pattern.extend(children.iter().map(bind));
+                (*node, true)
+            }
+            RAtom::APrefix {
+                node, pre, fixed, ..
+            } => {
+                pattern.extend_from_slice(m.seq_slice(*pre));
+                pattern.extend(fixed.iter().map(bind));
+                (*node, true)
+            }
+            RAtom::ASuffix {
+                node, fixed, suf, ..
+            } => {
+                pattern.extend(fixed.iter().map(bind));
+                pattern.extend_from_slice(m.seq_slice(*suf));
+                (*node, true)
+            }
+            RAtom::ABoth {
+                node,
+                pre,
+                fixed,
+                suf,
+                ..
+            } => {
+                pattern.extend_from_slice(m.seq_slice(*pre));
+                pattern.extend(fixed.iter().map(bind));
+                pattern.extend_from_slice(m.seq_slice(*suf));
+                (*node, true)
+            }
+            RAtom::ACExact { node, elems, .. } | RAtom::Comm { node, elems, .. } => {
+                pattern.extend(elems.iter().map(|(v, _)| bind(v)));
+                (*node, false)
+            }
+            RAtom::ACSub {
+                node, elems, rest, ..
+            } => {
+                pattern.extend(elems.iter().map(|(v, _)| bind(v)));
+                pattern.extend(m.mset_slice(*rest).iter().map(Cfg::mset_child_id));
+                (*node, false)
+            }
+            RAtom::ACIExact { node, elems, .. } => {
+                pattern.extend(elems.iter().map(bind));
+                (*node, false)
+            }
+            RAtom::ACISub {
+                node, elems, rest, ..
+            } => {
+                pattern.extend(elems.iter().map(bind));
+                pattern.extend_from_slice(m.set_slice(*rest));
+                (*node, false)
+            }
+            RAtom::Eq(a, b) => {
+                eg.note_rule_premise(m.get(*a), m.get(*b));
+                continue;
+            }
+            RAtom::EqGlobal(v, g) => {
+                eg.note_rule_premise(m.get(*v), globals.binding(*g));
+                continue;
+            }
+            RAtom::Collect { .. } => {
+                eg.note_rule_partial();
+                continue;
+            }
+            // Literal payloads and predicates over them, and disequalities, are not
+            // equalities between classes.
+            RAtom::Lit { .. } | RAtom::LitBind { .. } | RAtom::Neq(..) | RAtom::Pred { .. } => {
+                continue;
+            }
+        };
+        let n = m.get(node);
+        children.clear();
+        eg.for_each_child(n, |c, _| children.push(c));
+        if ordered && children.len() == pattern.len() {
+            for (&c, &p) in children.iter().zip(&pattern) {
+                eg.note_rule_premise(c, p);
+            }
+            continue;
+        }
+        let op = eg.node_op(n);
+        for &p in &pattern {
+            let rp = eg.find_const(p);
+            match children.iter().find(|&&c| eg.find_const(c) == rp) {
+                Some(&c) => eg.note_rule_premise(c, p),
+                None => {
+                    let mut budget = VIEW_BUDGET;
+                    match view_premises(eg, op, &children, p, VIEW_DEPTH, &mut budget) {
+                        Some(pairs) => {
+                            for (a, b) in pairs {
+                                eg.note_rule_premise(a, b);
+                            }
+                        }
+                        None => eg.note_rule_partial(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Levels of nesting the view search descends: a flattened view splices a
+/// same-operator member of a child's class, and its children can be spliced in
+/// turn; a regrouped element is a group whose own elements can be regrouped.
+const VIEW_DEPTH: usize = 4;
+
+/// Class members a view derivation may visit for one pattern position. A
+/// derivation that needs more ends as a partial instance (counted by the replay
+/// check), so the cost of proof mode per match stays bounded on nodes with large
+/// classes below them.
+const VIEW_BUDGET: usize = 256;
+
+/// The premises that make `p`'s class an element of a view of a node with
+/// `children`:
+/// - stored: a child in `p`'s class, paired with `p`;
+/// - flattened: `p`'s class is a child of a same-operator member `m` of a
+///   child's class, possibly several levels down; each `(element, m)` link and
+///   the final `(child of m, p)` pair;
+/// - regrouped: `p`'s class holds a same-operator node `g` each of whose
+///   children is in turn an element of the view; `(p, g)` and their premises.
+///
+/// `None` when no derivation within `depth` levels and `budget` member visits
+/// exists.
+fn view_premises<Cfg, L, const T: bool, const P: bool>(
+    eg: &EGraph<Cfg, L, T, P>,
+    op: Cfg::O,
+    children: &[Cfg::G],
+    p: Cfg::G,
+    depth: usize,
+    budget: &mut usize,
+) -> Option<Vec<(Cfg::G, Cfg::G)>>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    let rp = eg.find_const(p);
+    if let Some(&c) = children.iter().find(|&&c| eg.find_const(c) == rp) {
+        return Some(vec![(c, p)]);
+    }
+    // Flattened: breadth-first over same-operator members, with parent links
+    // `(element, member, parent link)`.
+    let mut level: Vec<(Cfg::G, Option<usize>)> = children.iter().map(|&c| (c, None)).collect();
+    let mut links: Vec<(Cfg::G, Cfg::G, Option<usize>)> = Vec::new();
+    let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for _ in 0..depth {
+        let mut next: Vec<(Cfg::G, Option<usize>)> = Vec::new();
+        for &(x, parent) in &level {
+            if !seen.insert(eg.find_const(x).to_usize()) {
+                continue;
+            }
+            for m in eg.class_members(x) {
+                if *budget == 0 {
+                    return None;
+                }
+                *budget -= 1;
+                if eg.node_op(m) != op || eg.is_evidence_node_pub(m) {
+                    continue;
+                }
+                links.push((x, m, parent));
+                let link = links.len() - 1;
+                let mut hit = None;
+                eg.for_each_child(m, |y, _| {
+                    if hit.is_none() && eg.find_const(y) == rp {
+                        hit = Some(y);
+                    }
+                    next.push((y, Some(link)));
+                });
+                if let Some(y) = hit {
+                    let mut pairs = Vec::new();
+                    let mut at = Some(link);
+                    while let Some(i) = at {
+                        let (a, b, up) = links[i];
+                        pairs.push((a, b));
+                        at = up;
+                    }
+                    pairs.push((y, p));
+                    return Some(pairs);
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        level = next;
+    }
+    // Regrouped: a same-operator node in p's class whose children are elements.
+    if depth == 0 {
+        return None;
+    }
+    let groups: Vec<Cfg::G> = eg
+        .class_members(p)
+        .filter(|&g| eg.node_op(g) == op && !eg.is_evidence_node_pub(g))
+        .collect();
+    'groups: for g in groups {
+        let mut kids = Vec::new();
+        eg.for_each_child(g, |c, _| kids.push(c));
+        let mut pairs = vec![(p, g)];
+        for k in kids {
+            match view_premises(eg, op, children, k, depth - 1, budget) {
+                Some(more) => pairs.extend(more),
+                None => continue 'groups,
+            }
+        }
+        return Some(pairs);
+    }
+    None
+}
+
 pub(crate) fn apply_rule_actions<Cfg, L, M, Q, S, const T: bool, const P: bool>(
     rule: &PreparedRule<Cfg::O, S, L>,
     query: &Q,
@@ -1331,6 +1586,10 @@ where
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
     let mut env = RhsEnv::new(query, rule.rhs_locals);
+    if P {
+        eg.begin_rule_instance();
+        note_match_premises(&rule.query, query, eg, globals);
+    }
     // Actions are applied in order and an error stops at the one that faulted:
     // the earlier actions' effects stay in the e-graph. That is deliberate. The
     // run is over, so nothing reads the graph again except a diagnostic, and
@@ -1349,6 +1608,9 @@ where
                 break;
             }
         }
+    }
+    if P {
+        eg.end_rule_instance();
     }
     debug_assert!(
         env.locals_are_unbound(),
@@ -2851,7 +3113,7 @@ mod tests {
         assert!(
             buf.steps
                 .iter()
-                .any(|&(_, _, j)| j == crate::union_find::Justification::Rewrite { rule_id }),
+                .any(|&(_, _, j)| matches!(j, crate::union_find::Justification::Rewrite { rule_id: r, .. } if r == rule_id)),
             "expected a Rewrite {{ rule_id: r0 }} step in the proof, got: {:?}",
             buf.steps,
         );

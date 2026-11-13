@@ -8,8 +8,9 @@ import SemperProofs.EMatch.Env.Snapshot
 Final theorems of `SemperProofs.EMatch.Env` (spec `spec-steps-env.md`,
 sections B, C, D), re-exported from:
 
-* `Model.lean`: `Env` (the engine's `Match`), `abs`, `EnvOk`, `WF`,
-  `Graph.ChildrenCanon`, `Graph.FindIdem`;
+* `Model.lean`: `Env` (the engine's `Match`), `abs`, `EnvOk`, the binding
+  kinds (`KindOk`, `joinKinds`), `WF`, `Graph.ChildrenCanon`,
+  `Graph.FindIdem`;
 * `Exec.lean`: `exec`, the CPS `run_step` over `Env`;
 * `Refine.lean`: `exec_spec`, `restore`, `refine`;
 * `Dup.lean`: the commutative-pair duplicate and `decomposeAC_nodup`;
@@ -21,30 +22,39 @@ namespace Semper.EMatch.Env
 open Semper.EMatch
 
 /-- **(Restore)** (spec B.2). For a `WF` plan and an entry environment
-bounded by its bound set, `run_step` returns the environment it was given,
-on `nodes`, `mults` and the three rest pools and spans. Out of scope, as
-the spec lists: `lit_vals` (`ExtractLitVal`) and the `mults` written by
-`Collect`'s `fill`. -/
-theorem env_restore (G : Graph) (κ : Var → Bool) (hG : G.ChildrenCanon) (hidem : G.FindIdem)
-    {B : List Var} {plan : Plan} (hwf : WF κ B plan) (e : Env) (he : EnvOk e B) :
-    (exec G κ plan e).2 = e :=
-  restore G κ hG hidem hwf e he
+bounded by its bound set whose node variables are bound, `run_step`
+returns the environment it was given, on `nodes`, `mults` and the three
+rest pools and spans. Out of scope, as the spec lists: `lit_vals`
+(`ExtractLitVal`) and the `mults` written by `Collect`'s `fill`. -/
+theorem env_restore (G : Graph) (hG : G.ChildrenCanon) (hidem : G.FindIdem)
+    {κ : Var → Bool} {B : List Var} {plan : Plan} (hwf : WF κ B plan) (e : Env)
+    (he : EnvOk e B) (hκ : KindOk κ e) :
+    (exec G (joinKinds κ plan) plan e).2 = e :=
+  restore G hG hidem hwf e he hκ
 
 /-- **Refinement** (spec B.4). The environments the recursive engine emits
-from `e` are, as a set, the bindings of the reference interpreter from
-`abs G κ e`. Hypotheses: H2 (`ChildrenCanon`), `find` idempotent, `WF`
-plan (`PlanWF` plus the write-once and classification conditions, see
-`WF`), entry environment bounded by the plan's bound set. -/
-theorem env_refine (G : Graph) (κ : Var → Bool) (hG : G.ChildrenCanon) (hidem : G.FindIdem)
-    {B : List Var} {plan : Plan} (hwf : WF κ B plan) (e : Env) (he : EnvOk e B) (σ : Binding) :
-    σ ∈ (exec G κ plan e).1 ↔ σ ∈ run G plan (abs G κ e) :=
-  refine G κ hG hidem hwf e he σ
+from `e`, read with the binding kinds at the end of the plan (a join
+target is a node variable), are, as a set, the bindings of the reference
+interpreter from `abs G κ e`. Hypotheses: H2 (`ChildrenCanon`), `find`
+idempotent, `WF` plan for the entry kinds `κ` (`PlanWF` plus the
+write-once conditions, see `WF`), entry environment bounded by the plan's
+bound set, node variables bound (`KindOk`). A variable may be bound as a
+class and later refined by a join to a node of that class: this is the
+nested-pattern case, which the scheduler's plans contain
+(`planOK_envWF`). -/
+theorem env_refine (G : Graph) (hG : G.ChildrenCanon) (hidem : G.FindIdem)
+    {κ : Var → Bool} {B : List Var} {plan : Plan} (hwf : WF κ B plan) (e : Env)
+    (he : EnvOk e B) (hκ : KindOk κ e) (σ : Binding) :
+    σ ∈ (exec G (joinKinds κ plan) plan e).1 ↔ σ ∈ run G plan (abs G κ e) :=
+  refine G hG hidem hwf e he hκ σ
 
-/-- The refinement from `Match::new`. -/
-theorem env_refine_empty (G : Graph) (κ : Var → Bool) (hG : G.ChildrenCanon)
-    (hidem : G.FindIdem) {plan : Plan} (hwf : WF κ [] plan) (σ : Binding) :
-    σ ∈ (exec G κ plan Env.empty).1 ↔ σ ∈ run G plan Binding.empty :=
-  refine_empty G κ hG hidem hwf σ
+/-- The refinement from `Match::new`: every variable starts unbound, of
+class kind; the emitted environments are read with the plan's join
+targets as node variables (`planKinds`). -/
+theorem env_refine_empty (G : Graph) (hG : G.ChildrenCanon)
+    (hidem : G.FindIdem) {plan : Plan} (hwf : WF (fun _ => false) [] plan) (σ : Binding) :
+    σ ∈ (exec G (planKinds plan) plan Env.empty).1 ↔ σ ∈ run G plan Binding.empty :=
+  refine_empty G hG hidem hwf σ
 
 /-- `WF` is a strengthening of `PlanWF`. -/
 theorem env_wf_planWF {κ : Var → Bool} {B : List Var} {plan : Plan} (h : WF κ B plan) :

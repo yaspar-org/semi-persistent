@@ -881,6 +881,10 @@ fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: Inde
         flatten: rq.flatten,
     };
     let mut before = used.clone();
+    // The prices of each pass, for the conformance test against the Lean model
+    // (`model::record`); release has no probe on the path.
+    #[cfg(test)]
+    let mut priced: Vec<Vec<(usize, f64)>> = Vec::new();
     loop {
         // Eager pass: Eq, Lit, already-bound nodes.
         lower_eager(&rq.atoms, &mut used, &mut bound, &mut steps);
@@ -896,6 +900,8 @@ fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: Inde
         // Costs are taken once per atom per pass rather than inside a
         // comparator, which under sampling would redraw them per comparison.
         let mut best: Option<(usize, f64)> = None;
+        #[cfg(test)]
+        let mut pass: Vec<(usize, f64)> = Vec::new();
         for ai in 0..rq.atoms.len() {
             if used[ai]
                 || matches!(
@@ -906,10 +912,14 @@ fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: Inde
                 continue;
             }
             let c = estimate_cost(&rq.atoms, ai, &bound, &mut ctx);
+            #[cfg(test)]
+            pass.push((ai, c));
             if best.is_none_or(|(_, b)| c < b) {
                 best = Some((ai, c));
             }
         }
+        #[cfg(test)]
+        priced.push(pass);
 
         let Some((ai, _)) = best else { break };
         if let RAtom::Collect { node, op, collect } = &rq.atoms[ai] {
@@ -941,6 +951,9 @@ fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: Inde
         record_emitters(&rq.atoms, &before, &used, &mut ctx.emitters);
         before.copy_from_slice(&used);
     }
+
+    #[cfg(test)]
+    model::record(rq, pre, &priced, &steps);
 
     if dump_plan_enabled() {
         dump_plan(&steps, rq.atoms.len());
@@ -1557,6 +1570,600 @@ fn emit_variadic_join<O: DenseId + Hash + Copy, I: IndexLike, V>(
     }
 }
 
+/// `scheduleEngine` of the Lean model
+/// (`proofs/lean/SemperProofs/EMatch/Engine/Schedule.lean`), transliterated, and
+/// its comparison with the plan `schedule_inner` emits.
+///
+/// What this computes independently of `schedule_inner`: the loop (`schedLoop`:
+/// the eager pass to a fixpoint, `eagerFix`, then the cheapest unused scanning
+/// atom in index order with a strict improvement replacing the best so far,
+/// `pickBest`), and the block each atom lowers to (`lower` and `eagerLower`, with
+/// the join's lookups as `engineJoinLookups` of `Choose.lean`: a `:comm` atom
+/// joined through its `byContains` lookups, which the model's `lower` omits). The
+/// prices come from the engine, pass by pass, as the model's `cost` is a parameter
+/// the theorem `scheduleEngine_schedA` never reads. A global in a child position is
+/// bound (`pv_is_bound`); the model has no globals. An atom kind the model does not
+/// have (a literal, a guard, a disequality, a global equality, a `Collect`) or a
+/// `:flatten` query puts the plan outside the model.
+#[cfg(test)]
+pub(crate) mod model {
+    use super::*;
+
+    /// A plan step less the fields the model does not carry: the literal value of
+    /// `CheckLit` and the view register, which the model has no step for.
+    #[derive(Clone, PartialEq, Eq)]
+    pub(crate) enum Key<O, I> {
+        Join {
+            target: VarId,
+            lookups: Vec<IndexLookup<O, I>>,
+            atom_id: usize,
+        },
+        ExtractChild {
+            target: VarId,
+            parent: VarId,
+            pos: I,
+        },
+        CheckChildEq {
+            parent: VarId,
+            pos: I,
+            expected: PatVar,
+        },
+        CheckEq {
+            a: VarId,
+            b: VarId,
+        },
+        CopyBinding {
+            target: VarId,
+            other: VarId,
+        },
+        ExpandA {
+            node: VarId,
+            children: Vec<PatVar>,
+            pre: Option<SeqVarId>,
+            suf: Option<SeqVarId>,
+        },
+        DecomposeAC {
+            node: VarId,
+            elems: Vec<(PatVar, RMult)>,
+            rest: Option<MsetVarId>,
+            idempotent: bool,
+        },
+        DecomposeACI {
+            node: VarId,
+            elems: Vec<PatVar>,
+            rest: Option<SetVarId>,
+        },
+        /// A step the model has none of; carries the engine's name for the report.
+        Other(&'static str),
+    }
+
+    impl<O, I> Key<O, I> {
+        fn name(&self) -> String {
+            match self {
+                Key::Join { atom_id, .. } => format!("Join(atom {atom_id})"),
+                Key::ExtractChild { .. } => "ExtractChild".into(),
+                Key::CheckChildEq { .. } => "CheckChildEq".into(),
+                Key::CheckEq { .. } => "CheckEq".into(),
+                Key::CopyBinding { .. } => "CopyBinding".into(),
+                Key::ExpandA { .. } => "ExpandA".into(),
+                Key::DecomposeAC { .. } => "DecomposeAC".into(),
+                Key::DecomposeACI { .. } => "DecomposeACI".into(),
+                Key::Other(n) => (*n).into(),
+            }
+        }
+    }
+
+    /// The engine's step, projected. A step with a view register is kept as
+    /// `Other`: the model has no `Flatten`, so a flattened plan is outside it.
+    fn key_of<O: Clone, I: Clone, V>(st: &Step<O, I, V>) -> Key<O, I> {
+        match st {
+            Step::Join {
+                target,
+                lookups,
+                atom_id,
+            } => Key::Join {
+                target: *target,
+                lookups: lookups.clone(),
+                atom_id: *atom_id,
+            },
+            Step::ExtractChild {
+                target,
+                parent,
+                pos,
+            } => Key::ExtractChild {
+                target: *target,
+                parent: *parent,
+                pos: pos.clone(),
+            },
+            Step::CheckChildEq {
+                parent,
+                pos,
+                expected,
+            } => Key::CheckChildEq {
+                parent: *parent,
+                pos: pos.clone(),
+                expected: *expected,
+            },
+            Step::CheckEq { a, b } => Key::CheckEq { a: *a, b: *b },
+            Step::CopyBinding { target, other } => Key::CopyBinding {
+                target: *target,
+                other: *other,
+            },
+            Step::ExpandA {
+                node,
+                children,
+                pre,
+                suf,
+                view: None,
+            } => Key::ExpandA {
+                node: *node,
+                children: children.clone(),
+                pre: *pre,
+                suf: *suf,
+            },
+            Step::DecomposeAC {
+                node,
+                elems,
+                rest,
+                idempotent,
+                view: None,
+            } => Key::DecomposeAC {
+                node: *node,
+                elems: elems.clone(),
+                rest: *rest,
+                idempotent: *idempotent,
+            },
+            Step::DecomposeACI {
+                node,
+                elems,
+                rest,
+                view: None,
+            } => Key::DecomposeACI {
+                node: *node,
+                elems: elems.clone(),
+                rest: *rest,
+            },
+            Step::ExpandA { .. } | Step::DecomposeAC { .. } | Step::DecomposeACI { .. } => {
+                Key::Other("viewed decomposition")
+            }
+            Step::CheckEqGlobal { .. } => Key::Other("CheckEqGlobal"),
+            Step::CheckNeq { .. } => Key::Other("CheckNeq"),
+            Step::BindGlobal { .. } => Key::Other("BindGlobal"),
+            Step::Flatten { .. } => Key::Other("Flatten"),
+            Step::ExtractLitVal { .. } => Key::Other("ExtractLitVal"),
+            Step::CheckLit { .. } => Key::Other("CheckLit"),
+            Step::CheckPred { .. } => Key::Other("CheckPred"),
+            Step::Collect { .. } => Key::Other("Collect"),
+        }
+    }
+
+    /// Why the model gives no plan.
+    pub(crate) enum Outside {
+        /// An atom kind, or a `:flatten` query, the model does not have.
+        Atom(&'static str),
+        /// The engine priced no such candidate in that pass: the two loops
+        /// diverged before it, so the comparison stands as a disagreement.
+        Unpriced { pass: usize, atom: usize },
+    }
+
+    /// `SchedState`.
+    struct State<O, I> {
+        used: Vec<bool>,
+        bound: Vec<bool>,
+        steps: Vec<Key<O, I>>,
+    }
+
+    fn pv_bound(pv: &PatVar, bound: &[bool]) -> bool {
+        pv_is_bound(pv, bound)
+    }
+
+    /// `engineJoinLookups`: `joinLookups` for a node already bound (the re-join in
+    /// its class), else `byOp` and one `byContains` per bound element.
+    fn contains_lookups<O: Copy, I>(
+        node: &VarId,
+        op: O,
+        elems: &[PatVar],
+        bound: &[bool],
+    ) -> Vec<IndexLookup<O, I>> {
+        if bound[node.idx()] {
+            return vec![
+                IndexLookup::ByRepr { repr: *node },
+                IndexLookup::ByOp { op },
+            ];
+        }
+        let mut ls = vec![IndexLookup::ByOp { op }];
+        for pv in elems {
+            if pv_bound(pv, bound) {
+                ls.push(IndexLookup::ByContains { child: *pv });
+            }
+        }
+        ls
+    }
+
+    /// `lower a B` (`Lower.lean`), on `st`: the join, then the body, marking the
+    /// atom's variables bound.
+    fn lower<O: Copy, S, V, I: IndexLike>(
+        atom: &RAtom<O, S, V>,
+        atom_id: usize,
+        st: &mut State<O, I>,
+    ) {
+        let bound = &mut st.bound;
+        let steps = &mut st.steps;
+        match atom {
+            RAtom::Plain { node, op, children } => {
+                // `joinLookups`: `childLookups` over the bound children.
+                let lookups = if bound[node.idx()] {
+                    vec![
+                        IndexLookup::ByRepr { repr: *node },
+                        IndexLookup::ByOp { op: *op },
+                    ]
+                } else {
+                    let mut ls = vec![IndexLookup::ByOp { op: *op }];
+                    for (pos, cv) in children.iter().enumerate() {
+                        if pv_bound(cv, bound) {
+                            ls.push(IndexLookup::ByChildPos {
+                                child: *cv,
+                                pos: child_pos::<I>(pos),
+                            });
+                        }
+                    }
+                    ls
+                };
+                steps.push(Key::Join {
+                    target: *node,
+                    lookups,
+                    atom_id,
+                });
+                bound[node.idx()] = true;
+                // `childSteps`.
+                for (pos, cv) in children.iter().enumerate() {
+                    if pv_bound(cv, bound) {
+                        steps.push(Key::CheckChildEq {
+                            parent: *node,
+                            pos: child_pos::<I>(pos),
+                            expected: *cv,
+                        });
+                    } else {
+                        let PatVar::Local(vid) = cv else {
+                            unreachable!()
+                        };
+                        steps.push(Key::ExtractChild {
+                            target: *vid,
+                            parent: *node,
+                            pos: child_pos::<I>(pos),
+                        });
+                        bound[vid.idx()] = true;
+                    }
+                }
+            }
+            RAtom::Comm { node, op, elems }
+            | RAtom::ACExact { node, op, elems }
+            | RAtom::ACSub {
+                node, op, elems, ..
+            } => {
+                let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
+                steps.push(Key::Join {
+                    target: *node,
+                    lookups: contains_lookups(node, *op, &evs, bound),
+                    atom_id,
+                });
+                bound[node.idx()] = true;
+                let rest = match atom {
+                    RAtom::ACSub { rest, .. } => Some(*rest),
+                    _ => None,
+                };
+                steps.push(Key::DecomposeAC {
+                    node: *node,
+                    elems: elems.clone(),
+                    rest,
+                    idempotent: false,
+                });
+                for pv in &evs {
+                    pv_mark_bound(pv, bound);
+                }
+            }
+            RAtom::ACIExact { node, op, elems }
+            | RAtom::ACISub {
+                node, op, elems, ..
+            } => {
+                steps.push(Key::Join {
+                    target: *node,
+                    lookups: contains_lookups(node, *op, elems, bound),
+                    atom_id,
+                });
+                bound[node.idx()] = true;
+                let rest = match atom {
+                    RAtom::ACISub { rest, .. } => Some(*rest),
+                    _ => None,
+                };
+                steps.push(Key::DecomposeACI {
+                    node: *node,
+                    elems: elems.clone(),
+                    rest,
+                });
+                for pv in elems {
+                    pv_mark_bound(pv, bound);
+                }
+            }
+            RAtom::AExact { node, op, children } => {
+                lower_assoc(node, *op, atom_id, children, None, None, st);
+            }
+            RAtom::APrefix {
+                node,
+                op,
+                pre,
+                fixed,
+            } => {
+                lower_assoc(node, *op, atom_id, fixed, Some(*pre), None, st);
+            }
+            RAtom::ASuffix {
+                node,
+                op,
+                fixed,
+                suf,
+            } => {
+                lower_assoc(node, *op, atom_id, fixed, None, Some(*suf), st);
+            }
+            RAtom::ABoth {
+                node,
+                op,
+                pre,
+                fixed,
+                suf,
+            } => {
+                lower_assoc(node, *op, atom_id, fixed, Some(*pre), Some(*suf), st);
+            }
+            RAtom::Eq(..) => unreachable!("an equality is lowered by the eager pass"),
+            RAtom::Lit { .. }
+            | RAtom::LitBind { .. }
+            | RAtom::Collect { .. }
+            | RAtom::EqGlobal(..)
+            | RAtom::Neq(..)
+            | RAtom::Pred { .. } => unreachable!("`schedule` rejects the query first"),
+        }
+    }
+
+    /// `lower` for the `assoc` shape: the join over the fixed positions, then
+    /// `expandA`.
+    fn lower_assoc<O: Copy, I>(
+        node: &VarId,
+        op: O,
+        atom_id: usize,
+        fixed: &[PatVar],
+        pre: Option<SeqVarId>,
+        suf: Option<SeqVarId>,
+        st: &mut State<O, I>,
+    ) {
+        st.steps.push(Key::Join {
+            target: *node,
+            lookups: contains_lookups(node, op, fixed, &st.bound),
+            atom_id,
+        });
+        st.bound[node.idx()] = true;
+        st.steps.push(Key::ExpandA {
+            node: *node,
+            children: fixed.to_vec(),
+            pre,
+            suf,
+        });
+        for pv in fixed {
+            pv_mark_bound(pv, &mut st.bound);
+        }
+    }
+
+    /// `eagerAt`: one index of a sweep; the flag is `progress`.
+    fn eager_at<O: Copy, S, V, I: IndexLike>(
+        atoms: &[RAtom<O, S, V>],
+        st: &mut State<O, I>,
+        i: usize,
+    ) -> bool {
+        if st.used[i] {
+            return false;
+        }
+        match &atoms[i] {
+            RAtom::Eq(x, y) => {
+                let (bx, by) = (st.bound[x.idx()], st.bound[y.idx()]);
+                if !(bx || by) {
+                    return false;
+                }
+                // `eagerLower`.
+                if bx && by {
+                    st.steps.push(Key::CheckEq { a: *x, b: *y });
+                } else if bx {
+                    st.steps.push(Key::CopyBinding {
+                        target: *y,
+                        other: *x,
+                    });
+                    st.bound[y.idx()] = true;
+                } else {
+                    st.steps.push(Key::CopyBinding {
+                        target: *x,
+                        other: *y,
+                    });
+                    st.bound[x.idx()] = true;
+                }
+                st.used[i] = true;
+                true
+            }
+            RAtom::Plain { node, .. } if st.bound[node.idx()] => {
+                lower(&atoms[i], i, st);
+                st.used[i] = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `eagerFix` with its fuel: sweeps (`eagerSweep`) while one made progress.
+    fn eager_fix<O: Copy, S, V, I: IndexLike>(atoms: &[RAtom<O, S, V>], st: &mut State<O, I>) {
+        let mut fuel = atoms.len() + 1;
+        while fuel > 0 {
+            fuel -= 1;
+            let mut progress = false;
+            for i in 0..atoms.len() {
+                progress |= eager_at(atoms, st, i);
+            }
+            if !progress {
+                break;
+            }
+        }
+    }
+
+    /// `pickBest`: the cheapest unused scanning atom in index order, a later one
+    /// replacing the best so far only when strictly cheaper (`pickStep`); the
+    /// prices are the engine's for this pass.
+    fn pick_best<O, S, V, I>(
+        atoms: &[RAtom<O, S, V>],
+        st: &State<O, I>,
+        pass: usize,
+        priced: &[Vec<(usize, f64)>],
+    ) -> Result<Option<usize>, Outside> {
+        let mut best: Option<(usize, f64)> = None;
+        for i in 0..atoms.len() {
+            if st.used[i] {
+                continue;
+            }
+            let scanning = !matches!(
+                &atoms[i],
+                RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. }
+            );
+            if !scanning {
+                continue;
+            }
+            let c = priced
+                .get(pass)
+                .and_then(|p| p.iter().find(|(ai, _)| *ai == i))
+                .map(|(_, c)| *c)
+                .ok_or(Outside::Unpriced { pass, atom: i })?;
+            best = match best {
+                None => Some((i, c)),
+                Some((j, b)) => {
+                    if c < b {
+                        Some((i, c))
+                    } else {
+                        Some((j, b))
+                    }
+                }
+            };
+        }
+        Ok(best.map(|(i, _)| i))
+    }
+
+    /// `scheduleEngine cost pre atoms`, the prices read from `priced`.
+    pub(crate) fn schedule<O: Copy, S, V, I: IndexLike>(
+        rq: &ResolvedQuery<O, S, V>,
+        pre: &[VarId],
+        priced: &[Vec<(usize, f64)>],
+    ) -> Result<Vec<Key<O, I>>, Outside> {
+        if rq.flatten {
+            return Err(Outside::Atom("flatten"));
+        }
+        let atoms = &rq.atoms;
+        for atom in atoms {
+            let kind = match atom {
+                RAtom::Lit { .. } => "Lit",
+                RAtom::LitBind { .. } => "LitBind",
+                RAtom::Collect { .. } => "Collect",
+                RAtom::EqGlobal(..) => "EqGlobal",
+                RAtom::Neq(..) => "Neq",
+                RAtom::Pred { .. } => "Pred",
+                _ => continue,
+            };
+            return Err(Outside::Atom(kind));
+        }
+        let mut st = State {
+            used: vec![false; atoms.len()],
+            bound: vec![false; rq.shape.num_vars()],
+            steps: Vec::new(),
+        };
+        for v in pre {
+            st.bound[v.idx()] = true;
+        }
+        // `schedLoop` with the fuel `atoms.length`: each iteration uses an atom,
+        // and the fuel runs out only once every atom is used.
+        let mut fuel = atoms.len();
+        let mut pass = 0;
+        loop {
+            if fuel == 0 {
+                break;
+            }
+            fuel -= 1;
+            eager_fix(atoms, &mut st);
+            let picked = pick_best(atoms, &st, pass, priced)?;
+            pass += 1;
+            let Some(i) = picked else {
+                break;
+            };
+            lower(&atoms[i], i, &mut st);
+            st.used[i] = true;
+        }
+        Ok(st.steps)
+    }
+
+    /// One plan beside the model's: how many atoms, how many picks the engine
+    /// made, and the verdict (`None` when the query is outside the model).
+    #[derive(Clone, Debug)]
+    pub(crate) struct PlanRecord {
+        pub atoms: usize,
+        pub picks: usize,
+        pub agree: Option<bool>,
+        pub detail: String,
+    }
+
+    thread_local! {
+        /// One `PlanRecord` per `schedule_inner` call, for the conformance test
+        /// of the static scheduler against the model.
+        static PLAN_LOG: std::cell::RefCell<Vec<PlanRecord>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Take and clear this thread's record of plans with the model's verdicts.
+    pub(crate) fn take_plan_records() -> Vec<PlanRecord> {
+        PLAN_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+    }
+
+    /// Compare the engine's plan with the model's and record the verdict.
+    pub(super) fn record<O: Copy + PartialEq, S, V, I: IndexLike>(
+        rq: &ResolvedQuery<O, S, V>,
+        pre: &[VarId],
+        priced: &[Vec<(usize, f64)>],
+        steps: &[Step<O, I, V>],
+    ) {
+        let engine: Vec<Key<O, I>> = steps.iter().map(key_of).collect();
+        let rec = match schedule::<O, S, V, I>(rq, pre, priced) {
+            Err(Outside::Atom(kind)) => PlanRecord {
+                atoms: rq.atoms.len(),
+                picks: priced.len().saturating_sub(1),
+                agree: None,
+                detail: kind.to_string(),
+            },
+            Err(Outside::Unpriced { pass, atom }) => PlanRecord {
+                atoms: rq.atoms.len(),
+                picks: priced.len().saturating_sub(1),
+                agree: Some(false),
+                detail: format!("the engine priced no atom {atom} in pass {pass}"),
+            },
+            Ok(model) => {
+                let agree = model == engine;
+                let detail = if agree {
+                    String::new()
+                } else {
+                    let names =
+                        |ks: &[Key<O, I>]| ks.iter().map(Key::name).collect::<Vec<_>>().join(", ");
+                    format!("engine [{}] model [{}]", names(&engine), names(&model))
+                };
+                PlanRecord {
+                    atoms: rq.atoms.len(),
+                    picks: priced.len().saturating_sub(1),
+                    agree: Some(agree),
+                    detail,
+                }
+            }
+        };
+        PLAN_LOG.with(|l| l.borrow_mut().push(rec));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2129,6 +2736,123 @@ mod tests {
             has_by_contains,
             "variadic atom with a bound element should drive via ByContains: {:?}",
             qp.steps
+        );
+    }
+
+    /// A chain of equalities that the eager pass closes only at its fixpoint:
+    /// `(= b c)` is free once `c` is bound, and `(= a b)`, which the sweep passed
+    /// over first, only on the second sweep. The corpus has no such chain, so
+    /// the comparison with the model is made here; a transliteration that sweeps
+    /// once leaves `(= a b)` unlowered.
+    #[test]
+    fn eager_chain_agrees_with_the_model() {
+        let _ = model::take_plan_records();
+        let (plan, _) = do_plan_multi(&["(g c)", "(= a b)", "(= b c)"]);
+        let recs = model::take_plan_records();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].agree, Some(true), "{}", recs[0].detail);
+        let copies = plan
+            .steps
+            .iter()
+            .filter(|s| matches!(s, Step::CopyBinding { .. }))
+            .count();
+        assert_eq!(copies, 2, "both equalities copy a binding");
+    }
+
+    /// The static scheduler and the Lean model's `scheduleEngine`
+    /// (`proofs/lean/SemperProofs/EMatch/Engine/Schedule.lean`, transliterated as
+    /// `model::schedule`) emit the same plan for every rule of every round of the
+    /// multi-round conformance corpus, run naive and semi-naive: the same atom
+    /// order, the same binding kind for every variable, the same join lookups.
+    /// The prices are the engine's (the model's `cost` is a parameter); the
+    /// control flow around them is the model's.
+    #[test]
+    fn static_plan_agrees_with_the_model_on_the_rounds_corpus() {
+        use crate::interpret::Interpreter;
+        use crate::model::{MachineLit, MachineModel};
+        use crate::nodes::DefaultConfig;
+        use crate::saturate::SaturationStrategy;
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/egg/conform-rounds");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+            .map(|e| e.expect("directory entry").path())
+            .filter(|p| p.extension().is_some_and(|x| x == "egg"))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "{} holds no .egg file", dir.display());
+
+        let (mut plans, mut agree, mut outside, mut multi, mut picks) =
+            (0usize, 0usize, 0usize, 0usize, 0usize);
+        let mut outside_kinds: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut disagreements = Vec::new();
+        let _ = model::take_plan_records();
+        for path in &paths {
+            let src = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            for strategy in [SaturationStrategy::Naive, SaturationStrategy::SemiNaive] {
+                let cmds = crate::parser::parse_program_v2(&src)
+                    .unwrap_or_else(|e| panic!("{}: parse error: {e}", path.display()));
+                let mut interp =
+                    Interpreter::<DefaultConfig, MachineLit, MachineModel, true, false>::new(
+                        MachineModel,
+                    );
+                interp.set_strategy(strategy);
+                let mut globals = crate::resolve::GlobalCtx::new();
+                let checked = crate::sortcheck::sortcheck_program(
+                    cmds,
+                    &mut interp.eg,
+                    &interp.model,
+                    &mut globals,
+                )
+                .unwrap_or_else(|e| panic!("{}: sort error: {e}", path.display()));
+                interp
+                    .run_checked(&checked)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                for rec in model::take_plan_records() {
+                    plans += 1;
+                    match rec.agree {
+                        None => {
+                            outside += 1;
+                            *outside_kinds.entry(rec.detail.clone()).or_default() += 1;
+                            continue;
+                        }
+                        Some(true) => agree += 1,
+                        Some(false) => disagreements.push(format!(
+                            "{} [{strategy:?}] {} atoms: {}",
+                            path.display(),
+                            rec.atoms,
+                            rec.detail
+                        )),
+                    }
+                    picks += rec.picks;
+                    if rec.atoms > 1 {
+                        multi += 1;
+                    }
+                }
+            }
+        }
+        let summary = format!(
+            "{} files, {plans} plans: {} compared ({multi} with several atoms, {picks} picks), \
+             {agree} agree, {} disagree; {outside} outside the model ({})",
+            paths.len(),
+            agree + disagreements.len(),
+            disagreements.len(),
+            outside_kinds
+                .iter()
+                .map(|(k, n)| format!("{n} {k}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        eprintln!("static plan against the model: {summary}");
+        assert!(
+            agree > 0 && multi > 0 && picks > 0,
+            "the corpus exercised no scheduling in the model: {summary}"
+        );
+        assert!(
+            disagreements.is_empty(),
+            "{summary}\n{}",
+            disagreements.join("\n")
         );
     }
 }

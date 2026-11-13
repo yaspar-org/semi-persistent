@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; TYPES: machine
+;; Rebuild under :inverse: the first round builds `Add{A,B,C}` and `Add{A,B}` and merges `B`
+;; with `Neg(A)` in the same action phase. The cancellation repair of the rebuild cancels the
+;; pair: `Add{A,B,C}` is the class of `C` and `Add{A,B}` the unit. Every surviving `Add` node
+;; has its `G` image, and the cancelled nodes are the leaves they cancelled to. Semi-naive and
+;; naive agree.
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E) (function Zero () E)
+(function P () E)
+(function Neg (E) E)
+(function Add (E) E :assoc-comm :identity (Zero) :inverse Neg)
+(function G (E E) E)
+(let p (P))
+(let s (Add (C) (D)))
+(rule ((P)) ((Add (A) (B) (C)) (Add (A) (B)) (Add (A) (B) (C) (D)) (union (B) (Neg (A)))))
+(rewrite (Add x y) (G x y))
+(run 10)
+(check-eq (Add (A) (B) (C)) (C))
+(check-eq (Add (A) (B)) (Zero))
+(check-eq (Add (C) (D)) (G (C) (D)))
+(check-eq (Add (A) (B) (C) (D)) (G (C) (D)))

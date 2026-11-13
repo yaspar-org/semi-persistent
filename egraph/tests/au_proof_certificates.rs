@@ -21,9 +21,8 @@
 //! before hash-consing, every instance interned onto the root's node, and
 //! both chains were reflexivity; this file pinned that as its key finding.
 //! Phase B (restore to a pre-merge mark, add the instances there, re-apply
-//! the merges) still recovers the same kind of chains. AC operators are not
-//! covered by creation evidence: `ac_equal_projection_explains_to_empty_chain`
-//! still pins an empty chain for them.
+//! the merges) still recovers the same kind of chains. AC operators keep their
+//! creation evidence as `Build` steps (`ac_equal_projection_explains_by_build_steps`).
 
 use std::collections::HashMap;
 
@@ -254,22 +253,33 @@ fn reason<const T: bool, const P: bool>(
     terms: &HashMap<usize, String>,
 ) -> String {
     match just {
-        Justification::Axiom { axiom_id } => {
-            format!("axiom {:?} \"{}\"", axiom_id, eg.axioms().name(*axiom_id))
+        Justification::Axiom { .. } => {
+            let axiom_id: AxiomId = just.axiom_id().expect("an axiom step");
+            format!("axiom {:?} \"{}\"", axiom_id, eg.axioms().name(axiom_id))
         }
         Justification::Congruence { node_a, node_b } => format!(
             "congruence({}, {})",
             render_node(eg, *node_a, terms),
             render_node(eg, *node_b, terms)
         ),
-        // C2 (doc §5): the log names the rule id only — no substitution and
-        // no matched instance — so this is all a checker gets.
-        Justification::Rewrite { rule_id } => {
-            format!(
-                "rewrite rule {rule_id:?} ; C2: rule id only, no substitution/instance in the log"
-            )
-        }
+        // The step names the rule and its instance; `explain_deep` expands the
+        // instance's premise pairs into steps of their own.
+        Justification::Rewrite { rule_id, inst } => match eg.rewrite_premises(*just) {
+            Some(p) => format!(
+                "rewrite rule {rule_id:?} instance {inst} ({} premises)",
+                p.len()
+            ),
+            None => format!("rewrite rule {rule_id:?} ; no complete instance recorded"),
+        },
         Justification::Assumption { lit } => format!("assumption {lit}"),
+        Justification::Build { node, .. } => {
+            format!("build({})", render_node(eg, *node, terms))
+        }
+        Justification::Normalize { node, normal } => format!(
+            "normalize({}, {})",
+            render_node(eg, *node, terms),
+            render_node(eg, *normal, terms)
+        ),
         Justification::ACSuperposition { .. }
         | Justification::ACInterReduction { .. }
         | Justification::ACAxiomCP { .. }
@@ -314,9 +324,9 @@ fn has_axiom(buf: &ProofBuf<ENodeId>) -> bool {
 /// Every `Axiom` step must reference an id in `registered`.
 fn assert_axioms_registered(buf: &ProofBuf<ENodeId>, registered: &[AxiomId], what: &str) {
     for (_, _, j) in &buf.steps {
-        if let Justification::Axiom { axiom_id } = j {
+        if let Some(axiom_id) = j.axiom_id::<AxiomId>() {
             assert!(
-                registered.contains(axiom_id),
+                registered.contains(&axiom_id),
                 "{what}: chain references unregistered axiom id {axiom_id:?}"
             );
         }
@@ -385,8 +395,8 @@ fn certificate_trace_free_operators() {
     // Mark BEFORE the merges: phase B restores to here.
     let token = eg.mark(ShrinkPolicy::Never);
 
-    eg.merge_justified(h1a, c, Justification::Axiom { axiom_id: ax1 });
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax2 });
+    eg.merge_justified(h1a, c, Justification::axiom(ax1));
+    eg.merge_justified(h2b, d, Justification::axiom(ax2));
     eg.rebuild();
     assert_ne!(eg.find_const(t1), eg.find_const(t2));
 
@@ -470,8 +480,8 @@ fn certificate_trace_free_operators() {
     let terms = snapshot_terms(&eg);
 
     // Re-apply the same justified merges and close congruence.
-    eg.merge_justified(h1a, c, Justification::Axiom { axiom_id: ax1 });
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax2 });
+    eg.merge_justified(h1a, c, Justification::axiom(ax1));
+    eg.merge_justified(h2b, d, Justification::axiom(ax2));
     eg.rebuild();
 
     assert_eq!(eg.find_const(inst_l2), eg.find_const(t1));
@@ -634,9 +644,9 @@ fn certificate_trace_with_rewrite_step() {
     let fired = apply_rule(&rule, &mut eg, &index, &stats, &model, &globals)
         .expect("the rule's RHS applies no primitive");
     assert!(fired > 0, "rule (h1 x) -> (c) must fire on h1(a)");
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax_h2 });
-    eg.merge_justified(k1u, p, Justification::Axiom { axiom_id: ax_k1 });
-    eg.merge_justified(k2w, q, Justification::Axiom { axiom_id: ax_k2 });
+    eg.merge_justified(h2b, d, Justification::axiom(ax_h2));
+    eg.merge_justified(k1u, p, Justification::axiom(ax_k1));
+    eg.merge_justified(k2w, q, Justification::axiom(ax_k2));
     eg.rebuild();
     assert_eq!(eg.find_const(h1a), eg.find_const(c), "rule merge missing");
     assert_ne!(eg.find_const(t1), eg.find_const(t2));
@@ -678,9 +688,9 @@ fn certificate_trace_with_rewrite_step() {
     let fired = apply_rule(&rule, &mut eg, &index, &stats, &model, &globals)
         .expect("the rule's RHS applies no primitive");
     assert!(fired > 0, "rule must fire again after restore");
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax_h2 });
-    eg.merge_justified(k1u, p, Justification::Axiom { axiom_id: ax_k1 });
-    eg.merge_justified(k2w, q, Justification::Axiom { axiom_id: ax_k2 });
+    eg.merge_justified(h2b, d, Justification::axiom(ax_h2));
+    eg.merge_justified(k1u, p, Justification::axiom(ax_k1));
+    eg.merge_justified(k2w, q, Justification::axiom(ax_k2));
     eg.rebuild();
 
     assert_eq!(eg.find_const(inst_l), eg.find_const(t1));
@@ -692,10 +702,10 @@ fn certificate_trace_with_rewrite_step() {
     assert!(has_congruence(&buf));
     assert!(has_axiom(&buf));
     assert!(
-        buf.steps.iter().any(|&(_, _, j)| j
-            == Justification::Rewrite {
-                rule_id: rule.rule_id
-            }),
+        buf.steps.iter().any(|&(_, _, j)| matches!(
+            j,
+            Justification::Rewrite { rule_id, .. } if rule_id == rule.rule_id
+        )),
         "chain1 must contain the Rewrite step for h1(a) = c, got {:?}",
         buf.steps
     );
@@ -769,8 +779,8 @@ fn certificate_trace_ac_projection() {
     let len_premerge = eg.len();
     let token = eg.mark(ShrinkPolicy::Never);
 
-    eg.merge_justified(h1a, c, Justification::Axiom { axiom_id: ax1 });
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax2 });
+    eg.merge_justified(h1a, c, Justification::axiom(ax1));
+    eg.merge_justified(h2b, d, Justification::axiom(ax2));
     eg.rebuild();
     assert_ne!(eg.find_const(t1), eg.find_const(t2));
 
@@ -810,8 +820,8 @@ fn certificate_trace_ac_projection() {
 
     let terms = snapshot_terms(&eg);
 
-    eg.merge_justified(h1a, c, Justification::Axiom { axiom_id: ax1 });
-    eg.merge_justified(h2b, d, Justification::Axiom { axiom_id: ax2 });
+    eg.merge_justified(h1a, c, Justification::axiom(ax1));
+    eg.merge_justified(h2b, d, Justification::axiom(ax2));
     eg.rebuild();
 
     assert_eq!(eg.find_const(inst_l), eg.find_const(t1));
@@ -854,13 +864,14 @@ fn certificate_trace_ac_projection() {
 // ---------------------------------------------------------------------------
 
 /// The two sides differ only by argument order and nesting, so build-time AC
-/// canonization (flatten, sort, coalesce) interns them to the SAME node id.
-/// The instantiated projection likewise interns onto the root's member and
-/// the explanation chain is empty: canonization is definitional and untraced
-/// (doc §3), which is exactly what the checker-side-canonizer decision (doc
-/// §4) assumes. Modeled on egraph/tests/ac_matrix.rs assert_eq_class.
+/// canonization (flatten, sort, coalesce) stores them as ONE node. Under
+/// proofs each nested spelling is kept as an evidence node of its own, merged
+/// into that node's class by a `Build` step whose premises are the splices;
+/// the chain between the two spellings is those steps and cites no axiom,
+/// because the equality is the AC law alone. Modeled on
+/// egraph/tests/ac_matrix.rs assert_eq_class.
 #[test]
-fn ac_equal_projection_explains_to_empty_chain() {
+fn ac_equal_projection_explains_by_build_steps() {
     let mut eg = Eg::<false, true>::new();
     let int = eg.intern_sort("Int");
     let plus = eg.register_mset("plus", int, int);
@@ -878,8 +889,18 @@ fn ac_equal_projection_explains_to_empty_chain() {
     let ca = eg.add(plus, &[c, a]);
     let t2 = eg.add(plus, &[ca, b]);
     assert_eq!(
-        t1, t2,
-        "build-time AC canonization must intern order/nesting variants to one node"
+        eg.find_const(t1),
+        eg.find_const(t2),
+        "build-time AC canonization must put order/nesting variants in one class"
+    );
+    let mut buf = ProofBuf::new();
+    assert!(eg.explain_deep(t1, t2, &mut buf));
+    assert!(
+        buf.steps
+            .iter()
+            .all(|(_, _, j)| matches!(j, Justification::Build { .. })),
+        "the nesting variants are related by their builds alone: {:?}",
+        buf.steps
     );
     eg.rebuild();
 
@@ -907,36 +928,35 @@ fn ac_equal_projection_explains_to_empty_chain() {
     let inst_r = materialize(&mut eg, &right_proj);
     eg.rebuild();
 
-    // The projection interns to the root's member node itself.
-    assert_eq!(inst_l, t1, "projection must intern onto the root member");
-    assert_eq!(inst_r, t2);
-
-    // The equality is definitional at the hash-cons level: the chain is empty
-    // (reflexivity), pinning the doc §3 claim that build-time canonization is
-    // untraced by design.
-    let mut buf = ProofBuf::new();
-    assert!(eg.explain_deep(inst_l, t1, &mut buf));
-    assert!(buf.steps.is_empty(), "canonization must not be traced");
-    buf.clear();
-    assert!(eg.explain_deep(inst_r, t2, &mut buf));
-    assert!(buf.steps.is_empty());
+    // The projections land in the root's class, and their chains to the inputs
+    // use no axiom: build-time canonization is traced by `Build` steps.
+    for (inst, t) in [(inst_l, t1), (inst_r, t2)] {
+        assert_eq!(eg.find_const(inst), eg.find_const(t));
+        buf.clear();
+        assert!(eg.explain_deep(inst, t, &mut buf));
+        assert!(
+            !buf.steps
+                .iter()
+                .any(|(_, _, j)| matches!(j, Justification::Axiom { .. })),
+            "no axiom relates two AC spellings: {:?}",
+            buf.steps
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: post-rebuild degeneracy merge carries the wrong label.
+// Test 5: a post-rebuild degeneracy merge is a `Normalize` step.
 // ---------------------------------------------------------------------------
 
-/// Pins the documented post-rebuild degeneracy
-/// merge — here an ACI singleton collapse, and(a,b) with a = b recanonizing
-/// to {a} = a — is pushed through the collision queue and logged as
-/// `Congruence { node, child }` (egraph.rs recanonize_parent /
-/// degeneracy_merge). The label is wrong: no congruence happened, an
-/// idempotence law did, and the two nodes in the step do not even share an
-/// operator. C1 proposes dedicated variants (`UnitDrop`, `NilpotentClamp`,
-/// `SingletonCollapse`); when C1 lands, this test must fail and be updated.
+/// A post-rebuild degeneracy merge (here an ACI singleton collapse, and(a,b)
+/// with a = b recanonizing to {a} = a) is logged as `Normalize { node,
+/// normal }`, not as a congruence step: the two nodes do not share an
+/// operator, and the premises are the collapsed node's own children. The deep
+/// explanation therefore cites `a = b`, which a congruence label paired
+/// against the leaf's (empty) children and never reached.
 #[test]
-fn degeneracy_merge_is_labelled_congruence() {
-    // cc (AC completion) stays off — the default — so the only mechanism that
+fn degeneracy_merge_is_a_normalize_step() {
+    // cc (AC completion) stays off, the default, so the only mechanism that
     // can derive and(a,b) = a is the recanonize degeneracy path, not a
     // completion inference with its own AC label.
     let mut eg = Eg::<false, true>::new();
@@ -952,7 +972,7 @@ fn degeneracy_merge_is_labelled_congruence() {
     let terms = snapshot_terms(&eg);
 
     let ax = eg.register_axiom("a=b", a, b);
-    eg.merge_justified(a, b, Justification::Axiom { axiom_id: ax });
+    eg.merge_justified(a, b, Justification::axiom(ax));
     eg.rebuild();
 
     // Recanonization coalesced {a, b} to the singleton {a}, and the
@@ -961,44 +981,30 @@ fn degeneracy_merge_is_labelled_congruence() {
 
     let mut buf = ProofBuf::new();
     assert!(eg.explain(and_ab, a, &mut buf));
-    print_chain("degeneracy: and(a,b) ≡ a after a=b", &buf, &eg, &terms);
-
-    // The degeneracy step is labelled Congruence and involves the collapsed
-    // Set node itself.
-    let degeneracy_step = buf
-        .steps
-        .iter()
-        .find_map(|(_, _, j)| match j {
-            Justification::Congruence { node_a, node_b }
-                if *node_a == and_ab || *node_b == and_ab =>
-            {
-                Some((*node_a, *node_b))
-            }
-            _ => None,
-        })
-        .expect("degeneracy merge must appear as a Congruence step (doc §3, C1)");
-
-    // No congruence happened: the equated nodes do not share an operator (a
-    // Set node against a nullary leaf). This is the C1 mislabelling.
-    let (na, nb) = degeneracy_step;
-    assert_ne!(
-        eg.node_op(na),
-        eg.node_op(nb),
-        "the 'Congruence' step relates nodes of different operators, \
-         so it cannot be a congruence; it is the ACI idempotence law \
-         (SingletonCollapse)"
+    print_chain("degeneracy: and(a,b) = a after a=b", &buf, &eg, &terms);
+    assert!(
+        buf.steps.iter().any(|(_, _, j)| matches!(
+            j,
+            Justification::Normalize { node, .. } if *node == and_ab
+        )),
+        "the collapse must be a Normalize step of the collapsed node: {:?}",
+        buf.steps
+    );
+    assert!(
+        !buf.steps
+            .iter()
+            .any(|(_, _, j)| matches!(j, Justification::Congruence { .. })),
+        "no congruence happened"
     );
 
-    // And explain_deep's congruence expansion has nothing to pair the MSet/Set
-    // children against on the leaf side: the deep chain adds no steps over
-    // the shallow one (doc §3: "explain_deep then tries to pair an MSet
-    // node's children against a leaf's and emits nothing").
-    let shallow_len = buf.steps.len();
+    // The deep chain expands the collapsed node's children and cites a = b.
     buf.clear();
     assert!(eg.explain_deep(and_ab, a, &mut buf));
-    assert_eq!(
-        buf.steps.len(),
-        shallow_len,
-        "congruence expansion of the degeneracy step should emit no sub-steps"
+    assert!(
+        buf.steps
+            .iter()
+            .any(|(_, _, j)| j.axiom_id::<AxiomId>() == Some(ax)),
+        "the deep chain must cite a = b: {:?}",
+        buf.steps
     );
 }

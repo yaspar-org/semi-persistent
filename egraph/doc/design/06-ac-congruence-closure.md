@@ -753,7 +753,7 @@ Chore B.** Two ways to get it wrong:
   (Because collapse keeps the node matchable this is less dangerous than under subsume,
   but the merge must still land first so the reduced form exists. The §5b cancellation
   case depends on the reduced node existing before matching proceeds.) The Lean
-  completeness proof needs this order as invariant I3 (§9c).
+  model states this order as invariant I3 and as `RetiredCovered` (§9c).
 - **Eager within the round.** The flag must gate Chore B *in the same round* the node
   becomes reducible. If this round's superposition pass still sees it, it breeds anyway.
   (The flag takes effect only when the next round rebuilds the active set, so within the
@@ -1758,9 +1758,10 @@ keys, so a merge never raises a child's key and no stored node grows.
 **Merge a node's normal form into its class before flagging the node collapsed.** The
 mechanisms are the (A′) inter-reduction merge and `FLAG_AC_COLLAPSED`, which removes the node
 from the rule set the next round reads. §6b states the order ("merge before mark"); the Lean
-proof needs it as invariant I3 (`CC/Defs.lean`: every retired node rewrites, in at least one
-step, to a node of its class), which `completion_complete_at_convergence` assumes and
-`CC/Laws/InvRulesMain.lean` uses (`nodes_reduce_all`). A node flagged before its reduct is
+proof states it as invariant I3 (`CC/Defs.lean`: every retired node rewrites, in at least one
+step, to a node of its class), derived from the reactivation pass (`I3_of_reactivate_fixed`),
+and as `RetiredCovered` (a retired node's class holds an active node), which the final
+theorems take and `Infer.retire` keeps. A node flagged before its reduct is
 merged is a retired node whose reduct is in no class with it, and the equality it carried is
 lost. `cc_round` calls `do_merge` and then `set_cc_collapsed` in the (A′) loop. No reproducer
 exists, because the engine has always merged first; the rule is recorded so that reordering
@@ -1786,7 +1787,12 @@ node, and `C5 = C5·C5` was not derived after `C2 = C3`. Commit `e06360e5` clear
 when `cc_round` materializes a node and when `recanonize_parent` shrinks one. A reactivation
 counts as a change of the round, so the next round runs, and that round collapses the node
 again if a rule still reduces it. Kapur's Algorithm 1 step 4(i) returns a reduced rule to the
-equation set for the same reason. Lean: the model keys retired nodes by monomial, and
+equation set for the same reason. A node active again takes part in its class's minimal
+monomial, so both places refresh it after clearing the flag (`refresh_min_monomial`, which
+skips collapsed nodes). Without the refresh the stored minimal monomial stayed on a node the
+round then collapsed when the re-activated node was the normal form of the class's own minimal
+monomial (`tests/egg/ac_reactivate_min_monomial.egg`, reduced from `semper-conform-cc-cert`
+seed 1, case 129; Lean `unretireNoRefresh_breaks_I5`, `CC/Slot.lean`). Lean: the model keys retired nodes by monomial, and
 `RoundFixed.nf_present` (`CC/Defs.lean`) requires the normal form of every active monomial to
 be an active node of the same class. Chapter 13 §5 item 24 states the invariant.
 
@@ -1887,21 +1893,29 @@ whole list with hypotheses is `proofs/lean/STATUS.md`):
   satisfy I5 initially and every later operation keeps it (`SlotState.I5`,
   `SlotState.OpsStar`, `SlotState.Agrees`; `reachable_I5` in `CC/Slot.lean` and
   `keyed_reachable_I5` in `CC/MinMonoKey.lean` discharge this for the engine's operations);
-  `I0Active` (every class holds an active node, `CC/Assemble.lean`); `hcanon` (every class
+  `I0Active` (every class that holds an active node has one as right-hand side,
+  `CC/Assemble.lean`; before 2026-11-06 it asked this of every class); `hcanon` (every class
   right-hand side is clamped); `RoundFixed` (`CC/Defs.lean`) with `nf_present` (the normal
   form of an active monomial is an active node of the same class) and `cp_joinable` (the
   critical pair of two distinct overlapping rules is joinable); the law facts `hlaw` and
-  `hnf_ax`; `hcp` (critical pairs with the law rules are joinable); `hcc` (two nodes with one
-  monomial are in one class); `hS` (active nodes of one class spell every asserted pair); and
-  `hcancel` (for a cancelative operator, joinability cancels a common summand).
+  `hnf_ax`; `hcp` (critical pairs with the law rules are joinable); `hcc` (two active nodes
+  with one monomial are in one class); `hS` (active nodes of one class spell every asserted
+  pair); and `hcancel` (for a cancelative operator, joinability cancels a common summand).
 - Cancelative operators: `completion_complete_cancellative_engine` (`CC/Lattice.lean`)
   replaces `hcancel` by `LatticeClosed`, which the fixpoint of `lattice_round` gives
   (`latticeClosed_of_engineFixed`); `hcancel` itself does not follow
   (`hcancel_not_derivable`). The rule above lists the lattice theorems.
 - Per law: `completion_complete_{identity,nilpotent,idempotent,inverse,combined}`
-  (`CC/Laws/`) discharge `hlaw` and `hnf_ax`. `completion_complete_inverse_engine` and
-  `completion_complete_combined_engine` (`CC/Laws/InvRulesMain.lean`) replace the four
-  `:inverse` hypotheses by the engine's R1-R5 (Chapter 5 §5.2).
+  (`CC/Laws/`) discharge `hlaw` and `hnf_ax`. `completion_complete_inverse_engine`,
+  `completion_complete_combined_engine` and `completion_complete_identityInverse_engine`
+  (`CC/Laws/InvRulesMain.lean`) conclude completeness for the inverse law sets from lattice
+  closure and `hS`: an `:inverse` operator is cancellative, so `lattice_round` runs for it.
+- Leaf constants: `completion_complete_atoms` (`CC/Atoms.lean`) and the `_atoms` forms of the
+  engine theorems (`CC/AtomsEngine.lean`) apply the theorems above to the completion view that
+  adds the one-element monomial `{x}` of each atomic class as a node of `x` and the empty
+  monomial as a node of the unit's class, with the one-element collapse (`RoundFixedA`) in the
+  fixed round; `AtomsWitness.witness_complete` meets every hypothesis on a state with four
+  leaf constants.
 - Order keys: `keyed_reachable_I5` and the counter-model `idOrder_grow_breaks_I5`
   (`CC/MinMonoKey.lean`).
 - `a_round` on folds: the theorems of `CC/ARound/` listed in the rule above.
@@ -1911,8 +1925,9 @@ whole list with hypotheses is `proofs/lean/STATUS.md`):
 - Bridge to matching: `ac_equal_same_class_graph` and `engine_match_modulo_complete`
   (`CC/Bridge/`), used by Chapter 7 §7.5 and Chapter 9.
 
-Scope (2026-11-05): `I0Active` asks every class to hold an active node of the operator, the
-theory does not identify merged child classes, the minimal-monomial history is met with an
+Scope (2026-11-05): `I0Active` asks every class to hold an active node of the operator
+(resolved 2026-11-06: leaf constants are covered, see above), the theory does not identify
+merged child classes, the minimal-monomial history is met with an
 initial state equal to the final one, and `ActRound` assumes the effects of rule actions;
 [Chapter 13 §4](13-soundness.md#4-what-is-proved-argued-and-assumed) states these limits.
 
@@ -1964,8 +1979,9 @@ are class ids, whose constant rules are a `find` function, and whose rule set is
 nodes (`completion_sound`, `kapur_termination`, `confluent_modulo`,
 `completion_complete_at_convergence`; hypotheses in `proofs/lean/STATUS.md`). Two of those
 hypotheses are engine obligations this section did not list: I5, the stored minimal monomial
-is the class's least active monomial, and I3, every retired node rewrites to a node of its
-class (§9c). The obligations below remain open for the Rust code itself, where the
+is the class's least active monomial, and `RetiredCovered`, every retired node's class holds an
+active node (§9c; the stronger I3, every retired node rewrites to a node of its class, is
+derived from the reactivation pass and assumed by no completeness theorem). The obligations below remain open for the Rust code itself, where the
 conformance generators and the fixtures are the evidence. §9c, "What is machine-checked",
 lists every hypothesis of `completion_complete_at_convergence`; the engine meets
 `RoundFixed.nf_present`, `RoundFixed.cp_joinable` and, for a cancelative operator,

@@ -23,11 +23,14 @@ a stored node, a single class, or the unit. The steps are the engine's,
 read existentially (any order, any splice choice): the engine's result is
 one such chain. `Den` is the zero-step case (`Den.toDenN`).
 
-`DenN` is stable under the rounds (`DenN.persist`: steps read nodes and
-classes only, mapped by the new `find`), so the store saturation theorem
-of `Fidelity/Subsume.lean` lifts: `fired_after_actions_N`,
-`inv_step_N`, `saturation_complete_N` (with `:subsume` runs and
-normalized right-hand sides).
+`DenN` is stable under a round that persists every stored node literally
+(`DenN.persist`, under `StorePersist`: steps read nodes and classes only,
+mapped by the new `find`). It is not stable under the recanonicalization
+the laws apply (`denN_persist_fails`, `Fidelity/Recanon.lean`), so the
+store saturation theorem of `Fidelity/Subsume.lean` lifts with the routing
+of `Fidelity/NormalizeSat.lean`: `fired_after_actions_N`, `inv_step_N`,
+`saturation_complete_N` (with `:subsume` runs and normalized right-hand
+sides).
 -/
 
 namespace Semper.EMatch.Fidelity

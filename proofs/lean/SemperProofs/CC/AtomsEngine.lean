@@ -1,0 +1,182 @@
+import SemperProofs.CC.Atoms
+import SemperProofs.CC.Lattice
+import SemperProofs.CC.Laws.InvRulesMain
+import SemperProofs.CC.Laws.AxiomCP
+import SemperProofs.CC.Reactivate
+
+/-!
+# The engine-level completeness theorems with leaf constants
+
+The theorems `completion_complete_cancellative_engine` (`Lattice.lean`),
+`completion_complete_inverse_engine`, `completion_complete_combined_engine`
+and `completion_complete_identityInverse_engine` (`Laws/InvRulesMain.lean`),
+read on the completion view `st.withAtoms A` of `Atoms.lean`. As in
+`completion_complete_atoms`, the fixed round is `RoundFixedA` (the
+one-element collapse included) and congruence `hcc` is stated on the stored
+state, every other hypothesis on the view. The inverse law sets go through
+lattice closure of the view, which the engine's `lattice_round` establishes
+for every `:inverse` operator (cancellative at the engine).
+
+The inverse rules R1-R5 are stated on the one-element nodes `{x}` of the
+classes a `g`-node touches (`InvNodes`, `RoundFixedInvNil.r4`). On the
+view these are the implicit nodes of the atoms: `invNodes_withAtoms` gives
+`InvNodes` of the view when every class a `g`-node touches is atomic, which
+the engine guarantees (a child of a non-`f` node and a class holding one
+are `atomic`), with no stored one-element node. The fixed round under R2
+then gives the `InvUnitFree` proof of the law set (`invUnitFree_of_fixed`).
+
+`CompleteAtoms.ofLaws` builds the bundle for a law set the model names
+(`LawSpec`) from the per-law conditions on the view's rules in place of
+`AxiomCP`, which `axiomCP_of_laws` derives. `CompleteAtoms.ofLattice`
+builds it for a cancellative law set from lattice closure of the view, with
+no condition on the critical pairs.
+-/
+
+namespace SemperProofs.CC
+
+open Relation
+
+variable {n : ℕ}
+
+/-- `I3` passes to the completion view: its retired nodes are stored
+retired nodes, and its rules and nodes contain the stored ones. -/
+theorem I3_withAtoms {L : Laws n} {st : State n} {A : Set (Fin n)} {u : Option (Fin n)} (h3 : I3 L st) :
+    I3 L (st.withAtoms A u) := by
+  intro M c hM
+  obtain ⟨M', c', hMM', hM', hc'⟩ := h3 M c hM.1
+  refine ⟨M', c', ?_, Or.inl hM', hc'⟩
+  clear hM' hc'
+  exact transGen_imp (fun _ _ h => h.imp (Rw_mono State.rules_withAtoms) id) hMM'
+
+/-- `InvNodes` of the completion view from the stored `g`-nodes, when every
+class a `g`-node touches is atomic: the one-element nodes the inverse rules
+are stated on are the implicit nodes of those atoms. -/
+theorem invNodes_withAtoms {st : State n} {A : Set (Fin n)} {u : Option (Fin n)} {gnodes : Set (Fin n × Fin n)}
+    {inv : Fin n → Option (Fin n)}
+    (hinv : ∀ x y, inv x = some y ↔ st.find x = x ∧ st.find y = y ∧
+      ∃ x' y', (x', y') ∈ gnodes ∧ st.find x' = x ∧ st.find y' = y)
+    (hidem : ∀ x, st.find (st.find x) = st.find x)
+    (hA : ∀ x y, (x, y) ∈ gnodes → st.find x ∈ A ∧ st.find y ∈ A) :
+    InvNodes (st.withAtoms A u) gnodes inv where
+  inv_iff := hinv
+  atom_child x y h := ⟨st.find x, Or.inr (Or.inl ⟨(hA x y h).1, rfl⟩), hidem x⟩
+  atom_class x y h := ⟨st.find y, Or.inr (Or.inl ⟨(hA x y h).2, rfl⟩), hidem y⟩
+
+/-- `completion_complete_cancellative_engine` with leaf constants. -/
+theorem completion_complete_cancellative_engine_atoms {L : Laws n}
+    {S : Set (Monomial n × Monomial n)} {st : State n} {A : Set (Fin n)} {u : Option (Fin n)}
+    {ss₀ ss : SlotState n}
+    (h5₀ : SlotState.I5 ss₀) (hrun : SlotState.OpsStar ss₀ ss)
+    (ha : SlotState.Agrees (st.withAtoms A u) ss)
+    (h0 : I0Active (st.withAtoms A u)) (hcanon : ∀ c, L.clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixedA L st A u)
+    (hlaw : ∀ P Q, L.lawRel P Q → degLex P Q)
+    (hnf_ax : ∀ M N, ¬ Rw (plain n) L.axRules (L.clamp M) N)
+    (hcp : ∀ r₁ r₂, r₁ ∈ (st.withAtoms A u).rules ∪ L.axRules →
+      r₂ ∈ (st.withAtoms A u).rules ∪ L.axRules → r₁ ≠ r₂ → Overlap r₁.1 r₂.1 →
+      Joinable (Rw (plain n) ((st.withAtoms A u).rules ∪ L.axRules))
+        (criticalPair (plain n) r₁ r₂).1 (criticalPair (plain n) r₁ r₂).2)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A u).active ∧
+      (N, d) ∈ (st.withAtoms A u).active ∧ st.find c = st.find d)
+    (hlat : L.cancellative → Lattice.LatticeClosed L (st.withAtoms A u))
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ (st.withAtoms A u).active)
+    (hN : (N, d) ∈ (st.withAtoms A u).active) (hMN : E L S M N) : st.find c = st.find d :=
+  Lattice.completion_complete_cancellative_engine h5₀ hrun ha h0 hcanon hfix.roundFixed hlaw
+    hnf_ax hcp (hfix.congr hcc) hS hlat hM hN hMN
+
+/-- `completion_complete_inverse_engine` with leaf constants: lattice
+closure and `hS` on the view. -/
+theorem completion_complete_inverse_engine_atoms (inv : Fin n → Option (Fin n)) (cancel : Prop)
+    {S : Set (Monomial n × Monomial n)} {st : State n} {A : Set (Fin n)} {u : Option (Fin n)}
+    (hlat : Lattice.LatticeClosed (Laws.inverse inv cancel) (st.withAtoms A u))
+    (hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A u).active ∧
+      (N, d) ∈ (st.withAtoms A u).active ∧ st.find c = st.find d)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ (st.withAtoms A u).active)
+    (hN : (N, d) ∈ (st.withAtoms A u).active) (hMN : E (Laws.inverse inv cancel) S M N) :
+    st.find c = st.find d :=
+  completion_complete_inverse_engine inv cancel hlat hS hM hN hMN
+
+/-- `completion_complete_combined_engine` with leaf constants; the unit `u`
+is the implicit node `(∅, u)` of the view. -/
+theorem completion_complete_combined_engine_atoms (u : Fin n) (k : ℕ) (hk : 2 ≤ k)
+    (inv : Fin n → Option (Fin n)) (cancel : Prop) (hu : InvUnitFree inv u)
+    {S : Set (Monomial n × Monomial n)} {st : State n} {A : Set (Fin n)}
+    (hlat : Lattice.LatticeClosed (Laws.combined u k hk inv cancel hu) (st.withAtoms A (some u)))
+    (hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A (some u)).active ∧
+      (N, d) ∈ (st.withAtoms A (some u)).active ∧ st.find c = st.find d)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ (st.withAtoms A (some u)).active)
+    (hN : (N, d) ∈ (st.withAtoms A (some u)).active)
+    (hMN : E (Laws.combined u k hk inv cancel hu) S M N) : st.find c = st.find d :=
+  completion_complete_combined_engine u k hk inv cancel hu hlat hS hM hN hMN
+
+/-- `completion_complete_identityInverse_engine` with leaf constants; the
+unit `u` is the implicit node `(∅, u)` of the view. -/
+theorem completion_complete_identityInverse_engine_atoms (u : Fin n)
+    (inv : Fin n → Option (Fin n)) (cancel : Prop) (hu : InvUnitFree inv u)
+    {S : Set (Monomial n × Monomial n)} {st : State n} {A : Set (Fin n)}
+    (hlat : Lattice.LatticeClosed (Laws.identityInverse u inv cancel hu)
+      (st.withAtoms A (some u)))
+    (hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A (some u)).active ∧
+      (N, d) ∈ (st.withAtoms A (some u)).active ∧ st.find c = st.find d)
+    {M N : Monomial n} {c d : Fin n} (hM : (M, c) ∈ (st.withAtoms A (some u)).active)
+    (hN : (N, d) ∈ (st.withAtoms A (some u)).active)
+    (hMN : E (Laws.identityInverse u inv cancel hu) S M N) : st.find c = st.find d :=
+  completion_complete_identityInverse_engine u inv cancel hu hlat hS hM hN hMN
+
+/-- **`CompleteAtoms` from the per-law conditions.** For a law set the model
+names, the bundle is built from the engine-side hypotheses and the
+conditions `LawSpec.Conds` on the view's rules; `hlaw` and `hnf_ax` are the
+law's, and `hcp_ax` is `axiomCP_of_laws` at the fixed round of the view.
+No hypothesis on the critical pairs that involve a law instance remains. -/
+theorem CompleteAtoms.ofLaws (sp : LawSpec n) {S : Set (Monomial n × Monomial n)}
+    {st : State n} {A : Set (Fin n)} {u : Option (Fin n)}
+    (slots : ∃ ss₀ ss : SlotState n,
+      SlotState.I5 ss₀ ∧ SlotState.OpsStar ss₀ ss ∧ SlotState.Agrees (st.withAtoms A u) ss)
+    (h0 : I0Active (st.withAtoms A u)) (hcanon : ∀ c, sp.laws.clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixedA sp.laws st A u) (hc : sp.Conds (st.withAtoms A u).rules)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A u).active ∧
+      (N, d) ∈ (st.withAtoms A u).active ∧ st.find c = st.find d)
+    (hlat : sp.laws.cancellative → Lattice.LatticeClosed sp.laws (st.withAtoms A u)) :
+    CompleteAtoms sp.laws S st A u where
+  slots := slots
+  h0 := h0
+  hcanon := hcanon
+  hfix := hfix
+  hlaw := sp.hlaw
+  hnf_ax := sp.hnf_ax
+  hcp_ax := fun _ => axiomCP_of_laws sp hfix.roundFixed hc
+  hcc := hcc
+  hS := hS
+  hlat := hlat
+
+/-- **`CompleteAtoms` from lattice closure, for a cancellative law set.**
+For a law set the model names whose operator is cancellative (every
+`:inverse` law set at the engine), the bundle needs no condition on the
+critical pairs: completeness goes through lattice closure of the view
+(`hlat`, what `lattice_round` establishes at its fixpoint), and `AxiomCP`
+is required for a non-cancellative operator only. -/
+theorem CompleteAtoms.ofLattice (sp : LawSpec n) {S : Set (Monomial n × Monomial n)}
+    {st : State n} {A : Set (Fin n)} {u : Option (Fin n)}
+    (slots : ∃ ss₀ ss : SlotState n,
+      SlotState.I5 ss₀ ∧ SlotState.OpsStar ss₀ ss ∧ SlotState.Agrees (st.withAtoms A u) ss)
+    (h0 : I0Active (st.withAtoms A u)) (hcanon : ∀ c, sp.laws.clamp (st.rhs c) = st.rhs c)
+    (hfix : RoundFixedA sp.laws st A u)
+    (hcc : ∀ P c d, (P, c) ∈ st.active → (P, d) ∈ st.active → st.find c = st.find d)
+    (hS : ∀ M N, (M, N) ∈ S → ∃ c d, (M, c) ∈ (st.withAtoms A u).active ∧
+      (N, d) ∈ (st.withAtoms A u).active ∧ st.find c = st.find d)
+    (hcancel : sp.laws.cancellative) (hlat : Lattice.LatticeClosed sp.laws (st.withAtoms A u)) :
+    CompleteAtoms sp.laws S st A u where
+  slots := slots
+  h0 := h0
+  hcanon := hcanon
+  hfix := hfix
+  hlaw := sp.hlaw
+  hnf_ax := sp.hnf_ax
+  hcp_ax := fun h => absurd hcancel h
+  hcc := hcc
+  hS := hS
+  hlat := fun _ => hlat
+
+end SemperProofs.CC

@@ -16,6 +16,9 @@ use crate::registry::{AxiomRegistry, OpKind, OpRegistry, RuleRegistry, SortRegis
 use crate::typed_routing::NodeRef;
 use crate::union_find::{Justification, ProofBuf};
 
+#[cfg(debug_assertions)]
+pub mod cc_mirror;
+
 /// How a completion op's monomial counts are bounded during normalization (design "three
 /// independent axes"): unbounded ℕ (MSet plain AC), clamped to {0,1} by dedup (Set idempotent =
 /// ACI), or reduced mod `order` (nilpotent, e.g. XOR at order 2 — stored MSet, the clamp is the
@@ -39,6 +42,20 @@ pub struct EGraphToken {
     /// describes exactly the state being snapshotted; `restore` puts it back so a caller
     /// can never observe an outcome from a discarded scope.
     completion_outcome: Option<CompletionOutcome>,
+    /// The proof-mode tables' lengths at mark time (see `rule_marks`).
+    rule_len: ProofLens,
+}
+
+/// The lengths of the append-only proof-mode tables at a mark.
+#[derive(Clone, Copy, Debug, Default)]
+struct ProofLens {
+    rule_starts: usize,
+    rule_premises: usize,
+    creation_log: usize,
+    build_starts: usize,
+    build_premises: usize,
+    merge_premise_pairs: usize,
+    merge_premise_log: usize,
 }
 
 /// Live-node threshold under which mark/restore stay sequential (see
@@ -150,7 +167,7 @@ pub struct EGraph<
     sorts: SortRegistry<Cfg::S, TRACK>,
     ops: OpRegistry<Cfg::O, Cfg::S, TRACK>,
     rules: RuleRegistry<TRACK>,
-    axioms: AxiomRegistry<Cfg::G, TRACK>,
+    axioms: AxiomRegistry<Cfg::G, Cfg::A, TRACK>,
     lits: LitValStore<L, Cfg::V, TRACK>,
     classes: EClasses<Cfg::G, Cfg::ClassKey, Cfg::UL, Cfg::UN, TRACK, PROOFS, Cfg::Policy>,
     nodes: NodeStore<Cfg::G, Cfg::O, Cfg::V, Cfg::C, Cfg::Ids, TRACK, PROOFS, Cfg::Policy>,
@@ -160,6 +177,16 @@ pub struct EGraph<
     history: crate::containers::history::History,
     worklist: Vec<(Cfg::UL, Cfg::G)>,
     collisions: Vec<(Cfg::G, Cfg::G)>,
+    /// Degenerate-arity merges `recanonize_parent` found (a node whose
+    /// normal form is one child's class, or the unit): merged beside the
+    /// hash-cons collisions, but justified as `Normalize`, because their
+    /// premises are the node's children and the operator's laws, not a second
+    /// node's children.
+    normalizations: Vec<(Cfg::G, Cfg::G)>,
+    /// Set by the saturation loops between a round's index build and its
+    /// end: creation evidence then leaves its merges on the worklist instead
+    /// of closing congruence at once (see `merge_creation_collisions`).
+    round_open: bool,
     /// EUF-derived merges captured for Nelson-Oppen equality export, recorded
     /// only when `record_merges` is set. Each entry is a `(survivor, absorbed)`
     /// class-root pair as of merge time, teed from the single `merge_in_classes`
@@ -168,6 +195,71 @@ pub struct EGraph<
     /// advance, so it holds at most one level's merges and needs no
     /// semi-persistent backtracking: `restore` clears it.
     merged_log: Vec<(Cfg::G, Cfg::G)>,
+    /// Rule instances (`PROOFS` only): instance `i` owns the premise pairs
+    /// `rule_premises[rule_starts[i]..rule_starts[i + 1]]` (the last one runs
+    /// to the end), each a pair of nodes the instance needs equal. Append-only
+    /// between marks: a mark records both lengths in `rule_marks`, and
+    /// restore truncates to them, so an instance of a discarded scope never
+    /// survives it.
+    rule_starts: Vec<usize>,
+    rule_premises: Vec<(Cfg::G, Cfg::G)>,
+    /// Instance `i` could not pair some pattern position with a child of the
+    /// matched node (a flattened view, a collected sequence): its premise list
+    /// is incomplete, and `rewrite_premises` reports it as unknown.
+    rule_partial: Vec<bool>,
+    /// The instance premise notes append to, while a rule's actions run.
+    rule_open: Option<u32>,
+    /// One `ProofLens` per open scope.
+    rule_marks: Vec<ProofLens>,
+    /// Proof mode: the node `add_with_creation_evidence` built for a client
+    /// term `(op, given children)` that it could not hash-cons (a fresh node
+    /// over non-root children, or a flagged duplicate of a node with history).
+    /// Such a node is not reachable through the hash-cons table, so without
+    /// this map every later build of the same term made another one: a rule
+    /// whose right-hand side re-fires each round grew its class by one copy
+    /// per round, and AC matching enumerated every combination of copies
+    /// (`ac_lazy_alternation.egg` exceeded 2 GB with `--proofs`).
+    creation_memo: std::collections::HashMap<(Cfg::O, Vec<(Cfg::G, usize)>), Cfg::G>,
+    /// Insertion order of `creation_memo`, so restore can drop a scope's entries.
+    creation_log: Vec<(Cfg::O, Vec<(Cfg::G, usize)>)>,
+    /// Proof mode: the splice witnesses of `Build` steps. Build `i` owns
+    /// `build_premises[build_starts[i]..build_starts[i + 1]]`, each a
+    /// `(child, spliced node)` pair recorded by the flatten helpers. A table of
+    /// its own, because a right-hand side builds terms while its rule instance
+    /// is still open in `rule_premises`.
+    build_starts: Vec<usize>,
+    build_premises: Vec<(Cfg::G, Cfg::G)>,
+    /// Build `i` collapsed under the operator's laws to a class (one child's, or
+    /// the unit's) rather than storing a node: the step relates the client's
+    /// term to that class, not to the children of the node that represents it.
+    build_collapsed: Vec<bool>,
+    /// Set by the n-ary build paths when normalization returns a class instead
+    /// of a node (`Normal::Single`, `Normal::Unit`).
+    last_build_collapsed: bool,
+    /// Set while a proof-mode n-ary build runs, so the flatten helpers record
+    /// their splices in `flatten_witness`.
+    record_flatten: bool,
+    flatten_witness: Vec<(Cfg::G, Cfg::G)>,
+    /// Set while a build must not make evidence nodes: the canonical build inside
+    /// an evidence build, and completion's own monomials, which are not client
+    /// terms.
+    no_evidence: bool,
+    /// Set for one merge: the class root that must survive it. A `Build` merge
+    /// keeps the canonical node's root, so an evidence node never becomes the
+    /// representative that later builds store as a child.
+    force_survivor: Option<Cfg::G>,
+    /// Proof mode: the premises of the steps whose children `explain_deep`
+    /// pairs by class (unordered congruence, `Normalize`, `Build`), computed
+    /// from the classes just before the merge and keyed by the merged pair.
+    /// Pairing by the classes at explanation time would also pair children
+    /// that became equal only through this step or a later one, and the
+    /// explanation would cite a conclusion as its own premise.
+    merge_premise_index: std::collections::HashMap<(usize, usize), (usize, usize)>,
+    merge_premise_pairs: Vec<(Cfg::G, Cfg::G)>,
+    merge_premise_log: Vec<(usize, usize)>,
+    /// Proof mode: the premises the next merge records instead of computing grouped
+    /// ones, set by a completion step that knows the rules it used.
+    pending_premises: Option<Vec<(Cfg::G, Cfg::G)>>,
     /// Gate for `merged_log`. Off by default, so EUF-only runs record nothing;
     /// the adapter enables it via `set_record_merges`.
     record_merges: bool,
@@ -210,9 +302,13 @@ pub struct EGraph<
     /// read can record it and the e-graph stays `Sync`.
     monomial_overflow: std::sync::atomic::AtomicBool,
     /// Counts the events that change how a build spells an AC term: a class holding a
-    /// completion monomial turns `atomic` (the build stops splicing it), or a merge changes
-    /// a class's minimal monomial for an op (the build splices a different monomial).
-    /// Neither event changes a node, so neither enters the semi-naive delta; the semi-naive
+    /// completion monomial turns `atomic` (the build stops splicing it), a merge changes
+    /// a class's minimal monomial for an op (the build splices a different monomial), or
+    /// a rebuild applies a law to a stored n-ary node beyond `find` (a unit drop, a count
+    /// clamp, a degenerate arity: `VarCanon::law_applied`), after which a right-hand side
+    /// built through that node's class has another value while the node that holds the
+    /// match is untouched (`proofs/lean/SemperProofs/Fidelity/Recanon.lean`,
+    /// `denN_persist_fails`). None of these events enters the semi-naive delta; the semi-naive
     /// loop reads this counter instead and, in plain mode, re-matches in full the rules
     /// whose right-hand side builds an AC term (design §9.2, "A build-time choice the delta
     /// cannot see"). Monotone, and not rolled back by `restore`: a spurious increase only
@@ -298,6 +394,11 @@ pub struct EGraph<
     /// declared inverse. NOTE: gate-level group support — inverse-PAIR cancellation only,
     /// not Kapur §5.4's full Abelian-group completion (no Gaussian elimination).
     inverse_op: crate::containers::SpUniqueMap<Cfg::O, Cfg::O, <Cfg::O as DenseId>::Index, TRACK>,
+    /// Debug mirror of the completion merges: the pending tag of the next merge and the
+    /// checker's own reading of the round (`cc_mirror`). Not rolled back by `restore`:
+    /// it holds nothing between two completion passes.
+    #[cfg(debug_assertions)]
+    cc_mirror: cc_mirror::Mirror<Cfg::G, Cfg::O>,
     /// Give a rewrite's AC result a flat alternative for each atomic same-op child
     /// (`--flatten-rhs`); see [`EGraph::same_op_summands`].
     pub flatten_rhs: bool,
@@ -462,7 +563,28 @@ where
             history: crate::containers::history::History::new(),
             worklist: Vec::new(),
             collisions: Vec::new(),
+            normalizations: Vec::new(),
+            round_open: false,
             merged_log: Vec::new(),
+            rule_starts: Vec::new(),
+            rule_premises: Vec::new(),
+            rule_partial: Vec::new(),
+            rule_open: None,
+            rule_marks: Vec::new(),
+            creation_memo: std::collections::HashMap::new(),
+            creation_log: Vec::new(),
+            build_starts: Vec::new(),
+            build_premises: Vec::new(),
+            build_collapsed: Vec::new(),
+            last_build_collapsed: false,
+            record_flatten: false,
+            flatten_witness: Vec::new(),
+            no_evidence: false,
+            force_survivor: None,
+            merge_premise_index: std::collections::HashMap::new(),
+            merge_premise_pairs: Vec::new(),
+            merge_premise_log: Vec::new(),
+            pending_premises: None,
             record_merges: false,
             g_buf: Vec::new(),
             mset_buf: Vec::new(),
@@ -492,6 +614,8 @@ where
             mset_flatten_buf: Vec::new(),
             unit_node: crate::containers::SpUniqueMap::new(),
             inverse_op: crate::containers::SpUniqueMap::new(),
+            #[cfg(debug_assertions)]
+            cc_mirror: cc_mirror::Mirror::default(),
             flatten_rhs: false,
             completion_outcome: None,
             completion_node_budget: DEFAULT_COMPLETION_NODE_BUDGET,
@@ -555,6 +679,24 @@ where
     pub fn close_decision_budget(&mut self) {
         self.decision_start = None;
         self.decision_spent = false;
+    }
+
+    /// Whether the last `rebuild` left the graph at its completion fixpoint: completion
+    /// is off ([`CompletionOutcome::Disabled`]), reached its fixpoint
+    /// ([`CompletionOutcome::Converged`]), or no rebuild has run. Any other outcome
+    /// (a budget stop, an overflow, a goal stop) leaves AC-entailed equalities out of
+    /// the graph, and a saturation round that changes nothing on it is no fixpoint.
+    ///
+    /// This is the engine's side of `EnginePhase.before_fixed` (`K.step Sb = none`,
+    /// `proofs/lean/SemperProofs/Fidelity/StopTest.lean`): the stop-test theorems
+    /// (`engine_stop_unchanged`, `EnginePhase.rebuild_idle`) apply to a round only when
+    /// the snapshot it matched on is a completion fixpoint, so the run loops report
+    /// `saturated` through this predicate (`tests/saturation_verdict.rs`).
+    pub fn completion_at_fixpoint(&self) -> bool {
+        matches!(
+            self.completion_outcome,
+            None | Some(CompletionOutcome::Disabled | CompletionOutcome::Converged { .. })
+        )
     }
 
     /// Whether the open lazy decision is out of budget: it has minted more nodes than
@@ -712,10 +854,10 @@ where
         self.rules.register(name, lhs, rhs)
     }
 
-    pub fn axioms(&self) -> &AxiomRegistry<Cfg::G, TRACK> {
+    pub fn axioms(&self) -> &AxiomRegistry<Cfg::G, Cfg::A, TRACK> {
         &self.axioms
     }
-    pub fn register_axiom(&mut self, name: &str, lhs: Cfg::G, rhs: Cfg::G) -> crate::id::AxiomId {
+    pub fn register_axiom(&mut self, name: &str, lhs: Cfg::G, rhs: Cfg::G) -> Cfg::A {
         self.axioms.register(name, lhs, rhs)
     }
 
@@ -1144,6 +1286,26 @@ where
                 OpKind::Lit => {}
             }
         }
+        // Proof mode keeps evidence of how a set, AC or associative term was stored
+        // (`add_nary_with_evidence`).
+        if PROOFS
+            && !self.no_evidence
+            && !children.is_empty()
+            && matches!(
+                self.ops.info(op).kind,
+                OpKind::MSet { .. } | OpKind::Set { .. } | OpKind::A { .. }
+            )
+        {
+            let counted: Vec<Cfg::C> = children
+                .iter()
+                .map(|&c| Cfg::mset_child_single(c))
+                .collect();
+            return self
+                .add_nary_with_evidence(op, children, &counted)
+                .unwrap_or_else(|e| {
+                    panic!("{e}: `add` lists children one by one, so this needs more children than the width counts (an API contract)")
+                });
+        }
         // An AC operator stores counted children; listed children count once each, so
         // only a list longer than the width's maximum can overflow, which is a caller's
         // contract here, unlike a rule's computed multiplicity.
@@ -1224,11 +1386,15 @@ where
                          carry no count: an internal invariant"
                     ),
                     crate::nary_canon::Normal::Unit => {
+                        self.last_build_collapsed = true;
                         return self
                             .unit_node(op)
                             .expect("Unit is returned only with a unit");
                     }
-                    crate::nary_canon::Normal::Single(g) => return self.classes.find(g),
+                    crate::nary_canon::Normal::Single(g) => {
+                        self.last_build_collapsed = true;
+                        return self.classes.find(g);
+                    }
                 }
                 match self.ops.info(op).kind {
                     OpKind::Set { .. } => {
@@ -1298,6 +1464,17 @@ where
                 );
             }
         }
+        if PROOFS && !self.no_evidence {
+            let counted: Vec<Cfg::C> = children
+                .iter()
+                .filter(|c| Cfg::mset_child_mult(c) > Cfg::M::ZERO)
+                .copied()
+                .collect();
+            if !counted.is_empty() {
+                let ids: Vec<Cfg::G> = counted.iter().map(Cfg::mset_child_id).collect();
+                return self.add_nary_with_evidence(op, &ids, &counted);
+            }
+        }
         self.mset_buf.clear();
         for c in children {
             let k = Cfg::mset_child_mult(c);
@@ -1307,6 +1484,147 @@ where
             }
         }
         self.add_mset_buffered(op)
+    }
+
+    /// Proof-mode build of a set, AC or associative term. The canonical build
+    /// `find`s the children, flattens nested same-operator children by splicing
+    /// a node of their class, and normalizes under the operator's laws, so the
+    /// node it returns can be another spelling than the client's: without
+    /// evidence, an explanation about that node never cites the equalities that
+    /// turned the client's term into it. When the build changed anything, the
+    /// client's term is kept as an evidence node with its given children,
+    /// merged into the canonical node's class by a `Build` step whose premises
+    /// are the splices. Evidence nodes carry `FLAG_SUBSUMED` and
+    /// `FLAG_CONGRUENT_DUP`: their content is the canonical node's, so matching,
+    /// completion and extraction skip them, which keeps saturation the plain
+    /// engine's. `ids` are the given children; `counted` the same children with
+    /// their multiplicities, for an AC operator.
+    fn add_nary_with_evidence(
+        &mut self,
+        op: Cfg::O,
+        ids: &[Cfg::G],
+        counted: &[Cfg::C],
+    ) -> Result<Cfg::G, MultOverflow> {
+        let mut key: Vec<(Cfg::G, usize)> = counted
+            .iter()
+            .map(|c| (Cfg::mset_child_id(c), Cfg::mset_child_mult(c).to_usize()))
+            .collect();
+        // The canonical build runs every time, memo or not: the spelling it stores
+        // depends on the graph (a splice takes the class's current minimal monomial), and
+        // a later build of the same term can store a new node that rules must see.
+        let saved = (self.no_evidence, self.record_flatten);
+        self.no_evidence = true;
+        self.record_flatten = true;
+        self.flatten_witness.clear();
+        self.last_build_collapsed = false;
+        let is_mset = matches!(self.ops.info(op).kind, OpKind::MSet { .. });
+        let built = if is_mset {
+            self.add_mset(op, counted)
+        } else {
+            Ok(self.add(op, ids))
+        };
+        let splices = std::mem::take(&mut self.flatten_witness);
+        (self.no_evidence, self.record_flatten) = saved;
+        let canon = built?;
+        let collapsed = std::mem::take(&mut self.last_build_collapsed);
+        if !collapsed && !self.build_changed(op, &key, canon, &splices) {
+            return Ok(canon);
+        }
+        // One evidence node per (client term, stored node): the memo key ends with the
+        // canonical node, marked by a multiplicity no child carries.
+        key.push((canon, usize::MAX));
+        if let Some(&id) = self.creation_memo.get(&(op, key.clone())) {
+            return Ok(id);
+        }
+        let mut flags = crate::node_types::FLAG_SUBSUMED | crate::node_types::FLAG_CONGRUENT_DUP;
+        if self.ops.info(op).is_constructor {
+            flags |= crate::node_types::FLAG_CONSTRUCTOR;
+        }
+        let id = self
+            .nodes
+            .add_evidence_nary(op, ids, counted, &self.ops, flags);
+        self.classes.add_singleton(id);
+        let inst = u32::try_from(self.build_starts.len()).expect("build count exceeds u32");
+        self.build_starts.push(self.build_premises.len());
+        self.build_premises.extend_from_slice(&splices);
+        self.build_collapsed.push(collapsed);
+        self.force_survivor = Some(self.classes.find_const(canon));
+        if let Some(m) =
+            self.merge_in_classes(id, canon, Some(Justification::Build { node: id, inst }))
+        {
+            self.fold_min_monomial(
+                m.survivor,
+                m.absorbed,
+                m.absorbed_min_row,
+                m.absorbed_atomic,
+            );
+            self.worklist.push((m.absorbed_uses, m.survivor));
+        }
+        if !self.worklist.is_empty() && !self.round_open {
+            self.rebuild_congruence();
+        }
+        self.remember_creation(op, &key, id);
+        Ok(id)
+    }
+
+    /// Whether the canonical build of `given` stored another spelling: it
+    /// spliced a child, returned a node of another operator (a law collapsed
+    /// the term), or returned a node whose original children differ from the
+    /// given ones (a child not its class root, a law that dropped or merged
+    /// children, or a node first built from other children).
+    fn build_changed(
+        &self,
+        op: Cfg::O,
+        given: &[(Cfg::G, usize)],
+        canon: Cfg::G,
+        splices: &[(Cfg::G, Cfg::G)],
+    ) -> bool {
+        if !splices.is_empty() || self.node_op(canon) != op {
+            return true;
+        }
+        let mut stored: Vec<(Cfg::G, usize)> = Vec::new();
+        let mut ids = Vec::new();
+        let mut counted = Vec::new();
+        if self.nodes.original_children(canon, &mut ids, &mut counted) {
+            stored.extend(ids.iter().map(|&g| (g, 1)));
+            stored.extend(
+                counted
+                    .iter()
+                    .map(|c| (Cfg::mset_child_id(c), Cfg::mset_child_mult(c).to_usize())),
+            );
+        } else {
+            self.for_each_child(canon, |g, m| stored.push((g, m.to_usize())));
+        }
+        let mut given: Vec<(Cfg::G, usize)> = given.to_vec();
+        if !matches!(self.ops.info(op).kind, OpKind::A { .. }) {
+            // Unordered: compare as multisets, summing a child's repeated entries.
+            let norm = |v: &mut Vec<(Cfg::G, usize)>| {
+                v.sort_by_key(|&(g, _)| g.to_usize());
+                let mut out: Vec<(Cfg::G, usize)> = Vec::with_capacity(v.len());
+                for &(g, m) in v.iter() {
+                    match out.last_mut() {
+                        Some((h, k)) if *h == g => *k += m,
+                        _ => out.push((g, m)),
+                    }
+                }
+                *v = out;
+            };
+            norm(&mut given);
+            norm(&mut stored);
+        }
+        given != stored
+    }
+
+    /// A proof-mode evidence node: a client's raw spelling, kept for
+    /// explanations and skipped by matching and completion.
+    pub fn is_evidence_node_pub(&self, n: Cfg::G) -> bool {
+        self.is_evidence_node(n)
+    }
+
+    /// A proof-mode evidence node (`add_nary_with_evidence`).
+    fn is_evidence_node(&self, n: Cfg::G) -> bool {
+        let f = self.node_flags(n);
+        f & crate::node_types::FLAG_SUBSUMED != 0 && f & crate::node_types::FLAG_CONGRUENT_DUP != 0
     }
 
     /// The AC build path behind [`add`](Self::add) and [`add_mset`](Self::add_mset),
@@ -1346,11 +1664,15 @@ where
             ),
             crate::nary_canon::Normal::Overflow => return Err(MultOverflow),
             crate::nary_canon::Normal::Unit => {
+                self.last_build_collapsed = true;
                 return Ok(self
                     .unit_node(op)
                     .expect("Unit is returned only with a unit"));
             }
-            crate::nary_canon::Normal::Single(g) => return Ok(self.classes.find(g)),
+            crate::nary_canon::Normal::Single(g) => {
+                self.last_build_collapsed = true;
+                return Ok(self.classes.find(g));
+            }
         }
         let result = self.nodes.add_mset(op, &self.mset_buf, node_flags);
         let id = self.register_if_fresh(result, op);
@@ -1380,13 +1702,19 @@ where
         ms: &[(Cfg::G, Cfg::M)],
         scratch: &mut Vec<Cfg::C>,
     ) -> Result<Cfg::G, MultOverflow> {
-        if matches!(self.ops.info(op).kind, OpKind::MSet { .. }) {
+        // Completion's monomials are built from class roots and are not client terms:
+        // they carry no evidence node.
+        let saved = std::mem::replace(&mut self.no_evidence, true);
+        let built = if matches!(self.ops.info(op).kind, OpKind::MSet { .. }) {
             scratch.clear();
             scratch.extend(ms.iter().map(|&(g, m)| Cfg::mset_child_with_mult(g, m)));
-            return self.add_mset(op, scratch);
-        }
-        let ids: Vec<Cfg::G> = ms.iter().map(|&(g, _)| g).collect();
-        Ok(self.add(op, &ids))
+            self.add_mset(op, scratch)
+        } else {
+            let ids: Vec<Cfg::G> = ms.iter().map(|&(g, _)| g).collect();
+            Ok(self.add(op, &ids))
+        };
+        self.no_evidence = saved;
+        built
     }
 
     pub fn add_lit(&mut self, op: Cfg::O, lit: Cfg::V) -> Cfg::G {
@@ -1620,6 +1948,43 @@ where
         };
         self.node_monomial_into(min, buf);
         true
+    }
+
+    /// The node whose monomial `class_rhs_into` returns for `node`'s class: the
+    /// unit for the unit's class, the class root for an atomic class, else the
+    /// class's minimal monomial node (the class root when there is none).
+    pub(crate) fn class_rhs_node(&self, node: Cfg::G) -> Cfg::G {
+        let cls = self.classes.find_const(node);
+        if let Some(u) = self.unit_node(self.node_op(node))
+            && self.classes.find_const(u) == cls
+        {
+            return u;
+        }
+        let Some(repr) = self.classes.repr_id(cls) else {
+            return cls;
+        };
+        if self.classes.atomic(repr) {
+            return cls;
+        }
+        self.completion_column(node)
+            .and_then(|col| self.classes.min_monomial(repr, col))
+            .unwrap_or(cls)
+    }
+
+    /// The inverse nodes a group-law cancellation in `ms` can use: for each
+    /// class `x` of `ms` with a node `inv(x)`, the pair `(inv(x), its class)`.
+    fn inverse_premises(
+        &self,
+        inv: Cfg::O,
+        ms: &[(Cfg::G, Cfg::M)],
+        out: &mut Vec<(Cfg::G, Cfg::G)>,
+    ) {
+        for &(x, _) in ms {
+            let root = self.classes.find_const(x);
+            if let Some(n) = self.nodes.plain1.probe(&inv, &[root]) {
+                out.push((n, self.classes.find_const(n)));
+            }
+        }
     }
 
     /// Lookup-only resolution of a canonical monomial to the class of an existing node of
@@ -1899,12 +2264,26 @@ where
         if ra == rb {
             return None;
         }
+        // Inside the completion code every merge carries a tag naming the Lean theorem
+        // that justifies it; the mirror checks the theorem's preconditions on the state
+        // as it stands before the merge.
+        #[cfg(debug_assertions)]
+        self.cc_mirror_on_merge(a, b);
+        let grouped = if PROOFS {
+            match self.pending_premises.take() {
+                Some(p) => Some(p),
+                None => just.and_then(|j| self.grouped_premises_now(j, a, b)),
+            }
+        } else {
+            None
+        };
         // Survivor policy (--union-by): `Rank` leaves the choice to the
         // union-find; the directed criteria keep the heavier side, so the
         // absorbed side is the cheap one and is known before the union.
-        let prefer_a = match self.union_by {
-            UnionBy::Rank => None,
-            _ => Some(self.union_weight(ra) >= self.union_weight(rb)),
+        let prefer_a = match (self.force_survivor.take(), self.union_by) {
+            (Some(keep), _) => Some(keep == ra),
+            (None, UnionBy::Rank) => None,
+            (None, _) => Some(self.union_weight(ra) >= self.union_weight(rb)),
         };
         // Semi-naive merge tracking: collect the absorbed side's members
         // before the splice. Under a directed policy only the (small)
@@ -1952,6 +2331,14 @@ where
         // one and the pairing cannot be recovered from `find`.
         if self.record_merges {
             self.merged_log.push((m.survivor, m.absorbed));
+        }
+        if let Some(pairs) = grouped {
+            let key = Self::pair_key(a, b);
+            let start = self.merge_premise_pairs.len();
+            self.merge_premise_pairs.extend_from_slice(&pairs);
+            self.merge_premise_index
+                .insert(key, (start, self.merge_premise_pairs.len()));
+            self.merge_premise_log.push(key);
         }
         Some(m)
     }
@@ -2089,11 +2476,32 @@ where
             crate::lca::LcaTable::build(parents, self.len())
         };
 
-        writeln!(out, "# semi-persistent-proof-dump v1")?;
+        writeln!(out, "# semi-persistent-proof-dump v2")?;
         writeln!(
             out,
             "# each term record proves node == representative; ids are decimal"
         )?;
+        writeln!(
+            out,
+            "# original: the children a congruence step through the node takes as premises"
+        )?;
+        writeln!(
+            out,
+            "# rewrite, grouped and completion steps list their premise pairs, each proved by its own term records"
+        )?;
+        writeln!(out, "axioms {}", self.axioms.len())?;
+        for i in 0..self.axioms.len() {
+            let id: Cfg::A = crate::id::id_at(i);
+            let info = self.axioms.info(id);
+            writeln!(
+                out,
+                "axiom {} lhs {} rhs {} name {:?}",
+                i,
+                info.lhs.to_usize(),
+                info.rhs.to_usize(),
+                info.name
+            )?;
+        }
         writeln!(out, "terms {}", self.len())?;
 
         let mut stats = ProofDumpStats::default();
@@ -2151,6 +2559,13 @@ where
                 }
                 write!(out, "{}:{}", child.to_usize(), mult)?;
             }
+            write!(out, "] original [")?;
+            for (i, child) in self.original_children(node).iter().enumerate() {
+                if i > 0 {
+                    write!(out, ",")?;
+                }
+                write!(out, "{}", child.to_usize())?;
+            }
             writeln!(out, "]")?;
 
             writeln!(
@@ -2162,6 +2577,17 @@ where
             for &(from, to, justification) in &buf.steps {
                 write!(out, "step {} {} ", from.to_usize(), to.to_usize())?;
                 self.write_proof_dump_justification(&mut out, justification)?;
+                // The premises recorded at the merge (grouped and completion steps).
+                if let Some(premises) = self.merge_premises(from, to) {
+                    write!(out, " premises [")?;
+                    for (i, (x, y)) in premises.iter().enumerate() {
+                        if i > 0 {
+                            write!(out, ",")?;
+                        }
+                        write!(out, "{}={}", x.to_usize(), y.to_usize())?;
+                    }
+                    write!(out, "]")?;
+                }
                 writeln!(out)?;
             }
             writeln!(out, "end")?;
@@ -2189,8 +2615,21 @@ where
                 std::io::ErrorKind::InvalidData,
                 "proof path contains a filler justification",
             )),
-            Justification::Rewrite { rule_id } => {
-                write!(out, "rewrite rule={}", rule_id.to_usize())
+            Justification::Rewrite { rule_id, inst } => {
+                write!(out, "rewrite rule={}", rule_id.to_usize())?;
+                match self.rewrite_premises(justification) {
+                    Some(premises) => {
+                        write!(out, " instance={inst} premises [")?;
+                        for (i, (x, y)) in premises.iter().enumerate() {
+                            if i > 0 {
+                                write!(out, ",")?;
+                            }
+                            write!(out, "{}={}", x.to_usize(), y.to_usize())?;
+                        }
+                        write!(out, "]")
+                    }
+                    None => write!(out, " premises unknown"),
+                }
             }
             Justification::Congruence { node_a, node_b } => write!(
                 out,
@@ -2199,7 +2638,7 @@ where
                 node_b.to_usize()
             ),
             Justification::Axiom { axiom_id } => {
-                write!(out, "axiom id={}", axiom_id.to_usize())
+                write!(out, "axiom id={}", axiom_id.as_usize())
             }
             Justification::ACSuperposition { node_a, node_b } => write!(
                 out,
@@ -2227,6 +2666,27 @@ where
             ),
             Justification::Assumption { lit } => {
                 write!(out, "assumption lit={}", lit.as_usize())
+            }
+            Justification::Normalize { node, normal } => write!(
+                out,
+                "normalize node={} normal={}",
+                node.to_usize(),
+                normal.to_usize()
+            ),
+            Justification::Build { node, .. } => {
+                write!(out, "build node={} splices [", node.to_usize())?;
+                for (i, (g, m)) in self
+                    .build_premises(justification)
+                    .unwrap_or(&[])
+                    .iter()
+                    .enumerate()
+                {
+                    if i > 0 {
+                        write!(out, ",")?;
+                    }
+                    write!(out, "{}={}", g.to_usize(), m.to_usize())?;
+                }
+                write!(out, "]")
             }
             Justification::InverseCancel { node_a, node_b } => write!(
                 out,
@@ -2282,44 +2742,299 @@ where
         let mut ac_scratch: Vec<Cfg::C> = Vec::new();
         let mut i = 0;
         while i < buf.steps.len() {
-            if let Justification::Congruence { node_a, node_b } = buf.steps[i].2 {
-                if !expanded.insert(Self::pair_key(node_a, node_b)) {
-                    i += 1;
-                    continue;
-                }
-                buf.children_a.clear();
-                buf.children_b.clear();
-                self.collect_original_children(node_a, &mut buf.children_a, &mut ac_scratch);
-                self.collect_original_children(node_b, &mut buf.children_b, &mut ac_scratch);
-
-                let is_ordered = matches!(
-                    self.node_ref(node_a),
-                    NodeRef::Plain1(_)
-                        | NodeRef::Plain2(_)
-                        | NodeRef::Plain3(_)
-                        | NodeRef::PlainN(_)
-                        | NodeRef::Seq(_)
-                );
-
-                if is_ordered {
-                    let n = buf.children_a.len().min(buf.children_b.len());
-                    for j in 0..n {
-                        let ca = buf.children_a[j];
-                        let cb = buf.children_b[j];
-                        if ca != cb
-                            && self.classes.find_const(ca) == self.classes.find_const(cb)
-                            && explained.insert(Self::pair_key(ca, cb))
-                        {
-                            self.classes.explain(ca, cb, buf);
+            let step = buf.steps[i].2;
+            match step {
+                Justification::Congruence { node_a, node_b } => {
+                    if expanded.insert(Self::pair_key(node_a, node_b)) {
+                        buf.children_a.clear();
+                        buf.children_b.clear();
+                        self.collect_original_children(
+                            node_a,
+                            &mut buf.children_a,
+                            &mut ac_scratch,
+                        );
+                        self.collect_original_children(
+                            node_b,
+                            &mut buf.children_b,
+                            &mut ac_scratch,
+                        );
+                        let is_ordered = matches!(
+                            self.node_ref(node_a),
+                            NodeRef::Plain1(_)
+                                | NodeRef::Plain2(_)
+                                | NodeRef::Plain3(_)
+                                | NodeRef::PlainN(_)
+                                | NodeRef::Seq(_)
+                        );
+                        if is_ordered {
+                            // Positional premises: the two child lists have one length, and
+                            // children at one position are in one class. A violation would
+                            // leave a premise unexplained, so it stops a debug build.
+                            debug_assert_eq!(
+                                buf.children_a.len(),
+                                buf.children_b.len(),
+                                "congruence step between ordered nodes of different arity"
+                            );
+                            for j in 0..buf.children_a.len().min(buf.children_b.len()) {
+                                let ca = buf.children_a[j];
+                                let cb = buf.children_b[j];
+                                if ca == cb {
+                                    continue;
+                                }
+                                debug_assert_eq!(
+                                    self.classes.find_const(ca),
+                                    self.classes.find_const(cb),
+                                    "congruence step whose children differ in class"
+                                );
+                                if explained.insert(Self::pair_key(ca, cb)) {
+                                    self.classes.explain(ca, cb, buf);
+                                }
+                            }
+                        } else if let Some(pairs) = self.merge_premises(node_a, node_b) {
+                            for &(x, y) in pairs {
+                                if explained.insert(Self::pair_key(x, y)) {
+                                    self.classes.explain(x, y, buf);
+                                }
+                            }
+                        } else {
+                            let op = self.node_op(node_a);
+                            self.law_witnesses(op, buf);
+                            self.explain_grouped(buf, &mut explained);
                         }
                     }
-                } else {
-                    self.explain_grouped(buf, &mut explained);
                 }
+                Justification::Normalize { node, normal }
+                    if self.merge_premises(node, normal).is_some() =>
+                {
+                    if expanded.insert(Self::pair_key(node, normal)) {
+                        for &(x, y) in self.merge_premises(node, normal).unwrap_or(&[]) {
+                            if explained.insert(Self::pair_key(x, y)) {
+                                self.classes.explain(x, y, buf);
+                            }
+                        }
+                    }
+                }
+                Justification::Normalize { node, normal } => {
+                    if expanded.insert(Self::pair_key(node, normal)) {
+                        buf.children_a.clear();
+                        buf.children_b.clear();
+                        self.collect_original_children(node, &mut buf.children_a, &mut ac_scratch);
+                        buf.children_b.push(normal);
+                        let op = self.node_op(node);
+                        self.law_witnesses(op, buf);
+                        self.explain_grouped(buf, &mut explained);
+                    }
+                }
+                Justification::Build { node, .. } => {
+                    let (from, to, _) = buf.steps[i];
+                    let other = if from == node { to } else { from };
+                    if let Some(pairs) = self.merge_premises(from, to) {
+                        if expanded.insert(Self::pair_key(node, other)) {
+                            for &(x, y) in pairs {
+                                if explained.insert(Self::pair_key(x, y)) {
+                                    self.classes.explain(x, y, buf);
+                                }
+                            }
+                        }
+                    } else if expanded.insert(Self::pair_key(node, other)) {
+                        buf.children_a.clear();
+                        buf.children_b.clear();
+                        self.for_each_child(node, |c, _| buf.children_a.push(c));
+                        if let Some(splices) = self.build_premises(step) {
+                            for &(g, m) in splices {
+                                buf.children_a.push(g);
+                                buf.children_a.push(m);
+                                self.for_each_child(m, |c, _| buf.children_a.push(c));
+                            }
+                        }
+                        let op = self.node_op(node);
+                        if self.build_collapsed(step) == Some(false) {
+                            self.collect_original_children(
+                                other,
+                                &mut buf.children_b,
+                                &mut ac_scratch,
+                            );
+                        } else {
+                            buf.children_b.push(other);
+                        }
+                        self.law_witnesses(op, buf);
+                        self.explain_grouped(buf, &mut explained);
+                    }
+                }
+                Justification::Rewrite { .. } => {
+                    if let Some(premises) = self.rewrite_premises(step) {
+                        for &(x, y) in premises {
+                            if explained.insert(Self::pair_key(x, y)) {
+                                self.classes.explain(x, y, buf);
+                            }
+                        }
+                    }
+                }
+                Justification::ACSuperposition { .. }
+                | Justification::ACInterReduction { .. }
+                | Justification::ACAxiomCP { .. }
+                | Justification::Cancellative { .. }
+                | Justification::InverseCancel { .. } => {
+                    let (from, to, _) = buf.steps[i];
+                    if let Some(pairs) = self.merge_premises(from, to)
+                        && expanded.insert(Self::pair_key(from, to))
+                    {
+                        for &(x, y) in pairs {
+                            if explained.insert(Self::pair_key(x, y)) {
+                                self.classes.explain(x, y, buf);
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
             i += 1;
         }
         true
+    }
+
+    /// Add to `buf.children_b` the nodes an operator's laws compare children
+    /// with: the unit, which a child in its class is dropped against, and the
+    /// argument of each inverse child, which cancels against a child in its
+    /// class. `explain_grouped` then explains those equalities too.
+    /// The premises of a grouped step about to merge `a` and `b`, from the
+    /// current classes: the nodes the step compares (see `explain_deep`),
+    /// grouped by class, each member paired with the first of its class.
+    /// `None` for a step that is not grouped.
+    fn grouped_premises_now(
+        &self,
+        j: Justification<Cfg::G>,
+        a: Cfg::G,
+        b: Cfg::G,
+    ) -> Option<Vec<(Cfg::G, Cfg::G)>> {
+        let mut scratch = Vec::new();
+        let mut list: Vec<Cfg::G> = Vec::new();
+        let op = match j {
+            Justification::Congruence { node_a, node_b } => {
+                if self.is_ordered_node(node_a) {
+                    return None;
+                }
+                self.collect_original_children(node_a, &mut list, &mut scratch);
+                self.collect_original_children(node_b, &mut list, &mut scratch);
+                self.node_op(node_a)
+            }
+            Justification::Normalize { node, normal } => {
+                self.collect_original_children(node, &mut list, &mut scratch);
+                list.push(normal);
+                self.node_op(node)
+            }
+            // An inverse repair: one side is the other with an inverse pair cancelled
+            // (or an inverse law applied); both sides' children, or the side itself when
+            // it is not a node of the operator.
+            Justification::InverseCancel { node_a, node_b } => {
+                let op = self.node_op(node_b);
+                for n in [node_a, node_b] {
+                    if self.node_op(n) == op && !self.is_ordered_node(n) {
+                        self.collect_original_children(n, &mut list, &mut scratch);
+                    } else {
+                        list.push(n);
+                    }
+                }
+                op
+            }
+            Justification::Build { node, .. } => {
+                let other = if a == node { b } else { a };
+                self.for_each_child(node, |c, _| list.push(c));
+                for &(g, m) in self.build_premises(j).unwrap_or(&[]) {
+                    list.push(g);
+                    list.push(m);
+                    self.for_each_child(m, |c, _| list.push(c));
+                }
+                if self.build_collapsed(j) == Some(false) {
+                    self.collect_original_children(other, &mut list, &mut scratch);
+                } else {
+                    list.push(other);
+                }
+                self.node_op(node)
+            }
+            _ => return None,
+        };
+        if let Some(u) = self.unit_node(op) {
+            list.push(u);
+        }
+        if let Some(inv) = self.inverse_op(op) {
+            // The inverse node's original argument: the cancellation compares the
+            // argument the term was built with, not the class root it now stores. And
+            // the inverse node a child's class holds (`b` after `b = inv(a)`): the
+            // normalization finds it by probing `inv(x)` for each child `x`.
+            let mut extra = Vec::new();
+            for k in 0..list.len() {
+                let c = list[k];
+                if self.node_op(c) == inv {
+                    self.collect_original_children(c, &mut extra, &mut scratch);
+                }
+                let root = self.classes.find_const(c);
+                if let Some(n) = self.nodes.plain1.probe(&inv, &[root]) {
+                    extra.push(n);
+                    self.collect_original_children(n, &mut extra, &mut scratch);
+                }
+            }
+            list.extend(extra);
+        }
+        list.sort_by_key(|c| self.classes.find_const(*c).to_usize());
+        let mut pairs = Vec::new();
+        let mut first = 0;
+        for k in 1..list.len() {
+            if self.classes.find_const(list[k]) != self.classes.find_const(list[first]) {
+                first = k;
+            } else if list[k] != list[first] {
+                pairs.push((list[first], list[k]));
+            }
+        }
+        Some(pairs)
+    }
+
+    /// The premises recorded when `a` and `b` were merged: the grouped pairs of
+    /// a congruence, `Normalize` or `Build` step, or the rules and inverse
+    /// nodes a completion step used. For explanation checkers.
+    pub fn step_premises(&self, a: Cfg::G, b: Cfg::G) -> Option<&[(Cfg::G, Cfg::G)]> {
+        self.merge_premises(a, b)
+    }
+
+    /// The merge-time premises recorded for the grouped step that merged `a`
+    /// and `b` (`grouped_premises_now`).
+    fn merge_premises(&self, a: Cfg::G, b: Cfg::G) -> Option<&[(Cfg::G, Cfg::G)]> {
+        let &(s, e) = self.merge_premise_index.get(&Self::pair_key(a, b))?;
+        Some(&self.merge_premise_pairs[s..e])
+    }
+
+    /// Whether `id`'s operator takes its children in order.
+    fn is_ordered_node(&self, id: Cfg::G) -> bool {
+        matches!(
+            self.node_ref(id),
+            NodeRef::Plain1(_)
+                | NodeRef::Plain2(_)
+                | NodeRef::Plain3(_)
+                | NodeRef::PlainN(_)
+                | NodeRef::Seq(_)
+        )
+    }
+
+    fn law_witnesses(&self, op: Cfg::O, buf: &mut ProofBuf<Cfg::G>) {
+        if let Some(u) = self.unit_node(op) {
+            buf.children_b.push(u);
+        }
+        if let Some(inv) = self.inverse_op(op) {
+            let n = buf.children_a.len() + buf.children_b.len();
+            for k in 0..n {
+                let c = if k < buf.children_a.len() {
+                    buf.children_a[k]
+                } else {
+                    buf.children_b[k - buf.children_a.len()]
+                };
+                if self.node_op(c) == inv {
+                    let mut args = Vec::new();
+                    let mut scratch = Vec::new();
+                    self.collect_original_children(c, &mut args, &mut scratch);
+                    buf.children_b.extend(args);
+                }
+            }
+        }
     }
 
     /// Order-normalized key for the explain-once set: `(a, b)` and `(b, a)`
@@ -2329,6 +3044,13 @@ where
         if x <= y { (x, y) } else { (y, x) }
     }
 
+    /// Explain every equality among `buf.children_a` and `buf.children_b`
+    /// taken together: the children of both sides, sorted by class, and in
+    /// each class every member against the first. A pairing that takes one
+    /// child per class from each side misses the rest: `+(a, b)` and
+    /// `+(a, a)` after `a = b` pair `a` with `a` and never cite `a = b`, and a
+    /// child equal to the unit or cancelled by an inverse has no partner on
+    /// the other side at all.
     fn explain_grouped(
         &self,
         buf: &mut ProofBuf<Cfg::G>,
@@ -2336,33 +3058,22 @@ where
     ) {
         buf.group_a.clear();
         buf.group_a.extend_from_slice(&buf.children_a);
+        buf.group_a.extend_from_slice(&buf.children_b);
         buf.group_a
             .sort_by_key(|c| self.classes.find_const(*c).to_usize());
 
-        buf.group_b.clear();
-        buf.group_b.extend_from_slice(&buf.children_b);
-        buf.group_b
-            .sort_by_key(|c| self.classes.find_const(*c).to_usize());
-
         buf.children_a.clear();
-        let mut ia = 0;
-        let mut ib = 0;
-        while ia < buf.group_a.len() && ib < buf.group_b.len() {
-            let ra = self.classes.find_const(buf.group_a[ia]).to_usize();
-            let rb = self.classes.find_const(buf.group_b[ib]).to_usize();
-            if ra < rb {
-                ia += 1;
-            } else if ra > rb {
-                ib += 1;
-            } else {
-                let ca = buf.group_a[ia];
-                let cb = buf.group_b[ib];
-                if ca != cb {
-                    buf.children_a.push(ca);
-                    buf.children_a.push(cb);
-                }
-                ia += 1;
-                ib += 1;
+        let mut first = 0;
+        for k in 1..buf.group_a.len() {
+            let c = buf.group_a[k];
+            if self.classes.find_const(c) != self.classes.find_const(buf.group_a[first]) {
+                first = k;
+                continue;
+            }
+            let f = buf.group_a[first];
+            if c != f {
+                buf.children_a.push(f);
+                buf.children_a.push(c);
             }
         }
 
@@ -2374,6 +3085,127 @@ where
                 self.classes.explain(ca, cb, buf);
             }
             k += 2;
+        }
+    }
+
+    /// The premise pairs of a `Rewrite` step's rule instance: the node pairs
+    /// the match and the right-hand side's construction need equal. `None`
+    /// for any other justification, for a step with no recorded instance, and
+    /// for an instance whose premise list is incomplete.
+    pub fn rewrite_premises(&self, j: Justification<Cfg::G>) -> Option<&[(Cfg::G, Cfg::G)]> {
+        let Justification::Rewrite { inst, .. } = j else {
+            return None;
+        };
+        let i = inst as usize;
+        if inst == crate::union_find::NO_INSTANCE || self.rule_partial.get(i) != Some(&false) {
+            return None;
+        }
+        let start = self.rule_starts[i];
+        let end = self
+            .rule_starts
+            .get(i + 1)
+            .copied()
+            .unwrap_or(self.rule_premises.len());
+        Some(&self.rule_premises[start..end])
+    }
+
+    /// Open a rule instance for one match (`PROOFS` only; otherwise
+    /// [`NO_INSTANCE`](crate::union_find::NO_INSTANCE)). Premises noted until
+    /// [`end_rule_instance`](Self::end_rule_instance) belong to it.
+    pub(crate) fn begin_rule_instance(&mut self) -> u32 {
+        if !PROOFS {
+            return crate::union_find::NO_INSTANCE;
+        }
+        debug_assert!(self.rule_open.is_none(), "rule instances do not nest");
+        let id = u32::try_from(self.rule_starts.len())
+            .ok()
+            .filter(|&i| i != crate::union_find::NO_INSTANCE)
+            .expect("rule instance count exceeds u32");
+        self.rule_starts.push(self.rule_premises.len());
+        self.rule_partial.push(false);
+        self.rule_open = Some(id);
+        id
+    }
+
+    /// The open instance, for the `Rewrite` steps its actions record.
+    pub(crate) fn open_rule_instance(&self) -> u32 {
+        self.rule_open.unwrap_or(crate::union_find::NO_INSTANCE)
+    }
+
+    pub(crate) fn end_rule_instance(&mut self) {
+        self.rule_open = None;
+    }
+
+    /// Record that the open instance needs `a` and `b` equal. A no-op with no
+    /// open instance, and for a node paired with itself.
+    pub(crate) fn note_rule_premise(&mut self, a: Cfg::G, b: Cfg::G) {
+        if PROOFS && a != b && self.rule_open.is_some() {
+            self.rule_premises.push((a, b));
+        }
+    }
+
+    /// Mark the open instance's premise list incomplete.
+    pub(crate) fn note_rule_partial(&mut self) {
+        if let Some(i) = self.rule_open {
+            self.rule_partial[i as usize] = true;
+        }
+    }
+
+    /// Drop the rule instances, build witnesses and creation-memo entries
+    /// recorded after the given lengths: their nodes belong to a discarded
+    /// scope.
+    fn truncate_rule_instances(&mut self, len: ProofLens) {
+        self.rule_starts.truncate(len.rule_starts);
+        self.rule_partial.truncate(len.rule_starts);
+        self.rule_premises.truncate(len.rule_premises);
+        self.rule_open = None;
+        self.build_starts.truncate(len.build_starts);
+        self.build_collapsed.truncate(len.build_starts);
+        self.build_premises.truncate(len.build_premises);
+        self.merge_premise_pairs.truncate(len.merge_premise_pairs);
+        for key in self
+            .merge_premise_log
+            .drain(len.merge_premise_log.min(self.merge_premise_log.len())..)
+        {
+            self.merge_premise_index.remove(&key);
+        }
+        for key in self
+            .creation_log
+            .drain(len.creation_log.min(self.creation_log.len())..)
+        {
+            self.creation_memo.remove(&key);
+        }
+    }
+
+    /// Whether a `Build` step's build collapsed to a class (see
+    /// `build_collapsed`); `None` for any other step.
+    pub fn build_collapsed(&self, j: Justification<Cfg::G>) -> Option<bool> {
+        let Justification::Build { inst, .. } = j else {
+            return None;
+        };
+        self.build_collapsed.get(inst as usize).copied()
+    }
+
+    /// The splice witnesses of a `Build` step; `None` for any other step.
+    pub fn build_premises(&self, j: Justification<Cfg::G>) -> Option<&[(Cfg::G, Cfg::G)]> {
+        let Justification::Build { inst, .. } = j else {
+            return None;
+        };
+        let i = inst as usize;
+        let start = *self.build_starts.get(i)?;
+        let end = self
+            .build_starts
+            .get(i + 1)
+            .copied()
+            .unwrap_or(self.build_premises.len());
+        Some(&self.build_premises[start..end])
+    }
+
+    /// Record the node built for the client term `(op, given)`.
+    fn remember_creation(&mut self, op: Cfg::O, given: &[(Cfg::G, usize)], id: Cfg::G) {
+        let key = (op, given.to_vec());
+        if self.creation_memo.insert(key.clone(), id).is_none() {
+            self.creation_log.push(key);
         }
     }
 
@@ -2427,6 +3259,16 @@ where
     /// closure but not complete AC/ACI congruence closure. Inspect
     /// [`completion_outcome`](Self::completion_outcome) after each call.
     pub fn rebuild(&mut self) {
+        // A rebuild ends any round left open by a fault inside it.
+        self.round_open = false;
+        // Terms the rebuild builds (completion's normal forms and rewrites) are the
+        // engine's, not a client's: they carry no evidence node.
+        let saved_evidence = std::mem::replace(&mut self.no_evidence, true);
+        self.rebuild_inner();
+        self.no_evidence = saved_evidence;
+    }
+
+    fn rebuild_inner(&mut self) {
         // Ordinary atom-level congruence closure always runs. AC completion runs only
         // when opted in (default off for divergence scoping — see the `cc` field docs).
         if !self.cc {
@@ -2494,6 +3336,17 @@ where
                 self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
                 return;
             }
+            // A merge can reorient the rule that collapsed a node; the node is then a
+            // rule again (`ac_collapsed_reoriented.egg`).
+            self.unretire_irreducible_collapsed();
+            // Debug builds check I5 on every congruence-closed state of the loop: the
+            // stored minimal monomials are what the round orients its rules toward.
+            #[cfg(debug_assertions)]
+            self.debug_check_min_monomial_invariant();
+            // And that no collapsed node is irreducible under the current rules and
+            // laws: such a node is an equation completion never superposes.
+            #[cfg(debug_assertions)]
+            self.debug_check_no_irreducible_collapsed();
             // Goal-directed early stop (the lazy-check transaction): the pair
             // joined, so the question is answered — stop mid-closure. The
             // graph is plain-congruence-closed at this point, a valid state.
@@ -2524,8 +3377,12 @@ where
             let was_full = full;
             // `|`, not `||`: the A-only pass runs every iteration, its changes
             // and the AC round's alike drain through the same fixpoint.
-            let changed =
-                self.cc_round(full, prev_mark, mark) | self.a_round() | self.canon_repair_round();
+            #[cfg(debug_assertions)]
+            self.cc_mirror_enter_round();
+            let cc_changed = self.cc_round(full, prev_mark, mark);
+            #[cfg(debug_assertions)]
+            self.cc_mirror_exit();
+            let changed = cc_changed | self.a_round() | self.canon_repair_round();
             prev_mark = mark;
             if std::mem::take(&mut self.cc_overflow) {
                 // Sound-but-incomplete stop, as for the growth budget, and reported. A
@@ -2572,7 +3429,12 @@ where
                 if was_full {
                     // The exact cancelative closure runs at the fixpoint only: it merges
                     // classes without adding nodes, and each merge reopens completion.
-                    if self.lattice_round() {
+                    #[cfg(debug_assertions)]
+                    self.cc_mirror_enter();
+                    let lattice_changed = self.lattice_round();
+                    #[cfg(debug_assertions)]
+                    self.cc_mirror_exit();
+                    if lattice_changed {
                         full = false;
                         continue;
                     }
@@ -2625,6 +3487,15 @@ where
         ops.sort_unstable();
         ops.dedup();
         let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
+        // Proof mode: per operator, the equations of its lattice system (each node
+        // equals its class, the unit's class, each inverse node's class), and per
+        // merge, the index of its operator's list. A lattice merge follows from the
+        // whole system, so its premises are all of them.
+        let mut op_prems: Vec<Vec<(Cfg::G, Cfg::G)>> = Vec::new();
+        let mut merge_prem: Vec<usize> = Vec::new();
+        // The operator of each merge, for its mirror tag.
+        #[cfg(debug_assertions)]
+        let mut merge_ops: Vec<Cfg::O> = Vec::new();
         let mut mono: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for op in ops {
             let mut var: std::collections::HashMap<Cfg::G, usize> = Default::default();
@@ -2638,8 +3509,26 @@ where
             };
             let nodes: Vec<Cfg::G> = self
                 .completion_node_ids()
-                .filter(|&g| self.node_op(g) == op)
+                .filter(|&g| self.node_op(g) == op && !self.is_evidence_node(g))
                 .collect();
+            if PROOFS {
+                let mut prem: Vec<(Cfg::G, Cfg::G)> = nodes
+                    .iter()
+                    .map(|&g| (g, self.classes.find_const(g)))
+                    .collect();
+                if let Some(u) = self.unit_node(op) {
+                    prem.push((u, self.classes.find_const(u)));
+                }
+                if let Some(inv) = self.inverse_op(op) {
+                    for (_, x) in self.inverse_classes(inv) {
+                        let root = self.classes.find_const(x);
+                        if let Some(n) = self.nodes.plain1.probe(&inv, &[root]) {
+                            prem.push((n, self.classes.find_const(n)));
+                        }
+                    }
+                }
+                op_prems.push(prem);
+            }
             for node in nodes {
                 mono.clear();
                 self.node_monomial_into(node, &mut mono);
@@ -2740,7 +3629,14 @@ where
                     }
                 }
                 match by_rep.entry(v) {
-                    std::collections::hash_map::Entry::Occupied(e) => merges.push((*e.get(), g)),
+                    std::collections::hash_map::Entry::Occupied(e) => {
+                        merges.push((*e.get(), g));
+                        if PROOFS {
+                            merge_prem.push(op_prems.len() - 1);
+                        }
+                        #[cfg(debug_assertions)]
+                        merge_ops.push(op);
+                    }
                     std::collections::hash_map::Entry::Vacant(e) => {
                         e.insert(g);
                     }
@@ -2748,7 +3644,11 @@ where
             }
         }
         let mut changed = false;
-        for (x, y) in merges {
+        #[cfg(debug_assertions)]
+        let mut merge_ops = merge_ops.into_iter();
+        for (mi, (x, y)) in merges.into_iter().enumerate() {
+            #[cfg(debug_assertions)]
+            let op = merge_ops.next().expect("one operator per lattice merge");
             if self.classes.find_const(x) == self.classes.find_const(y) {
                 continue;
             }
@@ -2756,8 +3656,13 @@ where
                 node_a: x,
                 node_b: y,
             };
+            #[cfg(debug_assertions)]
+            self.cc_mirror_tag(cc_mirror::MergeWhy::Lattice { op });
             let m = if PROOFS {
-                self.merge_in_classes(x, y, Some(just))
+                self.pending_premises = Some(op_prems[merge_prem[mi]].clone());
+                let m = self.merge_in_classes(x, y, Some(just));
+                self.pending_premises = None;
+                m
             } else {
                 self.merge_in_classes(x, y, None)
             };
@@ -2816,6 +3721,14 @@ where
     /// resulting hash-cons collision or degenerate-arity merge into `self.collisions`.
     /// Shared by the absorbed-uses sweep and the became-a-unit sweep in
     /// [`rebuild_congruence`](Self::rebuild_congruence).
+    /// [`recanonize_parent`](Self::recanonize_parent) outside `rebuild`, so a test can
+    /// rewrite an indexed node's stored children mid-round and see the snapshot check in
+    /// `saturate::debug_check_snapshot_contents` fire.
+    #[cfg(all(test, debug_assertions))]
+    pub(crate) fn test_recanonize_parent(&mut self, parent: Cfg::G) {
+        self.recanonize_parent(parent);
+    }
+
     fn recanonize_parent(&mut self, parent: Cfg::G) {
         let find = |g: Cfg::G| self.classes.find_const(g);
         // The op's identity as a *class* under the current union-find: recanonize drops it
@@ -2832,7 +3745,7 @@ where
                 .map(|u| classes.find_const(u))
         };
         let touched_before = self.touched.len();
-        let normal = self.nodes.recanonize_node(
+        let (normal, law) = self.nodes.recanonize_node(
             parent,
             find,
             unit_of,
@@ -2842,19 +3755,27 @@ where
             &mut self.touched,
             &self.ops,
         );
+        // A law changed the node beyond `find`: a right-hand side built from its class may
+        // now spell differently, and nothing in the delta names it (see the
+        // `spelling_epoch` field).
+        if law {
+            self.spelling_epoch += 1;
+        }
         // The span changed (recanonize pushes to `touched` only then) and still forms a
         // node: keep the class's min-monomial slot least (I5).
         if normal == crate::nary_canon::Normal::Node && self.touched.len() > touched_before {
-            self.refresh_min_monomial(parent);
             // A collapse retired the node because another rule's left-hand side was
             // contained in its old monomial; the new monomial may contain none, and then
             // the node is a rule completion must superpose. Reactivate it: the next round
             // re-tests reducibility and collapses it again if a rule still reduces it.
             // Left set, `Add{c2,c3,c5}` collapsed by `c2c4 → c2c3` became `Add{c2²,c5}` at
             // `C2 = C3`, and `C5 = C5·C5` was never derived (`ac_collapsed_recanon.egg`).
+            // The flag is cleared before the refresh, which skips collapsed nodes: a node
+            // active again takes part in the class's minimal monomial.
             if self.node_flags(parent) & crate::node_types::FLAG_AC_COLLAPSED != 0 {
                 self.clear_node_flag(parent, crate::node_types::FLAG_AC_COLLAPSED);
             }
+            self.refresh_min_monomial(parent);
         }
         // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
         // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
@@ -2866,7 +3787,7 @@ where
             self.width_error.get_or_insert(MultOverflow);
         }
         if let Some(pair) = self.degeneracy_pair(parent, normal) {
-            self.collisions.push(pair);
+            self.normalizations.push(pair);
         }
     }
 
@@ -2899,12 +3820,67 @@ where
         }
     }
 
+    /// Reactivate every collapsed completion node that no current rule of its operator
+    /// reduces. A node is collapsed against the rules of the round that reduced it; a
+    /// later merge can reorient every rule whose left-hand side it contains (the
+    /// reducer's class takes the reducer as its minimal monomial), and the node is then
+    /// an equation no rule represents and completion never superposes. The rules are
+    /// read as `cc_round` reads them: active nodes whose monomial is greater than their
+    /// class's right-hand side. A node holding an inverse pair stays collapsed: the
+    /// group law reduces it. A reactivated node takes part in its class's minimal
+    /// monomial, and the next round reads it as a rule; the full round that precedes a
+    /// reported fixpoint superposes it. Reactivation only adds rules (a lower minimal
+    /// monomial orients more nodes, never fewer), so one pass leaves no collapsed node
+    /// irreducible. Runs after each congruence rebuild of the completion loop.
+    fn unretire_irreducible_collapsed(&mut self) {
+        use crate::multiset::multiset_subset;
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        let mut collapsed: Vec<Cfg::G> = Vec::new();
+        let mut rules: Vec<(Cfg::O, Vec<(Cfg::G, Cfg::M)>)> = Vec::new();
+        let mut mono: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        let mut rhs: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        for id in self.completion_node_ids() {
+            let flags = self.node_flags(id);
+            if flags & FLAG_SUBSUMED != 0 {
+                continue;
+            }
+            if flags & FLAG_AC_COLLAPSED != 0 {
+                collapsed.push(id);
+                continue;
+            }
+            self.node_monomial_into(id, &mut mono);
+            if self.class_rhs_into(id, &mut rhs)
+                && self.monomial_cmp_key(&mono, &rhs) == std::cmp::Ordering::Greater
+            {
+                rules.push((self.node_op(id), mono.clone()));
+            }
+        }
+        for id in collapsed {
+            let op = self.node_op(id);
+            self.node_monomial_into(id, &mut mono);
+            if rules
+                .iter()
+                .any(|(o, lhs)| *o == op && multiset_subset(lhs, &mono))
+            {
+                continue;
+            }
+            if let Some(inv) = self.inverse_op(op)
+                && self.group_cancel_pairs(inv, &mut mono)
+            {
+                continue;
+            }
+            self.clear_node_flag(id, FLAG_AC_COLLAPSED);
+            self.refresh_min_monomial(id);
+        }
+    }
+
     /// Ordinary worklist-driven congruence closure: drain the merge worklist,
     /// recanonicalizing the parents of each absorbed class and merging the
     /// resulting hash-cons collisions, to a fixpoint.
     fn rebuild_congruence(&mut self) {
         while let Some((absorbed_uses, survivor)) = self.worklist.pop() {
             self.collisions.clear();
+            self.normalizations.clear();
             // Hot path: iterate the absorbed use list directly (no allocation). The body
             // mirrors `recanonize_parent` — it cannot be a method call here because the
             // use-list iterator holds `self.classes` for the whole loop, and only inline
@@ -2922,7 +3898,7 @@ where
                         .map(|u| classes.find_const(u))
                 };
                 let touched_before = self.touched.len();
-                let normal = self.nodes.recanonize_node(
+                let (normal, law) = self.nodes.recanonize_node(
                     parent,
                     find,
                     unit_of,
@@ -2932,6 +3908,11 @@ where
                     &mut self.touched,
                     &self.ops,
                 );
+                // As in `recanonize_parent`: a law applied beyond `find` is a spelling
+                // change the delta does not name.
+                if law {
+                    self.spelling_epoch += 1;
+                }
                 // As in `recanonize_parent`: a changed span that is still a node refreshes
                 // the class's min-monomial slot (I5). Deferred past the loop, which holds
                 // the use-list borrow.
@@ -2943,11 +3924,17 @@ where
                     self.width_error.get_or_insert(MultOverflow);
                 }
                 if let Some(pair) = self.degeneracy_pair(parent, normal) {
-                    self.collisions.push(pair);
+                    self.normalizations.push(pair);
                 }
             }
 
             for &parent in &refresh {
+                // As in `recanonize_parent`: a collapsed node whose monomial changed is
+                // active again, and the next round re-tests it (`ac_collapsed_stuck.egg`).
+                // Cleared before the refresh, which skips collapsed nodes.
+                if self.node_flags(parent) & crate::node_types::FLAG_AC_COLLAPSED != 0 {
+                    self.clear_node_flag(parent, crate::node_types::FLAG_AC_COLLAPSED);
+                }
                 self.refresh_min_monomial(parent);
             }
             self.refresh_buf = refresh;
@@ -2981,17 +3968,25 @@ where
                 }
             }
 
-            for i in 0..self.collisions.len() {
-                let (a, b) = self.collisions[i];
+            let n_collisions = self.collisions.len();
+            for i in 0..n_collisions + self.normalizations.len() {
+                let (a, b, normalize) = if i < n_collisions {
+                    let (a, b) = self.collisions[i];
+                    (a, b, false)
+                } else {
+                    let (a, b) = self.normalizations[i - n_collisions];
+                    (a, b, true)
+                };
                 let m = if PROOFS {
-                    self.merge_in_classes(
-                        a,
-                        b,
-                        Some(Justification::Congruence {
+                    let just = if normalize {
+                        Justification::Normalize { node: a, normal: b }
+                    } else {
+                        Justification::Congruence {
                             node_a: a,
                             node_b: b,
-                        }),
-                    )
+                        }
+                    };
+                    self.merge_in_classes(a, b, Some(just))
                 } else {
                     self.merge_in_classes(a, b, None)
                 };
@@ -3050,29 +4045,35 @@ where
         for i in 0..n_seq {
             let l = <Cfg::Ids as NodeIds>::LSeq::from_usize(i);
             let g = self.nodes.seq.get(l).global_id();
+            // A proof-mode evidence node is a client's raw spelling, not a stored one.
+            if self.is_evidence_node(g) {
+                continue;
+            }
             let cls = self.classes.find_const(g);
             groups.entry((self.node_op(g), cls)).or_default().push(g);
         }
-        // Oriented rules: larger spelling -> the class's shortlex-least one.
-        let mut rules: Vec<(Cfg::O, Vec<Cfg::G>, Vec<Cfg::G>)> = Vec::new();
+        // Oriented rules: larger spelling -> the class's shortlex-least one, with the
+        // two spellings' nodes (the rule's proof premise).
+        #[allow(clippy::type_complexity)]
+        let mut rules: Vec<(Cfg::O, Vec<Cfg::G>, Vec<Cfg::G>, Cfg::G, Cfg::G)> = Vec::new();
         let mut buf: Vec<Cfg::G> = Vec::new();
         for ((op, _cls), nodes) in groups.iter().filter(|(_, v)| v.len() > 1) {
-            let mut spellings: Vec<Vec<Cfg::G>> = Vec::with_capacity(nodes.len());
+            let mut spellings: Vec<(Vec<Cfg::G>, Cfg::G)> = Vec::with_capacity(nodes.len());
             for &n in nodes {
                 self.seq_children(n, &mut buf);
                 for e in buf.iter_mut() {
                     *e = self.classes.find_const(*e);
                 }
-                spellings.push(buf.clone());
+                spellings.push((buf.clone(), n));
             }
-            let least = spellings
+            let (least, least_node) = spellings
                 .iter()
-                .min_by(|a, b| shortlex(a, b))
+                .min_by(|a, b| shortlex(&a.0, &b.0))
                 .expect("non-empty spelling group")
                 .clone();
-            for elems in spellings {
+            for (elems, n) in spellings {
                 if shortlex(&elems, &least) == std::cmp::Ordering::Greater {
-                    rules.push((*op, elems, least.clone()));
+                    rules.push((*op, elems, least.clone(), n, least_node));
                 }
             }
         }
@@ -3090,12 +4091,18 @@ where
             }
             let l = <Cfg::Ids as NodeIds>::LSeq::from_usize(i);
             let g = self.nodes.seq.get(l).global_id();
+            if self.is_evidence_node(g) {
+                continue;
+            }
             let g_op = self.node_op(g);
             self.seq_children(g, &mut buf);
+            // Proof mode: each stored element paired with the class root the rewrite
+            // reads it as.
+            let stored: Vec<Cfg::G> = if PROOFS { buf.clone() } else { Vec::new() };
             for e in buf.iter_mut() {
                 *e = self.classes.find_const(*e);
             }
-            for (op, lhs, rhs) in &rules {
+            for (op, lhs, rhs, lhs_node, rhs_node) in &rules {
                 if *op != g_op || lhs.len() > buf.len() {
                     continue;
                 }
@@ -3128,14 +4135,25 @@ where
                 let nid = self.add(*op, &new_children);
                 if self.classes.find_const(nid) != self.classes.find_const(g) {
                     let m = if PROOFS {
-                        self.merge_justified(
+                        let mut prem = vec![(*lhs_node, *rhs_node)];
+                        prem.extend(
+                            stored
+                                .iter()
+                                .zip(buf.iter())
+                                .filter(|(a, b)| a != b)
+                                .map(|(&a, &b)| (a, b)),
+                        );
+                        self.pending_premises = Some(prem);
+                        let m = self.merge_justified(
                             g,
                             nid,
                             Justification::ACInterReduction {
                                 node_a: g,
                                 node_b: nid,
                             },
-                        )
+                        );
+                        self.pending_premises = None;
+                        m
                     } else {
                         self.merge(g, nid)
                     };
@@ -3207,7 +4225,11 @@ where
         if self.repair_state == Some(state) {
             return false;
         }
+        #[cfg(debug_assertions)]
+        self.cc_mirror_enter();
         let changed = self.inverse_cancel_repair() | self.inverse_law_repair();
+        #[cfg(debug_assertions)]
+        self.cc_mirror_exit();
         if !changed {
             // Arm the skip only on a clean round. A round that merged left `touched` and
             // `num_classes` moved, and the caller drains congruence and calls again.
@@ -3298,6 +4320,12 @@ where
             let c = self
                 .add_monomial(op, &ms, &mut scratch)
                 .expect("cancellation only lowers the counts of a stored monomial");
+            #[cfg(debug_assertions)]
+            self.cc_mirror_tag(cc_mirror::MergeWhy::InverseRepair {
+                op,
+                node: gid,
+                reduct: cc_mirror::mono(&ms),
+            });
             changed |= self.repair_merge(
                 c,
                 gid,
@@ -3306,6 +4334,8 @@ where
                     node_b: gid,
                 },
             );
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         changed
     }
@@ -3366,6 +4396,11 @@ where
         let mut merges: Vec<(Cfg::G, Cfg::G)> = Vec::new();
         // `(op, base, k−1, target)`: the node `base^(k−1)` to build and merge with `target`.
         let mut powers: Vec<(Cfg::O, Cfg::G, Cfg::M, Cfg::G)> = Vec::new();
+        // The inference each entry of `merges` and of `powers` is, for its mirror tag.
+        #[cfg(debug_assertions)]
+        let mut merge_why: Vec<(Cfg::O, cc_mirror::InvRule<Cfg::G>)> = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut power_why: Vec<cc_mirror::InvRule<Cfg::G>> = Vec::new();
         for (op, inv) in ops {
             let nodes = self.inverse_nodes(inv);
             if nodes.is_empty() {
@@ -3391,15 +4426,23 @@ where
                 if let Some(e) = unit {
                     if y == e && x != e {
                         merges.push((x, node));
+                        #[cfg(debug_assertions)]
+                        merge_why.push((op, cc_mirror::InvRule::R2InvUnit { node }));
                     }
                     if x == e && y != e {
                         merges.push((node, x));
+                        #[cfg(debug_assertions)]
+                        merge_why.push((op, cc_mirror::InvRule::R2UnitInv { node }));
                     }
                 }
                 if let Some(k) = power {
                     powers.push((op, x, k, node));
+                    #[cfg(debug_assertions)]
+                    power_why.push(cc_mirror::InvRule::R4 { node });
                     if y != x {
                         powers.push((op, y, k, x));
+                        #[cfg(debug_assertions)]
+                        power_why.push(cc_mirror::InvRule::R5 { node });
                     }
                 }
             }
@@ -3407,17 +4450,28 @@ where
             for w in classes.windows(2) {
                 if w[0].0 == w[1].0 && w[0].1 != w[1].1 {
                     merges.push((w[0].1, w[1].1));
+                    #[cfg(debug_assertions)]
+                    merge_why.push((op, cc_mirror::InvRule::R1Inj));
                 }
             }
             for &(node, x) in &nodes {
                 // `x` holds some `inv(z)`, so `node` is `inv(inv(z))`.
                 if let Ok(i) = classes.binary_search_by(|p| p.0.cmp(&x)) {
                     merges.push((node, classes[i].1));
+                    #[cfg(debug_assertions)]
+                    merge_why.push((op, cc_mirror::InvRule::R1Inv { node }));
                 }
             }
         }
         let mut changed = false;
+        #[cfg(debug_assertions)]
+        let mut merge_why = merge_why.into_iter();
         for (a, b) in merges {
+            #[cfg(debug_assertions)]
+            {
+                let (op, rule) = merge_why.next().expect("one inference per merge");
+                self.cc_mirror_tag(cc_mirror::MergeWhy::InverseLaw { op, rule });
+            }
             changed |= self.repair_merge(
                 a,
                 b,
@@ -3426,12 +4480,21 @@ where
                     node_b: b,
                 },
             );
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         let mut scratch: Vec<Cfg::C> = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut power_why = power_why.into_iter();
         for (op, base, k, target) in powers {
             let c = self
                 .add_monomial(op, &[(base, k)], &mut scratch)
                 .expect("a count below the nilpotent order fits every multiplicity width");
+            #[cfg(debug_assertions)]
+            {
+                let rule = power_why.next().expect("one inference per power");
+                self.cc_mirror_tag(cc_mirror::MergeWhy::InverseLaw { op, rule });
+            }
             changed |= self.repair_merge(
                 c,
                 target,
@@ -3440,6 +4503,8 @@ where
                     node_b: target,
                 },
             );
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         changed
     }
@@ -3535,6 +4600,10 @@ where
             lhs: Vec<(G, M)>,
             rhs: Vec<(G, M)>,
             node: G,
+            /// The node whose monomial is `rhs` (the class's minimal monomial node,
+            /// the class root for an atomic class, the unit for the unit's class):
+            /// the rule is the equality `node = rhs_node`, its proof premise.
+            rhs_node: G,
         }
         let mut rules: Vec<Rule<Cfg::G, Cfg::O, Cfg::M>> = Vec::new();
         let mut rhs_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
@@ -3556,6 +4625,7 @@ where
                     lhs,
                     rhs: rhs_buf.clone(),
                     node: gid,
+                    rhs_node: self.class_rhs_node(gid),
                 });
             }
         }
@@ -3637,7 +4707,11 @@ where
         // its superpositions are never generated. `ac_collapsed_recanon.egg`: the normal
         // form `c2²c5` of `c2c4c5` was such a node, and `C5 = C5·C5` was never derived.
         // Reactivation counts as a change, so the round loop does not report a fixpoint
-        // before the node is processed.
+        // before the node is processed. The node is active again, so it takes part in
+        // its class's minimal monomial (I5): the refresh folds it in. Without it the
+        // stored minimal monomial can stay on a node this round collapses, when the
+        // reactivated node is the normal form of the class's own minimal monomial under a
+        // rule a merge reoriented (`ac_reactivate_min_monomial.egg`).
         let reactivated = std::cell::Cell::new(false);
         let materialize =
             |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::C>| {
@@ -3646,6 +4720,7 @@ where
                     && eg.node_flags(id) & crate::node_types::FLAG_AC_COLLAPSED != 0
                 {
                     eg.clear_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
+                    eg.refresh_min_monomial(id);
                     reactivated.set(true);
                 }
                 Some(id)
@@ -3697,6 +4772,14 @@ where
             Vec<(Cfg::G, Cfg::M)>,
             Vec<(Cfg::G, Cfg::M)>,
         )> = Vec::new();
+        // One mirror tag per entry of `crit`: which pair it is and of which rules.
+        #[cfg(debug_assertions)]
+        let mut crit_why: Vec<cc_mirror::PairWhy<Cfg::G>> = Vec::new();
+        // Proof mode: per entry of `crit`, the equalities its reducts came from (the
+        // rules' `node = rhs_node` pairs and the inverse nodes a group-law pair used).
+        // The normalization's own rules are added when the pair is closed.
+        let mut crit_prem: Vec<Vec<(Cfg::G, Cfg::G)>> = Vec::new();
+        let rule_pair = |r: &Rule<Cfg::G, Cfg::O, Cfg::M>| (r.node, r.rhs_node);
 
         // (A′) Normalize every active monomial node against the rules and merge its
         // normal form back in (Kapur Algo 2 step 2, "normalize Sf"). This subsumes plain
@@ -3770,6 +4853,11 @@ where
                             crate::multiset::clamp_idempotent(&mut r1);
                             if r1 != rules[ti].rhs {
                                 crit.push((op, CpOrigin::AxiomCp, r1, rules[ti].rhs.clone()));
+                                if PROOFS {
+                                    crit_prem.resize(crit.len(), vec![rule_pair(&rules[ti])]);
+                                }
+                                #[cfg(debug_assertions)]
+                                crit_why.push(cc_mirror::PairWhy::Idem { rule: m_node, a });
                             }
                         }
                     }
@@ -3792,6 +4880,11 @@ where
                             crate::multiset::clamp_nilpotent(&mut r1, order);
                             let r2 = crate::multiset::multiset_subtract(&rules[ti].lhs, &[(a, m)]);
                             crit.push((op, CpOrigin::AxiomCp, r1, r2));
+                            if PROOFS {
+                                crit_prem.resize(crit.len(), vec![rule_pair(&rules[ti])]);
+                            }
+                            #[cfg(debug_assertions)]
+                            crit_why.push(cc_mirror::PairWhy::Nil { rule: m_node, a });
                         }
                     }
                     CompletionClamp::Multiset => {} // plain AC / identity-only: none (Lemma 4.3)
@@ -3815,7 +4908,26 @@ where
                             .binary_search_by(|p| p.0.cmp(&a))
                             .ok()
                             .map(|i| inverted[i].1);
+                        // The first `z` is the class of `inv(a)` when that node exists
+                        // (`AxiomPair.invLeft`); the other has `a` as the class of its
+                        // inverse node (`AxiomPair.invRight`).
+                        #[cfg(debug_assertions)]
+                        let mut left = inverse_of_a.is_some();
                         for z in inverse_of_a.into_iter().chain(inverted_by_a) {
+                            #[cfg(debug_assertions)]
+                            crit_why.push(if std::mem::take(&mut left) {
+                                cc_mirror::PairWhy::InvLeft {
+                                    rule: m_node,
+                                    a,
+                                    y: z,
+                                }
+                            } else {
+                                cc_mirror::PairWhy::InvRight {
+                                    rule: m_node,
+                                    x: z,
+                                    y: a,
+                                }
+                            });
                             let mut r1 = multiset_union(&rules[ti].rhs, &[(z, Cfg::M::ONE)]);
                             if let Some(order) = order {
                                 crate::multiset::clamp_nilpotent(&mut r1, order);
@@ -3825,6 +4937,18 @@ where
                                 &[(a, Cfg::M::ONE)],
                             );
                             crit.push((op, CpOrigin::AxiomCp, r1, r2));
+                            if PROOFS {
+                                // The group law's inverse node: `inv(a)` in class `z`, or
+                                // `inv(z)` in class `a`.
+                                let mut prem = vec![rule_pair(&rules[ti])];
+                                for x in [a, z] {
+                                    let root = self.classes.find_const(x);
+                                    if let Some(n) = self.nodes.plain1.probe(&inv, &[root]) {
+                                        prem.push((n, self.classes.find_const(n)));
+                                    }
+                                }
+                                crit_prem.resize(crit.len(), prem);
+                            }
                         }
                     }
                 }
@@ -3901,6 +5025,17 @@ where
                     CompletionClamp::Multiset => {}
                 }
                 crit.push((op, CpOrigin::Superposition, r1, r2));
+                if PROOFS {
+                    crit_prem.resize(
+                        crit.len(),
+                        vec![rule_pair(&rules[ti]), rule_pair(&rules[pi])],
+                    );
+                }
+                #[cfg(debug_assertions)]
+                crit_why.push(cc_mirror::PairWhy::Superpose {
+                    r1: m_node,
+                    r2: p_node,
+                });
             }
         }
 
@@ -3963,6 +5098,9 @@ where
                 crit.push((op, CpOrigin::Cancellative, m, r));
             } else {
                 // §5.2(iii)(b): f(ne ∪ {c}) = f({c}) for every constant c in the pool.
+                // Only the right side empties: a left side contained in the right side is
+                // below it in degree-lex, so orientation puts it on the right.
+                debug_assert!(!m.is_empty(), "cancel-close: the left side emptied");
                 let ne = if m.is_empty() { r } else { m };
                 for &g in pool {
                     let one = [(g, Cfg::M::ONE)];
@@ -4002,6 +5140,16 @@ where
                     Vec::new()
                 };
                 push_cancel(&mut crit, op, has_unit, &pl, m, r);
+                if PROOFS {
+                    crit_prem.resize(crit.len(), vec![rule_pair(&rules[ti])]);
+                }
+                #[cfg(debug_assertions)]
+                crit_why.resize(
+                    crit.len(),
+                    cc_mirror::PairWhy::C1 {
+                        rule: rules[ti].node,
+                    },
+                );
             }
             // (C2) cancelative disjoint superposition — each unordered same-op antichain
             // pair once. O(rules²) but only over the (rare) cancelative ops' rules.
@@ -4022,9 +5170,29 @@ where
                         Vec::new()
                     };
                     push_cancel(&mut crit, op, has_unit, &pl, m, r);
+                    if PROOFS {
+                        crit_prem.resize(
+                            crit.len(),
+                            vec![rule_pair(&rules[ti]), rule_pair(&rules[pj])],
+                        );
+                    }
+                    #[cfg(debug_assertions)]
+                    crit_why.resize(
+                        crit.len(),
+                        cc_mirror::PairWhy::C2 {
+                            r1: rules[ti].node,
+                            r2: rules[pj].node,
+                        },
+                    );
                 }
             }
         }
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            crit.len(),
+            crit_why.len(),
+            "one mirror tag per critical pair"
+        );
 
         // Critical-pair reducts are normalized to multisets (each step strictly lowers the
         // multiset in degree-lex order against the rule set, so it terminates), then only a
@@ -4080,6 +5248,16 @@ where
                         rhs: &r.rhs,
                     }),
             );
+            let target_pairs: Vec<(Cfg::G, Cfg::G)> = if PROOFS {
+                rules
+                    .iter()
+                    .filter(|r| r.op == op && r.node != node)
+                    .map(rule_pair)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let applied = std::cell::RefCell::new(Vec::new());
             // Normalize in the op's count domain: idempotent → set (clamp to 1); nilpotent →
             // mod-n; plain AC (MSet) → ℕ.
             // Linear, not indexed: this rule slice is refilled per target (each target is
@@ -4087,6 +5265,11 @@ where
             // index over. Any relative phase cost is workload-dependent and belongs in the
             // Criterion completion benchmark, not in this correctness comment.
             let nf = NfRules::linear(&nf_refs).with_work(&work);
+            let nf = if PROOFS {
+                nf.with_applied(&applied)
+            } else {
+                nf
+            };
             let normalized = match self.op_clamp(op) {
                 CompletionClamp::Idempotent => {
                     try_normalize_set_into(&mut nf_out, &mut nf_ping, &mset, nf)
@@ -4108,7 +5291,11 @@ where
             // inference (`x ∘ inv(x) = e`), not plain rule inter-reduction, and the proof
             // label must say so.
             let mut inverse_cancelled = false;
+            let mut inverse_prem = Vec::new();
             if let Some(inv) = self.inverse_op(op) {
+                if PROOFS {
+                    self.inverse_premises(inv, &nf_out, &mut inverse_prem);
+                }
                 inverse_cancelled = self.group_cancel_pairs(inv, &mut nf_out);
             }
             let normal = &nf_out;
@@ -4135,12 +5322,32 @@ where
                         node_b: node,
                     }
                 };
-                changed |= do_merge(self, c_prime, class, just);
+                #[cfg(debug_assertions)]
+                self.cc_mirror_tag(cc_mirror::MergeWhy::NormalForm {
+                    op,
+                    node,
+                    reduct: cc_mirror::mono(normal),
+                });
+                if PROOFS {
+                    // The node is its class's member; the rules the normal form used; the
+                    // inverse pairs that cancelled.
+                    let mut prem = vec![(node, class)];
+                    prem.extend(applied.borrow().iter().map(|&k| target_pairs[k as usize]));
+                    prem.extend(inverse_prem);
+                    self.pending_premises = Some(prem);
+                }
+                do_merge(self, c_prime, class, just);
+                self.pending_premises = None;
+                #[cfg(debug_assertions)]
+                self.cc_mirror_untag();
                 // Collapse: the node was reducible by another rule (proper containment),
                 // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
                 // NOT subsume — the node stays matchable and a legal child; only
-                // completion's active set excludes it. Merge first, mark second.
+                // completion's active set excludes it. Merge first, mark second. The
+                // collapse is a change even when the merge was not: it removes a rule, so
+                // the round ran over a rule set it then changed and is no fixpoint round.
                 self.set_cc_collapsed(node);
+                changed = true;
             }
         }
         let dt_aprime = t_aprime.elapsed();
@@ -4178,6 +5385,11 @@ where
                 rhs: &r.rhs,
             });
         }
+        // The rules' premise pairs, in the order of `nf_by_op`'s tables.
+        let nf_pairs_by_op: Vec<Vec<(Cfg::G, Cfg::G)>> = nf_by_op
+            .iter()
+            .map(|(o, _)| rules.iter().filter(|r| r.op == *o).map(rule_pair).collect())
+            .collect();
         // Index each op's table by LHS-minimum class, hoisted with the table itself. This
         // The index is amortized over all reduct normalizations for the op. Its performance
         // effect is tracked by the Criterion completion benchmark.
@@ -4187,7 +5399,11 @@ where
         let crit_generated = crit.len();
         let mut n1_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut n2_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
-        for (op, origin, r1, r2) in crit {
+        #[cfg(debug_assertions)]
+        let mut crit_why = crit_why.into_iter();
+        for (ci, (op, origin, r1, r2)) in crit.into_iter().enumerate() {
+            #[cfg(debug_assertions)]
+            let why = crit_why.next().expect("one mirror tag per critical pair");
             // Same in-round stops as the (A′) loop above.
             if self.cc_should_stop() {
                 break;
@@ -4203,11 +5419,18 @@ where
                 trivial += 1;
                 continue;
             }
-            let nf_rules = match nf_by_op.iter().position(|(o, _)| *o == op) {
+            let table = nf_by_op.iter().position(|(o, _)| *o == op);
+            let applied = std::cell::RefCell::new(Vec::new());
+            let nf_rules = match table {
                 Some(i) => NfRules::indexed(&nf_by_op[i].1, &nf_index_by_op[i]),
                 None => NfRules::linear(&empty_nf),
             }
             .with_work(&work);
+            let nf_rules = if PROOFS {
+                nf_rules.with_applied(&applied)
+            } else {
+                nf_rules
+            };
             // Normalize both reducts in the op's count domain (idempotent → set, nilpotent →
             // mod-n, plain AC → ℕ) before comparing/merging.
             let normalized = match self.op_clamp(op) {
@@ -4238,7 +5461,12 @@ where
                 overflow.set(true);
                 break;
             }
+            let mut inverse_prem = Vec::new();
             if let Some(inv) = self.inverse_op(op) {
+                if PROOFS {
+                    self.inverse_premises(inv, &n1_buf, &mut inverse_prem);
+                    self.inverse_premises(inv, &n2_buf, &mut inverse_prem);
+                }
                 self.group_cancel_pairs(inv, &mut n1_buf);
                 self.group_cancel_pairs(inv, &mut n2_buf);
             }
@@ -4276,7 +5504,30 @@ where
                     node_b: c2,
                 },
             };
+            #[cfg(debug_assertions)]
+            self.cc_mirror_tag(cc_mirror::MergeWhy::Pair {
+                op,
+                origin: why,
+                pair: (cc_mirror::mono(&r1), cc_mirror::mono(&r2)),
+                reducts: (cc_mirror::mono(n1), cc_mirror::mono(n2)),
+            });
+            if PROOFS {
+                let mut prem = crit_prem.get(ci).cloned().unwrap_or_default();
+                if let Some(t) = table {
+                    prem.extend(
+                        applied
+                            .borrow()
+                            .iter()
+                            .map(|&k| nf_pairs_by_op[t][k as usize]),
+                    );
+                }
+                prem.extend(inverse_prem);
+                self.pending_premises = Some(prem);
+            }
             changed |= do_merge(self, c1, c2, just);
+            self.pending_premises = None;
+            #[cfg(debug_assertions)]
+            self.cc_mirror_untag();
         }
         if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
             eprintln!(
@@ -4393,9 +5644,22 @@ where
             .history
             .mark_member(&mut members, shrink)
             .expect("mark: every member has headroom and the members are in step");
+        let rule_len = ProofLens {
+            rule_starts: self.rule_starts.len(),
+            rule_premises: self.rule_premises.len(),
+            creation_log: self.creation_log.len(),
+            build_starts: self.build_starts.len(),
+            build_premises: self.build_premises.len(),
+            merge_premise_pairs: self.merge_premise_pairs.len(),
+            merge_premise_log: self.merge_premise_log.len(),
+        };
+        self.rule_marks
+            .truncate((self.history.depth() as usize).saturating_sub(1));
+        self.rule_marks.push(rule_len);
         EGraphToken {
             group,
             completion_outcome: self.completion_outcome,
+            rule_len,
         }
     }
 
@@ -4433,9 +5697,12 @@ where
         // restored state (mark() rebuilds first), so a post-restore reader never sees an
         // outcome computed for the discarded scope.
         self.completion_outcome = token.completion_outcome;
+        self.truncate_rule_instances(token.rule_len);
+        self.rule_marks.truncate(self.history.depth() as usize);
         self.worklist.clear();
         self.key_lowered.clear();
         self.collisions.clear();
+        self.normalizations.clear();
         self.touched.clear();
         // Merges captured before this restore belong to the discarded scope.
         // The drain-before-advance discipline keeps this empty in practice;
@@ -4477,9 +5744,12 @@ where
             restore_prof_record(0, t);
         }
         self.completion_outcome = token.completion_outcome;
+        self.truncate_rule_instances(token.rule_len);
+        self.rule_marks.truncate(self.history.depth() as usize);
         self.worklist.clear();
         self.key_lowered.clear();
         self.collisions.clear();
+        self.normalizations.clear();
         self.touched.clear();
         self.repair_state = None;
     }
@@ -4504,9 +5774,13 @@ where
         };
         let ok = self.history.pop_member(&mut members);
         assert!(ok, "pop_scope: the members are in step with the history");
+        if let Some(len) = self.rule_marks.pop() {
+            self.truncate_rule_instances(len);
+        }
         self.worklist.clear();
         self.key_lowered.clear();
         self.collisions.clear();
+        self.normalizations.clear();
         self.touched.clear();
         self.repair_state = None;
     }
@@ -4535,19 +5809,34 @@ where
     ///    justification whose expansion explains the child differences.
     /// 3. A hit on a node without history is the same term.
     ///
-    /// Limitation: re-adding an identical term whose child is not a root
-    /// misses the earlier node (history is not indexed by content) and adds
-    /// another duplicate merged into the same class: correct, redundant.
+    /// Re-adding the same client term returns the node built for it the
+    /// first time (`creation_memo`): the hash-cons table cannot find it,
+    /// because its stored children are recanonicalized while its history
+    /// keeps the given ones.
     fn add_with_creation_evidence(
         &mut self,
         op: Cfg::O,
         given: &[Cfg::G],
         node_flags: u8,
     ) -> Cfg::G {
+        let key: Vec<(Cfg::G, usize)> = given.iter().map(|&g| (g, 1)).collect();
+        if let Some(&id) = self.creation_memo.get(&(op, key)) {
+            return id;
+        }
         let canonical: Vec<Cfg::G> = self.g_buf.clone();
         let all_roots = given.iter().zip(canonical.iter()).all(|(g, c)| g == c);
         if !all_roots {
             let result = self.nodes.add(op, given, &self.ops, node_flags);
+            // The given children can equal a node's stored children that a later merge left
+            // stale, while its history holds different original children: returning that
+            // node would make the client's term stand for the original one, and explanations
+            // would cite the original children's equalities instead of the given ones. Keep
+            // the client's term as its own node, as in case 2.
+            if let Added::Existing(n) = result
+                && self.node_has_history(n)
+            {
+                return self.add_creation_dup(op, given, &canonical, n, node_flags);
+            }
             let id = self.register_if_fresh(result, op);
             if result.is_fresh() {
                 for &child in &canonical {
@@ -4564,35 +5853,18 @@ where
                     }
                 }
                 self.collisions.clear();
+                self.normalizations.clear();
                 self.recanonize_parent(id);
                 self.merge_creation_collisions();
+                let key: Vec<(Cfg::G, usize)> = given.iter().map(|&g| (g, 1)).collect();
+                self.remember_creation(op, &key, id);
             }
             return id;
         }
         let result = self.nodes.add(op, &canonical, &self.ops, node_flags);
         match result {
             Added::Existing(n) if self.node_has_history(n) => {
-                let dup = self
-                    .nodes
-                    .add_congruent_dup(op, given, &self.ops, node_flags);
-                let id = self.register_if_fresh(Added::Fresh(dup), op);
-                for &child in &canonical {
-                    if let Some(repr) = self.classes.repr_id(child) {
-                        if !self.classes.atomic(repr)
-                            && (0..self.classes.min_width().saturating_sub(1))
-                                .any(|col| self.classes.min_monomial(repr, col).is_some())
-                        {
-                            // A class holding a completion monomial turns `atomic`: from now on
-                            // a build keeps it nested (see the `spelling_epoch` field).
-                            self.spelling_epoch += 1;
-                        }
-                        self.classes.add_use(repr, id);
-                    }
-                }
-                self.collisions.clear();
-                self.collisions.push((id, n));
-                self.merge_creation_collisions();
-                id
+                self.add_creation_dup(op, given, &canonical, n, node_flags)
             }
             _ => {
                 let id = self.register_if_fresh(result, op);
@@ -4616,19 +5888,62 @@ where
         }
     }
 
+    /// A flagged duplicate of the existing node `n` holding the client's
+    /// `given` children, merged with `n` by a congruence step whose premises
+    /// are the differences between `given` and `n`'s original children.
+    fn add_creation_dup(
+        &mut self,
+        op: Cfg::O,
+        given: &[Cfg::G],
+        canonical: &[Cfg::G],
+        n: Cfg::G,
+        node_flags: u8,
+    ) -> Cfg::G {
+        let dup = self
+            .nodes
+            .add_congruent_dup(op, given, &self.ops, node_flags);
+        let id = self.register_if_fresh(Added::Fresh(dup), op);
+        for &child in canonical {
+            if let Some(repr) = self.classes.repr_id(child) {
+                if !self.classes.atomic(repr)
+                    && (0..self.classes.min_width().saturating_sub(1))
+                        .any(|col| self.classes.min_monomial(repr, col).is_some())
+                {
+                    // A class holding a completion monomial turns `atomic`: from now on
+                    // a build keeps it nested (see the `spelling_epoch` field).
+                    self.spelling_epoch += 1;
+                }
+                self.classes.add_use(repr, id);
+            }
+        }
+        self.collisions.clear();
+        self.normalizations.clear();
+        self.collisions.push((id, n));
+        self.merge_creation_collisions();
+        let key: Vec<(Cfg::G, usize)> = given.iter().map(|&g| (g, 1)).collect();
+        self.remember_creation(op, &key, id);
+        id
+    }
+
     /// Merge the collisions `add_with_creation_evidence` recorded, each with a
     /// `Congruence` justification, as `rebuild_congruence` merges its own.
     fn merge_creation_collisions(&mut self) {
         let pairs = std::mem::take(&mut self.collisions);
-        for &(a, b) in &pairs {
-            let m = self.merge_in_classes(
-                a,
-                b,
-                Some(Justification::Congruence {
+        let normals = std::mem::take(&mut self.normalizations);
+        let tagged = pairs
+            .iter()
+            .map(|&(a, b)| (a, b, false))
+            .chain(normals.iter().map(|&(a, b)| (a, b, true)));
+        for (a, b, normalize) in tagged.collect::<Vec<_>>() {
+            let just = if normalize {
+                Justification::Normalize { node: a, normal: b }
+            } else {
+                Justification::Congruence {
                     node_a: a,
                     node_b: b,
-                }),
-            );
+                }
+            };
+            let m = self.merge_in_classes(a, b, Some(just));
             if let Some(m) = m {
                 self.fold_min_monomial(
                     m.survivor,
@@ -4641,15 +5956,27 @@ where
         }
         self.collisions = pairs;
         self.collisions.clear();
+        self.normalizations = normals;
+        self.normalizations.clear();
         // A creation merge can change a class root, leaving congruent parents
         // stored under the old root until the next rebuild; a term registered
         // right after would then miss its congruent twin (measured:
         // `conformance::differential_basic_against_semper`, seed 579). Close
         // congruence now, so `add` returns with the graph congruence-closed,
         // as a client registering terms expects.
-        if !self.worklist.is_empty() {
+        //
+        // Not while a saturation round is open: the round matches every rule against
+        // an index built at its start, and recanonicalizing the nodes it holds would
+        // change what later rules of the round match. Plain mode never rebuilds
+        // mid-round; the worklist waits for the round's rebuild here too.
+        if !self.worklist.is_empty() && !self.round_open {
             self.rebuild_congruence();
         }
+    }
+
+    /// Open or close a saturation round (see `round_open`).
+    pub(crate) fn set_round_open(&mut self, open: bool) {
+        self.round_open = open;
     }
 
     /// Test support: [`node_has_history`](Self::node_has_history).
@@ -5002,6 +6329,235 @@ where
         }
     }
 
+    /// Check invariant I5: for every class and completion operator with at least one
+    /// active node (neither `FLAG_SUBSUMED` nor `FLAG_AC_COLLAPSED`), the stored minimal
+    /// monomial is a node of that class and operator, is not collapsed, and its monomial
+    /// is the `monomial_cmp_key`-least among the class's active nodes of the operator. A
+    /// stored node that is subsumed is accepted when its monomial is at most the least
+    /// active one: it is still the class's least, and orients the same rules. The least
+    /// monomial is recomputed here by a scan over all nodes, independently of the
+    /// incremental maintenance (`register_if_fresh`, `fold_min_monomial`,
+    /// `refresh_min_monomial`), so a maintenance gap shows as a mismatch. Unit and atomic
+    /// classes are skipped: their right-hand side is `{}` or `{class}`, not the stored
+    /// node. `Err` names the class, the operator, the stored node and monomial, and the
+    /// recomputed ones.
+    pub fn check_min_monomial_invariant(&self) -> Result<(), String> {
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        use std::collections::BTreeMap;
+        let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
+        // Per (class representative, op): the least active monomial and a node holding it.
+        let mut least: BTreeMap<(Cfg::G, Cfg::O), (Cfg::G, Vec<(Cfg::G, Cfg::M)>)> =
+            BTreeMap::new();
+        let mut buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        for id in self.node_ids() {
+            if !matches!(self.node_ref(id), NodeRef::MSet(_) | NodeRef::Set(_))
+                || self.node_flags(id) & inactive != 0
+            {
+                continue;
+            }
+            self.node_monomial_into(id, &mut buf);
+            let key = (self.class_repr(id), self.node_op(id));
+            match least.get_mut(&key) {
+                None => {
+                    least.insert(key, (id, buf.clone()));
+                }
+                Some(cur) => {
+                    if self.monomial_cmp_key(&buf, &cur.1) == std::cmp::Ordering::Less {
+                        *cur = (id, buf.clone());
+                    }
+                }
+            }
+        }
+        let show = |m: &[(Cfg::G, Cfg::M)]| -> String {
+            let parts: Vec<String> = m
+                .iter()
+                .map(|&(g, k)| format!("{:?}^{}", g, k.to_usize()))
+                .collect();
+            format!("{{{}}}", parts.join(", "))
+        };
+        for (&(cls, op), (node, m)) in &least {
+            // The right-hand side of a unit class is the empty monomial and that of an
+            // atomic class is `{class}` (`class_rhs_into`): neither reads the stored
+            // minimal monomial, and a size-1 node `f(x)` merged with `x` by degeneracy
+            // sits below every stored one. Both are outside I5.
+            if self
+                .unit_node(op)
+                .is_some_and(|u| self.class_repr(u) == cls)
+                || self.class_atomic(cls) == Some(true)
+            {
+                continue;
+            }
+            let op_name = &self.ops.info(op).name;
+            let Some(stored) = self.class_min_monomial_of_op(cls, op) else {
+                return Err(format!(
+                    "I5: class {cls:?}, op {op_name}: no stored minimal monomial, least \
+                     active node {node:?} = {}",
+                    show(m)
+                ));
+            };
+            let flags = self.node_flags(stored);
+            if self.class_repr(stored) != cls
+                || self.node_op(stored) != op
+                || flags & FLAG_AC_COLLAPSED != 0
+            {
+                self.node_monomial_into(stored, &mut buf);
+                return Err(format!(
+                    "I5: class {cls:?}, op {op_name}: stored minimal monomial {stored:?} = {} \
+                     is {}; least active node {node:?} = {}",
+                    show(&buf),
+                    if self.class_repr(stored) != cls {
+                        "in another class"
+                    } else if self.node_op(stored) != op {
+                        "a node of another op"
+                    } else {
+                        "collapsed"
+                    },
+                    show(m)
+                ));
+            }
+            self.node_monomial_into(stored, &mut buf);
+            let cmp = self.monomial_cmp_key(&buf, m);
+            let ok = if flags & FLAG_SUBSUMED != 0 {
+                cmp != std::cmp::Ordering::Greater
+            } else {
+                cmp == std::cmp::Ordering::Equal
+            };
+            if !ok {
+                return Err(format!(
+                    "I5: class {cls:?}, op {op_name}: stored minimal monomial {stored:?} = {} \
+                     is not the least active monomial; least active node {node:?} = {} ({cmp:?})",
+                    show(&buf),
+                    show(m)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Debug: panic when `check_min_monomial_invariant` fails. Run after each
+    /// congruence rebuild of the completion loop in debug builds.
+    pub fn debug_check_min_monomial_invariant(&self) {
+        if let Err(e) = self.check_min_monomial_invariant() {
+            panic!("{e}");
+        }
+    }
+
+    /// Check that no collapsed completion node is irreducible: every node carrying
+    /// `FLAG_AC_COLLAPSED` (and not `FLAG_SUBSUMED`) has a monomial, read under the
+    /// current union-find, that one of the operator's laws or one of its current rules
+    /// reduces. A collapsed node is not a rule, so an irreducible one is an equation
+    /// completion never superposes. The laws are the unit as a summand, a count at or
+    /// above the nilpotent order, a count above 1 under idempotence, and a summand
+    /// together with the class of its existing inverse node. The rules are recomputed
+    /// here as completion reads them: every active node whose monomial is greater than
+    /// its class's right-hand side (`class_rhs_into`). A rule reduces a monomial when its
+    /// left-hand side is a sub-multiset of it. Two cases pass without a reduction: a
+    /// degenerate monomial (empty, or one summand of count 1) is an equality with a
+    /// class, not a rule; a copy of an active node of the same operator, class and
+    /// monomial leaves the equation to that node. `Err` names the node, its class, its
+    /// monomial and the operator.
+    pub fn check_no_irreducible_collapsed(&self) -> Result<(), String> {
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        use std::collections::BTreeMap;
+        type Mono<G, M> = Vec<(G, M)>;
+        let mut collapsed: Vec<Cfg::G> = Vec::new();
+        let mut rules: BTreeMap<Cfg::O, Vec<Mono<Cfg::G, Cfg::M>>> = BTreeMap::new();
+        let mut active: std::collections::BTreeSet<(Cfg::O, Cfg::G, Mono<Cfg::G, Cfg::M>)> =
+            std::collections::BTreeSet::new();
+        let mut buf: Mono<Cfg::G, Cfg::M> = Vec::new();
+        let mut rhs: Mono<Cfg::G, Cfg::M> = Vec::new();
+        for id in self.completion_node_ids() {
+            let flags = self.node_flags(id);
+            if flags & FLAG_SUBSUMED != 0 {
+                continue;
+            }
+            if flags & FLAG_AC_COLLAPSED != 0 {
+                collapsed.push(id);
+                continue;
+            }
+            self.node_monomial_into(id, &mut buf);
+            if self.class_rhs_into(id, &mut rhs)
+                && self.monomial_cmp_key(&buf, &rhs) == std::cmp::Ordering::Greater
+            {
+                rules.entry(self.node_op(id)).or_default().push(buf.clone());
+            }
+            active.insert((self.node_op(id), self.class_repr(id), buf.clone()));
+        }
+        let count = |m: &[(Cfg::G, Cfg::M)], g: Cfg::G| -> usize {
+            m.iter()
+                .filter(|&&(h, _)| h == g)
+                .map(|&(_, k)| k.to_usize())
+                .sum()
+        };
+        let contains = |big: &[(Cfg::G, Cfg::M)], small: &[(Cfg::G, Cfg::M)]| -> bool {
+            small.iter().all(|&(g, _)| count(big, g) >= count(small, g))
+        };
+        for id in collapsed {
+            let op = self.node_op(id);
+            self.node_monomial_into(id, &mut buf);
+            if buf.is_empty() || (buf.len() == 1 && buf[0].1.to_usize() == 1) {
+                continue;
+            }
+            // A copy of an active node of its class: that node carries the equation.
+            if active.contains(&(op, self.class_repr(id), buf.clone())) {
+                continue;
+            }
+            let unit = self.unit_node(op).map(|u| self.classes.find_const(u));
+            if unit.is_some_and(|u| count(&buf, u) > 0) {
+                continue;
+            }
+            let law_count = match self.op_clamp(op) {
+                CompletionClamp::Nilpotent { order } => {
+                    buf.iter().any(|&(_, k)| k.to_usize() >= usize::from(order))
+                }
+                CompletionClamp::Idempotent => buf.iter().any(|&(_, k)| k.to_usize() > 1),
+                CompletionClamp::Multiset => false,
+            };
+            if law_count {
+                continue;
+            }
+            if let Some(inv) = self.inverse_op(op)
+                && self.inverse_classes(inv).into_iter().any(|(y, x)| {
+                    if y == x {
+                        count(&buf, x) >= 2
+                    } else {
+                        count(&buf, x) > 0 && count(&buf, y) > 0
+                    }
+                })
+            {
+                continue;
+            }
+            if rules
+                .get(&op)
+                .is_some_and(|rs| rs.iter().any(|lhs| contains(&buf, lhs)))
+            {
+                continue;
+            }
+            let parts: Vec<String> = buf
+                .iter()
+                .map(|&(g, k)| format!("{:?}^{}", g, k.to_usize()))
+                .collect();
+            return Err(format!(
+                "collapsed node {id:?} (class {:?}, op {}) has monomial {{{}}}, which no law \
+                 and none of the op's {} current rules reduce",
+                self.class_repr(id),
+                self.ops.info(op).name,
+                parts.join(", "),
+                rules.get(&op).map_or(0, Vec::len)
+            ));
+        }
+        Ok(())
+    }
+
+    /// Debug: panic when `check_no_irreducible_collapsed` fails. Run after each
+    /// congruence rebuild of the completion loop in debug builds, beside
+    /// `debug_check_min_monomial_invariant`.
+    pub fn debug_check_no_irreducible_collapsed(&self) {
+        if let Err(e) = self.check_no_irreducible_collapsed() {
+            panic!("{e}");
+        }
+    }
+
     /// Debug: verify all nodes in each e-class have the same sort.
     /// Panics on violation. Only useful in tests / debug builds.
     pub fn debug_check_sort_invariant(&self) {
@@ -5181,6 +6737,10 @@ where
                     "flatten_mset_children exceeded work cap (degenerate cyclic AC class?)"
                 );
                 expansions += 1;
+                if self.record_flatten {
+                    self.flatten_witness
+                        .push((Cfg::mset_child_id(&c), min_node));
+                }
                 let k = Cfg::mset_child_mult(&c);
                 let mut overflow = false;
                 self.for_each_child(min_node, |cg, j| match k.checked_mul(j) {
@@ -5268,6 +6828,9 @@ where
                     "flatten_ac_children exceeded work cap (degenerate cyclic AC class?)"
                 );
                 expansions += 1;
+                if self.record_flatten {
+                    self.flatten_witness.push((g, min_node));
+                }
                 // Expand the canonical summand form; `for_each_child` yields (class, count)
                 // for either representation (a Set member counts once).
                 self.for_each_child(min_node, |cg, times| {
@@ -5338,6 +6901,11 @@ where
         let cls = self.classes.find_const(g);
         let mut best: Option<Cfg::G> = None;
         for n in self.classes.iter_class(cls) {
+            // A proof-mode evidence node holds a client's raw spelling; splicing it would
+            // put unflattened children back into the list.
+            if self.is_evidence_node(n) {
+                continue;
+            }
             if self.node_op(n) != op || !matches!(self.node_ref(n), NodeRef::Seq(_)) {
                 return None;
             }
@@ -5394,6 +6962,9 @@ where
                             "flatten_seq_children exceeded work cap (degenerate cyclic A class?)"
                         );
                         expansions += 1;
+                        if self.record_flatten {
+                            self.flatten_witness.push((g, inner));
+                        }
                         let (s, e) = self.nodes.seq.get(l).span();
                         // Reversed again, so the elements pop back in their stored order.
                         for i in (s..e).rev() {
@@ -5433,6 +7004,9 @@ where
                     "flatten_seq_children exceeded work cap (degenerate cyclic A class?)"
                 );
                 expansions += 1;
+                if self.record_flatten {
+                    self.flatten_witness.push((edge, inner));
+                }
                 let (s, e) = self.nodes.seq.get(l).span();
 
                 scratch.clear();
@@ -6196,19 +7770,14 @@ mod tests {
         let (ref mut eg, th) = eg::<false, true>();
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(42),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(42)));
         let mut buf = ProofBuf::new();
         eg.explain(x, y, &mut buf);
-        assert!(buf.steps.iter().any(|&(_, _, j)| j
-            == Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(42)
-            }));
+        assert!(
+            buf.steps
+                .iter()
+                .any(|&(_, _, j)| j == Justification::axiom(crate::id::AxiomId::new(42)))
+        );
     }
 
     #[test]
@@ -6217,20 +7786,8 @@ mod tests {
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
         let z = eg.add(th.z, &[]);
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(1),
-            },
-        );
-        eg.merge_justified(
-            y,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(2),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(1)));
+        eg.merge_justified(y, z, Justification::axiom(crate::id::AxiomId::new(2)));
         let mut buf = ProofBuf::new();
         eg.explain(x, z, &mut buf);
         for (from, to, just) in &buf.steps {
@@ -6259,9 +7816,7 @@ mod tests {
             eg.merge_justified(
                 a,
                 b,
-                Justification::Axiom {
-                    axiom_id: crate::id::AxiomId::new(i as u16),
-                },
+                Justification::axiom(crate::id::AxiomId::new(i as u32)),
             );
         }
 
@@ -6293,20 +7848,8 @@ mod tests {
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
         let z = eg.add(th.z, &[]);
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(7),
-            },
-        );
-        eg.merge_justified(
-            y,
-            z,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(8),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(7)));
+        eg.merge_justified(y, z, Justification::axiom(crate::id::AxiomId::new(8)));
 
         let mut dump = Vec::new();
         let stats = eg.dump_all_proofs(&mut dump).expect("proof dump");
@@ -6315,7 +7858,7 @@ mod tests {
         assert!(stats.steps >= 2);
 
         let text = String::from_utf8(dump).expect("UTF-8 proof dump");
-        assert!(text.starts_with("# semi-persistent-proof-dump v1\n"));
+        assert!(text.starts_with("# semi-persistent-proof-dump v2\n"));
         assert_eq!(
             text.lines()
                 .filter(|line| line.starts_with("term "))
@@ -6343,13 +7886,7 @@ mod tests {
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
         let token = eg.mark(ShrinkPolicy::Never);
-        eg.merge_justified(
-            x,
-            y,
-            Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(0),
-            },
-        );
+        eg.merge_justified(x, y, Justification::axiom(crate::id::AxiomId::new(0)));
         let mut buf = ProofBuf::new();
         assert!(eg.explain(x, y, &mut buf));
         eg.restore(token);
@@ -6378,20 +7915,21 @@ mod tests {
         let z = eg.add(th.z, &[]);
         let ax1 = crate::id::AxiomId::new(10);
         let ax2 = crate::id::AxiomId::new(20);
-        eg.merge_justified(x, y, Justification::Axiom { axiom_id: ax1 });
-        eg.merge_justified(y, z, Justification::Axiom { axiom_id: ax2 });
+        eg.merge_justified(x, y, Justification::axiom(ax1));
+        eg.merge_justified(y, z, Justification::axiom(ax2));
         let mut buf = ProofBuf::new();
         eg.explain(x, z, &mut buf);
         for &(_, _, just) in &buf.steps {
             match just {
                 Justification::Axiom { axiom_id } => {
                     assert!(
-                        axiom_id == ax1 || axiom_id == ax2,
+                        axiom_id == ax1.to_index() || axiom_id == ax2.to_index(),
                         "unexpected axiom_id {axiom_id:?} in proof step"
                     );
                 }
                 Justification::Congruence { .. } => {}
                 Justification::Rewrite { .. } => {}
+                Justification::Normalize { .. } | Justification::Build { .. } => {}
                 Justification::Filler => unreachable!("filler is never a real proof step"),
                 Justification::ACSuperposition { .. }
                 | Justification::ACInterReduction { .. }
@@ -6931,8 +8469,8 @@ mod dual_config_tests {
             let x = eg.add(th.x, &[]);
             let y = eg.add(th.y, &[]);
             let z = eg.add(th.z, &[]);
-            eg.merge_justified(x, y, Justification::Axiom { axiom_id: crate::id::AxiomId::new(1) });
-            eg.merge_justified(y, z, Justification::Axiom { axiom_id: crate::id::AxiomId::new(2) });
+            eg.merge_justified(x, y, Justification::axiom(crate::id::id_at::<Cfg::A>(1)));
+            eg.merge_justified(y, z, Justification::axiom(crate::id::id_at::<Cfg::A>(2)));
             let mut buf = ProofBuf::new();
             eg.explain(x, z, &mut buf);
             assert!(buf.steps.len() >= 2);
@@ -6944,13 +8482,13 @@ mod dual_config_tests {
             let y = eg.add(th.y, &[]);
             let fx = eg.add(th.f, &[x]);
             let fy = eg.add(th.f, &[y]);
-            eg.merge_justified(x, y, Justification::Axiom { axiom_id: crate::id::AxiomId::new(10) });
+            eg.merge_justified(x, y, Justification::axiom(crate::id::id_at::<Cfg::A>(10)));
             eg.rebuild();
             assert_eq!(eg.find(fx), eg.find(fy));
             let mut buf = ProofBuf::new();
             assert!(eg.explain_deep(fx, fy, &mut buf));
             assert!(buf.steps.iter().any(|(_, _, j)| matches!(j, Justification::Congruence { .. })));
-            assert!(buf.steps.iter().any(|(_, _, j)| *j == Justification::Axiom { axiom_id: crate::id::AxiomId::new(10) }));
+            assert!(buf.steps.iter().any(|(_, _, j)| *j == Justification::axiom(crate::id::id_at::<Cfg::A>(10))));
         }
 
         fn plain_n_congruence<Cfg>() {

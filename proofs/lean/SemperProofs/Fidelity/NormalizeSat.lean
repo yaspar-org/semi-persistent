@@ -1,4 +1,4 @@
-import SemperProofs.Fidelity.Normalize
+import SemperProofs.Fidelity.Recanon
 
 /-!
 # Saturation with normalized right-hand sides and `:subsume`
@@ -48,6 +48,26 @@ theorem firedN_persist {Sb Sa : Store} (h : StorePersist Sb Sa) {L : Sym → OpL
   | union a b => obtain ⟨c, ha, hb⟩ := this; exact ⟨_, ha.persist h, hb.persist h⟩
   | subsume _ => trivial
 
+/-- `firedN_persist` for a rule that builds no n-ary term, under normal-form
+recanonicalization of the n-ary nodes (`StorePersistN`). -/
+theorem firedN_persist_fixed {L : Sym → OpLaws} {Sb Sa : Store} (h : StorePersistN L Sb Sa)
+    {σ : Binding} {rule : Rule} (hr : rule.buildsNary = false)
+    (hf : FiredN Sb.graph L σ rule) : FiredN Sa.graph L σ rule := by
+  have hr' : ∀ act ∈ rule.actions, act.hasNary = false := by
+    simpa [Rule.buildsNary, List.any_eq_false] using hr
+  intro act hact
+  have hn := hr' act hact
+  have := hf act hact
+  cases act with
+  | insert t =>
+      obtain ⟨c, hc⟩ := this
+      exact ⟨_, hc.persist_fixed h (by simpa [Action.hasNary] using hn)⟩
+  | union a b =>
+      obtain ⟨c, ha, hb⟩ := this
+      have hab : a.hasNary = false ∧ b.hasNary = false := by simpa [Action.hasNary] using hn
+      exact ⟨_, ha.persist_fixed h hab.1, hb.persist_fixed h hab.2⟩
+  | subsume _ => trivial
+
 /-- One round on stores, the actions building normal forms. -/
 structure SActRoundN (L : Sym → OpLaws) where
   R : Round
@@ -81,70 +101,98 @@ theorem fired_after_actions_N (A : SActRoundN L) (hidem : A.Sa.graph.FindIdem) {
       exact this ▸ hb
   | subsume _ => trivial
 
+/-- The invariant with latency, guarded as `InvLagL`: a rule that builds an
+n-ary term is fired when the round's rebuild persisted every stored node
+literally. -/
 def InvLagN (A : SActRoundN L) (rules : List Rule) : Prop :=
-  ∀ rule ∈ rules, ∀ σ, Matches A.Sb.index rule.atoms σ → FiredN A.Sa.graph L σ rule
+  ∀ rule ∈ rules, (rule.buildsNary = true → Literal A.Sb A.Sa) →
+    ∀ σ, Matches A.Sb.index rule.atoms σ → FiredN A.Sa.graph L σ rule
 
 def EmitsAllN (A : SActRoundN L) (rules : List Rule) : Prop :=
-  ∀ rule ∈ rules, ∀ σ ∈ runNaive A.R.before rule.plan, A.emitted rule σ
+  ∀ rule ∈ rules, ∀ σ ∈ rule.matcher.naive A.R.before, A.emitted rule σ
 
 def EmitsRoundN (naive : Rule → Bool) (prev : Round) (A : SActRoundN L) (rules : List Rule) :
     Prop :=
   ∀ rule ∈ rules,
-    (naive rule = true → ∀ σ ∈ runNaive A.R.before rule.plan, A.emitted rule σ) ∧
+    (naive rule = true → ∀ σ ∈ rule.matcher.naive A.R.before, A.emitted rule σ) ∧
     (naive rule = false → ∀ (k : Nat) (ak : RAtom), rule.atoms[k]? = some (.scan ak) →
-      ∀ σ ∈ runVariant A.R.before prev.isNew k rule.plan, A.emitted rule σ)
+      ∀ σ ∈ rule.matcher.variant A.R.before prev.isNew k, A.emitted rule σ)
 
 theorem invLagN_zero {sig : Sym → Kind} {rules : List Rule} (A : SActRoundN L) (hwf : A.R.WF)
-    (hatoms : RulesWF sig A.R.before rules) (hplan : PlansOK rules) (hemit : EmitsAllN A rules) :
+    (hatoms : RulesWF sig A.R.before rules) (hmatch : MatchersOK rules) (hemit : EmitsAllN A rules) :
     InvLagN A rules := by
-  intro rule hr σ hm
+  intro rule hr _ σ hm
   have hidem : A.Sa.graph.FindIdem := by
     have := hwf.find_idem; rw [A.after_eq] at this; exact this
   rw [← A.before_eq] at hm
   exact fired_after_actions_N A hidem
-    (hemit rule hr σ ((mem_runNaive_iff (hatoms rule hr) (hplan rule hr) σ).2 hm))
+    (hemit rule hr σ ((MatcherOK.naive_iff (hmatch rule hr) (hatoms rule hr) σ).2 hm))
 
+/-- `inv_step_store` with normalized right-hand sides and normal-form
+recanonicalization: an old instance of a rule that builds an n-ary term is
+transported when the round persisted every node literally, and otherwise
+re-emitted by the naive run the routing forces (`route`, `resp = true`). -/
 theorem inv_step_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
     {prev A : SActRoundN L} (hlink : A.Sb = prev.Sa)
-    (hprev : prev.R.WF) (htr : prev.R.tracking = true) (hAp : StorePersist A.Sb A.Sa)
+    (hprev : prev.R.WF) (htr : prev.R.tracking = true) (hAp : StorePersistN L A.Sb A.Sa)
     (hatoms₀ : RulesWF sig prev.R.before rules) (hatoms₁ : RulesWF sig prev.R.after rules)
-    (hplan : PlansOK rules) (hemit : EmitsRoundN naive prev.R A rules)
+    (hmatch : MatchersOK rules) {resp : Bool} (hresp : ¬ Literal prev.Sb prev.Sa → resp = true)
+    (hemit : EmitsRoundN (route naive resp) prev.R A rules)
     (hinv : InvLagN prev rules) : InvLagN A rules := by
-  intro rule hr σ hm
+  intro rule hr hlit σ hm
   have hRlink : A.R.before = prev.R.after := by rw [A.before_eq, prev.after_eq, hlink]
   have hm' : Matches prev.R.after rule.atoms σ := by rw [prev.after_eq, ← hlink]; exact hm
+  have hnew : σ ∈ rule.matcher.naive prev.R.after :=
+    (MatcherOK.naive_iff (hmatch rule hr) (hatoms₁ rule hr) σ).2 hm'
+  obtain ⟨h1, h2⟩ := hemit rule hr
+  rw [hRlink] at h1 h2
+  have hroute : route naive resp rule = true → FiredN A.Sa.graph L σ rule :=
+    fun hn => fired_after_actions_N A hAp.after_idem (h1 hn σ hnew)
   by_cases hold : Matches prev.R.before rule.atoms σ
   · rw [prev.before_eq] at hold
-    have hf := hinv rule hr σ hold
-    rw [← hlink] at hf
-    exact firedN_persist hAp hf
-  · apply fired_after_actions_N A hAp.after_idem
-    have hnew : σ ∈ runNaive prev.R.after rule.plan :=
-      (mem_runNaive_iff (hatoms₁ rule hr) (hplan rule hr) σ).2 hm'
-    obtain ⟨h1, h2⟩ := hemit rule hr
-    rw [hRlink] at h1 h2
-    cases hn : naive rule with
-    | true => exact h1 hn σ hnew
+    cases hb : rule.buildsNary with
     | false =>
-        have hold' : σ ∉ runNaive prev.R.before rule.plan := fun h =>
-          hold ((mem_runNaive_iff (hatoms₀ rule hr) (hplan rule hr) σ).1 h)
+        have hf := hinv rule hr (fun h => by rw [hb] at h; exact absurd h (by decide)) σ hold
+        rw [← hlink] at hf
+        exact firedN_persist_fixed hAp hb hf
+    | true =>
+        have hlitA := hlit hb
+        by_cases hpp : Literal prev.Sb prev.Sa
+        · have hf := hinv rule hr (fun _ => hpp) σ hold
+          rw [← hlink] at hf
+          exact firedN_persist (hAp.toStorePersist hlitA) hf
+        · exact hroute (by simp [route, hresp hpp, hb])
+  · cases hn : route naive resp rule with
+    | true => exact hroute hn
+    | false =>
+        apply fired_after_actions_N A hAp.after_idem
+        have hold' : σ ∉ rule.matcher.naive prev.R.before := fun h =>
+          hold ((MatcherOK.naive_iff (hmatch rule hr) (hatoms₀ rule hr) σ).1 h)
         obtain ⟨k, ak, hk, hv⟩ :=
-          semi_naive_round_complete hprev htr (hatoms₀ rule hr) (hatoms₁ rule hr) (hplan rule hr)
-            hnew hold'
+          MatcherOK.round_complete (hmatch rule hr) hprev htr (hatoms₀ rule hr) (hatoms₁ rule hr) hnew hold'
         exact h2 hn k ak hk σ hv
 
+/-- A chain of store rounds, routed as `SChain`: after a round whose rebuild
+did not persist every node literally, the rules that build an n-ary term
+are matched in full (`route`, `resp = true`). -/
 def SChainN (naive : Rule → Bool) (rules : List Rule) : SActRoundN L → List (SActRoundN L) → Prop
   | _, [] => True
-  | prev, A :: As => A.Sb = prev.Sa ∧ EmitsRoundN naive prev.R A rules ∧ SChainN naive rules A As
+  | prev, A :: As => A.Sb = prev.Sa ∧
+      (∃ resp : Bool, (¬ Literal prev.Sb prev.Sa → resp = true) ∧
+        EmitsRoundN (route naive resp) prev.R A rules) ∧
+      SChainN naive rules A As
 
+/-- The per-round hypotheses: the matcher's round facts, tracking on, the
+store's persistence as the laws recanonicalize it (`StorePersistN`), and
+well-formed atoms. -/
 structure RoundOKN (sig : Sym → Kind) (rules : List Rule) (A : SActRoundN L) : Prop where
   wf : A.R.WF
   tracking : A.R.tracking = true
-  store : StorePersist A.Sb A.Sa
+  store : StorePersistN L A.Sb A.Sa
   atoms : RulesWF sig A.R.after rules
 
 theorem invLag_chain_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (hplan : PlansOK rules) : ∀ (A₀ : SActRoundN L) (As : List (SActRoundN L)),
+    (hmatch : MatchersOK rules) : ∀ (A₀ : SActRoundN L) (As : List (SActRoundN L)),
     RulesWF sig A₀.R.before rules → (∀ A ∈ A₀ :: As, RoundOKN sig rules A) →
     EmitsAllN A₀ rules → SChainN naive rules A₀ As → ∀ A ∈ A₀ :: As, InvLagN A rules := by
   intro A₀ As h₀ hok hemit₀ hchain
@@ -156,17 +204,17 @@ theorem invLag_chain_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : Lis
     | nil => intro _ _ _ _ A hA; simp at hA
     | cons A As ih =>
         intro h₀ hok hinv hchain A' hA'
-        obtain ⟨hlink, hemit, hchain'⟩ := hchain
+        obtain ⟨hlink, ⟨resp, hresp, hemit⟩, hchain'⟩ := hchain
         have hokB := hok B (by simp)
         have hokA := hok A (by simp)
         have hinvA : InvLagN A rules :=
-          inv_step_N hlink hokB.wf hokB.tracking hokA.store h₀ hokB.atoms hplan hemit hinv
+          inv_step_N hlink hokB.wf hokB.tracking hokA.store h₀ hokB.atoms hmatch hresp hemit hinv
         have hRlink : A.R.before = B.R.after := by rw [A.before_eq, B.after_eq, hlink]
         rcases List.mem_cons.1 hA' with rfl | hA'
         · exact hinvA
         · exact ih A (by rw [hRlink]; exact hokB.atoms) (fun C hC => hok C (by simp [hC])) hinvA
             hchain' A' hA'
-  have hinv₀ := invLagN_zero A₀ (hok A₀ (by simp)).wf h₀ hplan hemit₀
+  have hinv₀ := invLagN_zero A₀ (hok A₀ (by simp)).wf h₀ hmatch hemit₀
   intro A hA
   rcases List.mem_cons.1 hA with rfl | hA
   · exact hinv₀
@@ -184,17 +232,18 @@ def SActRoundN.Unchanged (A : SActRoundN L) : Prop :=
 on the index the loop returns is fired, its right-hand sides present as
 normal forms; `:subsume` rules allowed. -/
 theorem saturation_complete_N {sig : Sym → Kind} {naive : Rule → Bool} {rules : List Rule}
-    (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hplan : PlansOK rules)
+    (A₀ : SActRoundN L) (As : List (SActRoundN L)) (hmatch : MatchersOK rules)
     (h₀ : RulesWF sig A₀.R.before rules) (hok : ∀ A ∈ A₀ :: As, RoundOKN sig rules A)
     (hemit₀ : EmitsAllN A₀ rules) (hchain : SChainN naive rules A₀ As)
     {A : SActRoundN L} (hA : A ∈ A₀ :: As) (hfix : A.Unchanged) : InvN A.Sa L rules := by
-  have hinv := invLag_chain_N hplan A₀ As h₀ hok hemit₀ hchain A hA
+  have hinv := invLag_chain_N hmatch A₀ As h₀ hok hemit₀ hchain A hA
   obtain ⟨hn, hf, hs⟩ := hfix
+  have hlit : Literal A.Sb A.Sa := literal_of_unchanged (hok A hA).store.children_canon hn
   have hfeq : A.Sa.find = A.Sb.find := funext hf
   have hin : ∀ p, p ∈ A.Sa.index.nodes ↔ p ∈ A.Sb.index.nodes := by
     intro p; simp only [Store.mem_index, hn, hs]
   intro rule hr σ hm
-  exact hinv rule hr σ (matches_congr hin hfeq hm)
+  exact hinv rule hr (fun _ => hlit) σ (matches_congr hin hfeq hm)
 
 /-! ## Why: the literal model misses a degenerate arity -/
 

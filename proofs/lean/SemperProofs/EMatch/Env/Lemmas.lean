@@ -16,12 +16,13 @@ open Semper.EMatch
 /-! ## The continuation specification -/
 
 /-- What the rest of the plan guarantees on every well-formed environment
-bounded by `B'`: it restores the environment and its emitted list has the
-members of `F` on the abstraction. -/
+bounded by `B'` whose node variables (for the kinds `κ`) are bound: it
+restores the environment and its emitted list has the members of `F` on
+the abstraction. -/
 structure ContSpec (G : Graph) (κ : Var → Bool) (k : Cont) (B' : List Var)
     (F : Binding → List Binding) : Prop where
-  restore : ∀ e, EnvOk e B' → (k e).2 = e
-  mem : ∀ e, EnvOk e B' → ∀ σ, σ ∈ (k e).1 ↔ σ ∈ F (abs G κ e)
+  restore : ∀ e, EnvOk e B' → KindOk κ e → (k e).2 = e
+  mem : ∀ e, EnvOk e B' → KindOk κ e → ∀ σ, σ ∈ (k e).1 ↔ σ ∈ F (abs G κ e)
 
 /-! ## `EnvOk` under the writes -/
 
@@ -126,6 +127,10 @@ theorem loop_set (k : Cont) (t : Var) (ids : List NodeId) (env : Env)
   cases μ with
   | var k lo hi => cases wu <;> rfl
   | exact n => rfl
+
+theorem KindOk.setMultOf {κ : Var → Bool} {e : Env} (h : KindOk κ e) (μ : Mult) (m : Nat) :
+    KindOk κ (setMultOf e μ m) :=
+  h.of_nodes_eq (setMultOf_nodes e μ m)
 
 theorem setMultOf_set (e : Env) (x : Var) (g : NodeId) (μ : Mult) (m : Nat) :
     setMultOf (e.set x g) μ m = (setMultOf e μ m).set x g := by

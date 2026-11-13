@@ -97,14 +97,16 @@ above or must extract certificates before closure erases those distinctions.
 
 ## 5. Required justification content
 
-The producer/checker boundary needs four additions:
+The producer/checker boundary needs four additions. The log carries premises
+for all four (design chapter 14); what remains open is a checker that
+re-derives each step from them:
 
-| Requirement | Accepted design |
+| Requirement | Design |
 | --- | --- |
-| Degenerate AC merges | explicit `UnitDrop`, `NilpotentClamp`, and `SingletonCollapse` justifications |
-| Rewrite instance | checker-side rematching, or a logged matched node/substitution |
-| Multiset congruence | checker recomputes a multiplicity-preserving bijection, or the log carries one |
-| AC-completion inference | justification carries the premise node ids needed to reconstruct the overlap |
+| Degenerate AC merges | in the log: `Normalize { node, normal }`, whose premises are the collapsed node's children, the normal form and the unit; the checker recomputes which law applied |
+| Rewrite instance | in the log: the instance's premise pairs (each matched child against the node the pattern binds, each fetched variable against its root); the checker rematches the rule on them. Instances over flattened views and collected sequences are marked partial |
+| Multiset congruence | in the log: the class-grouped child pairs, from the classes before the merge; the checker recomputes a multiplicity-preserving bijection over them |
+| AC-completion inference | in the log: the rules (`node = rhs_node`) the overlap and the normalizations used; the checker re-derives the normal forms by AC rewriting with them |
 
 Checker-side reconstruction keeps the runtime log compact. Logged witnesses
 remain an optional format extension for consumers that cannot or should not

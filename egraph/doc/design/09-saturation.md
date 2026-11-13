@@ -1760,7 +1760,8 @@ docstring, `Final/Main.lean`).
   `completion_complete_at_convergence` (Chapter 6 §9c). It states completeness over the
   e-nodes present, with the root on the class of the theory-equal node. Its current scope
   (2026-11-05): `I0Active` asks every class to hold an active node of the operator, so a graph
-  with leaf constants is outside it; the theory does not identify merged child classes, so the
+  with leaf constants is outside it (resolved 2026-11-06: `saturation_modulo_complete_atoms`
+  covers leaf constants, Chapter 13 §4); the theory does not identify merged child classes, so the
   statement is about monomials as stored; the minimal-monomial history is met with an initial
   state equal to the final one, so I5 is in effect assumed at the final state; and the effects
   of rule actions are fields of `ActRound`, not derived from `apply.rs`
