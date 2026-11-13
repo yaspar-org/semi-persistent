@@ -91,6 +91,7 @@ pub enum Atom {
     /// literal values bound elsewhere in the query. Binds nothing and scans no
     /// relation.
     Pred { expr: PredExpr, span: Span },
+    // TODO(abs-surface-syntax): add `AbsGuard { var: String, test: AbsTestLit, span: Span }` for `within`, `nonzero` and `known-bits`; it binds nothing and scans no relation, like `Pred`, see egraph/doc/future/abstract-syntax-task.md §4
 }
 
 /// A primitive-predicate guard expression: a computation over literal values, built

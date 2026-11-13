@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: refine: domain 'congruence' is not enabled on sort 'Int'
+;; A refine value belongs to a domain enabled on the term's sort.
+(sort Int :interp int :domains (interval))
+(constructor x () Int)
+(refine (x) (congruence 1 2))

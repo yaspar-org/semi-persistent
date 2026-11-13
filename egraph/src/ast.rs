@@ -567,6 +567,7 @@ pub enum CompletionOption {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
+    // TODO(abs-surface-syntax): carry the sort's `:interp` carrier and `:domains` list (absent, empty, or names), e.g. `Sort(SortDecl)`, and add `Refine { term: Term, value: AbsValueLit, span: Span }` to this enum, see egraph/doc/future/abstract-syntax-task.md §4
     Sort(String),
     /// `(function …)` and `(constructor …)`: the same declaration, distinguished only by
     /// `meta.is_constructor`. Both register an operator with identical congruence and
@@ -578,6 +579,7 @@ pub enum Command {
         ret_sort: String,
         tags: Vec<AlgTag>,
         meta: OpMeta,
+        // TODO(abs-surface-syntax): add `interp: Option<String>` (the `:interp` operator) and `range: Option<(BigInt, BigInt)>` (the `:range` bounds) here, see egraph/doc/future/abstract-syntax-task.md §4
     },
     Datatype {
         name: String,
@@ -661,6 +663,7 @@ pub enum Command {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
+    // TODO(abs-surface-syntax): add `Refine(RhsTerm, AbsValueLit)` for the rule action `(refine t VALUE)`, see egraph/doc/future/abstract-syntax-task.md §4
     Union(RhsTerm, RhsTerm),
     Insert(RhsTerm),
     Set {

@@ -1,0 +1,30 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; WARNING: the analysis is not active
+;; Abstract guards in a rule body and in :when. Until the engine lands, every value is
+;; top, so no guard holds and no rule below fires, although each refine makes it true.
+;; The engine PR (abs-saturation-engine) turns each check-neq here into a check-eq.
+(sort Int :interp int)
+(sort BV8 :interp (bitvec 8))
+(constructor x () Int)
+(constructor z () Int)
+(constructor w () BV8)
+(constructor Big (Int) Int)
+(constructor Small (Int) Int)
+(constructor Pos (Int) Int)
+(constructor Odd (BV8) BV8)
+(constructor Lo (BV8) BV8)
+(refine (x) (interval 0 5))
+(refine (z) (interval 1 3))
+(refine (w) (bits :val 1 :mask 254))
+(rule ((= r (Big y)) (within y -3 9)) ((union r (Small y))))
+(rule ((= r (Pos y)) (nonzero y)) ((union r (Small y))))
+(rewrite (Odd v) (Lo v) :when ((known-bits v 1 254)))
+(Big (x))
+(Pos (z))
+(Odd (w))
+(run 3)
+(check-neq (Big (x)) (Small (x)))
+(check-neq (Pos (z)) (Small (z)))
+(check-neq (Odd (w)) (Lo (w)))

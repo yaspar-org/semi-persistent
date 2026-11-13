@@ -118,6 +118,7 @@ pub enum OpKind<S: DenseId> {
 /// `Default` is the undeclared case: a plain `(function …)` — not a constructor, cost 1,
 /// extractable. Cost 1 is what the extractor charged for every node before per-op costs
 /// existed, so a program that declares no `:cost` extracts exactly as it did before.
+// TODO(abs-surface-syntax): keep `OpMeta` `Copy`; store each op's resolved `:interp` operator and `:range` in a side table keyed by op id, which push/pop must not leak, see egraph/doc/future/abstract-syntax-task.md §4
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpMeta {
     /// Declared with `(constructor …)`, or a `(datatype …)` variant. A constructor is a term
@@ -175,6 +176,7 @@ impl<S: DenseId> OpInfo<S> {
 
 /// Append-only sort registry backed by `SpMap`.
 #[derive(Debug)]
+// TODO(abs-surface-syntax): record per declared sort its carrier (`int`, `bool`, `bitvec N`, or none) and its enabled-domain bit mask, with a lookup `abs_info(sort)`, see egraph/doc/future/abstract-syntax-task.md §4
 pub struct SortRegistry<S: DenseId, const TRACK: bool> {
     /// Positions in this log ARE sort ids, so the log's index word is the id's.
     map: SpUniqueMap<String, (), S::Index, TRACK>,

@@ -1,0 +1,6 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: sort 'B': bit-vector width 0 is outside 1..=128
+;; A bit-vector carrier has a width from 1 to 128.
+(sort B :interp (bitvec 0))
