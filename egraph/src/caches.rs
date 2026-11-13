@@ -1148,8 +1148,15 @@ impl<
     fn index_is_complete(&self) -> bool {
         let count = self.nodes.len().as_usize();
         let mut elems: Vec<C> = Vec::new();
+        // A proof-mode evidence node (`EGraph::add_nary_with_evidence`) holds a
+        // client's raw spelling and is never hash-consed: a probe must not return it
+        // as the canonical node of that spelling.
+        let evidence = crate::node_types::FLAG_SUBSUMED | crate::node_types::FLAG_CONGRUENT_DUP;
         for i in 0..count {
             let n = self.nodes.get(L::from_usize(i));
+            if n.flags & evidence == evidence {
+                continue;
+            }
             elems.clear();
             let (s, e) = n.span();
             for j in s..e {

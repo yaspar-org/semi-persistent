@@ -42,6 +42,17 @@ pub enum Justification<G: DenseId> {
         node: G,
         normal: G,
     },
+    /// A client's set, AC or associative term, kept as an evidence node
+    /// holding the children it was given, merged with the node it is stored
+    /// as. The build `find`s, flattens (splicing a same-operator node of a
+    /// child's class into the list) and normalizes the children; `inst` names
+    /// the splices as `(child, spliced node)` pairs, and `explain_deep`
+    /// explains them together with every class equality among the given
+    /// children, the spliced nodes' children and the stored node's children.
+    Build {
+        node: G,
+        inst: u32,
+    },
     /// AC completion: a critical-pair superposition between two rules sharing a child class.
     /// The merge equates the normalized reducts. (Kapur Def 3.2.)
     ACSuperposition {

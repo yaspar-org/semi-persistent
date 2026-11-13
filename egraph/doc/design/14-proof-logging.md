@@ -50,6 +50,7 @@ pub enum Justification<G: DenseId> {
     Congruence { node_a: G, node_b: G },
     Axiom { axiom_id: AxiomId },
     Normalize { node: G, normal: G },
+    Build { node: G, inst: u32 },
     ACSuperposition { node_a: G, node_b: G },
     ACInterReduction { node_a: G, node_b: G },
     ACAxiomCP { node_a: G, node_b: G },
@@ -68,6 +69,11 @@ pub enum Justification<G: DenseId> {
 - `Normalize`: a node was merged with its normal form under the operator's
   laws, one child's class or the unit (`and(a, a) = a`, `x + 0 = x`,
   `xor(a, a) = 0`).
+- `Build`: a client's set, AC or associative term, kept as an evidence node
+  with the children it was given, was merged with the node it is stored as.
+  The build `find`s the children, flattens a nested same-operator child by
+  splicing a node of its class, and normalizes under the operator's laws;
+  `inst` names the splices, and whether the build collapsed to a class.
 - `Axiom`: two nodes were merged by an explicit `(union ...)` command or
   another caller-supplied axiom merge.
 - The five AC-specific variants identify critical-pair, inter-reduction,
@@ -245,7 +251,16 @@ equalities:
   pair `a` with `a`, and a child in the unit's class has no partner at all.
 - `Normalize`: the node's original children, the normal form and the unit,
   grouped the same way.
+- `Build`: the evidence node's given children, the spliced nodes and their
+  children, and the stored node's original children (or the class it
+  collapsed to), grouped the same way.
 - `Rewrite`: the rule instance's premise pairs.
+
+The grouped steps (unordered congruence, `Normalize`, `Build`) record their
+premise pairs when they merge, from the classes just before the merge, keyed
+by the merged pair. Pairing by the classes at explanation time would also
+pair children that became equal only through this step or a later one, so an
+explanation would cite its own conclusion as a premise.
 
 The leaves are then `Axiom`, `Assumption`, a `Rewrite` with no complete
 instance, and the five completion variants, which do not record the rules
@@ -312,6 +327,21 @@ proofs the same computation as without them:
 Over the fixtures of `tests/egg`, each run with `--proofs` under a 20 s and
 2 GB bound, every fixture ends as it does without proofs.
 
+### Evidence nodes
+
+Under `PROOFS`, a build of a set, AC or associative term that changed the
+client's term (a child not its class root, a splice, a law that dropped,
+merged or cancelled children, or a hit on a node first built from other
+children) keeps the client's term as an evidence node and merges it with the
+stored node by a `Build` step. Evidence nodes carry `FLAG_SUBSUMED` and
+`FLAG_CONGRUENT_DUP`: their content is the stored node's, so matching,
+completion, extraction and the hash-cons index skip them, and saturation is
+the plain engine's. The canonical build runs on every build, and an evidence
+node is reused only for the same client term stored as the same node: the
+spelling a build stores depends on the graph (a splice takes the class's
+current minimal monomial), so the same term can store a new node later. A
+`Build` merge keeps the stored node's root as the class representative.
+
 ## Semi-Persistence
 
 The proof forest is stored in the union-find's parent/justification
@@ -339,13 +369,9 @@ joined). Every explanation over the fixtures replays. Steps the checker
 cannot replay, because the step records no premises, are counted and
 printed: the completion variants and the partial rule instances.
 
-Explanations stay incomplete in two known ways, listed here so a client does
-not read them as certificates:
+Explanations stay incomplete in the following ways, listed here so a client
+does not read them as certificates:
 
-- `add` for AC, ACI and associative operators keeps no creation evidence: a
-  term built after its children merged can hash-cons onto an existing node,
-  or a law applied at build time can return another class's node, with no
-  forest edge relating the client's term to the stored one.
 - The completion variants are leaves: a superposition, inter-reduction or
   cancellation step does not record the rules and law instances it used.
 

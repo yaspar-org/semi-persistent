@@ -359,7 +359,9 @@ where
         for &(_, _, j) in &self.buf.steps {
             match j {
                 Justification::Assumption { lit } => lits.push(Lit::decode(lit.as_usize())),
-                Justification::Congruence { .. } | Justification::Normalize { .. } => {}
+                Justification::Congruence { .. }
+                | Justification::Normalize { .. }
+                | Justification::Build { .. } => {}
                 Justification::Rewrite { .. } if self.eg.rewrite_premises(j).is_some() => {}
                 Justification::Rewrite { .. }
                 | Justification::Axiom { .. }

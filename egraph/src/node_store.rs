@@ -225,6 +225,39 @@ where
         fresh
     }
 
+    /// Insert a proof-mode evidence node for an n-ary client term: a fresh
+    /// global id holding the children exactly as the client gave them (not
+    /// `find`-ed, flattened or normalized), with no hash-cons hint. `ids` are
+    /// the children of a set or associative operator; `counted` those of an AC
+    /// operator. The caller flags the node so matching and completion skip it
+    /// and merges it with the canonical node.
+    pub fn add_evidence_nary<S: crate::DenseId>(
+        &mut self,
+        op: O,
+        ids: &[G],
+        counted: &[C],
+        ops: &OpRegistry<O, S, TRACK>,
+        flags: u8,
+    ) -> G {
+        let fresh = self.routing.reserve();
+        macro_rules! variadic {
+            ($store:expr, $variant:ident, $elems:expr) => {{
+                let lid = $store.insert_no_hint(fresh, op, $elems);
+                let mut n = $store.get(lid);
+                n.flags |= flags;
+                $store.set(lid, n);
+                self.routing.finalize(fresh, NodeRef::$variant(lid));
+            }};
+        }
+        match ops.info(op).kind {
+            OpKind::MSet { .. } => variadic!(self.mset, MSet, counted),
+            OpKind::Set { .. } => variadic!(self.set, Set, ids),
+            OpKind::A { .. } => variadic!(self.seq, Seq, ids),
+            _ => panic!("add_evidence_nary: set, AC and associative operators only"),
+        }
+        fresh
+    }
+
     // -----------------------------------------------------------------------
     // Per-kind insertion
     // -----------------------------------------------------------------------

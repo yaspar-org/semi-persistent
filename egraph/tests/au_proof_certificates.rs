@@ -21,9 +21,8 @@
 //! before hash-consing, every instance interned onto the root's node, and
 //! both chains were reflexivity; this file pinned that as its key finding.
 //! Phase B (restore to a pre-merge mark, add the instances there, re-apply
-//! the merges) still recovers the same kind of chains. AC operators are not
-//! covered by creation evidence: `ac_equal_projection_explains_to_empty_chain`
-//! still pins an empty chain for them.
+//! the merges) still recovers the same kind of chains. AC operators keep their
+//! creation evidence as `Build` steps (`ac_equal_projection_explains_by_build_steps`).
 
 use std::collections::HashMap;
 
@@ -272,6 +271,9 @@ fn reason<const T: bool, const P: bool>(
             None => format!("rewrite rule {rule_id:?} ; no complete instance recorded"),
         },
         Justification::Assumption { lit } => format!("assumption {lit}"),
+        Justification::Build { node, .. } => {
+            format!("build({})", render_node(eg, *node, terms))
+        }
         Justification::Normalize { node, normal } => format!(
             "normalize({}, {})",
             render_node(eg, *node, terms),
@@ -861,13 +863,14 @@ fn certificate_trace_ac_projection() {
 // ---------------------------------------------------------------------------
 
 /// The two sides differ only by argument order and nesting, so build-time AC
-/// canonization (flatten, sort, coalesce) interns them to the SAME node id.
-/// The instantiated projection likewise interns onto the root's member and
-/// the explanation chain is empty: canonization is definitional and untraced
-/// (doc §3), which is exactly what the checker-side-canonizer decision (doc
-/// §4) assumes. Modeled on egraph/tests/ac_matrix.rs assert_eq_class.
+/// canonization (flatten, sort, coalesce) stores them as ONE node. Under
+/// proofs each nested spelling is kept as an evidence node of its own, merged
+/// into that node's class by a `Build` step whose premises are the splices;
+/// the chain between the two spellings is those steps and cites no axiom,
+/// because the equality is the AC law alone. Modeled on
+/// egraph/tests/ac_matrix.rs assert_eq_class.
 #[test]
-fn ac_equal_projection_explains_to_empty_chain() {
+fn ac_equal_projection_explains_by_build_steps() {
     let mut eg = Eg::<false, true>::new();
     let int = eg.intern_sort("Int");
     let plus = eg.register_mset("plus", int, int);
@@ -885,8 +888,18 @@ fn ac_equal_projection_explains_to_empty_chain() {
     let ca = eg.add(plus, &[c, a]);
     let t2 = eg.add(plus, &[ca, b]);
     assert_eq!(
-        t1, t2,
-        "build-time AC canonization must intern order/nesting variants to one node"
+        eg.find_const(t1),
+        eg.find_const(t2),
+        "build-time AC canonization must put order/nesting variants in one class"
+    );
+    let mut buf = ProofBuf::new();
+    assert!(eg.explain_deep(t1, t2, &mut buf));
+    assert!(
+        buf.steps
+            .iter()
+            .all(|(_, _, j)| matches!(j, Justification::Build { .. })),
+        "the nesting variants are related by their builds alone: {:?}",
+        buf.steps
     );
     eg.rebuild();
 
@@ -914,19 +927,20 @@ fn ac_equal_projection_explains_to_empty_chain() {
     let inst_r = materialize(&mut eg, &right_proj);
     eg.rebuild();
 
-    // The projection interns to the root's member node itself.
-    assert_eq!(inst_l, t1, "projection must intern onto the root member");
-    assert_eq!(inst_r, t2);
-
-    // The equality is definitional at the hash-cons level: the chain is empty
-    // (reflexivity), pinning the doc §3 claim that build-time canonization is
-    // untraced by design.
-    let mut buf = ProofBuf::new();
-    assert!(eg.explain_deep(inst_l, t1, &mut buf));
-    assert!(buf.steps.is_empty(), "canonization must not be traced");
-    buf.clear();
-    assert!(eg.explain_deep(inst_r, t2, &mut buf));
-    assert!(buf.steps.is_empty());
+    // The projections land in the root's class, and their chains to the inputs
+    // use no axiom: build-time canonization is traced by `Build` steps.
+    for (inst, t) in [(inst_l, t1), (inst_r, t2)] {
+        assert_eq!(eg.find_const(inst), eg.find_const(t));
+        buf.clear();
+        assert!(eg.explain_deep(inst, t, &mut buf));
+        assert!(
+            !buf.steps
+                .iter()
+                .any(|(_, _, j)| matches!(j, Justification::Axiom { .. })),
+            "no axiom relates two AC spellings: {:?}",
+            buf.steps
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

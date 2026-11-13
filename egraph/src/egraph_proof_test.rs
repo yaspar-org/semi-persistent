@@ -336,6 +336,9 @@ mod deep_proof_test {
                 }
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
                 Justification::Assumption { lit } => format!("assumption {lit}"),
+                Justification::Build { node, .. } => {
+                    format!("build({})", eg.node_op_name(*node))
+                }
                 Justification::Normalize { node, normal } => {
                     format!(
                         "normalize({}, {})",
@@ -417,7 +420,7 @@ mod kind_proof_tests {
     fn has_axiom(buf: &ProofBuf<ENodeId>, id: u32) -> bool {
         buf.steps.iter().any(|(_, _, j)| {
             *j == Justification::Axiom {
-                axiom_id: crate::id::AxiomId::new(id as u32),
+                axiom_id: crate::id::AxiomId::new(id),
             }
         })
     }
@@ -434,6 +437,9 @@ mod kind_proof_tests {
                 ),
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
                 Justification::Assumption { lit } => format!("assumption {lit}"),
+                Justification::Build { node, .. } => {
+                    format!("build({})", eg.node_op_name(*node))
+                }
                 Justification::Normalize { node, normal } => {
                     format!(
                         "normalize({}, {})",
@@ -1198,6 +1204,9 @@ mod aci_deep_proof_test {
                 ),
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
                 Justification::Assumption { lit } => format!("assumption {lit}"),
+                Justification::Build { node, .. } => {
+                    format!("build({})", eg.node_op_name(*node))
+                }
                 Justification::Normalize { node, normal } => {
                     format!(
                         "normalize({}, {})",

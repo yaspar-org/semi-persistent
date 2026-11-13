@@ -380,6 +380,10 @@ pub struct NfRules<'r, 'i, G, M> {
     /// ([`with_work`](Self::with_work)). The completion round reads it to stop a round
     /// whose normalizations cost more than its work budget.
     work: Option<&'i std::cell::Cell<u64>>,
+    /// Positions (in `rules`) of the rules applied, in order
+    /// ([`with_applied`](Self::with_applied)): proof mode records them as the
+    /// premises of the merge the normal form feeds.
+    applied: Option<&'i std::cell::RefCell<Vec<u32>>>,
 }
 
 impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
@@ -390,6 +394,7 @@ impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
             rules,
             index: None,
             work: None,
+            applied: None,
         }
     }
 
@@ -405,6 +410,7 @@ impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
             rules,
             index: Some(index),
             work: None,
+            applied: None,
         }
     }
 
@@ -412,6 +418,14 @@ impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
     pub fn with_work(self, work: &'i std::cell::Cell<u64>) -> Self {
         Self {
             work: Some(work),
+            ..self
+        }
+    }
+
+    /// Record the position of every rule applied in `applied`.
+    pub fn with_applied(self, applied: &'i std::cell::RefCell<Vec<u32>>) -> Self {
+        Self {
+            applied: Some(applied),
             ..self
         }
     }
@@ -432,7 +446,7 @@ impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
     ) -> Option<NfRuleRef<'r, G, M>> {
         let (found, tested) = match self.index {
             None => match self.rules.iter().position(|r| rule_applies_linear(r, out)) {
-                Some(i) => (Some(self.rules[i]), i + 1),
+                Some(i) => (Some(i as u32), i + 1),
                 None => (None, self.rules.len()),
             },
             Some(ix) => {
@@ -441,11 +455,15 @@ impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
                     .iter()
                     .position(|&i| multiset_subset(self.rules[i as usize].lhs, out))
                 {
-                    Some(k) => (Some(self.rules[cands[k] as usize]), k + 1),
+                    Some(k) => (Some(cands[k]), k + 1),
                     None => (None, cands.len()),
                 }
             }
         };
+        if let (Some(i), Some(log)) = (found, self.applied) {
+            log.borrow_mut().push(i);
+        }
+        let found = found.map(|i| self.rules[i as usize]);
         if let Some(w) = self.work {
             w.set(w.get().saturating_add(tested as u64));
         }
