@@ -1338,7 +1338,7 @@ where
 /// flattened view, whose elements come from nested nodes) marks the instance
 /// partial, as does a collected sequence: its premises are then not claimed
 /// complete.
-fn note_match_premises<Cfg, L, Q, S: Copy, const T: bool, const P: bool>(
+pub(crate) fn note_match_premises<Cfg, L, Q, S: Copy, const T: bool, const P: bool>(
     query: &crate::resolve::ResolvedQuery<Cfg::O, S, L>,
     m: &Q,
     eg: &mut EGraph<Cfg, L, T, P>,
@@ -1439,14 +1439,134 @@ fn note_match_premises<Cfg, L, Q, S: Copy, const T: bool, const P: bool>(
             }
             continue;
         }
+        let op = eg.node_op(n);
         for &p in &pattern {
             let rp = eg.find_const(p);
             match children.iter().find(|&&c| eg.find_const(c) == rp) {
                 Some(&c) => eg.note_rule_premise(c, p),
-                None => eg.note_rule_partial(),
+                None => {
+                    let mut budget = VIEW_BUDGET;
+                    match view_premises(eg, op, &children, p, VIEW_DEPTH, &mut budget) {
+                        Some(pairs) => {
+                            for (a, b) in pairs {
+                                eg.note_rule_premise(a, b);
+                            }
+                        }
+                        None => eg.note_rule_partial(),
+                    }
+                }
             }
         }
     }
+}
+
+/// Levels of nesting the view search descends: a flattened view splices a
+/// same-operator member of a child's class, and its children can be spliced in
+/// turn; a regrouped element is a group whose own elements can be regrouped.
+const VIEW_DEPTH: usize = 4;
+
+/// Class members a view derivation may visit for one pattern position. A
+/// derivation that needs more ends as a partial instance (counted by the replay
+/// check), so the cost of proof mode per match stays bounded on nodes with large
+/// classes below them.
+const VIEW_BUDGET: usize = 256;
+
+/// The premises that make `p`'s class an element of a view of a node with
+/// `children`:
+/// - stored: a child in `p`'s class, paired with `p`;
+/// - flattened: `p`'s class is a child of a same-operator member `m` of a
+///   child's class, possibly several levels down; each `(element, m)` link and
+///   the final `(child of m, p)` pair;
+/// - regrouped: `p`'s class holds a same-operator node `g` each of whose
+///   children is in turn an element of the view; `(p, g)` and their premises.
+///
+/// `None` when no derivation within `depth` levels and `budget` member visits
+/// exists.
+fn view_premises<Cfg, L, const T: bool, const P: bool>(
+    eg: &EGraph<Cfg, L, T, P>,
+    op: Cfg::O,
+    children: &[Cfg::G],
+    p: Cfg::G,
+    depth: usize,
+    budget: &mut usize,
+) -> Option<Vec<(Cfg::G, Cfg::G)>>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    let rp = eg.find_const(p);
+    if let Some(&c) = children.iter().find(|&&c| eg.find_const(c) == rp) {
+        return Some(vec![(c, p)]);
+    }
+    // Flattened: breadth-first over same-operator members, with parent links
+    // `(element, member, parent link)`.
+    let mut level: Vec<(Cfg::G, Option<usize>)> = children.iter().map(|&c| (c, None)).collect();
+    let mut links: Vec<(Cfg::G, Cfg::G, Option<usize>)> = Vec::new();
+    let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for _ in 0..depth {
+        let mut next: Vec<(Cfg::G, Option<usize>)> = Vec::new();
+        for &(x, parent) in &level {
+            if !seen.insert(eg.find_const(x).to_usize()) {
+                continue;
+            }
+            for m in eg.class_members(x) {
+                if *budget == 0 {
+                    return None;
+                }
+                *budget -= 1;
+                if eg.node_op(m) != op || eg.is_evidence_node_pub(m) {
+                    continue;
+                }
+                links.push((x, m, parent));
+                let link = links.len() - 1;
+                let mut hit = None;
+                eg.for_each_child(m, |y, _| {
+                    if hit.is_none() && eg.find_const(y) == rp {
+                        hit = Some(y);
+                    }
+                    next.push((y, Some(link)));
+                });
+                if let Some(y) = hit {
+                    let mut pairs = Vec::new();
+                    let mut at = Some(link);
+                    while let Some(i) = at {
+                        let (a, b, up) = links[i];
+                        pairs.push((a, b));
+                        at = up;
+                    }
+                    pairs.push((y, p));
+                    return Some(pairs);
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        level = next;
+    }
+    // Regrouped: a same-operator node in p's class whose children are elements.
+    if depth == 0 {
+        return None;
+    }
+    let groups: Vec<Cfg::G> = eg
+        .class_members(p)
+        .filter(|&g| eg.node_op(g) == op && !eg.is_evidence_node_pub(g))
+        .collect();
+    'groups: for g in groups {
+        let mut kids = Vec::new();
+        eg.for_each_child(g, |c, _| kids.push(c));
+        let mut pairs = vec![(p, g)];
+        for k in kids {
+            match view_premises(eg, op, children, k, depth - 1, budget) {
+                Some(more) => pairs.extend(more),
+                None => continue 'groups,
+            }
+        }
+        return Some(pairs);
+    }
+    None
 }
 
 pub(crate) fn apply_rule_actions<Cfg, L, M, Q, S, const T: bool, const P: bool>(

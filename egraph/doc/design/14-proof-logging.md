@@ -101,13 +101,37 @@ pairs, the pairs of nodes the application needs equal:
 - each variable the right-hand side fetches, paired with the class root the
   right-hand side is built over.
 
-An instance that cannot pair a pattern position with a child of the matched
-node (a flattened view, whose elements come from nested nodes) or that
-contains a collected sequence is marked partial, and `rewrite_premises`
-reports it as unknown instead of claiming a complete list. Rule applications
-of the sequence engine and of collection rules record no instance yet. The
-table is append-only between marks; `restore`, `restore_and_pop` and
-`pop_scope` truncate it to the mark's lengths.
+A pattern position that matched an element of a flattened or regrouped view
+rather than a stored child is derived the way the view was built: a child's
+class holds a same-operator node whose children supply the element (several
+levels deep), or the element's class holds a same-operator node whose
+children are elements in turn; each link is a premise pair. Collection and
+sequence rules record the root query's premises and each bound node against
+its class root; one whose items or filters run sub-queries is marked partial,
+because the root query's match does not show the sub-matches, and
+`rewrite_premises` reports a partial instance as unknown instead of claiming a
+complete list. The table is append-only between marks; `restore`,
+`restore_and_pop` and `pop_scope` truncate it to the mark's lengths.
+
+### Completion premises
+
+Every completion merge records the equalities it used, in the same merge-time
+table as the grouped steps: a rule `node -> rhs` is the pair `(node,
+rhs_node)`, where `rhs_node` holds the class's minimal monomial (the class
+root for an atomic class, the unit for the unit's class).
+
+| Step | Premises |
+| --- | --- |
+| superposition | the two rules, and every rule the two normalizations applied |
+| axiom critical pair | the rule, the inverse nodes a group-law pair used, and the normalizations' rules |
+| cancellation (one rule or a disjoint pair) | the rules, and the normalizations' rules |
+| inter-reduction (A') | the node in its class, the rules its normalization applied, the inverse nodes that cancelled |
+| lattice round | every equation of the operator's lattice system: each node with its class, the unit, each inverse node |
+| A-round | the two spellings of the rule, and each element against the class root the rewrite read |
+| inverse repair | grouped, as `Normalize` |
+
+The normalizers record the positions of the rules they apply
+(`NfRules::with_applied`), so the list is the rules actually used.
 
 ## Proof Forest
 
@@ -365,20 +389,23 @@ only once its premises hold there (an axiom joins exactly the terms of its
 `union` command; a congruence step's children agree by position, or as
 classes after the operator's laws; a normalization leaves only the normal
 form's class or repeated classes; a rule application's premise pairs are
-joined). Every explanation over the fixtures replays. Steps the checker
-cannot replay, because the step records no premises, are counted and
-printed: the completion variants and the partial rule instances.
+joined; a completion step's recorded premises are joined). Every
+explanation over the fixtures replays. For a completion step the checker
+confirms that every equality the step used is established; it does not
+re-derive the AC normal forms from them. Steps with no complete premise list,
+the partial rule instances of collection and sequence rules with sub-queries,
+are counted and printed.
 
-Explanations stay incomplete in the following ways, listed here so a client
-does not read them as certificates:
-
-- The completion variants are leaves: a superposition, inter-reduction or
-  cancellation step does not record the rules and law instances it used.
+Explanations stay incomplete in one known way, listed here so a client does
+not read them as certificates: a collection or sequence rule whose items or
+filters run sub-queries records a partial instance, without the sub-matches'
+premises (36 rule steps over the fixtures).
 
 `dump_all_proofs` emits one deterministic node-to-representative path for
 each e-node (format v2): the registered axioms with their two terms, each
-node's current and original children, and each rule application's instance
-premises. It does not enumerate alternative proofs and does not call
+node's current and original children, each rule application's instance
+premises, each build's splices, and the premises recorded for grouped and
+completion steps. It does not enumerate alternative proofs and does not call
 `explain_deep`. No independent replay checker validates the dump itself.
 
 ---

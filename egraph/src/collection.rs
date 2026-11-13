@@ -192,6 +192,44 @@ pub struct Rule<O, S, L> {
 /// The type of a name or an expression: a scalar or a sequence of one sort, or the
 /// tuples a sequence primitive returns. Sorts are named as the registry and the
 /// literal model name them (`i64`, `MLTL`).
+impl<O, S, L> Rule<O, S, L> {
+    /// Whether a match of this rule also runs sub-queries (items or filters) whose
+    /// bindings the root query's match does not show: a proof-mode rule instance
+    /// built from the root query alone is then incomplete.
+    pub(crate) fn has_sub_queries(&self) -> bool {
+        !self.items.is_empty() || !self.filters.is_empty() || !self.filter_queries.is_empty()
+    }
+}
+
+/// Open a proof-mode rule instance for a collection or sequence rule's match:
+/// the root query's premises, and each bound node paired with its class root,
+/// which the sequence right-hand side builds over.
+pub(crate) fn open_seq_instance<Cfg, L, S: Copy, const T: bool, const P: bool>(
+    r: &Rule<Cfg::O, S, L>,
+    m: &crate::ematch::Match<Cfg>,
+    eg: &mut EGraph<Cfg, L, T, P>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
+{
+    if !P {
+        return;
+    }
+    eg.begin_rule_instance();
+    crate::apply::note_match_premises(&r.query, m, eg, globals);
+    for i in 0..r.seq_shape.nodes.len() {
+        let n = crate::ematch::MatchView::get(m, crate::ast::VarId::new(i as u16));
+        let root = eg.find_const(n);
+        eg.note_rule_premise(root, n);
+    }
+    if r.has_sub_queries() {
+        eg.note_rule_partial();
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Ty {
     Scalar(String),
@@ -1686,12 +1724,14 @@ where
     }
     for (ri, class, q, lets, legacy) in plans {
         let r = rules[ri];
+        open_seq_instance(r, &q, eg, globals);
         let new =
             match crate::seq_rhs::build(&r.seq_rhs, lets, &r.seq_shape, &q, eg, model, globals) {
                 Ok(g) => Some(g),
                 // "§Edge cases 1": a right-hand side with no value does not fire.
                 Err(e) if e == crate::seq_rhs::NO_FIRE => None,
                 Err(e) if e == crate::seq_rhs::TOO_WIDE => {
+                    eg.end_rule_instance();
                     eprintln!(
                         "warning: {}: a right-hand side of {} skipped",
                         r.name,
@@ -1700,7 +1740,10 @@ where
                     report.too_wide += 1;
                     continue;
                 }
-                Err(e) => return Err(format!("{}: {e}", r.name)),
+                Err(e) => {
+                    eg.end_rule_instance();
+                    return Err(format!("{}: {e}", r.name));
+                }
             };
         if let (Some(env), Some(l)) = (legacy, &r.legacy) {
             let old = match build(eg, model, &env, &l.rhs) {
@@ -1717,22 +1760,23 @@ where
             }
         }
         let Some(new) = new else {
+            eg.end_rule_instance();
             report.no_value += 1;
             continue;
         };
         let merged = match r.rule_id {
-            Some(rule_id) if PROOFS => eg
-                .merge_justified(
+            Some(rule_id) if PROOFS => {
+                let inst = eg.open_rule_instance();
+                eg.merge_justified(
                     new,
                     class,
-                    crate::union_find::Justification::Rewrite {
-                        rule_id,
-                        inst: crate::union_find::NO_INSTANCE,
-                    },
+                    crate::union_find::Justification::Rewrite { rule_id, inst },
                 )
-                .is_some(),
+                .is_some()
+            }
             _ => eg.merge(new, class).is_some(),
         };
+        eg.end_rule_instance();
         if merged {
             report.changed += 1;
         }

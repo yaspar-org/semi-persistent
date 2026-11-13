@@ -1615,6 +1615,12 @@ where
         given != stored
     }
 
+    /// A proof-mode evidence node: a client's raw spelling, kept for
+    /// explanations and skipped by matching and completion.
+    pub fn is_evidence_node_pub(&self, n: Cfg::G) -> bool {
+        self.is_evidence_node(n)
+    }
+
     /// A proof-mode evidence node (`add_nary_with_evidence`).
     fn is_evidence_node(&self, n: Cfg::G) -> bool {
         let f = self.node_flags(n);
@@ -2481,7 +2487,7 @@ where
         )?;
         writeln!(
             out,
-            "# rewrite steps list their rule instance's premise pairs, each proved by its own term records"
+            "# rewrite, grouped and completion steps list their premise pairs, each proved by its own term records"
         )?;
         writeln!(out, "axioms {}", self.axioms.len())?;
         for i in 0..self.axioms.len() {
@@ -2571,6 +2577,17 @@ where
             for &(from, to, justification) in &buf.steps {
                 write!(out, "step {} {} ", from.to_usize(), to.to_usize())?;
                 self.write_proof_dump_justification(&mut out, justification)?;
+                // The premises recorded at the merge (grouped and completion steps).
+                if let Some(premises) = self.merge_premises(from, to) {
+                    write!(out, " premises [")?;
+                    for (i, (x, y)) in premises.iter().enumerate() {
+                        if i > 0 {
+                            write!(out, ",")?;
+                        }
+                        write!(out, "{}={}", x.to_usize(), y.to_usize())?;
+                    }
+                    write!(out, "]")?;
+                }
                 writeln!(out)?;
             }
             writeln!(out, "end")?;

@@ -891,3 +891,37 @@ fn superposition_cites_the_unions_of_its_rules() {
         tally.not_replayable
     );
 }
+
+/// A match through a flattened view: `t = Add(K, Z)` keeps `K` as a child (a
+/// nullary constant's class is atomic, so the build does not splice it), and
+/// after `K = Add(A, B)` the `:flatten` rule `(Add (A) (B) x)` matches `t`'s
+/// view `{A, B, Z}`. The instance derives `A` and `B` through `K`'s class, so
+/// the explanation of `t = H(Z)` cites the union and replays with no partial
+/// instance.
+#[test]
+fn flattened_view_match_cites_the_union() {
+    let mut interp = run_src(
+        "(sort E)
+         (constructor K () E) (constructor Z () E)
+         (constructor A () E) (constructor B () E)
+         (constructor H (E) E)
+         (constructor Add (E) E :assoc :comm)
+         (let t (Add (K) (Z)))
+         (union (K) (Add (A) (B)))
+         (rewrite (Add (A) (B) x) (H x) :flatten)
+         (run 2)
+         (let h (H (Z)))",
+    );
+    let (t, h) = (global(&mut interp, "t"), global(&mut interp, "h"));
+    assert_cites_union(&interp, t, h, "Add(K, Z) = H(Z)");
+    let mut buf = ProofBuf::new();
+    assert!(interp.eg.explain_deep(t, h, &mut buf));
+    let mut tally = Tally::default();
+    replay(&interp, t, interp.eg.find_const(t), &buf.steps, &mut tally)
+        .unwrap_or_else(|e| panic!("Add(K, Z) = H(Z): {e}"));
+    assert!(
+        tally.not_replayable.is_empty(),
+        "the view's instance is complete: {:?}",
+        tally.not_replayable
+    );
+}
