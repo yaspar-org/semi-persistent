@@ -17,7 +17,7 @@ use crate::typed_routing::NodeRef;
 use crate::union_find::{Justification, ProofBuf};
 
 #[path = "abs_sched.rs"]
-mod abs_sched;
+pub(crate) mod abs_sched;
 
 /// How a completion op's monomial counts are bounded during normalization (design "three
 /// independent axes"): unbounded ℕ (MSet plain AC), clamped to {0,1} by dedup (Set idempotent =

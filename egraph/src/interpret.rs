@@ -1583,3 +1583,7 @@ impl RunStats {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "interpret_abs_tests.rs"]
+mod abs_tests;
