@@ -110,6 +110,11 @@ listing's order.
     check once at the public boundary, `requires` on internal cores; const
     generics tested before any read; one executable write path); the list
     append peel; the second-pass review table; the validation protocol.
+21. **[The Abstract-Value Pool](21-abstract-value-pool.md)**: task
+    specification for the `abs-class-storage` branch. A per-class handle
+    into a semi-persistent pool of opaque abstract values, invariant W8,
+    the restore obligation, and the 16-byte payload decision. Not yet
+    implemented.
 
 ## The class layer
 

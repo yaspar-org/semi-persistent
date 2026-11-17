@@ -27,10 +27,14 @@ The kernel provides:
 - proof explanation into `ProofBuf`; and
 - compositional `mark`/`restore`.
 
+<!-- TODO(abs-class-storage): list the per-class abstract-value handle and pool in this surface, see containers-verus/doc/design/21-abstract-value-pool.md §2 -->
+
 Operationally fallible forms return `ContainerError`; panic-shaped compatibility
 wrappers preserve the engine's internal invariant checks.
 
 ## Invariants
+
+<!-- TODO(abs-class-storage): change "W1 through W7" to "W1 through W8" and add the abstract-value handle clause, see containers-verus/doc/design/21-abstract-value-pool.md §3 -->
 
 `EClasses::wf()` contains W1 through W7, listed in the `eclasses.rs` module
 header:
