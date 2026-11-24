@@ -1,11 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use semi_persistent_abstract_domains::interval::Interval;
 use semi_persistent_abstract_domains::lattice::Domain;
 use semi_persistent_abstract_domains::semantics::{Signed, Unsigned};
 use semi_persistent_abstract_domains::transfer::{Arith, DivRem};
 use semi_persistent_abstract_domains::wrapped::Wrapped;
+use std::hint::black_box;
 
 fn bench_wrapped_vs_interval(c: &mut Criterion) {
     let mut group = c.benchmark_group("Wrapped_vs_Interval_U64");
@@ -86,6 +87,11 @@ fn bench_wrapped_division_cases(c: &mut Criterion) {
     let small_pos_2 = Wrapped::<u64>::new(2, 5);
     let wrapping_1 = Wrapped::<u64>::new(u64::MAX - 200, 100);
     let wrapping_2 = Wrapped::<u64>::new(u64::MAX - 50, 20);
+    let cross_sign_1 = Wrapped::<u64>::new((i64::MAX as u64) - 100, (i64::MIN as u64) + 100);
+    let cross_sign_2 = Wrapped::<u64>::new((i64::MAX as u64) - 50, (i64::MIN as u64) + 50);
+    let wide_wrap_1 = Wrapped::<u64>::new(100, 50);
+    let wide_wrap_2 = Wrapped::<u64>::new(200, 100);
+    let top = Wrapped::<u64>::top();
 
     // Unsigned Div
     group.bench_function("udiv_zero_pole_split_small", |b| {
@@ -132,13 +138,32 @@ fn bench_wrapped_division_cases(c: &mut Criterion) {
             )
         })
     });
-    group.bench_function("sdiv_wrapping_loop", |b| {
+    group.bench_function("sdiv_wrapping_cross_zero", |b| {
         b.iter(|| {
             <Wrapped<u64> as DivRem<Signed<u64>>>::div(
                 black_box(&wrapping_1),
                 black_box(&wrapping_2),
             )
         })
+    });
+    group.bench_function("sdiv_wrapping_cross_sign", |b| {
+        b.iter(|| {
+            <Wrapped<u64> as DivRem<Signed<u64>>>::div(
+                black_box(&cross_sign_1),
+                black_box(&cross_sign_2),
+            )
+        })
+    });
+    group.bench_function("sdiv_wrapping_wide", |b| {
+        b.iter(|| {
+            <Wrapped<u64> as DivRem<Signed<u64>>>::div(
+                black_box(&wide_wrap_1),
+                black_box(&wide_wrap_2),
+            )
+        })
+    });
+    group.bench_function("sdiv_top", |b| {
+        b.iter(|| <Wrapped<u64> as DivRem<Signed<u64>>>::div(black_box(&top), black_box(&top)))
     });
 
     // Signed Rem
@@ -150,13 +175,32 @@ fn bench_wrapped_division_cases(c: &mut Criterion) {
             )
         })
     });
-    group.bench_function("srem_wrapping_loop", |b| {
+    group.bench_function("srem_wrapping_cross_zero", |b| {
         b.iter(|| {
             <Wrapped<u64> as DivRem<Signed<u64>>>::rem(
                 black_box(&wrapping_1),
                 black_box(&wrapping_2),
             )
         })
+    });
+    group.bench_function("srem_wrapping_cross_sign", |b| {
+        b.iter(|| {
+            <Wrapped<u64> as DivRem<Signed<u64>>>::rem(
+                black_box(&cross_sign_1),
+                black_box(&cross_sign_2),
+            )
+        })
+    });
+    group.bench_function("srem_wrapping_wide", |b| {
+        b.iter(|| {
+            <Wrapped<u64> as DivRem<Signed<u64>>>::rem(
+                black_box(&wide_wrap_1),
+                black_box(&wide_wrap_2),
+            )
+        })
+    });
+    group.bench_function("srem_top", |b| {
+        b.iter(|| <Wrapped<u64> as DivRem<Signed<u64>>>::rem(black_box(&top), black_box(&top)))
     });
 
     group.finish();

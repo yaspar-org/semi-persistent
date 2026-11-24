@@ -1367,6 +1367,7 @@ dependencies = [
 name = "semi-persistent-abstract-domains"
 version = "0.3.0"
 dependencies = [
+ "criterion",
  "num-bigint",
  "num-traits",
  "rand 0.10.2",

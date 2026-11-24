@@ -819,6 +819,7 @@ impl<W:Word> Wrapped<W> {
         let mut i = 0usize;
         while i < 4
             invariant signed, i <= 4, self.wf(), d.wf(), result.wf(),
+                b0.wf(), b1.wf(), b2.wf(), b3.wf(),
                 forall|x: W| #[trigger] b0.gamma(x) == d.piece_has(0, x),
                 forall|x: W| #[trigger] b1.gamma(x) == d.piece_has(1, x),
                 forall|x: W| #[trigger] b2.gamma(x) == d.piece_has(2, x),
@@ -841,6 +842,7 @@ impl<W:Word> Wrapped<W> {
                 let mut j = 0usize;
                 while j < 4
                     invariant signed, j <= 4, i < 4, self.wf(), d.wf(), result.wf(), a.wf(),
+                        b0.wf(), b1.wf(), b2.wf(), b3.wf(),
                         forall|x: W| #[trigger] b0.gamma(x) == d.piece_has(0, x),
                         forall|x: W| #[trigger] b1.gamma(x) == d.piece_has(1, x),
                         forall|x: W| #[trigger] b2.gamma(x) == d.piece_has(2, x),
