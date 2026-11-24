@@ -425,8 +425,12 @@ where
     /// incremental or full transient-index repair.
     fn lazy_txn_open(&mut self) {
         if self.lazy_txn.is_none() {
-            // The mark rebuilds, so values are propagated before the transaction opens; values
-            // refined inside it roll back when it closes (abstract-engine-task.md §6).
+            // The mark rebuilds, so values are propagated before the transaction opens. Closing
+            // it restores the conflict flag and clears the abs queues, but not the class values
+            // or the `constants` map: those live outside the semi-persistent columns, so a value
+            // refined inside the transaction outlives it.
+            // TODO(abs-saturation-engine): values roll back once they live in the class-layer
+            // pool (#158) and `constants` rolls back with them (abstract-engine-task.md §6).
             self.lazy_txn = Some(self.eg.mark(self.shrink_policy));
             self.eg.set_cc(true);
         }
@@ -1430,9 +1434,12 @@ where
                 // fused, so it costs one pop core per column (design doc 08 §1;
                 // the verified `restore` alone keeps the scope open).
                 self.eg.restore_and_pop(mark.token);
-                // A conflict raised inside the scope is cleared by `restore_and_pop`.
-                // TODO(abs-saturation-engine): values roll back with the classes once they live
-                // in #146's pool; until then they survive the pop (abstract-engine-task.md §6).
+                // `restore_and_pop` restores the conflict flag to its value at the push and
+                // clears the abs queues. It does not roll back the class values or the
+                // `constants` map, so a value narrowed or a literal created inside the scope
+                // survives the pop.
+                // TODO(abs-saturation-engine): values roll back once they live in the class-layer
+                // pool (#158) and `constants` rolls back with them (abstract-engine-task.md §6).
                 self.rules.truncate(mark.rules_len);
                 self.globals.truncate(mark.globals_len);
             }
