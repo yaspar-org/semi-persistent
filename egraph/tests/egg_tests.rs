@@ -968,3 +968,4 @@ egg_test!(bench_subsume_rules, "bench/subsume.rules.egg");
 egg_test!(bench_typecheck_rules, "bench/typecheck.rules.egg");
 egg_test!(bench_until_native, "bench/until.native.egg");
 egg_test!(bench_until_rules, "bench/until.rules.egg");
+egg_test!(mismatched_union_sorts, "mismatched_union_sorts.egg");
