@@ -1,0 +1,21 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Completion over a fold rewrites a spelling only where it is a subterm: a prefix
+;; of an :assoc-left node, a suffix of an :assoc-right node. From A - B = C - D the
+;; engine derived (X - A) - B = (X - C) - D, i.e. X - 8 = X - 2 for 5 - 3 = 2 - 0,
+;; because a_round matched [C, D] inside [X, C, D] at any offset, as for :assoc.
+;; The two spine equalities still hold. Found by the model-refutation soundness
+;; hunt; the :flatten twin is flatten_fold_spine.egg.
+(set-option :completion eager)
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E) (function X () E)
+(function Sub (E) E :assoc-left)
+(function Pow (E) E :assoc-right)
+(union (Sub (A) (B)) (Sub (C) (D)))
+(union (Pow (A) (B)) (Pow (C) (D)))
+(check-eq (Sub (A) (B) (X)) (Sub (C) (D) (X)))
+(check-eq (Pow (X) (A) (B)) (Pow (X) (C) (D)))
+(check-neq (Sub (X) (A) (B)) (Sub (X) (C) (D)))
+(check-neq (Pow (A) (B) (X)) (Pow (C) (D) (X)))

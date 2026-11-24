@@ -1,0 +1,13 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; Stop-test regression (fidelity row SA11): the rewrite's right-hand side builds the
+;; inner (Add a b) and the outer node flattens back onto the matched one, so the union
+;; joins one class with itself and reported no change. The round minted (Add a b) and
+;; the loop stopped before the second rule matched it: the check failed, naive and
+;; semi-naive. Fixed by comparing the size stamp around the action phase.
+(datatype E (Add E :assoc-comm) (G E) (a) (b) (c) (d))
+(let t (Add (a) (b) (c)))
+(rewrite (Add x y z) (Add (Add x y) z))
+(rule ((Add x y)) ((union (G (Add x y)) (d))))
+(run 10)
+(check-eq (G (Add (a) (b))) (d))

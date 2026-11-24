@@ -1,0 +1,65 @@
+;; Converted from the CBMC e-graph dump regr_Array_UF14.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Leaf 3))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let ebase_4 (Leaf 4))  ; nondet_symbol
+(let ebase_5 (Leaf 5))  ; main::1::string_A!0@1#2[[0]]
+(let ebase_6 (Const 1 6))  ; const 1
+(let ebase_7 (Leaf 7))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@2#2
+(let ebase_8 (Leaf 8))  ; nondet_symbol
+(let ebase_9 (Leaf 9))  ; main::1::string_A!0@1#2[[1]]
+(let ebase_10 (Const 2 10))  ; const 2
+(let ebase_11 (Leaf 11))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@3#2
+(let ebase_12 (Leaf 12))  ; nondet_symbol
+(let ebase_13 (Leaf 13))  ; main::1::string_A!0@1#2[[2]]
+(let ebase_14 (Const 3 14))  ; const 3
+(let ebase_15 (Leaf 15))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@4#2
+(let ebase_16 (Leaf 16))  ; nondet_symbol
+(let ebase_17 (Leaf 17))  ; main::1::string_A!0@1#2[[3]]
+(let ebase_18 (Const 4 18))  ; const 4
+(let ebase_19 (Leaf 19))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@5#2
+(let ebase_20 (Leaf 20))  ; nondet_symbol
+(let ebase_21 (Leaf 21))  ; main::1::string_A!0@1#2[[4]]
+(let ebase_22 (Const 5 22))  ; const 5
+(let ebase_23 (Leaf 23))  ; main::1::string_A!0@1#1
+(let ebase_24 (Leaf 24))  ; array
+(let ebase_25 (Leaf 25))  ; main::1::string_A!0@1#1[[0]]
+(let ebase_26 (Leaf 26))  ; main::1::string_A!0@1#1[[1]]
+(let ebase_27 (Leaf 27))  ; main::1::string_A!0@1#1[[2]]
+(let ebase_28 (Leaf 28))  ; main::1::string_A!0@1#1[[3]]
+(let ebase_29 (Leaf 29))  ; main::1::string_A!0@1#1[[4]]
+(let ebase_30 (Leaf 30))  ; main::1::string_B!0@1#1
+(let ebase_31 (Leaf 31))  ; array
+(let ebase_32 (Leaf 32))  ; main::1::string_B!0@1#1[[0]]
+(let ebase_33 (Leaf 33))  ; main::1::string_B!0@1#1[[1]]
+(let ebase_34 (Leaf 34))  ; main::1::string_B!0@1#1[[2]]
+(let ebase_35 (Leaf 35))  ; main::1::string_B!0@1#1[[3]]
+(let ebase_36 (Leaf 36))  ; main::1::string_B!0@1#1[[4]]
+(let ebase_37 (Leaf 37))  ; main::1::i!0@1#1
+(let ebase_38 (Leaf 38))  ; main::1::j!0@1#1
+(let ebase_39 (Leaf 39))  ; main::1::nc_A!0@1#1
+(let ebase_40 (Leaf 40))  ; main::1::nc_B!0@1#1
+(let ebase_41 (Leaf 41))  ; main::1::found!0@1#1
+(let ebase_42 (Leaf 42))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#1
+(let ebase_43 (Leaf 43))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@2#1
+(let ebase_44 (Leaf 44))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@3#1
+(let ebase_45 (Leaf 45))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@4#1
+(let ebase_46 (Leaf 46))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@5#1

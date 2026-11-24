@@ -1,0 +1,35 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Regrouped views (design 07 §7.5, "Regrouped views") for `:assoc-right`, the mirror of
+;; flatten_regroup_assoc_left.egg: the store holds `Pow(a, Pow(b, c))` as [a, b, c], so the
+;; only valid grouping is a suffix, which only the last pattern position may take. The
+;; prefix grouping `(a ^ b) ^ c` is not matched even when its class exists. The plain rule's
+;; behavior is pinned in flatten_regroup_control.egg.
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E)
+(function Pow (E) E :assoc-right)
+(function T2 (E E) E)
+(function T3 (E E E) E)
+(let ab (Pow (A) (B)))
+(let bc (Pow (B) (C)))
+(let bcd (Pow (B) (C) (D)))
+(let cd (Pow (C) (D)))
+(let t (Pow (A) (B) (C)))
+(let t4 (Pow (A) (B) (C) (D)))
+(rewrite (Pow x y) (T2 x y) :flatten)
+(rewrite (Pow x y z) (T3 x y z) :flatten)
+(run 2)
+;; a ^ (b ^ c) with y = [b, c].
+(check-eq t (T2 (A) bc))
+;; (a ^ b) ^ c is not the term t spells.
+(check-neq t (T2 ab (C)))
+;; a ^ (b ^ (c ^ d)): the suffixes [b, c, d] and [c, d].
+(check-eq t4 (T2 (A) bcd))
+(check-eq t4 (T3 (A) (B) cd))
+;; Neither an inner run nor a prefix regroups.
+(check-neq t4 (T3 (A) bc (D)))
+(check-neq t4 (T3 ab (C) (D)))
+;; No node spells [c, a] during the run: no suffix group for b ^ (c ^ a).
+(check-neq (Pow (B) (C) (A)) (T2 (B) (Pow (C) (A))))

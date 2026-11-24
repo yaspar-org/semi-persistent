@@ -519,7 +519,9 @@ impl ExecUnum {
     }
 
     fn neg(&self) -> ExecUnum {
-        if self.base.checked_add(self.extent).is_none() {
+        // The negated range wraps when the input range does, or when it holds 0
+        // and something else: -[0, e] = {0} u [-e, MAX].
+        if self.base.checked_add(self.extent).is_none() || (self.base == 0 && self.extent != 0) {
             return ExecUnum::top();
         }
         let new_v = 0u64.wrapping_sub(self.base).wrapping_sub(self.extent);
@@ -911,6 +913,34 @@ fn fuzz_eun_neg() {
     for _ in 0..N {
         let ax = rand_eun(&mut rng);
         let ar = ax.neg();
+        for _ in 0..S {
+            let x = sample_eun(&ax, &mut rng);
+            let r = x.wrapping_neg();
+            assert!(
+                ar.contains(r),
+                "neg unsound: ax={:?} x={:#x} r={:#x} ar={:?}",
+                ax,
+                x,
+                r,
+                ar
+            );
+        }
+    }
+}
+
+/// Ranges [0, e] with e > 0: their negation {0} u [-e, MAX] wraps, which the
+/// unsound version missed (it dropped 0). Random Unums rarely have base 0.
+#[test]
+fn fuzz_eun_neg_from_zero() {
+    let mut rng = test_rng();
+    for _ in 0..N {
+        let mut ax = rand_eun(&mut rng);
+        ax.base = 0;
+        if ax.extent == 0 {
+            ax.extent = 1;
+        }
+        let ar = ax.neg();
+        assert!(ar.contains(0), "neg drops 0: ax={:?} ar={:?}", ax, ar);
         for _ in 0..S {
             let x = sample_eun(&ax, &mut rng);
             let r = x.wrapping_neg();

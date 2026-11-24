@@ -1,0 +1,93 @@
+;; Converted from the CBMC e-graph dump regr_Malloc10.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Null 3))  ; const NULL
+(let ebase_4 (Leaf 4))  ; address_of
+(let ebase_5 (Const 4 5))  ; const 4
+(let ebase_6 (Leaf 6))  ; nondet_symbol
+(let ebase_7 (Leaf 7))  ; member
+(let ebase_8 (Leaf 8))  ; symex_dynamic::dynamic_object#1..head..dummy
+(let ebase_9 (Leaf 9))  ; member
+(let ebase_10 (Type 10))
+(let ebase_11 (Leaf 11))  ; address_of
+(let ebase_12 (Typecast ebase_10 ebase_11))  ; typecast
+(let ebase_13 (Leaf 13))  ; if
+(let ebase_14 (Leaf 14))  ; if
+(let ebase_15 (Leaf 15))  ; __CPROVER_memory_leak#2
+(let ebase_16 (Leaf 16))  ; if
+(let ebase_17 (Leaf 17))  ; symex_dynamic::dynamic_object#2..head..dummy
+(let ebase_18 (Leaf 18))  ; goto_symex::return_value::malloc!0#3
+(let ebase_19 (Type 19))
+(let ebase_20 (Leaf 20))  ; drm_vm_open_locked::$tmp::return_value_malloc!0@1#2
+(let ebase_21 (Typecast ebase_19 ebase_20))  ; typecast
+(let ebase_22 (Leaf 22))  ; drm_vm_open_locked::1::vma_entry!0@1#2
+(let ebase_23 (Null 23))  ; const NULL
+(let ebase_24 (Type 24))
+(let ebase_25 (Typecast ebase_24 ebase_22))  ; typecast
+(let ebase_26 (Typecast ebase_24 ebase_4))  ; typecast
+(let ebase_27 (Leaf 27))  ; list_add::news!0@1#1
+(let ebase_28 (Leaf 28))  ; if
+(let ebase_29 (Leaf 29))  ; list_add::$tmp::return_value___VERIFIER_nondet_int!0@1#2
+(let ebase_30 (Leaf 30))  ; nondet_symbol
+(let ebase_31 (Leaf 31))  ; list_add::news!0@1#3
+(let ebase_32 (Leaf 32))  ; if
+(let ebase_33 (Leaf 33))  ; elem#2
+(let ebase_34 (Leaf 34))  ; if
+(let ebase_35 (Leaf 35))  ; if
+(let ebase_36 (Leaf 36))  ; elem#3
+(let ebase_37 (Leaf 37))  ; nondet_symbol
+(let ebase_38 (Leaf 38))  ; member
+(let ebase_39 (Leaf 39))  ; symex_dynamic::dynamic_object$0#1..head..dummy
+(let ebase_40 (Leaf 40))  ; member
+(let ebase_41 (Leaf 41))  ; address_of
+(let ebase_42 (Typecast ebase_10 ebase_41))  ; typecast
+(let ebase_43 (Leaf 43))  ; if
+(let ebase_44 (Leaf 44))  ; __CPROVER_memory_leak#3
+(let ebase_45 (Leaf 45))  ; if
+(let ebase_46 (Leaf 46))  ; __CPROVER_memory_leak#4
+(let ebase_47 (Leaf 47))  ; if
+(let ebase_48 (Leaf 48))  ; symex_dynamic::dynamic_object$0#2..head..dummy
+(let ebase_49 (Leaf 49))  ; goto_symex::return_value::malloc!0#6
+(let ebase_50 (Leaf 50))  ; drm_vm_open_locked::$tmp::return_value_malloc!0@2#2
+(let ebase_51 (Typecast ebase_19 ebase_50))  ; typecast
+(let ebase_52 (Leaf 52))  ; drm_vm_open_locked::1::vma_entry!0@2#2
+(let ebase_53 (Typecast ebase_24 ebase_52))  ; typecast
+(let ebase_54 (Leaf 54))  ; list_add::news!0@2#1
+(let ebase_55 (Leaf 55))  ; elem#4
+(let ebase_56 (Leaf 56))  ; main::1::dev!0@1#1
+(let ebase_57 (Leaf 57))  ; struct
+(let ebase_58 (Leaf 58))  ; struct
+(let ebase_59 (Leaf 59))  ; main::1::dev!0@1#1..vmalist..dummy
+(let ebase_60 (Leaf 60))  ; drm_vm_open_locked::1::vma_entry!0@1#1
+(let ebase_61 (Leaf 61))  ; drm_vm_open_locked::$tmp::return_value_malloc!0@1#1
+(let ebase_62 (Leaf 62))  ; malloc::1::malloc_res!0@1#1
+(let ebase_63 (Leaf 63))  ; malloc::$tmp::malloc_value!0@1#1
+(let ebase_64 (Leaf 64))  ; list_add::$tmp::return_value___VERIFIER_nondet_int!0@1#1
+(let ebase_65 (Leaf 65))  ; drm_vm_open_locked::1::vma_entry!0@2#1
+(let ebase_66 (Leaf 66))  ; drm_vm_open_locked::$tmp::return_value_malloc!0@2#1
+(let ebase_67 (Leaf 67))  ; malloc::1::malloc_res!0@2#1
+(let ebase_68 (Leaf 68))  ; malloc::$tmp::malloc_value!0@2#1
+(let ebase_69 (Leaf 69))  ; symex::args::0
+(let ebase_70 (Leaf 70))  ; symex::args::1
+(let ebase_71 (Leaf 71))  ; symex::args::2
+(let ebase_72 (Leaf 72))  ; symex::args::3
+(let ebase_73 (Leaf 73))  ; symex::args::4
+(let ebase_74 (Leaf 74))  ; symex::args::5

@@ -15,6 +15,7 @@ use crate::transfer::*;
 use crate::word::*;
 use vstd::arithmetic::div_mod::*;
 use vstd::arithmetic::mul::*;
+use vstd::arithmetic::power2::*;
 use vstd::prelude::*;
 
 verus! {
@@ -58,6 +59,53 @@ proof fn lemma_from_under<W: Word>(i: int)
     W::lemma_from_int(i);
     lemma_mod_add_multiples_vanish(i, W::modulus() as int);
     lemma_small_mod((i + W::modulus()) as nat, W::modulus());
+}
+
+/// 2^a <= 2^b for a <= b.
+proof fn lemma_pow2_le(a: nat, b: nat)
+    requires
+        a <= b,
+    ensures
+        0 < pow2(a) <= pow2(b),
+{
+    lemma_pow2_pos(a);
+    if a < b {
+        lemma_pow2_strictly_increases(a, b);
+    }
+}
+
+/// Right shift is monotone in the operand and antitone in the amount.
+proof fn lemma_shr_bounds(lo: nat, x: nat, hi: nat, a: nat, s: nat, b: nat)
+    requires
+        lo <= x <= hi,
+        a <= s <= b,
+    ensures
+        lo / pow2(b) <= x / pow2(s) <= hi / pow2(a),
+        x / pow2(s) <= x,
+{
+    lemma_pow2_le(a, s);
+    lemma_pow2_le(s, b);
+    lemma_pow2_le(0, a);
+    lemma2_to64();
+    lemma_div_is_ordered(lo as int, x as int, pow2(b) as int);
+    lemma_div_is_ordered_by_denominator(x as int, pow2(s) as int, pow2(b) as int);
+    lemma_div_is_ordered_by_denominator(x as int, pow2(a) as int, pow2(s) as int);
+    lemma_div_is_ordered(x as int, hi as int, pow2(a) as int);
+    lemma_div_is_ordered_by_denominator(x as int, 1, pow2(s) as int);
+}
+
+/// Left shift is monotone in the operand and in the amount.
+proof fn lemma_shl_bounds(lo: nat, x: nat, hi: nat, a: nat, s: nat, b: nat)
+    requires
+        lo <= x <= hi,
+        a <= s <= b,
+    ensures
+        lo * pow2(a) <= x * pow2(s) <= hi * pow2(b),
+{
+    lemma_pow2_le(a, s);
+    lemma_pow2_le(s, b);
+    lemma_mul_upper_bound(lo as int, x as int, pow2(a) as int, pow2(s) as int);
+    lemma_mul_upper_bound(x as int, hi as int, pow2(s) as int, pow2(b) as int);
 }
 
 proof fn lemma_from_zero<W: Word>()
@@ -128,6 +176,28 @@ impl<W: Word> Interval<W> {
         } else {
             BotOr::Bot
         }
+    }
+
+    /// The in-range shift amounts of `k` lie in `[r.0, r.1]`, or there are none.
+    fn shift_range(k: &Self) -> (r: Option<(u32, u32)>)
+        requires
+            k.wf(),
+        ensures
+            match r {
+                Some((a, b)) => a <= b && (b as nat) < W::bits() && forall|s: W|
+                    #[trigger] k.gamma(s) && s.view() < W::bits() ==> a as nat <= s.view() <= b as nat,
+                None => forall|s: W| #[trigger] k.gamma(s) ==> s.view() >= W::bits(),
+            },
+    {
+        let a = k.lo.to_shift()?;
+        proof {
+            W::lemma_modulus();
+        }
+        let b = match k.hi.to_shift() {
+            Some(b) => b,
+            None => W::bit_width() - 1,
+        };
+        Some((a, b))
     }
 
     pub fn bounds(&self) -> (r: (W, W))
@@ -450,7 +520,7 @@ impl<W: Word> DivRem<Unsigned<W>> for Interval<W> {
         };
         let q = self.lo.udiv(d.hi);
         let same_q = q.eq(self.hi.udiv(dlo1));
-        if let (true, Some(qh), Some(ql)) = (same_q, q.checked_mul(d.hi), q.checked_mul(dlo1)) {
+        if same_q {
             {
                 proof {
                     lemma_fundamental_div_mod(self.lo.view() as int, d.hi.view() as int);
@@ -460,7 +530,28 @@ impl<W: Word> DivRem<Unsigned<W>> for Interval<W> {
                     lemma_mul_inequality(dlo1.view() as int, d.hi.view() as int, q.view() as int);
                     lemma_mul_is_commutative(q.view() as int, d.hi.view() as int);
                     lemma_mul_is_commutative(q.view() as int, dlo1.view() as int);
+                    self.lo.lemma_view_bounded();
+                    self.hi.lemma_view_bounded();
                 }
+                // q * d.hi <= lo and q * d.lo' <= hi, so neither product wraps.
+                let qh = match q.checked_mul(d.hi) {
+                    Some(v) => v,
+                    None => {
+                        proof {
+                            assert(false);
+                        }
+                        z
+                    },
+                };
+                let ql = match q.checked_mul(dlo1) {
+                    Some(v) => v,
+                    None => {
+                        proof {
+                            assert(false);
+                        }
+                        z
+                    },
+                };
                 let lo_r = match self.lo.checked_sub(qh) {
                     Some(v) => v,
                     None => { return (BotOr::Val(Self::top()), flag); },  // unreachable
@@ -592,6 +683,146 @@ impl<W: Word> DivRem<Signed<W>> for Interval<W> {
 
     fn rem(&self, d: &Self) -> (r: (BotOr<Self>, DivZero)) {
         Self::signed_div_flag(d)
+    }
+}
+
+/// Bounds that hold bit by bit: `x & y` is at most either operand, `x | y` at
+/// least either one, and `x | y`, `x ^ y` have no bit above the higher top.
+/// Warren's minOR/maxOR (Hacker's Delight 4-3) would make `and`/`or` exact.
+impl<W: Word> Bitwise<W> for Interval<W> {
+    fn and(&self, o: &Self) -> (r: Self) {
+        let hi = if self.hi.le(o.hi) {
+            self.hi
+        } else {
+            o.hi
+        };
+        let r = Interval { lo: W::zero(), hi };
+        proof {
+            assert forall|x: W, y: W| self.gamma(x) && o.gamma(y) implies #[trigger] r.gamma(
+                x.and(y),
+            ) by {
+                W::lemma_and_le(x, y);
+            }
+        }
+        r
+    }
+
+    fn or(&self, o: &Self) -> (r: Self) {
+        let lo = if self.lo.le(o.lo) {
+            o.lo
+        } else {
+            self.lo
+        };
+        let m = if self.hi.le(o.hi) {
+            o.hi
+        } else {
+            self.hi
+        };
+        let r = Interval { lo, hi: m.smear() };
+        proof {
+            W::lemma_below_ones_above(m, m, m);
+            assert forall|x: W, y: W| self.gamma(x) && o.gamma(y) implies #[trigger] r.gamma(
+                x.or(y),
+            ) by {
+                W::lemma_or_ge(x, y);
+                W::lemma_below_ones_above(x, y, m);
+            }
+        }
+        r
+    }
+
+    fn xor(&self, o: &Self) -> (r: Self) {
+        let m = if self.hi.le(o.hi) {
+            o.hi
+        } else {
+            self.hi
+        };
+        let r = Interval { lo: W::zero(), hi: m.smear() };
+        proof {
+            W::lemma_below_ones_above(m, m, m);
+            assert forall|x: W, y: W| self.gamma(x) && o.gamma(y) implies #[trigger] r.gamma(
+                x.xor(y),
+            ) by {
+                W::lemma_below_ones_above(x, y, m);
+            }
+        }
+        r
+    }
+
+    /// Exact: `!x = MAX - x` reverses the order.
+    fn not(&self) -> (r: Self) {
+        let r = Interval { lo: self.hi.bit_not(), hi: self.lo.bit_not() };
+        proof {
+            W::lemma_not(self.lo);
+            W::lemma_not(self.hi);
+            assert forall|x: W| self.gamma(x) implies #[trigger] r.gamma(x.not()) by {
+                W::lemma_not(x);
+            }
+        }
+        r
+    }
+}
+
+impl<W: Word> Shift<Unsigned<W>> for Interval<W> {
+    /// `[lo << a, hi << b]` over the in-range amounts `[a, b]` when no result
+    /// wraps; top otherwise.
+    fn shl(&self, k: &Self) -> (r: BotOr<Self>) {
+        let (a, b) = match Self::shift_range(k) {
+            Some(ab) => ab,
+            None => return BotOr::Bot,
+        };
+        proof {
+            lemma_shl_bounds(self.lo.view(), self.lo.view(), self.hi.view(), a as nat, a as nat, b as nat);
+        }
+        match self.hi.checked_shl(b) {
+            Some(hi) => {
+                proof {
+                    hi.lemma_view_bounded();
+                }
+                let lo = match self.lo.checked_shl(a) {
+                    Some(lo) => lo,
+                    None => {
+                        proof {
+                            assert(false);
+                        }
+                        W::zero()
+                    },
+                };
+                let r = Interval { lo, hi };
+                proof {
+                    assert forall|x: W, s: W|
+                        self.gamma(x) && k.gamma(s) && Unsigned::<W>::shift_ok(s) implies #[trigger] r.gamma(
+                        Unsigned::<W>::shl(x, s),
+                    ) by {
+                        lemma_shl_bounds(self.lo.view(), x.view(), self.hi.view(), a as nat, s.view(), b as nat);
+                        lemma_from_small::<W>((x.view() * pow2(s.view())) as int);
+                    }
+                }
+                BotOr::Val(r)
+            },
+            None => BotOr::Val(Self::top()),
+        }
+    }
+
+    /// `[lo >> b, hi >> a]` over the in-range amounts `[a, b]`.
+    fn shr(&self, k: &Self) -> (r: BotOr<Self>) {
+        let (a, b) = match Self::shift_range(k) {
+            Some(ab) => ab,
+            None => return BotOr::Bot,
+        };
+        let r = Interval { lo: self.lo.shr(b), hi: self.hi.shr(a) };
+        proof {
+            lemma_shr_bounds(self.lo.view(), self.lo.view(), self.hi.view(), a as nat, a as nat, b as nat);
+            assert forall|x: W, s: W|
+                self.gamma(x) && k.gamma(s) && Unsigned::<W>::shift_ok(s) implies #[trigger] r.gamma(
+                Unsigned::<W>::shr(x, s),
+            ) by {
+                lemma_shr_bounds(self.lo.view(), x.view(), self.hi.view(), a as nat, s.view(), b as nat);
+                x.lemma_view_bounded();
+                lemma_from_small::<W>((x.view() / pow2(s.view())) as int);
+            }
+        }
+        BotOr::Val(r)
     }
 }
 

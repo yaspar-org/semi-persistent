@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+(sort E)
+(function Zero () E)
+(function p () E) (function q () E) (function a () E) (function b () E)
+(function z () E) (function r () E)
+(function Add (E) E :assoc-comm :identity (Zero))
+(set-option :completion eager)
+(let pp (p)) (let qq (q)) (let aa (a)) (let bb (b))
+(let n1 (Add a b))
+(let n2 (Add p q r))
+(union r (Zero))
+(union n1 n2)
+(let d (Add a b z))
+(let e (Add p q z))
+
+(check-eq d e)

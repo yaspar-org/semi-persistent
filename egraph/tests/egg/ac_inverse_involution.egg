@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; R1 (InvMatching), involution: the node Neg(Neg(X)) equals X.
+;; {X, Neg(X)} = {} = {Neg(X), Neg(Neg(X))} and cancellation of Neg(X).
+(sort E)
+(constructor A () E)
+(constructor C () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(let t (Neg (Neg (A))))
+(check-eq t (A))
+(let u (Add (C) (Neg (Neg (C)))))
+(let v (Add (C) (C)))
+(check-eq u v)

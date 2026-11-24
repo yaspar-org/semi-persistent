@@ -1,0 +1,25 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; TYPES: machine
+;; The demand rule for a sequence with a unit (counterexample 5 of the laws proof):
+;; n = seq[a, X, b], X ∋ seq[u, u] with u the unit; the view [a, u, u, b] normalizes to
+;; [a, b], (seq p q) matches it with no rest, and closing the leaf gives [a, X, b],
+;; which matches nothing: the leaf's block is invisible, so a leaf all of whose elements
+;; are the unit is non-inert. The engine cannot build this shape: `:identity` is
+;; accepted only with `:comm`, so a sequence has no unit and the sequence clause of the
+;; rule never fires. This fixture pins that restriction; if a sequence ever gets a
+;; unit, it must become an `EXPECT: ok` check of the match below.
+(sort E)
+(function u () E)
+(function Ac () E) (function Bc () E) (function Xc () E) (function Uc () E)
+(function seq (E) E :assoc :identity (u))
+(function Pair (E E) E)
+(let x (Xc))
+(let v (Uc))
+(union x (seq v v))
+(let n (seq (Ac) x (Bc)))
+(union v (u))
+(rewrite (seq p q) (Pair p q) :flatten)
+(run 1)
+(check-eq n (Pair (Ac) (Bc)))

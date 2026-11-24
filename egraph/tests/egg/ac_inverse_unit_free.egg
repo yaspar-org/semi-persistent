@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; R2 (InvUnitFree): an inverse node in the unit class puts its argument there.
+;; {A, Neg(A)} = {} and Neg(A) = Zero give {A} = {} by the unit drop; the stored
+;; monomial never carries the pair, so this is asserted at rebuild.
+(sort E)
+(constructor A () E)
+(constructor C () E)
+(constructor D () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(union (Neg (A)) (Zero))
+(check-eq (A) (Zero))

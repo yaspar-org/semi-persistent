@@ -1,0 +1,52 @@
+;; Converted from the CBMC e-graph dump arith_mul_matrix2x2.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let econg_2 (Const 0 2))  ; const 0
+(let econg_3 (Leaf 3))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let econg_4 (Leaf 4))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let econg_5 (Leaf 5))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let econg_6 (Leaf 6))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let econg_7 (Leaf 7))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let econg_8 (Leaf 8))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let econg_9 (Leaf 9))  ; main::$tmp::return_value_nondet_u32$1!0@1#2
+(let econg_10 (Leaf 10))  ; main::$tmp::return_value_nondet_u32$1!0@1#2
+(let econg_11 (Leaf 11))  ; main::$tmp::return_value_nondet_u32$1!0@1#2
+(let econg_12 (Leaf 12))  ; main::$tmp::return_value_nondet_u32$2!0@1#2
+(let econg_13 (Leaf 13))  ; main::$tmp::return_value_nondet_u32$2!0@1#2
+(let econg_14 (Leaf 14))  ; main::$tmp::return_value_nondet_u32$2!0@1#2
+(let econg_15 (Leaf 15))  ; main::1::a!0@1#1
+(let econg_16 (Leaf 16))  ; main::$tmp::return_value_nondet_u32!0@1#1
+(let econg_17 (Leaf 17))  ; main::1::b!0@1#1
+(let econg_18 (Leaf 18))  ; main::$tmp::return_value_nondet_u32$0!0@1#1
+(let econg_19 (Leaf 19))  ; main::1::c!0@1#1
+(let econg_20 (Leaf 20))  ; main::$tmp::return_value_nondet_u32$1!0@1#1
+(let econg_21 (Leaf 21))  ; main::1::d!0@1#1
+(let econg_22 (Leaf 22))  ; main::$tmp::return_value_nondet_u32$2!0@1#1
+(let econg_23 (Mult econg_3 econg_6))  ; *
+(let econg_24 (Mult econg_9 econg_12))  ; *
+(let econg_25 (Plus econg_23 econg_24))  ; +
+(union econg_3 econg_4)
+(union econg_3 econg_5)
+(union econg_6 econg_7)
+(union econg_6 econg_8)
+(union econg_9 econg_10)
+(union econg_9 econg_11)
+(union econg_12 econg_13)
+(union econg_12 econg_14)

@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; A collapsed node whose monomial changes on recanonicalization is a rule again. The first
+;; rebuild collapses `Add{c2,c3,c5}`, which contains `c2c4 → c2c3`. The merge `C2 = C3` turns
+;; it into `Add{c2²,c5}`, which no rule reduces, so it is the rule `c2²c5 → c2²`. Its
+;; superposition with `c1c2² → C5` gives `C5·C5 = c1·c2²c5 = c1c2² = C5`. The collapsed flag
+;; used to survive the recanonicalization, so the rule never re-entered completion and the
+;; check failed; with `(union (C2) (C3))` first it passed. Reduced from
+;; `semper-conform-cc-cert` seed 1004, case 655.
+(sort E)
+(function C1 () E) (function C2 () E) (function C3 () E) (function C4 () E) (function C5 () E) (function Zero () E)
+(function Add (E) E :assoc-comm :identity (Zero))
+(set-option :completion eager)
+(union (Add (C2) (C4)) (Add (C2) (C3)))
+(union (Add (C3) (C4)) (Add (C2) (C3) (C5)))
+(union (C2) (C3))
+(union (Add (C1) (C2):2) (C5))
+(check-eq (C5) (Add (C5):2))

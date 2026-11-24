@@ -1,0 +1,48 @@
+;; Converted from the CBMC e-graph dump regr_Pointer2.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let econg_2 (Const 0 2))  ; const 0
+(let econg_3 (Leaf 3))  ; main::1::x_i!0@1#2
+(let econg_4 (Leaf 4))  ; main::1::x_i!0@1#2
+(let econg_5 (Type 5))
+(let econg_6 (Leaf 6))  ; address_of
+(let econg_7 (Typecast econg_5 econg_6))  ; typecast
+(let econg_8 (Leaf 8))  ; main::1::x_i!0@1#3
+(let econg_9 (Leaf 9))  ; main::1::x_i!0@1#3
+(let econg_10 (Leaf 10))  ; main::1::x!0@1#1
+(let econg_11 (Leaf 11))  ; main::1::x_i!0@1#1
+(let econg_12 (Const 1 12))  ; const 1
+(let econg_13 (BitAnd econg_7 econg_12))  ; bitand
+(let econg_14 (Const 0 14))  ; const 0
+(let econg_15 (Leaf 15))  ; pointer_object
+(let econg_16 (Null 16))  ; const NULL
+(let econg_17 (Leaf 17))  ; pointer_object
+(let econg_18 (Type 18))
+(let econg_19 (Typecast econg_18 econg_9))  ; typecast
+(let econg_20 (Leaf 20))  ; pointer_object
+(let econg_21 (Type 21))
+(let econg_22 (Leaf 22))  ; object_size
+(let econg_23 (Typecast econg_21 econg_22))  ; typecast
+(let econg_24 (Leaf 24))  ; pointer_offset
+(let econg_25 (Typecast econg_21 econg_24))  ; typecast
+(let econg_26 (Const 4 26))  ; const 4
+(let econg_27 (Plus econg_25 econg_26))  ; +
+(union econg_3 econg_4)
+(union econg_8 econg_9)

@@ -1,0 +1,119 @@
+;; Converted from the CBMC e-graph dump svcomp_loops_compact.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let econg_0 (Null 0))  ; const NULL
+(let econg_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let econg_2 (Const 0 2))  ; const 0
+(let econg_3 (Leaf 3))  ; array_of
+(let econg_4 (Const 0 4))  ; const 0
+(let econg_5 (Leaf 5))  ; main::argc!0@1#1
+(let econg_6 (Leaf 6))  ; main::argc!0@1#1
+(let econg_7 (Leaf 7))  ; address_of
+(let econg_8 (Const 8 8))  ; const 8
+(let econg_9 (Type 9))
+(let econg_10 (Const 0 10))  ; const 0
+(let econg_11 (Typecast econg_9 econg_10))  ; typecast
+(let econg_12 (Leaf 12))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let econg_13 (Leaf 13))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let econg_14 (Leaf 14))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#2
+(let econg_15 (Const 0 15))  ; const 0
+(let econg_16 (Leaf 16))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#2
+(let econg_17 (Leaf 17))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#2
+(let econg_18 (Leaf 18))  ; with
+(let econg_19 (Const 1 19))  ; const 1
+(let econg_20 (Leaf 20))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@2#2
+(let econg_21 (Leaf 21))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@2#2
+(let econg_22 (Leaf 22))  ; with
+(let econg_23 (Leaf 23))  ; main::1::array#2
+(let econg_24 (Const 2 24))  ; const 2
+(let econg_25 (Leaf 25))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@3#2
+(let econg_26 (Leaf 26))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@3#2
+(let econg_27 (Leaf 27))  ; with
+(let econg_28 (Leaf 28))  ; main::1::array#3
+(let econg_29 (Const 3 29))  ; const 3
+(let econg_30 (Leaf 30))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@4#2
+(let econg_31 (Leaf 31))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@4#2
+(let econg_32 (Leaf 32))  ; with
+(let econg_33 (Leaf 33))  ; main::1::array#4
+(let econg_34 (Const 4 34))  ; const 4
+(let econg_35 (Leaf 35))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@5#2
+(let econg_36 (Leaf 36))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@5#2
+(let econg_37 (Leaf 37))  ; with
+(let econg_38 (Leaf 38))  ; main::1::array#5
+(let econg_39 (Const 5 39))  ; const 5
+(let econg_40 (Leaf 40))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@6#2
+(let econg_41 (Leaf 41))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@6#2
+(let econg_42 (Leaf 42))  ; with
+(let econg_43 (Leaf 43))  ; main::1::array#6
+(let econg_44 (Const 6 44))  ; const 6
+(let econg_45 (Leaf 45))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@7#2
+(let econg_46 (Leaf 46))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@7#2
+(let econg_47 (Leaf 47))  ; with
+(let econg_48 (Leaf 48))  ; main::1::array#7
+(let econg_49 (Const 7 49))  ; const 7
+(let econg_50 (Leaf 50))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@8#2
+(let econg_51 (Leaf 51))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@8#2
+(let econg_52 (Leaf 52))  ; with
+(let econg_53 (Leaf 53))  ; main::1::array#8
+(let econg_54 (Const 8 54))  ; const 8
+(let econg_55 (Leaf 55))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@9#2
+(let econg_56 (Leaf 56))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@9#2
+(let econg_57 (Leaf 57))  ; with
+(let econg_58 (Leaf 58))  ; main::1::array#9
+(let econg_59 (Const 9 59))  ; const 9
+(let econg_60 (Leaf 60))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@10#2
+(let econg_61 (Leaf 61))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@10#2
+(let econg_62 (Leaf 62))  ; with
+(let econg_63 (Leaf 63))  ; main::1::array#10
+(let econg_64 (Const 10 64))  ; const A
+(let econg_65 (Leaf 65))  ; main::1::ND!0@1#1
+(let econg_66 (Leaf 66))  ; main::$tmp::return_value___VERIFIER_nondet_char!0@1#1
+(let econg_67 (Leaf 67))  ; main::1::i!0@1#1
+(let econg_68 (Leaf 68))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@1#1
+(let econg_69 (Leaf 69))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@2#1
+(let econg_70 (Leaf 70))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@3#1
+(let econg_71 (Leaf 71))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@4#1
+(let econg_72 (Leaf 72))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@5#1
+(let econg_73 (Leaf 73))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@6#1
+(let econg_74 (Leaf 74))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@7#1
+(let econg_75 (Leaf 75))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@8#1
+(let econg_76 (Leaf 76))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@9#1
+(let econg_77 (Leaf 77))  ; main::$tmp::return_value___VERIFIER_nondet_char$0!0@10#1
+(let econg_78 (Leaf 78))  ; main::argc!0@1#1
+(let econg_79 (Leaf 79))  ; symex::args::1
+(let econg_80 (Leaf 80))  ; main::argc!0@1#1
+(let econg_81 (Leaf 81))  ; index
+(let econg_82 (Type 82))
+(let econg_83 (Typecast econg_82 econg_6))  ; typecast
+(let econg_84 (Null 84))  ; const NULL
+(let econg_85 (Leaf 85))  ; index
+(union econg_5 econg_6)
+(union econg_12 econg_13)
+(union econg_12 econg_14)
+(union econg_16 econg_17)
+(union econg_20 econg_21)
+(union econg_25 econg_26)
+(union econg_30 econg_31)
+(union econg_35 econg_36)
+(union econg_40 econg_41)
+(union econg_45 econg_46)
+(union econg_50 econg_51)
+(union econg_55 econg_56)
+(union econg_60 econg_61)
+(union econg_5 econg_78)
+(union econg_5 econg_80)

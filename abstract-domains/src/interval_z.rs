@@ -181,6 +181,66 @@ impl IntervalZ {
         IntervalZ { lo: Lo::Fin(dup_ibig(&c)), hi: Hi::Fin(c) }
     }
 
+    /// Whether this interval can contain a negative value, zero, or a
+    /// positive value.  This is used by FactsZ clients to refine Sign directly
+    /// from the interval bounds without constructing temporary IBig hulls.
+    pub fn sign_possibilities(&self) -> (r: (bool, bool, bool))
+        requires
+            self.wf(),
+        ensures
+            forall|x: int| #[trigger] self.gamma(x) && x < 0 ==> r.0,
+            forall|x: int| #[trigger] self.gamma(x) && x == 0 ==> r.1,
+            forall|x: int| #[trigger] self.gamma(x) && x > 0 ==> r.2,
+    {
+        let zero = IBig::from_i64(0);
+        let negative = match &self.lo {
+            Lo::NegInf => true,
+            Lo::Fin(lo) => !zero.le(lo),
+        };
+        let zero_possible = match (&self.lo, &self.hi) {
+            (Lo::NegInf, Hi::PosInf) => true,
+            (Lo::NegInf, Hi::Fin(hi)) => zero.le(hi),
+            (Lo::Fin(lo), Hi::PosInf) => lo.le(&zero),
+            (Lo::Fin(lo), Hi::Fin(hi)) => lo.le(&zero) && zero.le(hi),
+        };
+        let positive = match &self.hi {
+            Hi::PosInf => true,
+            Hi::Fin(hi) => !hi.le(&zero),
+        };
+        proof {
+            assert forall|x: int| #[trigger] self.gamma(x) && x < 0 implies negative by {
+                match &self.lo {
+                    Lo::NegInf => {},
+                    Lo::Fin(lo) => {
+                        assert(lo.view() <= x);
+                        assert(!(0int <= lo.view()));
+                    },
+                }
+            }
+            assert forall|x: int| #[trigger] self.gamma(x) && x == 0 implies zero_possible by {
+                match (&self.lo, &self.hi) {
+                    (Lo::NegInf, Hi::PosInf) => {},
+                    (Lo::NegInf, Hi::Fin(hi)) => { assert(0int <= hi.view()); },
+                    (Lo::Fin(lo), Hi::PosInf) => { assert(lo.view() <= 0int); },
+                    (Lo::Fin(lo), Hi::Fin(hi)) => {
+                        assert(lo.view() <= 0int);
+                        assert(0int <= hi.view());
+                    },
+                }
+            }
+            assert forall|x: int| #[trigger] self.gamma(x) && x > 0 implies positive by {
+                match &self.hi {
+                    Hi::PosInf => {},
+                    Hi::Fin(hi) => {
+                        assert(x <= hi.view());
+                        assert(!(hi.view() <= 0int));
+                    },
+                }
+            }
+        }
+        (negative, zero_possible, positive)
+    }
+
     /// The intersection, exactly: an interval meet loses nothing.
     pub fn meet_exact(&self, o: &Self) -> (r: BotOr<Self>)
         requires

@@ -1,0 +1,52 @@
+;; Converted from the CBMC e-graph dump svcomp_loops_for_infinite_loop_2.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Const 36028797018963968 1))  ; const 80000000000000
+(let ebase_2 (Const 0 2))  ; const 0
+(let ebase_3 (Const 0 3))  ; const 0
+(let ebase_4 (Leaf 4))  ; main::$tmp::return_value___VERIFIER_nondet_int!0@1#2
+(let ebase_5 (Leaf 5))  ; nondet_symbol
+(let ebase_6 (Leaf 6))  ; main::1::n!0@1#2
+(let ebase_7 (Const 1 7))  ; const 1
+(let ebase_8 (Const 1 8))  ; const 1
+(let ebase_9 (Const 2 9))  ; const 2
+(let ebase_10 (Const 3 10))  ; const 3
+(let ebase_11 (Const 4 11))  ; const 4
+(let ebase_12 (Const 5 12))  ; const 5
+(let ebase_13 (Const 6 13))  ; const 6
+(let ebase_14 (Const 7 14))  ; const 7
+(let ebase_15 (Const 8 15))  ; const 8
+(let ebase_16 (Const 9 16))  ; const 9
+(let ebase_17 (Const 10 17))  ; const A
+(let ebase_18 (Leaf 18))  ; main::1::i!0@1#1
+(let ebase_19 (Leaf 19))  ; main::1::x!0@1#1
+(let ebase_20 (Leaf 20))  ; main::1::y!0@1#1
+(let ebase_21 (Leaf 21))  ; main::1::n!0@1#1
+(let ebase_22 (Leaf 22))  ; main::$tmp::return_value___VERIFIER_nondet_int!0@1#1
+(let ebase_23 (Leaf 23))  ; if
+(let ebase_24 (Leaf 24))  ; symex::args::0
+(let ebase_25 (Leaf 25))  ; symex::args::1
+(let ebase_26 (Leaf 26))  ; symex::args::2
+(let ebase_27 (Leaf 27))  ; symex::args::3
+(let ebase_28 (Leaf 28))  ; symex::args::4
+(let ebase_29 (Leaf 29))  ; symex::args::5
+(let ebase_30 (Leaf 30))  ; symex::args::6
+(let ebase_31 (Leaf 31))  ; symex::args::7
+(let ebase_32 (Leaf 32))  ; symex::args::8
+(let ebase_33 (Leaf 33))  ; symex::args::9

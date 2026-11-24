@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; CHECK_AC_BASIS: on
+;; Control for ac_minmono_grow_wa.egg: the same merge in the other direction,
+;; (union (a) (w)), keeps a, so Add{a,b} does not change and stays least.
+;; Passed before the order-key fix too.
+(sort E)
+(function a () E) (function b () E) (function c () E) (function e () E)
+(function y () E) (function w () E)
+(function Add (E) E :assoc-comm)
+(set-option :completion eager)
+(let n1 (Add (a) (b)))
+(let n2 (Add (c) (e)))
+(union n1 n2)
+(union (a) (w))
+(let d (Add (c) (e) (y)))
+(let f (Add (b) (w) (y)))
+(check-eq d f)

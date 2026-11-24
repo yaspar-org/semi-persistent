@@ -1,0 +1,89 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; semper-conform-cc-cert seed=1 case=107 family=wide bound=4 classes=3
+;; Every check-neq pair is separated by a countermodel of the declared laws and the
+;; asserted equations (SemperProofs/CC/Countermodel.lean: not_E_of_separates); its
+;; certificate precedes it. check-eq pairs are =_E (bounded oracle).
+;; candidates: 17, certified check-neq: 17, uncertified: 0, check-eq: 32
+;; MODEL max3^1 C0=1 C1=1 C2=0
+;; MODEL max3^1 C0=1 C1=1 C2=1
+(sort E)
+(function C0 () E)
+(function C1 () E)
+(function C2 () E)
+(function Top () E)
+(function And (E) E :assoc-comm-idem :identity (Top))
+(set-option :completion eager)
+(union (And (C0) (C1)) (And (C0) (C0)))
+(union (C1) (And (C1) (C2) (C2)))
+(union (And (C0) (C0) (C0)) (C1))
+(union (And (C0) (C0) (C1) (C2) (Top)) (C0))
+(union (And (C1) (C2)) (And (C0) (C2) (C2)))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C0) (C1)) (Top))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C0) (C0)) (Top))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C0) (C1)) (C2))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C0) (C0)) (C2))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (C1) (Top))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C1) (C2) (C2)) (Top))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (C1) (C2))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C1) (C2) (C2)) (C2))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C0) (C0) (C0)) (Top))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C0) (C0) (C0)) (C2))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (C0) (Top))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (C0) (C2))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C1) (C2)) (Top))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C0) (C2) (C2)) (Top))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C1) (C2)) (C2))
+;; CERT max3^1 C0=1 C1=1 C2=0
+(check-neq (And (C0) (C2) (C2)) (C2))
+;; CERT max3^1 C0=1 C1=1 C2=1
+(check-neq (Top) (C2))
+(check-eq (C0) (C1))
+(check-eq (C0) (And (C0) (C0)))
+(check-eq (C0) (And (C0) (C1)))
+(check-eq (C0) (And (C0) (C2)))
+(check-eq (C0) (And (C1) (C1)))
+(check-eq (C0) (And (C1) (C2)))
+(check-eq (C2) (And (C2) (C2)))
+(check-eq (C0) (And (C0) (C0) (C0)))
+(check-eq (C0) (And (C0) (C0) (C1)))
+(check-eq (C0) (And (C0) (C0) (C2)))
+(check-eq (C0) (And (C0) (C1) (C1)))
+(check-eq (C0) (And (C0) (C1) (C2)))
+(check-eq (C0) (And (C0) (C2) (C2)))
+(check-eq (C0) (And (C1) (C1) (C1)))
+(check-eq (C0) (And (C1) (C1) (C2)))
+(check-eq (C0) (And (C1) (C2) (C2)))
+(check-eq (C2) (And (C2) (C2) (C2)))
+(check-eq (C0) (And (C0) (C0) (C0) (C0)))
+(check-eq (C0) (And (C0) (C0) (C0) (C1)))
+(check-eq (C0) (And (C0) (C0) (C0) (C2)))
+(check-eq (C0) (And (C0) (C0) (C1) (C1)))
+(check-eq (C0) (And (C0) (C0) (C1) (C2)))
+(check-eq (C0) (And (C0) (C0) (C2) (C2)))
+(check-eq (C0) (And (C0) (C1) (C1) (C1)))
+(check-eq (C0) (And (C0) (C1) (C1) (C2)))
+(check-eq (C0) (And (C0) (C1) (C2) (C2)))
+(check-eq (C0) (And (C0) (C2) (C2) (C2)))
+(check-eq (C0) (And (C1) (C1) (C1) (C1)))
+(check-eq (C0) (And (C1) (C1) (C1) (C2)))
+(check-eq (C0) (And (C1) (C1) (C2) (C2)))
+(check-eq (C0) (And (C1) (C2) (C2) (C2)))
+(check-eq (C2) (And (C2) (C2) (C2) (C2)))

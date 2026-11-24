@@ -1,0 +1,62 @@
+;; Converted from the CBMC e-graph dump arith_mul_bench2.egg by scripts/cbmc-egg-convert.py.
+;; Source: cbmc-egg-dumps.tar.gz, provided by Michael Tautschnig; see egraph/tests/egg/cbmc/README.md.
+(sort Term)
+(function Leaf (IBig) Term)
+(function Const (IBig IBig) Term)   ; value, leaf id
+(function Null (IBig) Term)
+(function Type (IBig) Term)
+(function Plus (Term) Term :assoc-comm)
+(function Mult (Term) Term :assoc-comm)
+(function BitAnd (Term) Term :assoc-comm-idem)
+(function BitOr (Term) Term :assoc-comm-idem)
+(function BitXor (Term) Term :assoc-comm)
+(function Equal (Term Term) Term :comm)
+(function Minus (Term Term) Term)
+(function Neg (Term) Term)
+(function BitNot (Term) Term)
+(function Typecast (Term Term) Term)
+
+(let ebase_0 (Null 0))  ; const NULL
+(let ebase_1 (Leaf 1))  ; __CPROVER_deallocated#1
+(let ebase_2 (Equal ebase_0 ebase_1))  ; =  ;; [ASSUME]
+(let ebase_3 (Leaf 3))  ; __CPROVER_max_malloc_size!0#1
+(let ebase_4 (Const 36028797018963968 4))  ; const 80000000000000
+(let ebase_5 (Equal ebase_3 ebase_4))  ; =  ;; [ASSUME]
+(let ebase_6 (Leaf 6))  ; __CPROVER_memory_leak#1
+(let ebase_7 (Equal ebase_0 ebase_6))  ; =  ;; [ASSUME]
+(let ebase_8 (Leaf 8))  ; __CPROVER_rounding_mode!0#1
+(let ebase_9 (Const 0 9))  ; const 0
+(let ebase_10 (Equal ebase_8 ebase_9))  ; =  ;; [ASSUME]
+(let ebase_11 (Leaf 11))  ; main::$tmp::return_value_nondet_u32!0@1#2
+(let ebase_12 (Leaf 12))  ; nondet_symbol
+(let ebase_13 (Equal ebase_11 ebase_12))  ; =  ;; [ASSUME]
+(let ebase_14 (Leaf 14))  ; main::1::a!0@1#2
+(let ebase_15 (Equal ebase_11 ebase_14))  ; =  ;; [ASSUME]
+(let ebase_16 (Leaf 16))  ; main::$tmp::return_value_nondet_u32$0!0@1#2
+(let ebase_17 (Leaf 17))  ; nondet_symbol
+(let ebase_18 (Equal ebase_16 ebase_17))  ; =  ;; [ASSUME]
+(let ebase_19 (Leaf 19))  ; main::1::b!0@1#2
+(let ebase_20 (Equal ebase_16 ebase_19))  ; =  ;; [ASSUME]
+(let ebase_21 (Leaf 21))  ; main::$tmp::return_value_nondet_u32$1!0@1#2
+(let ebase_22 (Leaf 22))  ; nondet_symbol
+(let ebase_23 (Equal ebase_21 ebase_22))  ; =  ;; [ASSUME]
+(let ebase_24 (Leaf 24))  ; main::1::c!0@1#2
+(let ebase_25 (Equal ebase_21 ebase_24))  ; =  ;; [ASSUME]
+(let ebase_26 (Leaf 26))  ; main::$tmp::return_value_nondet_u32$2!0@1#2
+(let ebase_27 (Leaf 27))  ; nondet_symbol
+(let ebase_28 (Equal ebase_26 ebase_27))  ; =  ;; [ASSUME]
+(let ebase_29 (Leaf 29))  ; main::1::d!0@1#2
+(let ebase_30 (Equal ebase_26 ebase_29))  ; =  ;; [ASSUME]
+(let ebase_31 (Leaf 31))  ; main::1::a!0@1#1
+(let ebase_32 (Leaf 32))  ; main::$tmp::return_value_nondet_u32!0@1#1
+(let ebase_33 (Leaf 33))  ; main::1::b!0@1#1
+(let ebase_34 (Leaf 34))  ; main::$tmp::return_value_nondet_u32$0!0@1#1
+(let ebase_35 (Leaf 35))  ; main::1::c!0@1#1
+(let ebase_36 (Leaf 36))  ; main::$tmp::return_value_nondet_u32$1!0@1#1
+(let ebase_37 (Leaf 37))  ; main::1::d!0@1#1
+(let ebase_38 (Leaf 38))  ; main::$tmp::return_value_nondet_u32$2!0@1#1
+(let ebase_39 (Mult ebase_14 ebase_19))  ; *
+(let ebase_40 (Mult ebase_24 ebase_29))  ; *
+(let ebase_41 (Plus ebase_39 ebase_40))  ; +
+(let ebase_42 (Equal ebase_41 ebase_41))  ; =  ;; [ASSERT]
+(let ebase_43 (Leaf 43))  ; const true  ;; [ASSUME]

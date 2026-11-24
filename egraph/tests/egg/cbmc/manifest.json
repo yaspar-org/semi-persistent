@@ -1,0 +1,1592 @@
+{
+ "arith_contract_chain.base": {
+  "lets": 67,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 19
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "arith_contract_chain.cong": {
+  "lets": 67,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 19
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 10
+ },
+ "arith_just_comm.base": {
+  "lets": 28,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 9
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "arith_just_comm.cong": {
+  "lets": 28,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 9
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "arith_mul_bench1.base": {
+  "lets": 81,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 23
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "arith_mul_bench1.cong": {
+  "lets": 85,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 23
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 18
+ },
+ "arith_mul_bench2.base": {
+  "lets": 44,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 13
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "arith_mul_bench2.cong": {
+  "lets": 44,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 13
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 8
+ },
+ "arith_mul_bench3.base": {
+  "lets": 172,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 48
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "arith_mul_bench3.cong": {
+  "lets": 180,
+  "roles": {
+   "ASSERT": 1,
+   "ASSUME": 48
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 34
+ },
+ "arith_mul_dot4.base": {
+  "lets": 53,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "arith_mul_dot4.cong": {
+  "lets": 57,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 18
+ },
+ "arith_mul_dot8.base": {
+  "lets": 110,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "arith_mul_dot8.cong": {
+  "lets": 118,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 34
+ },
+ "arith_mul_matrix2x2.base": {
+  "lets": 26,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "arith_mul_matrix2x2.cong": {
+  "lets": 26,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 8
+ },
+ "arith_simple.base": {
+  "lets": 14,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "arith_simple.cong": {
+  "lets": 14,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "cbmc_regr_Malloc11.base": {
+  "lets": 76,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "cbmc_regr_Malloc11.cong": {
+  "lets": 76,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "collections_slist_test_add.base": {
+  "lets": 3226,
+  "roles": {
+   "ASSUME": 1074
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "collections_slist_test_add.cong": {
+  "lets": 3226,
+  "roles": {
+   "ASSUME": 1074
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 93
+ },
+ "collections_slist_test_addAt.base": {
+  "lets": 6446,
+  "roles": {
+   "ASSUME": 2062
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "collections_slist_test_addAt.cong": {
+  "lets": 6446,
+  "roles": {
+   "ASSUME": 2062
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 109
+ },
+ "collections_slist_test_contains.base": {
+  "lets": 3891,
+  "roles": {
+   "ASSUME": 1293
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "collections_slist_test_contains.cong": {
+  "lets": 3891,
+  "roles": {
+   "ASSUME": 1293
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 113
+ },
+ "collections_slist_test_remove.base": {
+  "lets": 5736,
+  "roles": {
+   "ASSUME": 1857
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "collections_slist_test_remove.cong": {
+  "lets": 5736,
+  "roles": {
+   "ASSUME": 1857
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 116
+ },
+ "collections_slist_test_removeFirst.base": {
+  "lets": 4990,
+  "roles": {
+   "ASSUME": 1646
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "collections_slist_test_removeFirst.cong": {
+  "lets": 4990,
+  "roles": {
+   "ASSUME": 1646
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 106
+ },
+ "regr_Array_Initialization2.base": {
+  "lets": 18,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Array_Initialization2.cong": {
+  "lets": 18,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 2
+ },
+ "regr_Array_Pointer3.base": {
+  "lets": 83,
+  "roles": {
+   "A": 1,
+   "B": 1,
+   "C": 1,
+   "D": 1,
+   "E": 1,
+   "F": 1
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Array_Pointer3.cong": {
+  "lets": 83,
+  "roles": {
+   "A": 1,
+   "B": 1,
+   "C": 1,
+   "D": 1,
+   "E": 1,
+   "F": 1
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 10
+ },
+ "regr_Array_UF1.base": {
+  "lets": 100,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Array_UF1.cong": {
+  "lets": 100,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 5
+ },
+ "regr_Array_UF14.base": {
+  "lets": 47,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Array_UF14.cong": {
+  "lets": 47,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 10
+ },
+ "regr_Array_UF2.base": {
+  "lets": 63,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Array_UF2.cong": {
+  "lets": 63,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "regr_Array_UF3.base": {
+  "lets": 169,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Array_UF3.cong": {
+  "lets": 169,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 12
+ },
+ "regr_Fixedbv3.base": {
+  "lets": 23,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Fixedbv3.cong": {
+  "lets": 23,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 3
+ },
+ "regr_Float-no-simp1.base": {
+  "lets": 27,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Float-no-simp1.cong": {
+  "lets": 27,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 1
+ },
+ "regr_Float-no-simp2.base": {
+  "lets": 12,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Float-no-simp2.cong": {
+  "lets": 12,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 1
+ },
+ "regr_Float3.base": {
+  "lets": 23,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Float3.cong": {
+  "lets": 23,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 3
+ },
+ "regr_Float4.base": {
+  "lets": 17,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Float4.cong": {
+  "lets": 17,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 1
+ },
+ "regr_Float5.base": {
+  "lets": 16,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Float5.cong": {
+  "lets": 16,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 3
+ },
+ "regr_Float6.base": {
+  "lets": 13,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Float6.cong": {
+  "lets": 13,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 2
+ },
+ "regr_Malloc1.base": {
+  "lets": 75,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc1.cong": {
+  "lets": 75,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 6
+ },
+ "regr_Malloc10.base": {
+  "lets": 75,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc10.cong": {
+  "lets": 75,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 5
+ },
+ "regr_Malloc11.base": {
+  "lets": 76,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc11.cong": {
+  "lets": 76,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "regr_Malloc12.base": {
+  "lets": 41,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc12.cong": {
+  "lets": 41,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 10
+ },
+ "regr_Malloc13.base": {
+  "lets": 45,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc13.cong": {
+  "lets": 45,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 6
+ },
+ "regr_Malloc14.base": {
+  "lets": 42,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc14.cong": {
+  "lets": 42,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "regr_Malloc17.base": {
+  "lets": 63,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc17.cong": {
+  "lets": 63,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 3
+ },
+ "regr_Malloc18.base": {
+  "lets": 29,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc18.cong": {
+  "lets": 29,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 1
+ },
+ "regr_Malloc3.base": {
+  "lets": 43,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc3.cong": {
+  "lets": 43,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc4.base": {
+  "lets": 38,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc4.cong": {
+  "lets": 38,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 3
+ },
+ "regr_Malloc5.base": {
+  "lets": 62,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc5.cong": {
+  "lets": 62,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "regr_Malloc6.base": {
+  "lets": 63,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc6.cong": {
+  "lets": 63,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "regr_Malloc7.base": {
+  "lets": 56,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc7.cong": {
+  "lets": 56,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "regr_Malloc8.base": {
+  "lets": 144,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc8.cong": {
+  "lets": 144,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "regr_Malloc9.base": {
+  "lets": 78,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Malloc9.cong": {
+  "lets": 78,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "regr_Pointer1.base": {
+  "lets": 21,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Pointer1.cong": {
+  "lets": 21,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Pointer2.base": {
+  "lets": 28,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Pointer2.cong": {
+  "lets": 28,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 2
+ },
+ "regr_Pointer3.base": {
+  "lets": 67,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Pointer3.cong": {
+  "lets": 67,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Pointer4.base": {
+  "lets": 18,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Pointer4.cong": {
+  "lets": 18,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Pointer_Arithmetic1.base": {
+  "lets": 17,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Pointer_Arithmetic1.cong": {
+  "lets": 17,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Struct_Initialization2.base": {
+  "lets": 11,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_Struct_Initialization2.cong": {
+  "lets": 11,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 1
+ },
+ "regr_struct3.base": {
+  "lets": 13,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_struct3.cong": {
+  "lets": 13,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 2
+ },
+ "regr_union3.base": {
+  "lets": 9,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "regr_union3.cong": {
+  "lets": 9,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "svcomp_array_data_structures_set_multi_proc_ground-1.base": {
+  "lets": 66,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_data_structures_set_multi_proc_ground-1.cong": {
+  "lets": 66,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 10
+ },
+ "svcomp_array_data_structures_set_multi_proc_ground-2.base": {
+  "lets": 66,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_data_structures_set_multi_proc_ground-2.cong": {
+  "lets": 66,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 10
+ },
+ "svcomp_array_data_structures_set_multi_proc_trivial_ground.base": {
+  "lets": 66,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_data_structures_set_multi_proc_trivial_ground.cong": {
+  "lets": 66,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 10
+ },
+ "svcomp_array_relax-1.base": {
+  "lets": 3583,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_relax-1.cong": {
+  "lets": 3583,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 156
+ },
+ "svcomp_array_relax-2.base": {
+  "lets": 3487,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_relax-2.cong": {
+  "lets": 3487,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 138
+ },
+ "svcomp_array_sanfoundry_02_ground.base": {
+  "lets": 67,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_sanfoundry_02_ground.cong": {
+  "lets": 67,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 10
+ },
+ "svcomp_array_sanfoundry_10_ground.base": {
+  "lets": 75,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_sanfoundry_10_ground.cong": {
+  "lets": 75,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 12
+ },
+ "svcomp_array_sanfoundry_24-1.base": {
+  "lets": 261,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_sanfoundry_24-1.cong": {
+  "lets": 261,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 32
+ },
+ "svcomp_array_sanfoundry_24-2.base": {
+  "lets": 261,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_sanfoundry_24-2.cong": {
+  "lets": 261,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 32
+ },
+ "svcomp_array_sanfoundry_27_ground.base": {
+  "lets": 64,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_array_sanfoundry_27_ground.cong": {
+  "lets": 64,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 10
+ },
+ "svcomp_bv_byte_add-1.base": {
+  "lets": 636,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_bv_byte_add-1.cong": {
+  "lets": 636,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 58
+ },
+ "svcomp_bv_byte_add-2.base": {
+  "lets": 640,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_bv_byte_add-2.cong": {
+  "lets": 640,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 58
+ },
+ "svcomp_bv_byte_add_1-1.base": {
+  "lets": 561,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_bv_byte_add_1-1.cong": {
+  "lets": 561,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 50
+ },
+ "svcomp_bv_byte_add_1-2.base": {
+  "lets": 565,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_bv_byte_add_1-2.cong": {
+  "lets": 565,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 50
+ },
+ "svcomp_bv_byte_add_2-1.base": {
+  "lets": 567,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_bv_byte_add_2-1.cong": {
+  "lets": 567,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 51
+ },
+ "svcomp_bv_byte_add_2-2.base": {
+  "lets": 563,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_bv_byte_add_2-2.cong": {
+  "lets": 563,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 51
+ },
+ "svcomp_bv_gcd_1.base": {
+  "lets": 164,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_bv_gcd_1.cong": {
+  "lets": 164,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 42
+ },
+ "svcomp_bv_gcd_2.base": {
+  "lets": 147,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_bv_gcd_2.cong": {
+  "lets": 147,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 42
+ },
+ "svcomp_bv_gcd_3.base": {
+  "lets": 147,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_bv_gcd_3.cong": {
+  "lets": 147,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 42
+ },
+ "svcomp_heap_bubble_sort_linux-1.base": {
+  "lets": 42120,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_heap_bubble_sort_linux-1.cong": {
+  "lets": 42120,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 601
+ },
+ "svcomp_heap_bubble_sort_linux-2.base": {
+  "lets": 42109,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_heap_bubble_sort_linux-2.cong": {
+  "lets": 42109,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 601
+ },
+ "svcomp_heap_dancing.base": {
+  "lets": 2016,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_heap_dancing.cong": {
+  "lets": 2016,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 50
+ },
+ "svcomp_heap_sll_to_dll_rev-1.base": {
+  "lets": 8523,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_heap_sll_to_dll_rev-1.cong": {
+  "lets": 8523,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 30
+ },
+ "svcomp_list_alternating_list-1.base": {
+  "lets": 1388,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_alternating_list-1.cong": {
+  "lets": 1388,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 144
+ },
+ "svcomp_list_alternating_list-2.base": {
+  "lets": 1388,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_alternating_list-2.cong": {
+  "lets": 1388,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 144
+ },
+ "svcomp_list_list-1.base": {
+  "lets": 2391,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_list-1.cong": {
+  "lets": 2391,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 284
+ },
+ "svcomp_list_list-2.base": {
+  "lets": 2391,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_list-2.cong": {
+  "lets": 2391,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 284
+ },
+ "svcomp_list_list_flag-1.base": {
+  "lets": 1063,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_list_flag-1.cong": {
+  "lets": 1063,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 146
+ },
+ "svcomp_list_list_flag-2.base": {
+  "lets": 1063,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_list_flag-2.cong": {
+  "lets": 1063,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 146
+ },
+ "svcomp_list_list_search-1.base": {
+  "lets": 335,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_list_search-1.cong": {
+  "lets": 335,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 16
+ },
+ "svcomp_list_list_search-2.base": {
+  "lets": 580,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_list_search-2.cong": {
+  "lets": 580,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 16
+ },
+ "svcomp_list_simple-1.base": {
+  "lets": 705,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_simple-1.cong": {
+  "lets": 705,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 144
+ },
+ "svcomp_list_simple-2.base": {
+  "lets": 701,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_simple-2.cong": {
+  "lets": 701,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 144
+ },
+ "svcomp_list_simple_built_from_end.base": {
+  "lets": 565,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_simple_built_from_end.cong": {
+  "lets": 565,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 95
+ },
+ "svcomp_list_splice-1.base": {
+  "lets": 1352,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_splice-1.cong": {
+  "lets": 1352,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 144
+ },
+ "svcomp_list_splice-2.base": {
+  "lets": 1352,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_list_splice-2.cong": {
+  "lets": 1352,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 144
+ },
+ "svcomp_loops_array-1.base": {
+  "lets": 28,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_array-1.cong": {
+  "lets": 28,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "svcomp_loops_array-2.base": {
+  "lets": 28,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_array-2.cong": {
+  "lets": 28,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "svcomp_loops_compact.base": {
+  "lets": 86,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_compact.cong": {
+  "lets": 86,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 15
+ },
+ "svcomp_loops_count_up_down-1.base": {
+  "lets": 82,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_count_up_down-1.cong": {
+  "lets": 82,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 13
+ },
+ "svcomp_loops_count_up_down-2.base": {
+  "lets": 82,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_count_up_down-2.cong": {
+  "lets": 82,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 13
+ },
+ "svcomp_loops_eureka_01-1.base": {
+  "lets": 1617,
+  "roles": {
+   "A": 3,
+   "B": 3,
+   "C": 3,
+   "D": 3,
+   "E": 3,
+   "F": 3
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_eureka_01-1.cong": {
+  "lets": 1617,
+  "roles": {
+   "A": 3,
+   "B": 3,
+   "C": 3,
+   "D": 3,
+   "E": 3,
+   "F": 3
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 4
+ },
+ "svcomp_loops_eureka_01-2.base": {
+  "lets": 107,
+  "roles": {
+   "A": 3,
+   "B": 3,
+   "C": 3,
+   "D": 3,
+   "E": 3,
+   "F": 3
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_eureka_01-2.cong": {
+  "lets": 107,
+  "roles": {
+   "A": 3,
+   "B": 3,
+   "C": 3,
+   "D": 3,
+   "E": 3,
+   "F": 3
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_for_bounded_loop1.base": {
+  "lets": 201,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_for_bounded_loop1.cong": {
+  "lets": 201,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 31
+ },
+ "svcomp_loops_for_infinite_loop_1.base": {
+  "lets": 34,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_for_infinite_loop_1.cong": {
+  "lets": 34,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 2
+ },
+ "svcomp_loops_for_infinite_loop_2.base": {
+  "lets": 34,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_for_infinite_loop_2.cong": {
+  "lets": 34,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 2
+ },
+ "svcomp_loops_heavy-1.base": {
+  "lets": 38,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_heavy-1.cong": {
+  "lets": 38,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 3
+ },
+ "svcomp_loops_heavy-2.base": {
+  "lets": 38,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_loops_heavy-2.cong": {
+  "lets": 38,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 3
+ },
+ "svcomp_recursive_Ackermann01-2.base": {
+  "lets": 2082,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_recursive_Ackermann01-2.cong": {
+  "lets": 2082,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 761
+ },
+ "svcomp_recursive_Ackermann02.base": {
+  "lets": 2082,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_recursive_Ackermann02.cong": {
+  "lets": 2082,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 761
+ },
+ "svcomp_recursive_Ackermann03.base": {
+  "lets": 2083,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_recursive_Ackermann03.cong": {
+  "lets": 2083,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 761
+ },
+ "svcomp_recursive_Ackermann04.base": {
+  "lets": 2083,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_recursive_Ackermann04.cong": {
+  "lets": 2083,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 761
+ },
+ "svcomp_recursive_Addition01-2.base": {
+  "lets": 1149,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_recursive_Addition01-2.cong": {
+  "lets": 1149,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 384
+ },
+ "svcomp_recursive_Addition02.base": {
+  "lets": 1150,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_recursive_Addition02.cong": {
+  "lets": 1150,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 384
+ },
+ "svcomp_recursive_Addition02WithOverflowBug.base": {
+  "lets": 1149,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_recursive_Addition02WithOverflowBug.cong": {
+  "lets": 1149,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 384
+ },
+ "svcomp_recursive_Addition03-1.base": {
+  "lets": 1153,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 0
+ },
+ "svcomp_recursive_Addition03-1.cong": {
+  "lets": 1153,
+  "roles": {},
+  "skipped": [],
+  "skipped_count": 0,
+  "unions": 382
+ }
+}

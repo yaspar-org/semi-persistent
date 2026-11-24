@@ -227,5 +227,30 @@ Users can then write:
 The engine handles interning, hash-consing, and pattern matching
 automatically.
 
+## Regression fixtures and tests
+
+A change to the engine adds a regression for the defect it fixes, and two rules decide whether
+that regression ever runs.
+
+**Register every top-level `tests/egg` fixture by hand.** `tests/egg_tests.rs` runs a
+program in `tests/egg/` only if an `egg_test!(name, "file.egg")` line names it; the harness does
+not scan that directory. A fixture added without the line never runs, and a regression that
+never runs protects nothing. The subdirectories are the exception, and they are walked on
+purpose: `tests/egg/cbmc/` (`cbmc_corpus`, which also asserts the count of 214),
+`tests/egg/conform/` (`tests/conform.rs`, the programs generated from the Lean models), and the
+book's `doc/book/examples/` (`book_examples`).
+
+**A test must not depend on machine speed.** A deadline, a timeout or a wall-clock ratio that
+passes on one machine fails on a faster or a slower one. Commit `5d62603d` is the case: the
+anytime test of the exact anti-unification solver gave the solve a 5 ms deadline, a release
+build on a 2026 laptop (Apple M4 Pro) finished within it and reported `Completion::Exact`, and
+the test failed while the debug build in CI passed. The test now uses `Duration::ZERO`, which
+expires at the first poll on every machine (`tests/au_exact_anytime.rs`). Use a deadline that
+expires at once, a step count, or a deterministic counter such as `SatResult::match_steps`;
+wall-clock claims belong in the Criterion benchmarks (Chapter 8, §8.3).
+
+The cross-cutting invariants that a change to the engine must keep, each with its regression,
+are listed in [Chapter 13 §5](13-soundness.md#5-implementation-invariants-the-correctness-claims-depend-on).
+
 ---
 [← Language Guide](A1-language-guide.md) · [Table of Contents](00-table-of-contents.md) · [Future Work →](A3-future-work.md)

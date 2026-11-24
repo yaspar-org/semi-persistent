@@ -30,6 +30,62 @@ impl Anum {
 
     pub open spec fn from_tnum(t: Tnum) -> Anum { Anum { base: t.val, span: t.mask } }
 
+    /// Subtraction of a smaller Anum: the base subtracts the other's maximum and
+    /// the span is the same as for add, since y's offset d2 turns into the
+    /// offset span - d2, again a bit subset of span.
+    pub open spec fn sub(self, a: Anum) -> Anum {
+        Anum {
+            base: (self.base - nat_add(a.base, a.span)) as nat,
+            span: self.mask_tnum().add(a.mask_tnum()).mask,
+        }
+    }
+
+    pub proof fn sub_sound(self, a: Anum)
+        requires self.base >= nat_add(a.base, a.span)
+        ensures forall|x: nat, y: nat| #![auto] self.has(x) && a.has(y) ==> self.sub(a).has((x - y) as nat)
+    {
+        nat_add_correct(a.base, a.span);
+        let ms = self.mask_tnum();
+        let ma = a.mask_tnum();
+        let sum = ms.add(ma);
+        ms.add_sound(ma);
+        ms.add_carry_val_zero(ma, TBit { val: Bit::f(), mask: Bit::f() });
+        assert(sum == Tnum::ctor(0, sum.mask));
+        assert forall|x: nat, y: nat| #![auto] self.has(x) && a.has(y) implies self.sub(a).has((x - y) as nat) by {
+            a.has_le_max(y);
+            let d1 = (x - self.base) as nat;
+            let d2 = (y - a.base) as nat;
+            // d2 is a bit subset of a.span, so a.span - d2 is one too.
+            ma.has_equiv(d2);
+            sub_submask(a.span, d2);
+            let e2 = (a.span - d2) as nat;
+            ma.has_equiv(e2);
+            assert(ms.has(d1) && ma.has(e2));
+            assert(sum.has(nat_add(d1, e2)));
+            nat_add_correct(d1, e2);
+            assert((x - y) - self.sub(a).base == d1 + e2);
+        };
+    }
+
+    /// Every member is at most base + span.
+    pub proof fn has_le_max(self, x: nat)
+        requires self.has(x)
+        ensures x <= self.base + self.span
+    {
+        let d = nat_sub(x, self.base);
+        self.mask_tnum().has_equiv(d);
+        and_not_zero_le(d, self.span);
+    }
+
+    /// to_tnum is well formed for every Anum.
+    pub proof fn to_tnum_inv(self)
+        ensures self.to_tnum().inv()
+    {
+        disj_zero(self.span);
+        disj_zero_r(self.base);
+        self.mask_tnum().add_inv(self.val_tnum());
+    }
+
     /// Key lemma: hasMinus — if Tn(v,m).has(n) then Tn(0,m).has(n - v)
     pub proof fn from_tnum_sound(t: Tnum)
         requires t.inv()
@@ -165,71 +221,7 @@ impl Anum {
         self.mask_tnum().add_carry_zero();
     }
 
-    /// Multiplication: t0 * t using Anum accumulator.
-    pub open spec fn mul_step(t0: Tnum, t: Tnum, a: Anum) -> Tnum
-        decreases t0.size()
-    {
-        if t0.is_zero() { a.to_tnum() }
-        else {
-            Anum::mul_step(
-                t0.rsh(),
-                t.lsh(),
-                a.add(Anum::from_tnum(t.mul_bit(t0.head()))),
-            )
-        }
-    }
-
-    pub proof fn mul_step_sound(t0: Tnum, t: Tnum, a: Anum)
-        requires t0.inv(), t.inv()
-        ensures forall|x: nat, y: nat, z: nat| #![auto]
-            t0.has(x) && t.has(y) && a.has(z) ==>
-            Anum::mul_step(t0, t, a).has(nat_mul_acc(x, y, z))
-        decreases t0.size()
-    {
-        assert forall|x: nat, y: nat, z: nat| #![auto]
-            t0.has(x) && t.has(y) && a.has(z)
-            implies Anum::mul_step(t0, t, a).has(nat_mul_acc(x, y, z)) by {
-            Anum::mul_step_sound1(t0, t, a, x, y, z);
-        };
-    }
-
-    proof fn mul_step_sound1(t0: Tnum, t: Tnum, a: Anum, x: nat, y: nat, z: nat)
-        requires t0.inv(), t.inv(), t0.has(x), t.has(y), a.has(z)
-        ensures Anum::mul_step(t0, t, a).has(nat_mul_acc(x, y, z))
-        decreases t0.size()
-    {
-        if t0.is_zero() {
-            assert(x == 0);
-            Anum::tnum_has_from_anum(a, z);
-        } else {
-            // Step: chain the component lemmas
-            let tb = t.mul_bit(t0.head());
-
-            // 1. rsh/lsh preserve inv
-            Anum::rsh_inv(t0);
-            Anum::lsh_inv(t);
-
-            // 2. times_b is sound and preserves inv
-            t.times_b_inv(t0.head());
-
-            // 3. Build new accumulator
-            let a1 = a.add(Anum::from_tnum(tb));
-
-            // 4. New accumulator has the right concrete value
-            assert(t0.head().has(hd(x))) by {
-                if t0.is_zero() {} // contradiction
-            };
-            Anum::mul_step_acc(t, t0.head(), a, x, y, z);
-
-            // 5. Unfold times1
-            Anum::times1_unfold(x, y, z);
-
-            // 6. IH
-            Anum::mul_step_sound1(t0.rsh(), t.lsh(), a1, tl(x), lsh(y), nat_add(z, nat_mul_bit(y, hd(x))));
-        }
-    }
-
-    /// Base case: a.has(z) ==> a.to_tnum().has(z)
+    /// a.has(z) ==> a.to_tnum().has(z)
     pub proof fn tnum_has_from_anum(a: Anum, z: nat)
         requires a.has(z)
         ensures a.to_tnum().has(z)
@@ -264,7 +256,7 @@ impl Anum {
     }
 
     /// rsh preserves inv
-    proof fn rsh_inv(t: Tnum)
+    pub proof fn rsh_inv(t: Tnum)
         requires t.inv()
         ensures t.rsh().inv()
     {
@@ -277,7 +269,7 @@ impl Anum {
     }
 
     /// lsh preserves inv
-    proof fn lsh_inv(t: Tnum)
+    pub proof fn lsh_inv(t: Tnum)
         requires t.inv()
         ensures t.lsh().inv()
     {
@@ -302,126 +294,11 @@ impl Anum {
         // else: direct from definition
     }
 
-    pub open spec fn tnum_mul(t0: Tnum, t1: Tnum) -> Tnum {
-        Anum::mul_step(t0, t1, Anum::zero())
-    }
-
-    pub proof fn tnum_mul_sound(t0: Tnum, t1: Tnum)
-        requires t0.inv(), t1.inv()
-        ensures
-            Anum::tnum_mul(t0, t1).inv(),
-            forall|x: nat, y: nat| #![auto]
-                t0.has(x) && t1.has(y) ==> Anum::tnum_mul(t0, t1).has(nat_mul_acc(x, y, 0))
-    {
-        Anum::mul_step_sound(t0, t1, Anum::zero());
-        Anum::times2_inv(t0, t1, Anum::zero());
-    }
-
-    proof fn times2_inv(t0: Tnum, t: Tnum, a: Anum)
-        requires t0.inv(), t.inv()
-        ensures Anum::mul_step(t0, t, a).inv()
-        decreases t0.size()
-    {
-        if t0.is_zero() {
-            disj_zero(a.span);
-            assert forall|j: nat| #![auto] !(bit(a.base, j).b() && bit(0 as nat, j).b()) by { bit_zero(j); };
-            disj_bits(a.base, 0);
-            Tnum::ctor(0, a.span).add_inv(Tnum::ctor(a.base, 0));
-        } else {
-            Anum::rsh_inv(t0);
-            Anum::lsh_inv(t);
-            t.times_b_inv(t0.head());
-            Anum::times2_inv(t0.rsh(), t.lsh(), a.add(Anum::from_tnum(t.mul_bit(t0.head()))));
-        }
-    }
-
-    // ================================================================
-    // mul_step_rc / times2R: tail-recursive multiplication for bounded simulation
-    //
-    // ================================================================
-
-    /// Raw tail-recursive multiplication loop.
-    /// Uses add (not add_bitwise) so no linking lemma is needed at Layer 2.
-    /// The bounded Layer 4 version will use add_bitwise and prove simulation.
-    pub open spec fn mul_step_rc(t0: Tnum, t: Tnum, p: Tnum, q: Tnum, acc_v: Tnum, acc_m: Tnum, a: Anum) -> Tnum
-        decreases p.size()
-    {
-        if p.is_zero() {
-            acc_m.add(acc_v)
-        } else {
-            let a1 = a.add(Anum::from_tnum(q.mul_bit(p.head())));
-            let p1 = p.rsh();
-            let q1 = q.lsh();
-            if p.head().val.b() {
-                Anum::mul_step_rc(t0, t, p1, q1, acc_v, acc_m.add(Tnum::ctor(0, q.mask)), a1)
-            } else if p.head().mask.b() {
-                Anum::mul_step_rc(t0, t, p1, q1, acc_v, acc_m.add(Tnum::ctor(0, q.max())), a1)
-            } else {
-                Anum::mul_step_rc(t0, t, p1, q1, acc_v, acc_m, a1)
-            }
-        }
-    }
-
-    /// Simulation proof: mul_step_rc equals mul_step(t0, t, Anum::zero()).
-    pub proof fn mul_step_r(t0: Tnum, t: Tnum, p: Tnum, q: Tnum, acc_v: Tnum, acc_m: Tnum, a: Anum)
-        requires
-            Anum::mul_step(t0, t, Anum::zero()) == Anum::mul_step(p, q, a),
-            acc_v == Tnum::ctor(mul(t0.val, t.val), 0),
-            acc_m == a.mask_tnum(),
-            mul(t0.val, t.val) == nat_mul_acc(p.val, q.val, a.base),
-        ensures
-            Anum::mul_step_rc(t0, t, p, q, acc_v, acc_m, a) == Anum::mul_step(t0, t, Anum::zero()),
-        decreases p.size()
-    {
-        a.add_zero();
-        if p.is_zero() {
-            // p.val == 0, so nat_mul_acc(0, q.val, a.base) == a.base
-            // Therefore mul(t0.val, t.val) == a.base
-            // acc_v == Tnum::ctor(a.base, 0) == a.val_tnum()
-            // acc_m == a.mask_tnum()
-            // acc_m.add(acc_v) == a.mask_tnum().add(a.val_tnum()) == a.to_tnum()
-            // mul_step(p, q, a) == a.to_tnum() (since p.is_zero())
-        } else {
-            let a1 = a.add(Anum::from_tnum(q.mul_bit(p.head())));
-            let p1 = p.rsh();
-            let q1 = q.lsh();
-
-            // times1 invariant maintenance:
-            // nat_mul_acc(p.val, q.val, a.base) unfolds when p.val != 0
-            Anum::times1_unfold(p.val, q.val, a.base);
-
-            if p.head().val.b() {
-                // q.mul_bit(Tb(T,F)) == q, from_tnum(q).mask_tnum() == Tn(0, q.mask)
-                // a1.mask == a.mask_tnum().add(Tn(0, q.mask)).m
-                // acc_m' == a.mask_tnum().add(Tn(0, q.mask))
-                // acc_m'.v == 0 by add_carry_val_zero
-                let acc_m1 = acc_m.add(Tnum::ctor(0, q.mask));
-                assert(acc_m1.val == 0) by {
-                    a.mask_tnum().add_carry_val_zero(Tnum::ctor(0, q.mask), TBit { val: Bit::f(), mask: Bit::f() });
-                };
-                // So acc_m' == Tn(0, acc_m'.m) == a1.mask_tnum()
-                Anum::mul_step_r(t0, t, p1, q1, acc_v, acc_m1, a1);
-            } else if p.head().mask.b() {
-                // q.mul_bit(Tb(F,T)) == q.add_zero() == Tn(0, q.val|q.mask) = Tn(0, q.max())
-                // from_tnum(Tn(0, q.max())).mask_tnum() == Tn(0, q.max())
-                let acc_m1 = acc_m.add(Tnum::ctor(0, q.max()));
-                assert(acc_m1.val == 0) by {
-                    a.mask_tnum().add_carry_val_zero(Tnum::ctor(0, q.max()), TBit { val: Bit::f(), mask: Bit::f() });
-                };
-                Anum::mul_step_r(t0, t, p1, q1, acc_v, acc_m1, a1);
-            } else {
-                // p.head() == Tb(F,F): q.mul_bit(Tb(F,F)) == zero
-                // a1 == a.add(from_tnum(zero)) == a.add(Anum::zero()) == a
-                // acc_m unchanged
-                Anum::mul_step_r(t0, t, p1, q1, acc_v, acc_m, a1);
-            }
-        }
-    }
     // ================================================================
     // Anum-level multiplication: Anum × An → An (preserves additive structure)
     // ================================================================
 
-    /// Anum multiplication loop — same as times2 but returns Anum, not Tn.
+    /// Anum multiplication loop: shift-and-add with an Anum accumulator.
     /// The accumulator stays as An throughout, preserving the exact base.
     pub open spec fn mul_step_anum(t0: Tnum, t: Tnum, a: Anum) -> Anum
         decreases t0.size()
@@ -442,7 +319,7 @@ impl Anum {
         Anum::mul_step_anum(t0, t1, Anum::zero())
     }
 
-    /// Soundness of mul_step_anum — same as mul_step_sound.
+    /// Soundness of mul_step_anum.
     pub proof fn mul_step_anum_sound(t0: Tnum, t: Tnum, a: Anum)
         requires t0.inv(), t.inv()
         ensures forall|x: nat, y: nat, z: nat| #![auto]
@@ -553,6 +430,69 @@ impl Anum {
             };
             eq_from_bits(bw_and_not(k, mask), 0);
         };
+    }
+
+    // ================================================================
+    // Shift, reflection and cover
+    // ================================================================
+
+    /// Left shift by k: x = base + d with d a bit subset of span gives
+    /// x << k = (base << k) + (d << k), and d << k is a bit subset of span << k.
+    pub open spec fn lshi(self, k: nat) -> Anum {
+        Anum { base: lshi(self.base, k), span: lshi(self.span, k) }
+    }
+
+    pub proof fn lshi_sound(self, k: nat)
+        ensures forall|x: nat| #![auto] self.has(x) ==> self.lshi(k).has(lshi(x, k))
+    {
+        self.mask_tnum().lshi_sound(k);
+        lsh_exp(0, k);
+        assert(self.mask_tnum().lshi(k) == self.lshi(k).mask_tnum());
+        assert forall|x: nat| #![auto] self.has(x) implies self.lshi(k).has(lshi(x, k)) by {
+            let d = nat_sub(x, self.base);
+            lsh_exp(x, k);
+            lsh_exp(self.base, k);
+            lsh_exp(d, k);
+            vstd::arithmetic::mul::lemma_mul_is_distributive_add_other_way(exp(k) as int, self.base as int, d as int);
+            assert(nat_sub(lshi(x, k), lshi(self.base, k)) == lshi(d, k));
+        };
+    }
+
+    /// Reflection through m >= base + span: m - x for every member x. The
+    /// offset span - d of a bit subset d of span is again one (sub_submask).
+    pub open spec fn reflect(self, m: nat) -> Anum {
+        Anum { base: (m - (self.base + self.span)) as nat, span: self.span }
+    }
+
+    pub proof fn reflect_sound(self, m: nat)
+        requires self.base + self.span <= m
+        ensures forall|x: nat| #![auto] self.has(x) ==> self.reflect(m).has((m - x) as nat)
+    {
+        assert forall|x: nat| #![auto] self.has(x) implies self.reflect(m).has((m - x) as nat) by {
+            self.has_le_max(x);
+            let d = nat_sub(x, self.base);
+            self.mask_tnum().has_equiv(d);
+            sub_submask(self.span, d);
+            let e = (self.span - d) as nat;
+            self.mask_tnum().has_equiv(e);
+            assert(nat_sub((m - x) as nat, self.reflect(m).base) == e);
+        };
+    }
+
+    /// A member of a Tnum is a bit subset of its maximum val | mask.
+    pub proof fn cover(t: Tnum, n: nat)
+        requires t.has(n)
+        ensures Tnum::ctor(0, t.max()).has(n)
+    {
+        t.has_equiv(n);
+        Tnum::ctor(0, t.max()).has_equiv(n);
+        assert forall|i: nat| #![auto] bit(bw_and_not(n, t.max()), i) == bit(0 as nat, i) by {
+            and_not_bit(n, t.mask, i);
+            or_bit(t.val, t.mask, i);
+            and_not_bit(n, t.max(), i);
+            bit_zero(i);
+        };
+        eq_from_bits(bw_and_not(n, t.max()), 0);
     }
 }
 

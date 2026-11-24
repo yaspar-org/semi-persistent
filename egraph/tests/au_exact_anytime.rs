@@ -159,7 +159,9 @@ fn assert_valid_projections(
 fn exact_deadline_returns_anytime_incumbent() {
     let (mut eg, left, right) = build_crossover(8);
 
-    // Tiny deadline: the solve is cut off long before completion.
+    // Zero deadline: expired at the first poll, so the solve is cut off
+    // however fast the machine is. A 5 ms deadline let the instance run to
+    // completion in a release build on a 2026 laptop and claim Exact.
     let mut anytime = {
         let snap = AuSnapshot::new(&eg).unwrap();
         let started = Instant::now();
@@ -170,7 +172,7 @@ fn exact_deadline_returns_anytime_incumbent() {
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
                 cycle_mode: CycleMode::Pair,
-                exact_deadline: Some(Duration::from_millis(5)),
+                exact_deadline: Some(Duration::ZERO),
                 ..Default::default()
             },
         )
@@ -181,7 +183,7 @@ fn exact_deadline_returns_anytime_incumbent() {
         // poll or an accidental run-to-completion fallback.
         assert!(
             elapsed < Duration::from_secs(2),
-            "deadline of 5 ms overshot to {elapsed:?}"
+            "zero deadline overshot to {elapsed:?}"
         );
         result
     };

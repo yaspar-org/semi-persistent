@@ -1,0 +1,33 @@
+name = "SemperProofs"
+defaultTargets = ["SemperProofs"]
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "v4.35.0"
+
+[[lean_lib]]
+name = "SemperProofs"
+
+[[lean_lib]]
+name = "Conform"
+
+[[lean_exe]]
+name = "semper-conform"
+root = "Conform.Main"
+
+[[lean_exe]]
+name = "semper-conform-rounds"
+root = "Conform.Rounds.Main"
+
+[[lean_exe]]
+name = "semper-conform-cc"
+root = "Conform.CC.Main"
+
+[[lean_exe]]
+name = "semper-conform-flatten"
+root = "Conform.Flatten.Main"
+
+[[lean_exe]]
+name = "semper-conform-cc-cert"
+root = "Conform.CC.CertMain"

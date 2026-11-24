@@ -20,7 +20,8 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 - **[Developer Guide: Extending the Literal Model](A2-developer-guide.md)**
   The `LitModel` trait, defining new builtin sorts and operations,
   how builtins are lifted into the e-graph, deferred interning,
-  soundness guarantees.
+  soundness guarantees. Registering regression fixtures, and why no test may
+  depend on machine speed.
 
 - **[Future Work](A3-future-work.md)**
   Index of maintained future specifications: variables and binders,
@@ -69,12 +70,15 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
    intermediate sub-sum subterms and breaks congruence completeness
    while the implemented matcher targets a narrower, sound maximum-partition
    e-matching relation; finite tests support matcher soundness, while a theorem
-   and matcher completeness remain open. Part II gives the implemented repair,
+   and matcher completeness remain open (corrected 2026-11-04: both are Lean
+   theorems for a model of the matcher, Chapter 7 §7.5). Part II gives the implemented repair,
    Kapur-style
    inter-reduction and lcm-superposition critical pairs over the existing
    `DecomposeAC`/`by_contains` machinery. Its soundness, termination, and
    completeness claims are conditional on the obligations stated in that
-   chapter; they are not machine-checked theorems about the Rust code.
+   chapter; they are not machine-checked theorems about the Rust code (they are
+   Lean theorems about a model of the completion state, and §9c states the rules
+   the engine must keep for the model's hypotheses to hold).
    §13 specifies the three completion modes
    (plain, eager, lazy: the goal-directed transaction at failing checks) and
    §14 the A-only inter-reduction round with its undecidability boundary.
@@ -133,7 +137,9 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
     (plain, C, A, AC, ACI). Soundness: no false equality is asserted.
     Plain congruence closure is the default; opt-in AC/ACI completion attempts a
     stronger fixpoint but may stop at a resource limit. What is machine-checked,
-    tested, argued conditionally, and still open.
+    tested, argued conditionally, and still open. §5 lists the implementation
+    invariants the correctness claims depend on, each found by a Lean proof or a
+    conformance generator, with a link to the section that explains it.
 
 14. **[Proof Logging](14-proof-logging.md)**
     Copy-on-first-re-canonization via history bit. `Justification`

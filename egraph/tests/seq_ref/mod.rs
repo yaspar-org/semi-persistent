@@ -53,6 +53,10 @@ pub struct Graph {
     /// (`semi_persistent_egraph::nary_canon::normalize`). An operator without an entry
     /// has its kind's laws and no unit or inverse.
     pub laws: BTreeMap<String, semi_persistent_egraph::nary_canon::NaryLaws<ClassId, String>>,
+    /// Each fold's direction (`:assoc-left`, `:assoc-right`): a flattened view opens a
+    /// fold's nested child only on its spine. An operator without an entry opens every
+    /// position.
+    pub folds: BTreeMap<String, semi_persistent_egraph::registry::AssocDir>,
 }
 
 impl Graph {
@@ -338,7 +342,9 @@ pub type FlatView = (Vec<(ClassId, u64)>, Vec<Leaves>);
 /// `doc/goal-flatten-and-engine-completion.md`, decision 2, as narrowed by
 /// `doc/goal-canonical-flatten-views.md`, decision 2): each child class `X` is kept
 /// whole, or replaced by the view of one of its `op` members, recursively, unless `X`
-/// is already open on the path. The root's class is not on the path. Multiplicities
+/// is already open on the path, or lies off a fold's spine (the first child of every
+/// node for `:assoc-left`, the last for `:assoc-right`: a nesting elsewhere is
+/// grouping the fold keeps). The root's class is not on the path. Multiplicities
 /// multiply through each opened member. Each view is canonized by the one
 /// normalization (`nary_canon::normalize`), and a view whose canonical form is not a
 /// node is dropped. Distinct canonical views, in sorted order, each with the leaf
@@ -352,11 +358,18 @@ pub fn views(g: &Graph, op: &str, kids: &[(ClassId, u64)]) -> Vec<FlatView> {
         mult: u64,
         path: &[ClassId],
     ) -> Vec<(Vec<(ClassId, u64)>, Leaves)> {
+        use semi_persistent_egraph::registry::AssocDir;
         let mut acc: Vec<(Vec<(ClassId, u64)>, Leaves)> = vec![(vec![], vec![])];
-        for &(x, j) in kids {
+        let last = kids.len().saturating_sub(1);
+        for (i, &(x, j)) in kids.iter().enumerate() {
             let k = mult * j;
             let mut opts: Vec<(Vec<(ClassId, u64)>, Leaves)> = vec![(vec![(x, k)], vec![])];
-            if !path.contains(&x) {
+            let on_spine = match g.folds.get(op) {
+                Some(AssocDir::Left) => i == 0,
+                Some(AssocDir::Right) => i == last,
+                _ => true,
+            };
+            if on_spine && !path.contains(&x) {
                 let mut p = path.to_vec();
                 p.push(x);
                 for m in g.classes[x]
