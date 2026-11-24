@@ -735,6 +735,7 @@ impl<W:Word> Wrapped<W> {
     // Verus does not yet support Rust let-chains; retain nested conditions
     // below rather than using Clippy's suggested `if let ... && ...` form.
     #[allow(clippy::collapsible_if)]
+    #[inline(always)]
     fn divrem_impl(&self, d: &Self, rem: bool, signed: bool) -> (r: (BotOr<Self>, DivZero))
         requires self.wf(), d.wf(),
         ensures r.0.wf(),
