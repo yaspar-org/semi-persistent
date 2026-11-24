@@ -1,0 +1,24 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; The demand rule keeps a match whose untaken leaf opened a class the items take.
+;; n = Plus{Y, Z}, Z ∋ Plus{Y, d}, Y ∋ Plus{X, c}. Fully flattened, n = Plus{X, c, Y, d},
+;; and (Plus (Yc) (Dc) ..rest) matches it with rest = {X, c}. The only trees giving that
+;; view open Y, whose leaf [X, c] takes nothing; closing Y would merge it with the taken
+;; Y into Y:2, which the unannotated item takes whole with rest = {}, so no less-opened
+;; view carries the match. A leaf whose opened class is taken therefore counts as
+;; satisfied (`proofs/lean`, `demand_fix_complete_ac`). Before the rule was corrected
+;; this check failed. flatten_demand_refold_control.egg takes X instead of Y.
+(sort E)
+(function Xc () E) (function Cc () E) (function Yc () E) (function Dc () E) (function Zc () E)
+(function Plus (E) E :assoc-comm)
+(function Pick (E) E)
+(let y (Yc))
+(let z (Zc))
+(union y (Plus (Xc) (Cc)))
+(union z (Plus y (Dc)))
+(let n (Plus y z))
+(rewrite (Plus (Yc) (Dc) ..rest) (Pick (Plus ..rest)) :flatten)
+(run 1)
+(check-eq n (Pick (Plus (Xc) (Cc))))

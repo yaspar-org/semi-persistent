@@ -1,0 +1,35 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; Regrouped views (design 07 §7.5, "Regrouped views") for `:assoc-left`: the store holds
+;; `Sub(Sub(a, b), c)` as [a, b, c], so the only valid grouping is a prefix, which only the
+;; first pattern position may take. The suffix grouping `a - (b - c)` is a different term and
+;; is not matched even when its class exists. The plain rule's behavior is pinned in
+;; flatten_regroup_control.egg.
+(sort E)
+(function A () E) (function B () E) (function C () E) (function D () E)
+(function Sub (E) E :assoc-left)
+(function T2 (E E) E)
+(function T3 (E E E) E)
+(let ab (Sub (A) (B)))
+(let bc (Sub (B) (C)))
+(let abc (Sub (A) (B) (C)))
+(let cd (Sub (C) (D)))
+(let t (Sub (A) (B) (C)))
+(let t4 (Sub (A) (B) (C) (D)))
+(rewrite (Sub x y) (T2 x y) :flatten)
+(rewrite (Sub x y z) (T3 x y z) :flatten)
+(run 2)
+;; (a - b) - c with x = [a, b].
+(check-eq t (T2 ab (C)))
+;; a - (b - c) is not the term t spells.
+(check-neq t (T2 (A) bc))
+;; ((a - b) - c) - d: the prefixes [a, b, c] and [a, b].
+(check-eq t4 (T2 abc (D)))
+(check-eq t4 (T3 ab (C) (D)))
+;; Neither an inner run nor a suffix regroups.
+(check-neq t4 (T3 (A) bc (D)))
+(check-neq t4 (T3 (A) (B) cd))
+;; No node spells [b, a] during the run: no prefix group for (b - a) - c.
+(check-neq (Sub (B) (A) (C)) (T2 (Sub (B) (A)) (C)))

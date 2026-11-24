@@ -154,13 +154,14 @@ pub fn saturate_rules_naive(rules, eg, model, spec, globals, scratch)
         if goal_met(spec, eg) { return Ok(goal_result(i)); }
         let index = IndexStore::build_with(eg, scratch);
         let stats = IndexStats::from_index(&index);
+        let stamp = eg.size_stamp();   // (node count, live class count) before the actions
         let mut changes = 0;
         for ordinary rule in rules matching spec.ruleset {
             changes += apply_rule_pooled(rule, eg, index, stats, model, globals)?;
         }
         changes += apply_sequence_batch(sequence rules, eg, &index, &stats, ..)?;
         index.recycle_into(scratch, true);
-        if changes == 0 {
+        if changes == 0 && eg.size_stamp() == stamp {
             return Ok(saturated_result(i + 1));
         }
     }
@@ -175,12 +176,59 @@ Each iteration begins by rebuilding (propagating pending merges and
 detecting congruences), then constructs sorted indices from scratch,
 schedules each rule based on current cardinalities, executes the
 plans via leapfrog triejoin, and applies the resulting actions. If
-the action counter is zero, `SatResult::saturated` reports an operational
-fixpoint for this driver. This is not a theorem of logical completeness.
+the action counter is zero and the size stamp did not move, `SatResult::saturated` reports
+an operational fixpoint for this driver (the stamp test is commit `38632dc4`; the
+pseudo-code above showed `changes == 0` alone until 2026-11-05). This is not a theorem of logical completeness.
 `Union` increments only for a new merge, but `Insert` increments whenever it is
 applied and `Subsume` increments whenever it is applied; those conservative
 counters can keep a run from reporting saturation even when an insertion
 hash-conses to an existing node.
+
+(Correction, 2026-11-04: the previous sentences describe the engine before commit
+`2982903e`, and the effect was not conservative but a run that never saturates. The counts are
+now exact for `Insert` and `Subsume`, and one case of `Union` still undercounts; see the next
+subsection. Corrected 2026-11-05: commit `38632dc4` fixed that case with the size stamp; the
+next subsection gives the rule.)
+
+#### The stop test and action counting
+
+The mechanisms are the loop's stop test, `changes == 0`, and the count each action returns
+(`apply::apply_action`). The loop stops on the first round whose actions report no change, so
+a round's count must be positive exactly when the round changed the graph: a node was
+created, two classes merged, or a subsume flag was newly set. The Lean round model states this
+stop condition as `Unchanged` (`proofs/lean/SemperProofs/EMatch/Engine/Saturate/`), and both
+defects below are differences between the engine's test and that predicate.
+
+- **Counting a hash-cons hit as a change never saturates.** Before commit `2982903e`, `Insert`
+  returned 1 on every application, so a naive-routed rule with an insert re-fired its old
+  matches every round and `(run 10)` ran ten rounds on a program saturated after one. `Insert`
+  now counts a change only when the node count grew, and `Subsume` only when the flag was not
+  already set. Regression: `tests/saturate_insert_fixpoint.rs`, which checks `saturated` after
+  two rounds.
+- **Not counting nodes built inside a union of already-equal sides stops early.** Fixed in
+  commit `38632dc4`: the loops compare `EGraph::size_stamp()`, the pair (node count, live
+  class count), before and after the action phase, and stop only when no action counted a
+  change and the stamp did not move. Regressions: `stop_self_union_mints.egg`,
+  `stop_assoc_flatten_mints.egg`, control `stop_insert_control.egg`. Lean:
+  `engine_stop_unchanged` (`proofs/lean/SemperProofs/Fidelity/StopTest.lean`), the engine's
+  stop test implies the model's `Unchanged`. Before the fix, `Union` evaluated both sides, which can create nodes, and returns 0 when the two
+  sides end in one class. In the program below the first rule builds `(F (a))` on both sides
+  of its union, the round reports no change although it created a node, and the loop stops
+  before the second rule can match that node; the check fails under naive and semi-naive
+  evaluation:
+
+  ```lisp
+  (datatype E (F E) (a) (b))
+  (let t (a))
+  (rule ((a)) ((union (F (a)) (F (a)))))
+  (rule ((F x)) ((union (F x) (b))))
+  (run 10)
+  (check-eq (F (a)) (b))
+  ```
+
+  The fix in progress compares the graph's node and class counts around the round's actions,
+  so a node created by any action counts. (Retracted 2026-11-05: the fix is commit
+  `38632dc4`, described at the start of this item.)
 
 `SatResult` also carries `match_steps`: one count per executed lowered
 matching step plus one per emitted match, across all rounds. It is populated
@@ -203,7 +251,8 @@ interp.set_strategy(SaturationStrategy::SemiNaive);
 
 `(run N)` calls `EGraph::saturate_rules_in`, which dispatches on the selected
 strategy: `Naive` calls `saturate_rules_naive`, and `SemiNaive` calls
-`saturate_rules_semi` with merge-member tracking switched on for the run. On the CLI the strategy
+`saturate_rules_semi`, which switches merge-member tracking on for the run and restores the
+previous setting on return, whatever path called it (commit `2982903e`; §9.2). On the CLI the strategy
 is chosen with `--use-semi-naive` or `--use-naive` (mutually exclusive;
 the default is naive), and match-step counting is enabled with
 `--count-match-steps`, which prints the total match work at the end of
@@ -219,7 +268,19 @@ covers them too (§7.6, "Semi-naive evaluation"). `(run … :until …)` works o
 such a ruleset.
 The intended soundness and naive-fixpoint equivalence are justified by the
 delta decomposition and finite differential/regression tests; they are not
-machine-checked end-to-end theorems.
+machine-checked end-to-end theorems. (Correction, 2026-11-04: for a model of the rounds they
+are. `proofs/lean/SemperProofs/EMatch/Engine/Rounds/` proves cross-round completeness of
+tracked semi-naive matching, `delta_complete` and `semi_naive_complete`, and
+`Engine/Saturate/` proves `saturation_complete`: at a round that changed nothing, every match
+of every rule is fired, for tracked semi-naive and naive routing. Not modelled: `:flatten` and
+sequence rules across rounds, `:subsume` runs, literals and globals in the saturation theorem.
+The model's correspondence to `saturate.rs` is tested, not proved.)
+(Corrected 2026-11-05: the model covers `:subsume` runs. `saturation_complete_store`
+(`Fidelity/Subsume.lean`) reads consequences on the store with subsumption, and
+`saturation_complete_N` (`Fidelity/NormalizeSat.lean`) takes right-hand sides as the normal
+forms `add` builds. `saturation_complete_engine`, `saturation_complete_store_engine` and
+`saturation_complete_N_engine` (`Fidelity/StopTest.lean`) take the engine's stop test in
+place of `Unchanged`. Literals, globals and primitives remain unmodelled.)
 
 ### Run Control: Rulesets and Goals
 
@@ -465,6 +526,57 @@ The fallback stays for ordinary flattened rules. Sequence rules under `:flatten`
 need it: their `Δ_collect` adds the climb through nesting from every affected and
 touched class, and the semi-filter test descends through the views' classes (§7.6, "Semi-naive evaluation").
 
+#### A build-time choice the delta cannot see
+
+The key invariant is about *matches*: semi-naive finds every match naive finds. It does
+not make the two strategies build the same nodes from those matches, and in plain mode
+(completion off) they can reach different fixpoints. The node a right-hand side builds for
+an AC term depends on whether a nested same-op child's class is `atomic` at build time
+(`flatten_mset_children`, [Chapter 6 §6c](06-ac-congruence-closure.md#6c-continuous-flattening-what-to-flatten-and-the-representative-trap)): a non-atomic
+child is spliced flat, an atomic one is kept nested. The bit flips as the graph grows,
+through `register_if_fresh`, the use path and the merge fold, and a flip changes no node,
+so it enters no delta. Naive re-fires every old match each round and rebuilds the term
+under the new bit; semi-naive never re-fires a match whose nodes did not change.
+
+`tests/egg/semi_naive_atomic_naive.egg` and `semi_naive_atomic_semi.egg` hold the
+reproducer:
+
+```lisp
+(let p (P (C)))
+(rule ((P y)) ((Q (Add (Add (A) (B)) y)) (H (Add (A) (B)))))
+(rule ((Q (Add (Add (A) (B)) w))) ((W w)))
+(run 10)
+(check (W (C)))
+```
+
+Round 1 builds Q's argument flat, `Add{A,B,C}`, because `[Add(A,B)]` is not yet atomic,
+and the same round's H action makes it atomic. Naive re-fires the `(P (C))` match in
+round 2, builds the nested `Add{[A+B],C}`, and the second rule's nested pattern matches
+it: `(W (C))` holds. Semi-naive never builds the nested spelling, and the check fails.
+Every completion mode derives `(W (C))` under both strategies
+(`semi_naive_atomic_eager.egg` for eager), because completion joins the flat and nested
+spellings. Before the fix below, the two strategies therefore agreed at the fixpoint only modulo the
+§6c order dependence in plain mode.
+
+Three fixes were considered: route every rule whose right-hand side builds an AC term to
+naive matching, log the changes into the delta, or accept and document. The engine logs the
+changes (2026-11-05), because the first gives up the delta saving on every AC-building rule
+in every round, and the third leaves the two strategies at different fixpoints.
+
+**Log spelling changes.** Two inputs decide the spelling: whether an argument's class is
+`atomic`, and which monomial is its minimal one. `spelling_epoch` counts the events that
+change either for a class holding a completion monomial: a child use that turns `atomic` on
+(the five `add_use` sites), and a merge that joins an atomic and a non-atomic side or changes
+a minimal monomial (`fold_min_monomial`). The pattern does not name the class (in the
+reproducer the first rule matches `(P y)`), so the semi-naive loop does not key the event to
+an atom: in plain mode, when the epoch moved since the previous delta was cut, every rule
+whose right-hand side builds an AC term (`rhs_builds_ac`) matches in full that round, as
+under naive. Completion modes skip this, since completion joins the spellings.
+`semi_naive_atomic_semi.egg` (the `atomic` event) and `semi_naive_minmono.egg` (the
+minimal-monomial event) failed under semi-naive alone before the change and pass now. The
+counter is monotone and over-approximates (a pool row may hold only the order key), so a
+spurious increase costs one full match round, never a missed match.
+
 ### The K-Variant Decomposition
 
 For a rule with k atoms, semi-naive runs k variants of the rule's
@@ -533,6 +645,24 @@ amortized by absorbing the smaller side. Constraint atoms are applied as
 filters uniformly across variants. Rules with constraint/global shapes
 that violate the premise bypass the variants.
 
+#### The touched log and merges that keep the stored id
+
+The mechanisms are the touched log and a merge whose survivor is the id the parents already
+store. That merge changes no stored child, so rebuild recanonicalizes no parent and the log
+receives nothing from recanonization; yet the absorbed class's nodes now share the survivor's
+class, and joins through that class gain tuples. Every semi-naive path must therefore record the
+absorbed class's members in the touched log. Before commit `2982903e` only the interpreter set
+`track_merge_members`; the free entry points `saturate::saturate_semi*` did not, and a merge
+that kept the stored id could enable a match no delta named. `saturate_rules_semi` now sets the
+flag and restores it on return, so every path is tracked; benchmarks that called the free
+functions now pay the per-merge ring walk. Failing program
+(`tests/egg/semi_merge_membership_delta.egg`): `(Sub (Num 1) (Num 1))` rewrites into the
+existing `(Num 0)` class, which mints nothing and, in one union direction, recanonicalizes
+nothing; the rewrite `(Add (Num 0) ..rest) → (Add ..rest)` then matches `t = (Add (x) (Sub (Num
+1) (Num 1)))` only through the absorbed member, and `(check-eq t (x))` fails without it. Lean:
+`delta_incomplete_untracked`, the counter-model without tracking (`Rounds/Counter.lean`), and
+`delta_complete`, which assumes `R.tracking = true` (`Rounds/Delta.lean`).
+
 **Three rule shapes have no delta to read and match the whole graph
 every round** (`saturate::needs_naive_match`):
 
@@ -549,6 +679,21 @@ every round** (`saturate::needs_naive_match`):
   rule never fires at any budget.
   `egraph/tests/egg/root_binding_merge_during_run.egg` pins it under
   both strategies.
+
+  **Correction (2026-11-04).** "An `EqGlobal` on a node variable" was too narrow: since commit
+  `2d36795a` every `EqGlobal` routes the rule naive, whatever its local. The mechanisms are
+  the equality to a global and the class-growth delta. In `((h x) (= x g))` with `x` a child,
+  the match appears when `g`'s class absorbs `x`'s; if `x`'s id survives, `(h x)` is not
+  recanonicalized, and the only touched node is the absorbed one, which no atom of the rule
+  scans, so no delta names the match. Failing program (`tests/egg/semi_eq_global_local.egg`):
+  `(let g (a))`, `(let t (h (b)))`, three unions that make `(b)`'s class the heavier one, then
+  `(rule ((h x) (= x g)) ((union (c) (d))))` and `(rewrite (a) (b))`; `(check-eq (c) (d))`
+  failed under `--use-semi-naive` and every union policy, and `(run 4)` did not recover it
+  because the loop stops on a zero-change round. Lean: `delta_incomplete_global`
+  (`Rounds/Counter.lean`). The same proof shows the other half of this bullet is stronger than
+  needed: an `Eq` between two locals needs no naive routing under merge tracking
+  (`delta_complete_eq_nodes`, `Rounds/Delta.lean`). The engine still routes those rules naive;
+  removing that routing is sound only while every semi-naive path tracks merge members.
 - A rule referencing a let-bound global in a child or element
   position. The global's class can grow by absorbing another class,
   and no atom of the rule scans that class, so not even the
@@ -1493,7 +1638,8 @@ into the `EGraph::touched` vector:
 - **Absorbed class members**: `merge_in_classes` pushes the absorbed
   side's member nodes on every merge while the semi-naive driver has
   merge tracking enabled, so class growth that recanonicalizes nothing
-  still reaches the next round's delta.
+  still reaches the next round's delta. `saturate_rules_semi` enables it on every path
+  ("The touched log and merges that keep the stored id", above).
 - **Subsumed nodes**: `EGraph::subsume` pushes the subsumed node. Sequence rules read
   these from `RoundDelta::subsumed`; the delta index skips them.
 
@@ -1548,7 +1694,11 @@ implementation's coverage argument that every newly enabled match appears
 in at least one variant. Node-equality and fixed-global shapes do not satisfy
 that argument and run against the full view instead. Differential and direct
 variant tests provide finite evidence; there is no machine-checked transition
-theorem.
+theorem. (Correction, 2026-11-04: there is one for a model. `delta_complete`
+(`proofs/lean/SemperProofs/EMatch/Engine/Rounds/Delta.lean`) proves that, under rebuild's
+round facts `Round.WF` and with tracking on, a binding that satisfies a rule's atoms after a
+round and not before binds some join atom to a node in the delta. Its two counter-models,
+`delta_incomplete_untracked` and `delta_incomplete_global`, are the two rules above.)
 
 A superset preserves coverage and the k variants still partition the
 delta-involving tuples, but it can re-emit a tuple that matched in an earlier
@@ -1576,6 +1726,59 @@ boundary, the log never needs to survive a `mark`/`restore`: after a
 restore, the loop simply starts the next round with an empty log and
 repopulates it during the following rebuild. No semi-persistent
 coordination is required.
+
+### What is machine-checked, what is tested against the model, and what is not modelled
+
+**Soundness.** A semi-naive run that misses an enabling event loses matches and derives no
+false equality: "Correctness Invariant", above, states that a missed event is a completeness
+failure, not an equality-soundness failure. Matching soundness is `engine_plan_sound` for the
+model (Chapter 7 §7.4). What an action builds denotes its right-hand side in every model of
+the graph and the laws: `denN_sound`, `firedN_sound` and `union_recorded_sound`
+(`Fidelity/Sound.lean`). The round-level converse, that every node or merge after a round
+comes from a fired instance or from completion, is open (`saturation_modulo_sound`
+docstring, `Final/Main.lean`).
+
+**Completeness, machine-checked for a model of the rounds:**
+
+- Within a round: `variant_partition` and `variants_disjoint` (`Engine/SemiNaive.lean`).
+- Across rounds: `delta_complete` (`Engine/Rounds/Delta.lean`), under `Round.WF` (the facts
+  rebuild guarantees) and `R.tracking = true`; `semi_naive_round_complete` and
+  `semi_naive_complete` (`Engine/Rounds/Complete.lean`) compose it with the variants.
+  `delta_complete_eq_nodes` shows that an `Eq` between two locals needs no naive routing under
+  tracking. The counter-models are `delta_incomplete_untracked` and
+  `delta_incomplete_global` (`Engine/Rounds/Counter.lean`).
+- At the fixpoint: `saturation_complete` (`Engine/Saturate/Invariant.lean`): at a round that
+  changed nothing, every match of every rule is fired, for tracked semi-naive and naive
+  routing. `saturation_complete_engine` (`Fidelity/StopTest.lean`) takes the engine's stop
+  test; `engine_stop_unchanged` proves that test implies `Unchanged`. The transport of a
+  binding through a round's merges, `matches_transport` (`Engine/Saturate/Transport.lean`),
+  assumes `NoCollapse` (Chapter 7 §7.5).
+- Modulo the AC theory: `saturation_modulo_complete` (`Final/Main.lean`). Hypotheses: a chain
+  of rounds with rebuild's round facts, merge tracking on, no `:subsume`, well-formed rules and
+  plans, every variant or naive match emitted per round, and a last state that is the
+  represented graph of a completion state meeting the hypotheses of
+  `completion_complete_at_convergence` (Chapter 6 §9c). It states completeness over the
+  e-nodes present, with the root on the class of the theory-equal node. Its current scope
+  (2026-11-05): `I0Active` asks every class to hold an active node of the operator, so a graph
+  with leaf constants is outside it; the theory does not identify merged child classes, so the
+  statement is about monomials as stored; the minimal-monomial history is met with an initial
+  state equal to the final one, so I5 is in effect assumed at the final state; and the effects
+  of rule actions are fields of `ActRound`, not derived from `apply.rs`
+  ([Chapter 13 §4](13-soundness.md#4-what-is-proved-argued-and-assumed)).
+
+**Tested against the model on generated programs:** `lake exe semper-conform-rounds`
+(`proofs/lean/Conform/Rounds`) writes `tests/egg/conform-rounds/`, rules that build terms over
+several rounds, checked against the model's fired-instance invariant on the engine's own
+snapshot. `tests/conform.rs` runs each file under both strategies. CI does not regenerate this
+directory, because its oracle reads the engine's dumps (`tests/conform.rs` header).
+
+**Not modelled:** `:flatten` ordinary rules and sequence rules across rounds (the engine
+routes the former naive); `spelling_epoch` and the build-time spelling of an AC right-hand side
+(`flatten_mset_children`), so only `semi_naive_atomic_semi.egg` and `semi_naive_minmono.egg`
+pin the agreement of naive and semi-naive on the nodes built, as opposed to the matches found;
+literals, globals, primitives, comprehensions and `--flatten-rhs`; and `Round.Persist`, which
+assumes recanonicalization is a literal map, an assumption that a unit drop or a degenerate
+collapse on rebuild breaks (`proofs/lean/STATUS.md`, "Known divergences").
 
 ### Implementation Status
 
@@ -1677,6 +1880,12 @@ a universal proof. As built:
   semi-naive is checked against naive across the entire program corpus
   (arithmetic, AC multiplicity, ACI, extraction, folding, subsumption,
   globals, push/pop).
+  The exception is the plain-mode AC pair `semi_naive_atomic_naive.egg` /
+  `semi_naive_atomic_semi.egg`, which pins the one known fixpoint difference
+  (§9.2, "A build-time choice the delta cannot see"). (Retracted 2026-11-05: since commit
+  `cdcb2186` the two files expect the same outcome, because `spelling_epoch` makes semi-naive
+  re-match the AC-building rules after a spelling change. Each file runs under one strategy
+  (`;; EVAL: naive`, `;; EVAL: semi`), so the pair compares the strategies on one program.)
 - **Disjointness** (the property final-state equivalence may not see):
   in one round, the variant
   match sets must be pairwise disjoint and their union must equal the
@@ -1700,6 +1909,10 @@ a universal proof. As built:
   matching steps plus emitted matches) lets tests assert semi-naive explores fewer
   steps than naive on a focused fixture, and that `ByContains` keeps work
   independent of unrelated distractor count in its fixture.
+- **Generated programs from the Lean model**: `tests/egg/conform-rounds/` (multi-round rules,
+  `semper-conform-rounds`) and the four other conformance directories run under both
+  strategies in `tests/conform.rs`; §9.2, "What is machine-checked", gives what the rounds
+  programs check, and Chapter 6 §9c and Chapter 7 §7.5 give the others.
 
 Note: a strict *structural isomorphism* check is **not** used as the
 differential oracle. Node count and per-class node multiset are

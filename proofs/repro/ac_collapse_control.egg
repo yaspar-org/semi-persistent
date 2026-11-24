@@ -1,0 +1,7 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+(datatype E (Add E :assoc-comm) (a) (b) (c) (d))
+(let t (Add (a) (b)))
+(rule ((Add x y)) ((union (c) (d))))
+(run 1)
+(check-eq (c) (d))

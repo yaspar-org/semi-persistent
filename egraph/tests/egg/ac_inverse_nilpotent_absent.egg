@@ -1,0 +1,17 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; CHECK_AC_BASIS: on
+;; R5 (NilpotentInverseCP, the other overlap): for Neg(X) of class Y, Y^(k-1) = X.
+;; Y^(k-1) = Y^(k-1) + {X, Y} = Y^k + {X} = {X}. The node Neg(Y) never exists, so
+;; R4 at Y cannot fire; the pair of Y^k = {} with {X, Y} = {} exists regardless.
+(sort E)
+(constructor X () E)
+(constructor Zero () E)
+(constructor Neg (E) E)
+(constructor Add (E) E :assoc :comm :nilpotent 3 :identity (Zero) :inverse Neg)
+(set-option :completion eager)
+(let y (Neg (X)))
+(let s (Add y y))
+(check-eq s (X))

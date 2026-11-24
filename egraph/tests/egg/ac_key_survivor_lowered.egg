@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; CHECK_AC_BASIS: on
+;; Completion order keys, survivor side (row EG1): Add{x,z} = Add{y,w}, keys x1 y2 z3 w4,
+;; minimal monomial Add{x,z}. (union W P) keeps w as representative and gives its class
+;; p's key 0, so Add{y,w} shrinks to keys {0,2}, below Add{x,z}, with no change to its
+;; span: no recanonization refreshes it. Without the refresh of the survivor's completion
+;; parents (refresh_key_lowered) the stored minimal monomial stays Add{x,z}, the basis
+;; check reports it non-minimal, and the second check fails.
+;; Control: ac_key_survivor_lowered_control.egg.
+(sort E)
+(function p () E) (function x () E) (function y () E) (function z () E)
+(function w () E) (function q () E)
+(function Add (E) E :assoc-comm)
+(set-option :completion eager)
+(let P (p)) (let X (x)) (let Y (y)) (let Z (z)) (let W (w))
+(union (Add X Z) (Add Y W))
+(union W P)
+(check-eq (Add X Z (q)) (Add Y W (q)))
+(check-eq (Add X Z (q)) (Add Y P (q)))

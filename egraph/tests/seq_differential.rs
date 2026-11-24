@@ -145,6 +145,11 @@ fn to_graph(it: &Interp, globals: &[&str]) -> Graph {
             mults.clear();
         }
         g.kinds.insert(op.clone(), kind);
+        if let OpKind::A { dir, .. } = eg.ops().info(o).kind
+            && dir != semi_persistent_egraph::registry::AssocDir::Both
+        {
+            g.folds.insert(op.clone(), dir);
+        }
         if kind != Kind::Plain {
             let l = eg.nary_laws(o);
             g.laws.insert(

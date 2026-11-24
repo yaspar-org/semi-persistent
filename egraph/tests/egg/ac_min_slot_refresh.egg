@@ -1,0 +1,22 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; CHECK_AC_BASIS: on
+;; Regression: the per-class min-monomial slot must be refreshed when recanonization
+;; shrinks a node in place (I5). Class {Add{a,b}, Add{p,q,r}} stores slot Add{a,b};
+;; merging r with the identity shrinks Add{p,q,r} to Add{p,q} ≺ Add{a,b} (p, q have
+;; the smaller ids). With a stale slot no rule is produced and a+b+z = p+q+z is missed.
+(sort E)
+(function Zero () E)
+(function p () E) (function q () E) (function a () E) (function b () E)
+(function z () E) (function r () E)
+(function Add (E) E :assoc-comm :identity (Zero))
+(set-option :completion eager)
+(let pp (p)) (let qq (q)) (let aa (a)) (let bb (b))
+(let n1 (Add a b))
+(let n2 (Add p q r))
+(union n1 n2)
+(let d (Add a b z))
+(let e (Add p q z))
+(union r (Zero))
+(check-eq d e)

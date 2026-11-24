@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+(sort E)
+(function p () E) (function q () E) (function Kc () E)
+(function Add (E) E :assoc-comm)
+(function Pick (E E) E)
+(let k (Kc))
+(let top (Add (p) k))
+(union k (Add (p) (q)))
+(rewrite (Add x ..rest) (Pick x (Add ..rest)) :flatten)
+(run 1)
+(check-eq top (Pick (p) k))
+(check-eq top (Pick (q) (Add (p) (p))))
+(check-neq top (Pick (p) (q)))

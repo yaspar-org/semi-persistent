@@ -1287,8 +1287,13 @@ where
             }
         }
         CompiledAction::Insert(t) => {
+            // A change only when a node was created: on a hash-cons hit the
+            // graph is as before, and counting it would keep the saturation
+            // loop from reporting a fixpoint while a naive-routed insert rule
+            // re-fires its old matches every round.
+            let before = eg.node_count();
             eval(t, env, eg, model, globals)?;
-            1
+            usize::from(eg.node_count() > before)
         }
         CompiledAction::Set {
             func: _,
@@ -1299,8 +1304,12 @@ where
         }
         CompiledAction::Subsume(var) => {
             let node = env.node(RhsNodeRef::Query(*var));
+            // A change only when the flag was not set: a subsumed node is not
+            // matched again, so this is reached once per node unless another
+            // rule's action names it.
+            let fresh = eg.node_flags(node) & crate::node_types::FLAG_SUBSUMED == 0;
             eg.subsume(node);
-            1
+            usize::from(fresh)
         }
     })
 }
@@ -1439,7 +1448,8 @@ pub(crate) fn report_flatten_skips<Cfg, L, S, O, const T: bool, const P: bool>(
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
     let (skipped, overflowed) = (pool.flatten_skipped(), pool.flatten_overflowed());
-    if skipped == 0 && overflowed == 0 {
+    let truncated = pool.flatten_regroup_truncated();
+    if skipped == 0 && overflowed == 0 && truncated == 0 {
         // Nothing to report. The rule's name is looked up only here: a caller that compiled
         // its rule outside the e-graph's registry (the unit tests below) has no entry for it.
         return;
@@ -1450,6 +1460,12 @@ pub(crate) fn report_flatten_skips<Cfg, L, S, O, const T: bool, const P: bool>(
         eprintln!(
             "warning: {name}: {n} node(s) with {} skipped",
             crate::flatten::OVER_BOUND
+        );
+    }
+    if truncated > 0 {
+        eprintln!(
+            "warning: {name}: {truncated} node(s) with {}; their other views were matched",
+            crate::flatten::REGROUP_TRUNCATED
         );
     }
     let n = overflowed;

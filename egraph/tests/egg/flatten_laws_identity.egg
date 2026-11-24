@@ -1,0 +1,33 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; The demand rule under `:identity`: an untaken leaf whose opened class is the unit
+;; (counterexample 2 of the laws proof). n = add{t, W}, W ∋ add{X, d}, X ∋ add{b, c},
+;; and X is merged with the unit after construction. In the model, fully opened,
+;; n = add{t, b, c, d}, (add (Tc) ..rest) matches it with rest = {b, c, d}, the leaf
+;; (X, [b, c]) takes nothing and X is not taken, so the old rule rejected the match;
+;; closing the leaf gives {t, X, d}, which drops the unit to {t, d}, so no less-opened
+;; view carries the match, and the leaf is non-inert (X is the unit). The engine never
+;; reaches that shape: rebuild recanonizes every stored child list under the laws, so
+;; the unit class leaves W's node ({X, d} becomes {d}, and W is merged with d) and no
+;; stored node has the unit as a child; a leaf opened on the unit cannot arise, and the
+;; unit clause of the rule is implemented but unreachable by this route. The checks pin
+;; that absorption: the only match is on the stored view {t, d}.
+(sort E)
+(function zero () E)
+(function Tc () E) (function Bc () E) (function Cc () E) (function Dc () E)
+(function Xc () E) (function Wc () E)
+(function add (E) E :assoc :comm :identity (zero))
+(function Pick (E) E)
+(let x (Xc))
+(let w (Wc))
+(union x (add (Bc) (Cc)))
+(union w (add x (Dc)))
+(let n (add (Tc) w))
+(union x (zero))
+(rewrite (add (Tc) ..rest) (Pick (add ..rest)) :flatten)
+(run 1)
+(check-eq w (Dc))
+(check-eq n (Pick (Dc)))
+(check-neq n (Pick (add (Bc) (Cc) (Dc))))

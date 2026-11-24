@@ -497,6 +497,9 @@ pub struct MatchPool<Cfg: EGraphConfig> {
     /// (`crate::flatten::MULT_OVERFLOW`), for the query just run, and the first of them.
     flatten_overflowed: usize,
     first_flatten_overflow: Option<crate::flatten::FlattenOverflow<Cfg::G, Cfg::M>>,
+    /// Nodes whose regrouping stopped at a bound (`crate::flatten::REGROUP_TRUNCATED`),
+    /// for the query just run.
+    flatten_regroup_truncated: usize,
 }
 
 impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
@@ -527,12 +530,18 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
             flatten_skipped: 0,
             flatten_overflowed: 0,
             first_flatten_overflow: None,
+            flatten_regroup_truncated: 0,
         }
     }
 
     /// Nodes the `Flatten` step skipped for exceeding a bound, for the query just run.
     pub fn flatten_skipped(&self) -> usize {
         self.flatten_skipped
+    }
+
+    /// Nodes whose regrouping stopped at a bound, for the query just run.
+    pub fn flatten_regroup_truncated(&self) -> usize {
+        self.flatten_regroup_truncated
     }
 
     /// Flattened views and openings skipped for a multiplicity beyond the configured
@@ -1178,6 +1187,7 @@ pub fn run_query_seeded_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: b
     pool.flatten_skipped = 0;
     pool.flatten_overflowed = 0;
     pool.first_flatten_overflow = None;
+    pool.flatten_regroup_truncated = 0;
     let mut env = Match::new(&plan.shape);
     for &(v, g) in seeds {
         env.set(v, g);
@@ -1217,6 +1227,7 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     pool.flatten_skipped = 0;
     pool.flatten_overflowed = 0;
     pool.first_flatten_overflow = None;
+    pool.flatten_regroup_truncated = 0;
     let mut env = Match::new(&plan.shape);
     let exec = Exec::<Cfg, L, S>::static_plan(&plan.steps);
     run_step(&exec, 0, eg, index, globals, &mut env, pool);
@@ -1261,6 +1272,7 @@ pub fn run_query_scheduled_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS
     pool.flatten_skipped = 0;
     pool.flatten_overflowed = 0;
     pool.first_flatten_overflow = None;
+    pool.flatten_regroup_truncated = 0;
     let mut env = Match::new(&rq.shape);
     let adaptive = Adaptive::new(rq);
     let exec = Exec::adaptive(&adaptive);
@@ -1941,9 +1953,43 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                     PatVar::Local(v) => env.nodes[v.idx()].map(|c| canon(index, eg, c)),
                 })
                 .collect();
+            // Regrouped views (`crate::flatten`, "Regrouped views"): an item bound to `g`
+            // takes a group of elements when `g` holds an `op` node over them, so an
+            // element is takeable when it lies below a bound class through `op` members.
+            // The closure is capped; past the cap every element is takeable, which only
+            // prunes less.
+            let bound = bound.and_then(|b| {
+                use crate::flatten::Members;
+                const CAP: usize = 4096;
+                let mut seen: std::collections::HashSet<Cfg::G> = b.iter().copied().collect();
+                let mut queue: Vec<Cfg::G> = b;
+                let (mut kids, mut ids) = (Vec::new(), Vec::new());
+                while let Some(x) = queue.pop() {
+                    for &m in snap.members(x) {
+                        if snap.op(m) != Some(*op) {
+                            continue;
+                        }
+                        snap.children(m, *kind, &mut kids, &mut ids);
+                        for &(c, _) in &kids {
+                            if seen.insert(c) {
+                                if seen.len() > CAP {
+                                    return None;
+                                }
+                                queue.push(c);
+                            }
+                        }
+                    }
+                }
+                Some(seen)
+            });
             let takeable = |c: Cfg::G| bound.as_ref().is_none_or(|b| b.contains(&c));
-            match crate::flatten::enumerate(&snap, n, *op, *kind, takeable, &mut fl) {
+            // A match takes at most one regrouped class per item.
+            let limit = items.len();
+            match crate::flatten::enumerate(&snap, n, *op, *kind, takeable, limit, &mut fl) {
                 Ok(()) => {
+                    if fl.regroup_truncated() {
+                        results.flatten_regroup_truncated += 1;
+                    }
                     // A view past the width is skipped inside the enumeration; the node's
                     // other views still run, and the first overflow is kept for the report.
                     if fl.overflows() > 0 {

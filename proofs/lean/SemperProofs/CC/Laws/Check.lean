@@ -1,0 +1,33 @@
+import SemperProofs.CC.Laws.Main
+
+/-! Axiom audit for the concrete law sets. Expected: `propext`,
+`Classical.choice`, `Quot.sound` only. -/
+
+#print axioms SemperProofs.CC.NFLaw.toLaws_hlaw
+#print axioms SemperProofs.CC.NFLaw.toLaws_hnf_ax
+#print axioms SemperProofs.CC.NFLaw.hcp_of_gen
+#print axioms SemperProofs.CC.NFLaw.E_iff
+#print axioms SemperProofs.CC.identity_hlaw
+#print axioms SemperProofs.CC.identity_hnf_ax
+#print axioms SemperProofs.CC.nilpotent_hlaw
+#print axioms SemperProofs.CC.nilpotent_hnf_ax
+#print axioms SemperProofs.CC.idempotent_hlaw
+#print axioms SemperProofs.CC.idempotent_hnf_ax
+#print axioms SemperProofs.CC.idempotent_clamp_eq_dedup
+#print axioms SemperProofs.CC.inverse_hlaw
+#print axioms SemperProofs.CC.inverse_hnf_ax
+#print axioms SemperProofs.CC.invNormal_invWalk
+#print axioms SemperProofs.CC.invGen_cp_not_joinable
+#print axioms SemperProofs.CC.combined_hlaw
+#print axioms SemperProofs.CC.combined_hnf_ax
+#print axioms SemperProofs.CC.combined_counterexample
+#print axioms SemperProofs.CC.hcp_identity
+#print axioms SemperProofs.CC.hcp_nilpotent
+#print axioms SemperProofs.CC.hcp_idempotent
+#print axioms SemperProofs.CC.hcp_inverse
+#print axioms SemperProofs.CC.hcp_combined
+#print axioms SemperProofs.CC.completion_complete_identity
+#print axioms SemperProofs.CC.completion_complete_nilpotent
+#print axioms SemperProofs.CC.completion_complete_idempotent
+#print axioms SemperProofs.CC.completion_complete_inverse
+#print axioms SemperProofs.CC.completion_complete_combined

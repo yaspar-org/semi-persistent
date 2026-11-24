@@ -1,0 +1,29 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; The demand rule under `:inverse`: an untaken leaf whose opened class cancels against
+;; a present class (counterexample 1 of the laws proof, `demand_laws_complete_ac`).
+;; n = add{t, W}, W ∋ add{X, d}, X ∋ add{b, c}, neg(X) = t. Fully opened, n = add{t, b,
+;; c, d}, and (add (Tc) ..rest) matches it with rest = {b, c, d}. Its only tree has the
+;; leaf (X, [b, c]), which takes nothing and whose class is not taken, so the old rule
+;; (a taken element or a taken opened class) rejected the match; but closing the leaf
+;; gives {t, X, d}, in which X cancels t, so the view is {d}, not a node, and no
+;; less-opened view carries the match. The leaf is non-inert (X has its inverse t
+;; present) and the match is kept. Before the rule was extended this check failed.
+(sort E)
+(function zero () E)
+(function Tc () E) (function Bc () E) (function Cc () E) (function Dc () E)
+(function Xc () E) (function Wc () E)
+(function neg (E) E)
+(function add (E) E :assoc :comm :identity (zero) :inverse neg)
+(function Pick (E) E)
+(let x (Xc))
+(let w (Wc))
+(union x (add (Bc) (Cc)))
+(union w (add x (Dc)))
+(let n (add (Tc) w))
+(union (neg x) (Tc))
+(rewrite (add (Tc) ..rest) (Pick (add ..rest)) :flatten)
+(run 1)
+(check-eq n (Pick (add (Bc) (Cc) (Dc))))

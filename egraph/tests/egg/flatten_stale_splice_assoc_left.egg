@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; TYPES: machine
+;; EVAL: both
+;; Stale splice at build (:assoc-left). A rule's action first unions (B) and (A), with (A) the
+;; absorbed side, then builds a term whose same-op child class is spliced by `add`
+;; (flatten_*_children). The nested node's stored children still read (A) until the next
+;; rebuild; spliced raw, the new node kept the non-canonical key and, with no use on a
+;; live class, no rebuild ever recanonicalized it, so building the canonical spelling
+;; later missed the hash-cons. The check holds once spliced children are `find`'d.
+;; Companion of seq_hashcons_miss_min.egg.
+(sort E)
+(function A () E)
+(function B () E)
+(function D () E)
+(function G (E) E)
+(function Lf (E) E :assoc-left)
+(let k (Lf (A) (A)))
+(G k)
+(rule ((G y)) ((union (B) (A)) (union (Lf y (A)) (D))))
+(run 1)
+(check-eq (Lf (A) (A) (A)) (D))
