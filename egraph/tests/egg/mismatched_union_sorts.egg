@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; Regression: unioning two terms of different sorts in a rule head must fail resolution.
+(sort TypeA)
+(sort TypeB)
+(function val_a () TypeA)
+(function val_b () TypeB)
+
+(rule ((= x (val_a)))
+      ((union x (val_b))))
