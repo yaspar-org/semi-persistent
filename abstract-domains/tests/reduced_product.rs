@@ -333,6 +333,13 @@ fn bool4_connectives_are_exact() {
                 None => assert_eq!(want, [false, false]),
                 Some(m) => assert_eq!(set(&m), want),
             }
+
+            assert_eq!(set(&a.join(b)), set(&b.join(a)), "join commutativity");
+            assert_eq!(
+                bot(a.meet(b)).map(|m| set(&m)),
+                bot(b.meet(a)).map(|m| set(&m)),
+                "meet commutativity"
+            );
         }
     }
 }
