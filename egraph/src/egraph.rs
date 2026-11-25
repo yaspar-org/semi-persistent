@@ -723,6 +723,12 @@ where
     pub fn intern_sort(&mut self, name: &str) -> Cfg::S {
         self.sorts.intern(name)
     }
+    pub fn set_sort_abs_info(&mut self, id: Cfg::S, info: crate::registry::SortAbsInfo) {
+        self.sorts.set_abs_info(id, info);
+    }
+    pub fn set_op_abs_info(&mut self, id: Cfg::O, info: crate::registry::OpAbsInfo) {
+        self.ops.set_abs_info(id, info);
+    }
     pub fn sort_name(&self, id: Cfg::S) -> &str {
         self.sorts.name(id)
     }

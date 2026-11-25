@@ -1,0 +1,7 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: function 'f': :interp bvadd needs signature
+;; bvadd works on bit-vectors of one width; Int is an int carrier.
+(sort Int :interp int)
+(function f (Int Int) Int :interp bvadd)

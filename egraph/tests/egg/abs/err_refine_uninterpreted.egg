@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: refine: domain 'interval' is not enabled on sort 'E'
+;; An uninterpreted sort enables no domain.
+(sort E)
+(constructor e () E)
+(refine (e) (interval 0 1))

@@ -567,7 +567,11 @@ pub enum CompletionOption {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
-    Sort(String),
+    Sort {
+        name: String,
+        interp: Option<String>,
+        domains: Option<Vec<String>>,
+    },
     /// `(function …)` and `(constructor …)`: the same declaration, distinguished only by
     /// `meta.is_constructor`. Both register an operator with identical congruence and
     /// matching behavior; a constructor additionally carries the extraction semantics
@@ -578,6 +582,13 @@ pub enum Command {
         ret_sort: String,
         tags: Vec<AlgTag>,
         meta: OpMeta,
+        interp: Option<String>,
+        range: Option<(String, String)>,
+    },
+    Refine {
+        term: Term,
+        value: crate::abs_syntax::AbsValueLit,
+        span: Span,
     },
     Datatype {
         name: String,
@@ -661,6 +672,7 @@ pub enum Command {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
+    Refine(RhsTerm, crate::abs_syntax::AbsValueLit),
     Union(RhsTerm, RhsTerm),
     Insert(RhsTerm),
     Set {

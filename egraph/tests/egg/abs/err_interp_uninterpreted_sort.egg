@@ -1,0 +1,7 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: function 'g': :interp + needs signature
+;; An uninterpreted sort has no carrier, so no operator's signature matches it.
+(sort E)
+(function g (E E) E :interp +)

@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: function 'g': :interp bvadd needs signature
+;; bvadd needs one width for both arguments and the result.
+(sort BV8  :interp (bitvec 8))
+(sort BV16 :interp (bitvec 16))
+(function g (BV8 BV16) BV16 :interp bvadd)

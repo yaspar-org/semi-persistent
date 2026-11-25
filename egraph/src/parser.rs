@@ -817,6 +817,100 @@ fn parse_mult_expr(input: &mut &str) -> ModalResult<MultExpr> {
 }
 
 // ── Actions ──
+/// Parse a single non-whitespace, non-delimiter token (identifiers, signed/hex integers,
+/// symbolic operators like `+`, `<`, `<=`, or `+inf`/`-inf`).
+fn raw_token<'a>(input: &mut &'a str) -> ModalResult<&'a str> {
+    ws_inner(input);
+    let end = input
+        .find(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | ';'))
+        .unwrap_or(input.len());
+    if end == 0 {
+        let mut e = ContextError::new();
+        e.push(StrContext::Expected(StrContextValue::Description("token")));
+        return Err(ErrMode::Backtrack(e));
+    }
+    let tok = &input[..end];
+    *input = &input[end..];
+    Ok(tok)
+}
+
+/// Parse either an atom (`int`, `bool`) or a parenthesized form (`(bitvec 8)`).
+fn raw_sexp(input: &mut &str) -> ModalResult<String> {
+    ws_inner(input);
+    if input.starts_with('(') {
+        let start = *input;
+        let mut depth = 0usize;
+        for (idx, ch) in start.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let s = &start[..=idx];
+                        *input = &start[idx + 1..];
+                        return Ok(s.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut e = ContextError::new();
+        e.push(StrContext::Expected(StrContextValue::Description("')'")));
+        Err(ErrMode::Cut(e))
+    } else {
+        Ok(raw_token(input)?.to_string())
+    }
+}
+
+fn parse_abs_value(input: &mut &str) -> ModalResult<crate::abs_syntax::AbsValueLit> {
+    cut_char(input, '(')?;
+    ws_inner(input);
+    let head = ident(input)?;
+    let res = match head {
+        "interval" => {
+            ws_inner(input);
+            let lo = raw_token(input)?.to_string();
+            ws_inner(input);
+            let hi = raw_token(input)?.to_string();
+            crate::abs_syntax::AbsValueLit::Interval { lo, hi }
+        }
+        "bits" => {
+            ws_inner(input);
+            if input.starts_with(":val") {
+                *input = &input[":val".len()..];
+            }
+            ws_inner(input);
+            let val = raw_token(input)?.to_string();
+            ws_inner(input);
+            if input.starts_with(":mask") {
+                *input = &input[":mask".len()..];
+            }
+            ws_inner(input);
+            let mask = raw_token(input)?.to_string();
+            crate::abs_syntax::AbsValueLit::Bits { val, mask }
+        }
+        "congruence" => {
+            ws_inner(input);
+            let r = raw_token(input)?.to_string();
+            ws_inner(input);
+            let m = raw_token(input)?.to_string();
+            crate::abs_syntax::AbsValueLit::Congruence { r, m }
+        }
+        "nonzero" => crate::abs_syntax::AbsValueLit::NonZero,
+        "true" => crate::abs_syntax::AbsValueLit::True,
+        "false" => crate::abs_syntax::AbsValueLit::False,
+        _ => {
+            let mut e = ContextError::new();
+            e.push(StrContext::Expected(StrContextValue::Description(
+                "known abstract value type",
+            )));
+            return Err(ErrMode::Cut(e));
+        }
+    };
+    ws_inner(input);
+    cut_char(input, ')')?;
+    Ok(res)
+}
 
 fn parse_action(input: &mut &str, base: usize) -> ModalResult<Action> {
     let start = input.as_ptr() as usize;
@@ -842,6 +936,11 @@ fn parse_action(input: &mut &str, base: usize) -> ModalResult<Action> {
             cut_char(input, ')')?;
             let value = parse_rhs(input, base)?;
             Action::Set { func, args, value }
+        }
+        "refine" => {
+            let term = parse_rhs(input, base)?;
+            let value = parse_abs_value(input)?;
+            crate::ast::Action::Refine(term, value)
         }
         _ => {
             let mut children = Vec::new();
@@ -1354,7 +1453,43 @@ fn parse_command(
         }
         "sort" => {
             let name = ident(input)?.to_owned();
-            SurfaceCommand::Pass(Command::Sort(name))
+            let mut interp = None;
+            let mut domains = None;
+
+            loop {
+                ws(input)?;
+                if input.starts_with(')') {
+                    break;
+                }
+
+                if input.starts_with(":interp") {
+                    *input = &input[":interp".len()..];
+                    ws(input)?;
+                    interp = Some(raw_sexp(input)?);
+                } else if input.starts_with(":domains") {
+                    *input = &input[":domains".len()..];
+                    ws(input)?;
+                    cut_char(input, '(')?;
+                    let mut doms = Vec::new();
+                    loop {
+                        ws(input)?;
+                        if input.starts_with(')') {
+                            break;
+                        }
+                        doms.push(ident(input)?.to_string());
+                    }
+                    cut_char(input, ')')?;
+                    domains = Some(doms);
+                } else {
+                    break; // Unrecognized token, loop breaks and it will fail cleanly later
+                }
+            }
+
+            SurfaceCommand::Pass(Command::Sort {
+                name,
+                interp,
+                domains,
+            })
         }
         // `(function …)` and `(constructor …)` share a shape; the keyword decides only
         // whether the declared op is a constructor (a term former, extraction-eligible with
@@ -1372,7 +1507,7 @@ fn parse_command(
             }
             cut_char(input, ')')?;
             let ret_sort = ident(input)?.to_owned();
-            let (tags, mut meta) = parse_decl_tags(input, base)?;
+            let (tags, mut meta, interp, range) = parse_decl_tags(input, base)?;
             meta.is_constructor = kw == "constructor";
             SurfaceCommand::Pass(Command::Function {
                 name,
@@ -1380,6 +1515,8 @@ fn parse_command(
                 ret_sort,
                 tags,
                 meta,
+                interp,
+                range,
             })
         }
         "datatype" => {
@@ -1400,7 +1537,7 @@ fn parse_command(
                     }
                     args.push(ident(input)?.to_owned());
                 }
-                let (tags, mut meta) = parse_decl_tags(input, base)?;
+                let (tags, mut meta, _, _) = parse_decl_tags(input, base)?;
                 // A datatype variant is a constructor by construction.
                 meta.is_constructor = true;
                 cut_char(input, ')')?;
@@ -1864,6 +2001,13 @@ fn parse_command(
                 cycle_mode,
             })
         }
+        "refine" => {
+            let term = parse_term_inner(input, base)?;
+            ws(input)?;
+            let value = parse_abs_value(input)?;
+            let span = span_of(base, start, input);
+            SurfaceCommand::Pass(Command::Refine { term, value, span })
+        }
         _ => {
             // Ground term insertion: (op args...)
             let children = parse_term_children(input, base)?;
@@ -1889,11 +2033,43 @@ fn parse_command(
 ///
 /// The returned `OpMeta` has `is_constructor: false`; the caller sets it, since that comes from
 /// the declaration keyword (`constructor` / `datatype`), not from a tag.
-fn parse_decl_tags(input: &mut &str, base: usize) -> ModalResult<(Vec<AlgTag>, OpMeta)> {
+fn parse_decl_tags(
+    input: &mut &str,
+    base: usize,
+) -> ModalResult<(
+    Vec<AlgTag>,
+    OpMeta,
+    Option<String>,
+    Option<(String, String)>,
+)> {
     let mut tags = Vec::new();
     let mut meta = OpMeta::default();
+    let mut interp = None;
+    let mut range = None;
+
     loop {
         ws_inner(input);
+
+        if input.starts_with(":interp") {
+            *input = &input[":interp".len()..];
+            ws_inner(input);
+            interp = Some(raw_token(input)?.to_string());
+            continue;
+        }
+        if input.starts_with(":range") {
+            *input = &input[":range".len()..];
+            ws_inner(input);
+            cut_char(input, '(')?;
+            ws_inner(input);
+            let lo = raw_token(input)?.to_string();
+            ws_inner(input);
+            let hi = raw_token(input)?.to_string();
+            ws_inner(input);
+            cut_char(input, ')')?;
+            range = Some((lo, hi));
+            continue;
+        }
+
         // Extraction tags first: neither prefixes nor is prefixed by an algebra tag.
         if input.starts_with(":cost") {
             *input = &input[":cost".len()..];
@@ -1975,7 +2151,7 @@ fn parse_decl_tags(input: &mut &str, base: usize) -> ModalResult<(Vec<AlgTag>, O
             break;
         }
     }
-    Ok((tags, meta))
+    Ok((tags, meta, interp, range))
 }
 
 fn ws_inner(input: &mut &str) {

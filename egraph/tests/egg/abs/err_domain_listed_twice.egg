@@ -1,0 +1,6 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: sort 'Int': domain 'interval' is listed twice
+;; A domain set names each domain once.
+(sort Int :interp int :domains (interval congruence interval))

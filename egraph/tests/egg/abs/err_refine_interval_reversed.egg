@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: (interval lo hi) needs lo <= hi
+;; An empty interval is rejected, not read as a contradiction.
+(sort Int :interp int)
+(constructor x () Int)
+(refine (x) (interval 9 0))

@@ -1,0 +1,8 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: (bits :val V :mask M) needs V and M to share no bit
+;; A mask bit is an unknown bit, so the value has 0 there.
+(sort BV8 :interp (bitvec 8))
+(constructor w () BV8)
+(refine (w) (bits :val 3 :mask 1))

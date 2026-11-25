@@ -91,6 +91,13 @@ pub enum Atom {
     /// literal values bound elsewhere in the query. Binds nothing and scans no
     /// relation.
     Pred { expr: PredExpr, span: Span },
+    /// Abstract-domain guard (`within`, `nonzero`, `known-bits`).
+    /// Binds nothing and scans no relation, like `Pred`.
+    AbsGuard {
+        var: String,
+        test: crate::abs_syntax::AbsTestLit,
+        span: Span,
+    },
 }
 
 /// A primitive-predicate guard expression: a computation over literal values, built

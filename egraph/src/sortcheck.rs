@@ -77,6 +77,10 @@ pub enum CTerm<O, S, L> {
 #[derive(Clone, Debug)]
 pub enum CCommand<O, S, L> {
     /// Declaration — replay through interpreter's existing exec path.
+    Refine {
+        term: CTerm<O, S, L>,
+        value: crate::abs_syntax::AbsValue,
+    },
     Decl(Command),
     Let(String, CTerm<O, S, L>),
     Union(CTerm<O, S, L>, CTerm<O, S, L>),
@@ -602,6 +606,58 @@ where
             self.atoms.push(Atom::Neq(ra, rb));
             return Ok(self.fresh("neq"));
         }
+        if let SurfacePattern::App { op, children, .. } = pat
+            && matches!(op.as_str(), "within" | "nonzero" | "known-bits")
+        {
+            let tok = |c: &SurfacePatChild| -> Result<String, String> {
+                match c {
+                    SurfacePatChild::Elem(
+                        SurfacePattern::Lit(s, _) | SurfacePattern::Var(s, _),
+                    ) => Ok(s.clone()),
+                    _ => Err(format!("{op}: expected a literal argument")),
+                }
+            };
+            let var_of = |c: &SurfacePatChild| -> Result<String, String> {
+                match c {
+                    SurfacePatChild::Elem(SurfacePattern::Var(v, _)) => Ok(v.clone()),
+                    _ => Err(format!("{op}: first argument must be a variable")),
+                }
+            };
+            let (var, test) = match (op.as_str(), children.as_slice()) {
+                ("within", [v, lo, hi]) => {
+                    let var = var_of(v)?;
+                    let test = crate::abs_syntax::AbsTestLit::Within {
+                        var: var.clone(),
+                        lo: tok(lo)?,
+                        hi: tok(hi)?,
+                    };
+                    (var, test)
+                }
+                ("nonzero", [v]) => {
+                    let var = var_of(v)?;
+                    let test = crate::abs_syntax::AbsTestLit::NonZero { var: var.clone() };
+                    (var, test)
+                }
+                ("known-bits", [v, val, mask]) => {
+                    let var = var_of(v)?;
+                    let test = crate::abs_syntax::AbsTestLit::KnownBits {
+                        var: var.clone(),
+                        val: tok(val)?,
+                        mask: tok(mask)?,
+                    };
+                    (var, test)
+                }
+                _ => {
+                    return Err(format!("{op}: wrong number of arguments"));
+                }
+            };
+            self.atoms.push(Atom::AbsGuard {
+                var,
+                test,
+                span: pat.span(),
+            });
+            return Ok(self.fresh("abs_guard"));
+        }
         if let SurfacePattern::App { op, .. } = pat
             && op != EQ_FORM
             && let Some(op_id) = self.ops.id_by_name(op)
@@ -710,6 +766,7 @@ where
                     .ops
                     .id_by_name(op)
                     .ok_or_else(|| format!("unknown operator '{op}'"))?;
+
                 if !self.ops.is_prim_op(op_id) {
                     return Err(format!(
                         "'{op}' is not a primitive operator; every operator inside a guard \
@@ -1359,7 +1416,7 @@ where
 {
     // Declarations: register into egraph, then wrap as Decl
     match &cmd {
-        Command::Sort(_) | Command::Function { .. } | Command::Datatype { .. } => {
+        Command::Sort { .. } | Command::Function { .. } | Command::Datatype { .. } => {
             // Use the interpreter's existing exec_function / intern_sort logic
             // by delegating to the egraph directly.
             exec_decl(&cmd, eg, model, globals)?;
@@ -1382,6 +1439,27 @@ where
         Command::Insert(term) => {
             let ct = check_term(&term, None, eg.ops(), eg.sorts(), model, globals)?;
             Ok(CCommand::Insert(ct))
+        }
+        Command::Refine { term, value, span } => {
+            let ct = check_term(&term, None, eg.ops(), eg.sorts(), model, globals)?;
+            let sort = match &ct {
+                CTerm::Lit(_, s) | CTerm::App { sort: s, .. } | CTerm::Global(_, s) => *s,
+                CTerm::Counted(_, _) => {
+                    return Err(serr("refine: counted term is not allowed here", span));
+                }
+            };
+            let info = eg.sorts().abs_info(sort);
+            let checked = crate::abs_syntax::check_abs_value(
+                &value,
+                eg.sorts().name(sort),
+                info.carrier,
+                info.domains,
+            )
+            .map_err(|msg| serr(msg, span))?;
+            Ok(CCommand::Refine {
+                term: ct,
+                value: checked,
+            })
         }
         Command::CheckEq(a, b, complete) => {
             let ca = check_term(&a, None, eg.ops(), eg.sorts(), model, globals)?;
@@ -1572,16 +1650,149 @@ where
     Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
 {
     match cmd {
-        Command::Sort(name) => {
-            eg.intern_sort(name);
+        Command::Sort {
+            name,
+            interp,
+            domains,
+        } => {
+            use crate::abs_syntax::{Carrier, Domain, DomainMask};
+            use crate::registry::SortAbsInfo;
+
+            if domains.is_some() && interp.is_none() {
+                return Err(serr(
+                    format!("sort '{name}': :domains needs :interp"),
+                    Span::Dummy,
+                ));
+            }
+
+            let mut info = SortAbsInfo {
+                carrier: None,
+                domains: DomainMask::default(),
+            };
+
+            if let Some(i_str) = interp {
+                let trimmed = i_str.trim();
+                let carrier = if trimmed == "int" {
+                    Carrier::Int
+                } else if trimmed == "bool" {
+                    Carrier::Bool
+                } else if trimmed.starts_with('(') && trimmed.ends_with(')') {
+                    let inner = trimmed[1..trimmed.len() - 1].trim();
+                    let parts: Vec<&str> = inner.split_whitespace().collect();
+                    if parts.len() == 2 && parts[0] == "bitvec" {
+                        let w: i64 = parts[1].parse().map_err(|_| {
+                            serr(
+                                format!("sort '{name}': unknown carrier '{trimmed}'"),
+                                Span::Dummy,
+                            )
+                        })?;
+                        if !(1..=128).contains(&w) {
+                            return Err(serr(
+                                format!("sort '{name}': bit-vector width {w} is outside 1..=128"),
+                                Span::Dummy,
+                            ));
+                        }
+                        Carrier::BitVec(w as u32)
+                    } else {
+                        return Err(serr(
+                            format!("sort '{name}': unknown carrier '{trimmed}'"),
+                            Span::Dummy,
+                        ));
+                    }
+                } else {
+                    return Err(serr(
+                        format!("sort '{name}': unknown carrier '{trimmed}'"),
+                        Span::Dummy,
+                    ));
+                };
+
+                info.carrier = Some(carrier);
+                let carrier_str = match carrier {
+                    Carrier::Int => "int".to_string(),
+                    Carrier::Bool => "bool".to_string(),
+                    Carrier::BitVec(w) => format!("(bitvec {w})"),
+                };
+
+                if let Some(doms) = domains {
+                    let mut seen = std::collections::HashSet::new();
+                    for d in doms {
+                        if !seen.insert(d.as_str()) {
+                            return Err(serr(
+                                format!("sort '{name}': domain '{d}' is listed twice"),
+                                Span::Dummy,
+                            ));
+                        }
+                        let dom = match d.as_str() {
+                            "interval" => Domain::Interval,
+                            "ubounds" => Domain::UBounds,
+                            "sbounds" => Domain::SBounds,
+                            "congruence" => Domain::Congruence,
+                            "nonzero" => Domain::NonZero,
+                            "bits" => Domain::Bits,
+                            "bool" => Domain::Bool,
+                            _ => {
+                                return Err(serr(
+                                    format!("sort '{name}': unknown domain '{d}'"),
+                                    Span::Dummy,
+                                ));
+                            }
+                        };
+                        let valid_for_carrier = match dom {
+                            Domain::Interval | Domain::NonZero => matches!(carrier, Carrier::Int),
+                            Domain::UBounds | Domain::SBounds | Domain::Bits => {
+                                matches!(carrier, Carrier::BitVec(_))
+                            }
+                            Domain::Congruence => {
+                                matches!(carrier, Carrier::Int | Carrier::BitVec(_))
+                            }
+                            Domain::Bool => matches!(carrier, Carrier::Bool),
+                        };
+                        if !valid_for_carrier {
+                            return Err(serr(
+                                format!(
+                                    "sort '{name}': domain '{d}' is not available for carrier {carrier_str}"
+                                ),
+                                Span::Dummy,
+                            ));
+                        }
+                        info.domains.enable(dom);
+                    }
+                } else {
+                    match carrier {
+                        Carrier::Int => {
+                            info.domains.enable(Domain::Interval);
+                            info.domains.enable(Domain::Congruence);
+                            info.domains.enable(Domain::NonZero);
+                        }
+                        Carrier::Bool => {
+                            info.domains.enable(Domain::Bool);
+                        }
+                        Carrier::BitVec(_) => {
+                            info.domains.enable(Domain::UBounds);
+                            info.domains.enable(Domain::SBounds);
+                            info.domains.enable(Domain::Congruence);
+                            info.domains.enable(Domain::Bits);
+                        }
+                    }
+                }
+            }
+
+            let sid = eg.intern_sort(name);
+            eg.set_sort_abs_info(sid, info);
         }
+
         Command::Function {
             name,
             arg_sorts,
             ret_sort,
             tags,
             meta,
+            interp,
+            range,
         } => {
+            use crate::abs_syntax::{Carrier, Domain};
+            use num_bigint::BigInt;
+
             let ret = eg
                 .sorts()
                 .id_by_name(ret_sort)
@@ -1594,7 +1805,184 @@ where
                         .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                 })
                 .collect::<Result<_, _>>()?;
-            register_op(eg, name, &args, ret, tags, *meta, model, globals)?;
+
+            let fmt_carrier = |c: Option<Carrier>| -> String {
+                match c {
+                    Some(Carrier::Int) => "int".to_string(),
+                    Some(Carrier::Bool) => "bool".to_string(),
+                    Some(Carrier::BitVec(w)) => format!("(bitvec {w})"),
+                    None => "none".to_string(),
+                }
+            };
+
+            if let Some(op_name) = interp {
+                if tags
+                    .iter()
+                    .any(|t| matches!(t, AlgTag::Assoc | AlgTag::AssocLeft | AlgTag::AssocRight))
+                {
+                    return Err(serr(
+                        format!("function '{name}': :interp does not combine with :assoc"),
+                        Span::Dummy,
+                    ));
+                }
+
+                let arg_carriers: Vec<Option<Carrier>> = args
+                    .iter()
+                    .map(|&s| eg.sorts().abs_info(s).carrier)
+                    .collect();
+                let ret_carrier = eg.sorts().abs_info(ret).carrier;
+
+                let (expected, sig_ok) = match op_name.as_str() {
+                    "+" | "-" | "*" => (
+                        "(int int) int",
+                        arg_carriers.as_slice() == [Some(Carrier::Int), Some(Carrier::Int)]
+                            && ret_carrier == Some(Carrier::Int),
+                    ),
+                    "neg" => (
+                        "(int) int",
+                        arg_carriers.as_slice() == [Some(Carrier::Int)]
+                            && ret_carrier == Some(Carrier::Int),
+                    ),
+                    "<" | "<=" => (
+                        "(int int) bool",
+                        arg_carriers.as_slice() == [Some(Carrier::Int), Some(Carrier::Int)]
+                            && ret_carrier == Some(Carrier::Bool),
+                    ),
+                    "bvadd" | "bvsub" | "bvmul" | "bvand" | "bvor" | "bvxor" => (
+                        "((bitvec N) (bitvec N)) (bitvec N)",
+                        matches!(
+                            (arg_carriers.as_slice(), ret_carrier),
+                            (
+                                [Some(Carrier::BitVec(w1)), Some(Carrier::BitVec(w2))],
+                                Some(Carrier::BitVec(w3))
+                            ) if w1 == w2 && *w2 == w3
+                        ),
+                    ),
+                    "bvult" | "bvule" | "bvslt" | "bvsle" => (
+                        "((bitvec N) (bitvec N)) bool",
+                        matches!(
+                            (arg_carriers.as_slice(), ret_carrier),
+                            (
+                                [Some(Carrier::BitVec(w1)), Some(Carrier::BitVec(w2))],
+                                Some(Carrier::Bool)
+                            ) if w1 == w2
+                        ),
+                    ),
+                    "and" | "or" => (
+                        "(bool bool) bool",
+                        arg_carriers.as_slice() == [Some(Carrier::Bool), Some(Carrier::Bool)]
+                            && ret_carrier == Some(Carrier::Bool),
+                    ),
+                    "not" => (
+                        "(bool) bool",
+                        arg_carriers.as_slice() == [Some(Carrier::Bool)]
+                            && ret_carrier == Some(Carrier::Bool),
+                    ),
+                    "ite" => (
+                        "(bool T T) T",
+                        matches!(
+                            (arg_carriers.as_slice(), ret_carrier),
+                            ([Some(Carrier::Bool), Some(t1), Some(t2)], Some(t3))
+                                if t1 == t2 && *t2 == t3
+                        ),
+                    ),
+                    "embed" => {
+                        let ok = args.len() == 1
+                            && matches!(
+                                (eg.sorts().name(args[0]), ret_carrier),
+                                ("IBig", Some(Carrier::Int))
+                                    | ("u64" | "i64", Some(Carrier::BitVec(64)))
+                                    | ("bool", Some(Carrier::Bool))
+                            );
+                        ("(literal) T", ok)
+                    }
+                    _ => {
+                        return Err(serr(
+                            format!("function '{name}': unknown interpreted operator '{op_name}'"),
+                            Span::Dummy,
+                        ));
+                    }
+                };
+
+                if !sig_ok {
+                    let got_args = arg_carriers
+                        .iter()
+                        .map(|&c| fmt_carrier(c))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let got_ret = fmt_carrier(ret_carrier);
+                    return Err(serr(
+                        format!(
+                            "function '{name}': :interp {op_name} needs signature {expected}, got ({got_args}) {got_ret}"
+                        ),
+                        Span::Dummy,
+                    ));
+                }
+            }
+
+            let parsed_range = if let Some((lo_s, hi_s)) = range {
+                let ret_info = eg.sorts().abs_info(ret);
+                let has_bounds = match ret_info.carrier {
+                    Some(Carrier::Int) => ret_info.domains.has(Domain::Interval),
+                    Some(Carrier::BitVec(_)) => ret_info.domains.has(Domain::UBounds),
+                    _ => false,
+                };
+                if !has_bounds {
+                    return Err(serr(
+                        format!(
+                            "function '{name}': :range needs a bounds domain on sort '{ret_sort}'"
+                        ),
+                        Span::Dummy,
+                    ));
+                }
+                let lo: BigInt = lo_s.parse().map_err(|_| {
+                    serr(
+                        format!("function '{name}': :range bound '{lo_s}' is not an integer"),
+                        Span::Dummy,
+                    )
+                })?;
+                let hi: BigInt = hi_s.parse().map_err(|_| {
+                    serr(
+                        format!("function '{name}': :range bound '{hi_s}' is not an integer"),
+                        Span::Dummy,
+                    )
+                })?;
+                if lo > hi {
+                    return Err(serr(
+                        format!("function '{name}': :range needs lo <= hi"),
+                        Span::Dummy,
+                    ));
+                }
+                if let Some(Carrier::BitVec(w)) = ret_info.carrier {
+                    let max_excl = BigInt::from(1u8) << (w as usize);
+                    if lo < BigInt::from(0) || lo >= max_excl {
+                        return Err(serr(
+                            format!("value {lo_s} does not fit (bitvec {w})"),
+                            Span::Dummy,
+                        ));
+                    }
+                    if hi < BigInt::from(0) || hi >= max_excl {
+                        return Err(serr(
+                            format!("value {hi_s} does not fit (bitvec {w})"),
+                            Span::Dummy,
+                        ));
+                    }
+                }
+                Some((lo, hi))
+            } else {
+                None
+            };
+
+            let op_id = register_op(eg, name, &args, ret, tags, *meta, model, globals)?;
+            if interp.is_some() || parsed_range.is_some() {
+                eg.set_op_abs_info(
+                    op_id,
+                    crate::registry::OpAbsInfo {
+                        interp: interp.as_deref().map(|s| s.trim().to_string()),
+                        range: parsed_range,
+                    },
+                );
+            }
         }
         Command::Datatype { name, variants } => {
             eg.intern_sort(name);
@@ -1642,6 +2030,12 @@ where
     Cfg::Policy: crate::config::StorePolicy<Cfg, TRACK>,
 {
     use crate::registry::{AssocDir, Clamp, OpKind, UnitRef};
+    if matches!(name, "refine" | "within" | "nonzero" | "known-bits") {
+        return Err(serr(
+            format!("operator name '{name}' is reserved by the abstract-domain syntax"),
+            Span::Dummy,
+        ));
+    }
 
     // The registry asserts these two; a program reaches them, so they are sort errors here
     // (bug #7, and a second declaration of one name, found with it on 2026-10-06).

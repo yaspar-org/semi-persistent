@@ -13,6 +13,8 @@ for semantics and [Annex A](A-full-grammar.md) for the complete grammar.
 | `(datatype T (C S ... :tag*) ...)` | Declare `T` and one constructor per variant. |
 | `(ruleset r)` | Declare a ruleset name for `:ruleset r` and `(run r n)`. |
 
+<!-- TODO(abs-surface-syntax): add rows for `(sort S :interp C :domains (D...))`, the `:interp OP` and `:range (lo hi)` declaration options, and a "Refining abstract values" table for the top-level `(refine t VALUE)`, see egraph/doc/future/abstract-syntax-task.md §2 -->
+
 Algebraic properties are attached to operator declarations and individual
 datatype variants as tags. They determine an operator's representation and
 required arity. [Chapter 4](04-declaring-algebra.md) gives their laws, legal
@@ -53,6 +55,8 @@ explains term construction in detail.
 Modifiers may appear in any order. `birewrite` rejects `:subsume`, and so does a
 sequence rewrite. A general `rule` puts guards in its query list and accepts
 only `:flatten` and `:ruleset` as trailing modifiers.
+
+<!-- TODO(abs-surface-syntax): document the abstract guards `(within x lo hi)`, `(nonzero x)`, `(known-bits x V M)` in rule bodies and `:when`, and add a `(refine t VALUE)` row to the action table below, see egraph/doc/future/abstract-syntax-task.md §2 -->
 
 ### General-rule actions
 

@@ -907,8 +907,24 @@ where
 
     fn exec_checked(&mut self, cmd: &CCommand<Cfg::O, Cfg::S, L>) -> Result<(), InterpError> {
         match cmd {
-            CCommand::Decl(_) => {
-                // Already registered into egraph during sortcheck. No-op.
+            CCommand::Decl(cmd) => {
+                // Already registered into egraph during sortcheck.
+                if let crate::ast::Command::Sort { name, .. } = cmd
+                    && let Some(sid) = self.eg.sorts().id_by_name(name)
+                    && !self.eg.sorts().abs_info(sid).domains.is_empty()
+                    && !self
+                        .warnings
+                        .iter()
+                        .any(|w| w.contains("the analysis is not active"))
+                {
+                    self.warn(
+                        "abstract domains are declared, but the analysis is not active: values stay top, abstract guards never hold, and refine and :range have no effect"
+                            .to_string(),
+                    );
+                }
+            }
+            CCommand::Refine { term, .. } => {
+                self.build_cterm(term)?;
             }
             CCommand::Let(name, ct) => {
                 let (id, sort) = self.build_cterm(ct)?;

@@ -1,0 +1,7 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: sort-error
+;; MESSAGE: function 'f': unknown interpreted operator 'frob'
+;; The :interp of a function names an operator the registry lists.
+(sort Int :interp int)
+(function f (Int Int) Int :interp frob)

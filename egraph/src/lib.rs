@@ -8,6 +8,7 @@
 // use `crate::containers::Vec`, `crate::containers::Tagged`, etc.
 pub use semi_persistent_containers as containers;
 
+pub mod abs_syntax;
 pub mod ac_invariants;
 pub mod apply;
 pub mod ast;

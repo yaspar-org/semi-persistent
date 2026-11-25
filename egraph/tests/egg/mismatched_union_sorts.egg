@@ -1,0 +1,10 @@
+;; egraph/tests/egg/mismatched_union_sorts.egg
+(sort TypeA)
+(sort TypeB)
+
+(declare val_a TypeA)
+(declare val_b TypeB)
+
+;; Attempting to union two different sorts in the rule head should trigger the new validation check
+(rule ((= val_a val_a)) 
+      ((union val_a val_b)))
