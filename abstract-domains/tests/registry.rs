@@ -237,6 +237,30 @@ fn int_encoding_rounds_bounds_outward() {
 }
 
 #[test]
+fn int_entry_boundaries_and_malformed_bytes_are_safe() {
+    // The two sentinel bytes encode infinities, finite boundary values round
+    // trip, and an invalid lower/upper order widens to top rather than
+    // producing a malformed abstract record.
+    let carrier = Carrier::Int;
+    for value in [i64::MIN + 1, -5, 5, i64::MAX - 1] {
+        let source = int_value(
+            Lo::Fin(IBig::from_i64(value)),
+            Hi::Fin(IBig::from_i64(value)),
+        );
+        let bytes = int_entry(source);
+        assert_eq!(&bytes[..8], &value.to_le_bytes());
+        assert_eq!(&bytes[8..], &value.to_le_bytes());
+    }
+    let mut malformed = [0_u8; 16];
+    malformed[..8].copy_from_slice(&5_i64.to_le_bytes());
+    malformed[8..].copy_from_slice(&(-5_i64).to_le_bytes());
+    let mut normalized = [0_u8; 16];
+    encode(carrier, &decode(carrier, &malformed), &mut normalized);
+    assert_eq!(&normalized[..8], &i64::MIN.to_le_bytes());
+    assert_eq!(&normalized[8..], &i64::MAX.to_le_bytes());
+}
+
+#[test]
 fn top_concretizes_to_every_value() {
     // For each carrier, gamma(decode(top(carrier))) holds for every u8, for
     // both booleans, and for the integers -1000..=1000.
@@ -382,7 +406,7 @@ fn disabled_fields_stay_top() {
             RegistryResult::Val(value) => value,
             RegistryResult::Bot => panic!("disabled analysis cannot create a conflict"),
         },
-        forward(Op::BvAdd, mask, &[left, right]),
+        forward(Op::BvAdd, TransferMasks::uniform(mask), &[left, right]),
     ] {
         let mut bytes = [0; 2];
         encode(carrier, &value, &mut bytes);
@@ -398,11 +422,66 @@ fn is_singleton_is_exact() {
     let carrier = Carrier::BitVec(Width::W8);
     let mask = DomainSet::from_bit(0);
     for value in 0_u8..=255 {
-        assert!(
-            matches!(as_constant(carrier, mask, &u8_value(value, value)), Some(Const::Bv(v)) if v == value as u128)
-        );
+        assert!(matches!(
+            as_constant(carrier, mask, &u8_value(value, value)),
+            Some(Const { carrier: Carrier::BitVec(Width::W8), value: ConstValue::Bv(v) })
+                if v == value as u128
+        ));
     }
     assert!(as_constant(carrier, mask, &u8_value(7, 8)).is_none());
+
+    assert!(matches!(
+        as_constant(
+            Carrier::Bool,
+            mask,
+            &Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True),
+        ),
+        Some(Const {
+            carrier: Carrier::Bool,
+            value: ConstValue::Bool(true)
+        })
+    ));
+    assert!(matches!(
+        as_constant(
+            Carrier::Int,
+            mask,
+            &int_value(Lo::Fin(IBig::from_i64(-9)), Hi::Fin(IBig::from_i64(-9))),
+        ),
+        Some(Const {
+            carrier: Carrier::Int,
+            value: ConstValue::Int(_)
+        })
+    ));
+}
+
+#[test]
+fn tagged_constants_cannot_cross_carriers() {
+    // A literal must retain the carrier at which it was parsed.  In
+    // particular, a BitVec(8) literal is neither an Int nor a BitVec(16).
+    let eight = Const {
+        carrier: Carrier::BitVec(Width::W8),
+        value: ConstValue::Bv(255),
+    };
+    assert!(matches!(
+        constant(Carrier::BitVec(Width::W8), &eight),
+        Ok(Value::Bv8(_))
+    ));
+    assert!(matches!(
+        constant(Carrier::BitVec(Width::W16), &eight),
+        Err(ConstError::CarrierMismatch)
+    ));
+    assert!(matches!(
+        constant(Carrier::Int, &eight),
+        Err(ConstError::CarrierMismatch)
+    ));
+    let too_wide = Const {
+        carrier: Carrier::BitVec(Width::W8),
+        value: ConstValue::Bv(256),
+    };
+    assert!(matches!(
+        constant(Carrier::BitVec(Width::W8), &too_wide),
+        Err(ConstError::OutOfRange)
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +511,47 @@ fn operator_names_resolve_with_their_signature() {
 }
 
 #[test]
+fn concat_has_the_resolved_width_and_indexed_casts_are_rejected() {
+    // `concat` is width-safe even before its precise transfer lands. The
+    // other casts need indices absent from the current parser API, so the
+    // registry rejects them rather than manufacturing a wrong-width result.
+    let bv8 = Carrier::BitVec(Width::W8);
+    assert_eq!(
+        op("concat", &[bv8, bv8]),
+        Ok((
+            Op::Concat {
+                result: Carrier::BitVec(Width::W16)
+            },
+            Carrier::BitVec(Width::W16)
+        ))
+    );
+    for name in ["extract", "zero_extend", "sign_extend"] {
+        assert_eq!(op(name, &[bv8]), Err(OpError::Signature));
+    }
+    assert_eq!(
+        op(
+            "concat",
+            &[
+                Carrier::TopOnly { bits: u32::MAX },
+                Carrier::TopOnly { bits: 2 },
+            ],
+        ),
+        Err(OpError::Signature)
+    );
+
+    let result = forward(
+        Op::Concat {
+            result: Carrier::BitVec(Width::W16),
+        },
+        TransferMasks::uniform(DomainSet::from_bit(0)),
+        &[u8_value(1, 1), u8_value(2, 2)],
+    );
+    let mut bytes = [0; 4];
+    encode(Carrier::BitVec(Width::W16), &result, &mut bytes);
+    assert_eq!(bytes, [0, 0, 255, 255]);
+}
+
+#[test]
 fn forward_transfers_are_sound_on_u8_pairs() {
     // For every BitVec operator of §4 with a forward transfer, every pair of
     // seeded Facts<u8> entries (a, b), and every x in gamma(a), y in
@@ -440,7 +560,7 @@ fn forward_transfers_are_sound_on_u8_pairs() {
     // Report pct_non_optimal per operator (tests/common/mod.rs).
     let mask = DomainSet::from_bit(0);
     for x in 0_u8..=255 {
-        let neg = forward(Op::BvNeg, mask, &[u8_value(x, x)]);
+        let neg = forward(Op::BvNeg, TransferMasks::uniform(mask), &[u8_value(x, x)]);
         assert!(u8_contains_ref(&neg, x.wrapping_neg()));
         for y in 0_u8..=255 {
             for (operator, expected) in [
@@ -448,13 +568,67 @@ fn forward_transfers_are_sound_on_u8_pairs() {
                 (Op::BvSub, x.wrapping_sub(y)),
                 (Op::BvMul, x.wrapping_mul(y)),
             ] {
-                let result = forward(operator, mask, &[u8_value(x, x), u8_value(y, y)]);
+                let result = forward(
+                    operator,
+                    TransferMasks::uniform(mask),
+                    &[u8_value(x, x), u8_value(y, y)],
+                );
                 assert!(
                     u8_contains_ref(&result, expected),
                     "{operator:?} lost {expected} for {x}, {y}"
                 );
             }
         }
+    }
+}
+
+#[test]
+fn seeded_interval_pairs_cover_every_enabled_u8_arithmetic_transfer() {
+    // Singleton checks can hide a transfer that widens or drops part of a
+    // range. Exercise seeded non-singleton intervals, enumerate every
+    // concrete pair they represent, and report how often the interval result
+    // has values outside the exact finite result set.
+    let seeds = [(0, 0), (0, 1), (1, 3), (7, 11), (127, 129), (250, 255)];
+    let mask = TransferMasks::uniform(DomainSet::from_bit(0));
+    for (operator, concrete) in [
+        (Op::BvAdd, u8::wrapping_add as fn(u8, u8) -> u8),
+        (Op::BvSub, u8::wrapping_sub as fn(u8, u8) -> u8),
+        (Op::BvMul, u8::wrapping_mul as fn(u8, u8) -> u8),
+        (Op::BvUdiv, |x, y| x.checked_div(y).unwrap_or(u8::MAX)),
+        (Op::BvUrem, |x, y| x.checked_rem(y).unwrap_or(x)),
+    ] {
+        let mut non_optimal = 0_usize;
+        let mut total = 0_usize;
+        for (a_lo, a_hi) in seeds {
+            for (b_lo, b_hi) in seeds {
+                let result = forward(
+                    operator,
+                    mask,
+                    &[u8_value(a_lo, a_hi), u8_value(b_lo, b_hi)],
+                );
+                let (r_lo, r_hi) = u8_bounds(&result);
+                let mut exact = [false; 256];
+                for x in a_lo..=a_hi {
+                    for y in b_lo..=b_hi {
+                        exact[concrete(x, y) as usize] = true;
+                    }
+                }
+                for value in 0_u8..=255 {
+                    assert!(
+                        !exact[value as usize] || u8_contains_ref(&result, value),
+                        "{operator:?} lost {value} for [{a_lo}, {a_hi}] and [{b_lo}, {b_hi}]"
+                    );
+                }
+                let exact_count = exact.iter().filter(|present| **present).count();
+                let result_count = usize::from(r_hi) - usize::from(r_lo) + 1;
+                non_optimal += usize::from(result_count > exact_count);
+                total += 1;
+            }
+        }
+        eprintln!(
+            "{operator:?}: pct_non_optimal={:.1}% ({non_optimal}/{total})",
+            100.0 * non_optimal as f64 / total as f64
+        );
     }
 }
 
@@ -469,10 +643,37 @@ fn division_by_zero_follows_smtlib() {
     for x in 0_u8..=255 {
         let dividend = u8_value(x, x);
         let zero = u8_value(0, 0);
-        let quotient = forward(Op::BvUdiv, mask, &[dividend, zero]);
+        let quotient = forward(Op::BvUdiv, TransferMasks::uniform(mask), &[dividend, zero]);
         assert_eq!(u8_bounds(&quotient), (u8::MAX, u8::MAX));
-        let remainder = forward(Op::BvUrem, mask, &[u8_value(x, x), u8_value(0, 0)]);
+        let remainder = forward(
+            Op::BvUrem,
+            TransferMasks::uniform(mask),
+            &[u8_value(x, x), u8_value(0, 0)],
+        );
         assert_eq!(u8_bounds(&remainder), (x, x));
+
+        for upper in [1_u8, 2, 17, u8::MAX] {
+            let maybe_zero = u8_value(0, upper);
+            let quotient = forward(
+                Op::BvUdiv,
+                TransferMasks::uniform(mask),
+                &[u8_value(x, x), maybe_zero],
+            );
+            assert!(u8_contains_ref(&quotient, u8::MAX));
+            for divisor in 1..=upper {
+                assert!(u8_contains_ref(&quotient, x / divisor));
+            }
+
+            let remainder = forward(
+                Op::BvUrem,
+                TransferMasks::uniform(mask),
+                &[u8_value(x, x), u8_value(0, upper)],
+            );
+            assert!(u8_contains_ref(&remainder, x));
+            for divisor in 1..=upper {
+                assert!(u8_contains_ref(&remainder, x % divisor));
+            }
+        }
     }
 }
 
@@ -485,7 +686,11 @@ fn comparisons_are_sound_on_u8_pairs() {
     for x in 0_u8..=255 {
         for y in 0_u8..=255 {
             for operator in [Op::BvUlt, Op::BvUle, Op::BvSlt, Op::BvSle, Op::Eq] {
-                let result = forward(operator, mask, &[u8_value(x, x), u8_value(y, y)]);
+                let result = forward(
+                    operator,
+                    TransferMasks::uniform(mask),
+                    &[u8_value(x, x), u8_value(y, y)],
+                );
                 // Current interval comparison stubs answer Bool4::Top. Top
                 // contains either concrete truth value, hence is sound.
                 assert_eq!(bool_entry(result), 2);
@@ -506,10 +711,20 @@ fn backward_transfers_are_sound_on_u8() {
     for x in 0_u8..=255 {
         for y in 0_u8..=255 {
             let args = [u8_value(x, x), u8_value(y, y)];
-            let backward_result = backward(Op::BvAdd, mask, &top(carrier), &args);
-            assert_eq!(backward_result.arity, 2);
-            assert_eq!(u8_bounds(&backward_result.values[0]), (x, x));
-            assert_eq!(u8_bounds(&backward_result.values[1]), (y, y));
+            let backward_result = backward(
+                Op::BvAdd,
+                TransferMasks::uniform(mask),
+                &top(carrier),
+                &args,
+            );
+            match backward_result {
+                BackwardResult::Val { values, arity } => {
+                    assert_eq!(arity, 2);
+                    assert_eq!(u8_bounds(&values[0]), (x, x));
+                    assert_eq!(u8_bounds(&values[1]), (y, y));
+                }
+                BackwardResult::Bot => panic!("unconstrained addition cannot be bottom"),
+            }
         }
     }
 }
@@ -527,7 +742,7 @@ fn ite_follows_the_design_table() {
     let branch_false = u8_value(9, 9);
     let true_case = forward(
         Op::Ite,
-        mask,
+        TransferMasks::uniform(mask),
         &[
             Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True),
             branch_true,
@@ -537,7 +752,7 @@ fn ite_follows_the_design_table() {
     assert_eq!(u8_bounds(&true_case), (7, 7));
     let top_case = forward(
         Op::Ite,
-        mask,
+        TransferMasks::uniform(mask),
         &[
             Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::Top),
             u8_value(7, 7),
@@ -545,6 +760,85 @@ fn ite_follows_the_design_table() {
         ],
     );
     assert_eq!(u8_bounds(&top_case), (7, 9));
+
+    let backward_true = backward(
+        Op::Ite,
+        TransferMasks::uniform(mask),
+        &u8_value(7, 7),
+        &[
+            Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::Top),
+            u8_value(7, 7),
+            u8_value(9, 9),
+        ],
+    );
+    match backward_true {
+        BackwardResult::Val { values, arity } => {
+            assert_eq!(arity, 3);
+            assert!(matches!(
+                &values[0],
+                Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True)
+            ));
+            assert_eq!(u8_bounds(&values[1]), (7, 7));
+            assert_eq!(u8_bounds(&values[2]), (9, 9));
+        }
+        BackwardResult::Bot => panic!("the then branch can produce 7"),
+    }
+    assert!(matches!(
+        backward(
+            Op::Ite,
+            TransferMasks::uniform(mask),
+            &u8_value(8, 8),
+            &[
+                Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::Top),
+                u8_value(7, 7),
+                u8_value(9, 9),
+            ],
+        ),
+        BackwardResult::Bot
+    ));
+
+    assert_eq!(
+        decided_branch(
+            Op::Ite,
+            &Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True),
+        ),
+        Some(1)
+    );
+    assert_eq!(
+        decided_branch(
+            Op::Ite,
+            &Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::False),
+        ),
+        Some(2)
+    );
+    assert_eq!(
+        decided_branch(
+            Op::Ite,
+            &Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::Top),
+        ),
+        None
+    );
+}
+
+#[test]
+fn mixed_sort_transfers_use_the_mask_of_each_sort() {
+    // Disabling the Boolean condition field of an `ite` must not accidentally
+    // treat the stored True bit as available information for a BitVec result.
+    let enabled = DomainSet::from_bit(0);
+    let masks = TransferMasks {
+        args: [DomainSet::empty(), enabled, enabled],
+        result: enabled,
+    };
+    let value = forward(
+        Op::Ite,
+        masks,
+        &[
+            Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True),
+            u8_value(7, 7),
+            u8_value(9, 9),
+        ],
+    );
+    assert_eq!(u8_bounds(&value), (0, 255));
 }
 
 #[test]
@@ -566,13 +860,25 @@ fn bool_connectives_are_exact() {
                 )
             };
             assert_eq!(
-                bool_entry(forward(Op::And, mask, &[left, right])),
+                bool_entry(forward(
+                    Op::And,
+                    TransferMasks::uniform(mask),
+                    &[left, right]
+                )),
                 expected(|x, y| x && y)
             );
             assert_eq!(
                 bool_entry(forward(
+                    Op::Eq,
+                    TransferMasks::uniform(mask),
+                    &[decode(Carrier::Bool, &[a]), decode(Carrier::Bool, &[b])]
+                )),
+                expected(|x, y| x == y)
+            );
+            assert_eq!(
+                bool_entry(forward(
                     Op::Or,
-                    mask,
+                    TransferMasks::uniform(mask),
                     &[decode(Carrier::Bool, &[a]), decode(Carrier::Bool, &[b])]
                 )),
                 expected(|x, y| x || y)
@@ -580,7 +886,7 @@ fn bool_connectives_are_exact() {
             assert_eq!(
                 bool_entry(forward(
                     Op::Xor,
-                    mask,
+                    TransferMasks::uniform(mask),
                     &[decode(Carrier::Bool, &[a]), decode(Carrier::Bool, &[b])]
                 )),
                 expected(|x, y| x ^ y)
@@ -588,12 +894,20 @@ fn bool_connectives_are_exact() {
             assert_eq!(
                 bool_entry(forward(
                     Op::Implies,
-                    mask,
+                    TransferMasks::uniform(mask),
                     &[decode(Carrier::Bool, &[a]), decode(Carrier::Bool, &[b])]
                 )),
                 expected(|x, y| !x || y)
             );
         }
+        assert_eq!(
+            bool_entry(forward(
+                Op::Not,
+                TransferMasks::uniform(mask),
+                &[decode(Carrier::Bool, &[a])],
+            )),
+            bool_code(bool_values(a).into_iter().map(|x| !x).collect())
+        );
     }
 }
 
@@ -607,14 +921,34 @@ fn int_transfers_are_sound_on_small_integers() {
         for y in -20_i64..=20 {
             let left = int_value(Lo::Fin(IBig::from_i64(x)), Hi::Fin(IBig::from_i64(x)));
             let right = int_value(Lo::Fin(IBig::from_i64(y)), Hi::Fin(IBig::from_i64(y)));
-            let add = int_entry(forward(Op::Add, mask, &[left, right]));
+            let add = int_entry(forward(
+                Op::Add,
+                TransferMasks::uniform(mask),
+                &[left, right],
+            ));
             assert_eq!(&add[..8], &(x + y).to_le_bytes());
             assert_eq!(&add[8..], &(x + y).to_le_bytes());
         }
         let value = int_value(Lo::Fin(IBig::from_i64(x)), Hi::Fin(IBig::from_i64(x)));
-        let neg = int_entry(forward(Op::Neg, mask, &[value]));
+        let neg = int_entry(forward(Op::Neg, TransferMasks::uniform(mask), &[value]));
         assert_eq!(&neg[..8], &(-x).to_le_bytes());
         assert_eq!(&neg[8..], &(-x).to_le_bytes());
+
+        if x != 0 {
+            let quotient = int_entry(forward(
+                Op::Div,
+                TransferMasks::uniform(mask),
+                &[
+                    int_value(Lo::Fin(IBig::from_i64(20)), Hi::Fin(IBig::from_i64(20))),
+                    int_value(Lo::Fin(IBig::from_i64(x)), Hi::Fin(IBig::from_i64(x))),
+                ],
+            ));
+            let concrete = 20_i64.div_euclid(x);
+            let lo = i64::from_le_bytes(quotient[..8].try_into().unwrap());
+            let hi = i64::from_le_bytes(quotient[8..].try_into().unwrap());
+            assert!(lo == i64::MIN || lo <= concrete);
+            assert!(hi == i64::MAX || concrete <= hi);
+        }
     }
 }
 
@@ -630,15 +964,25 @@ fn u128_instance_is_exercised() {
     max_entry[..16].copy_from_slice(&max.to_le_bytes());
     max_entry[16..].copy_from_slice(&max.to_le_bytes());
     let max_value = decode(carrier, &max_entry);
-    assert!(matches!(as_constant(carrier, mask, &max_value), Some(Const::Bv(v)) if v == max));
+    assert!(matches!(
+        as_constant(carrier, mask, &max_value),
+        Some(Const { carrier: Carrier::BitVec(Width::W128), value: ConstValue::Bv(v) }) if v == max
+    ));
 
     let mut one_entry = [0; 32];
     one_entry[..16].copy_from_slice(&1_u128.to_le_bytes());
     one_entry[16..].copy_from_slice(&1_u128.to_le_bytes());
-    let sum = forward(Op::BvAdd, mask, &[max_value, decode(carrier, &one_entry)]);
+    let sum = forward(
+        Op::BvAdd,
+        TransferMasks::uniform(mask),
+        &[max_value, decode(carrier, &one_entry)],
+    );
     assert!(matches!(
         as_constant(carrier, mask, &sum),
-        Some(Const::Bv(0))
+        Some(Const {
+            carrier: Carrier::BitVec(Width::W128),
+            value: ConstValue::Bv(0)
+        })
     ));
 
     let mut top_entry = [0; 32];
@@ -657,8 +1001,11 @@ fn non_native_width_is_top() {
         domain_bit(carrier, "ubounds").unwrap()
     ));
     assert_eq!(entry_size(carrier), 0);
-    assert!(matches!(top(carrier), Value::Top));
+    assert!(matches!(top(carrier), Value::TopOnly { bits: 7 }));
     let mut bytes = [];
-    encode(carrier, &Value::Top, &mut bytes);
-    assert!(matches!(decode(carrier, &bytes), Value::Top));
+    encode(carrier, &Value::TopOnly { bits: 7 }, &mut bytes);
+    assert!(matches!(
+        decode(carrier, &bytes),
+        Value::TopOnly { bits: 7 }
+    ));
 }
