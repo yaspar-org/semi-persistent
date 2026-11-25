@@ -9,8 +9,6 @@
 //! difference: a `;; WARNING: text` line asks for exactly one warning containing `text`,
 //! because the interim semantics raise the not-active warning once per program.
 //!
-//! The task is specified in `doc/future/abstract-syntax-task.md`. The test is ignored
-//! until that branch implements it; `cargo test --test abs_syntax -- --ignored` runs it.
 
 use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::{BignumLit, BignumModel};
@@ -125,7 +123,6 @@ fn check(path: &std::path::Path) {
 }
 
 #[test]
-#[ignore = "abs-surface-syntax: not implemented yet"]
 fn abs_surface_syntax_acceptance() {
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(DIR)
         .unwrap_or_else(|e| panic!("cannot read {DIR}: {e}"))

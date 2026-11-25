@@ -142,6 +142,10 @@ pub enum Step<O, I, V> {
     CheckPred {
         guard: PredGuard<O, V>,
     },
+    CheckAbsGuard {
+        node: crate::resolve::PatVar,
+        test: crate::abs_syntax::AbsTest,
+    },
     /// Assemble a sequence pattern's matches at the bound `node` and continue with
     /// each (`crate::seq_engine`).
     Collect {
@@ -648,7 +652,7 @@ fn record_emitters<O, S, V>(
                 }
             }
             // A guard binds nothing, so it emits nothing.
-            RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. } => {}
+            RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. } | RAtom::AbsGuard { .. } => {}
         }
     }
 }
@@ -767,7 +771,11 @@ fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
                 base_card(op, atom_id, stats) as f64
             }
         }
-        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Neq(..) | RAtom::Pred { .. } => 0.0,
+        RAtom::Eq(..)
+        | RAtom::EqGlobal(..)
+        | RAtom::Neq(..)
+        | RAtom::Pred { .. }
+        | RAtom::AbsGuard { .. } => 0.0,
     }
 }
 
@@ -1061,6 +1069,7 @@ fn fmt_step<O: std::fmt::Debug, I: std::fmt::Debug, V>(st: &Step<O, I, V>) -> St
         }
         Step::CheckLit { node, .. } => format!("CheckLit node=v{}", node.idx()),
         Step::CheckPred { .. } => "CheckPred".to_string(),
+        Step::CheckAbsGuard { .. } => "CheckAbsGuard".to_string(),
     }
 }
 
@@ -1117,7 +1126,17 @@ pub(crate) fn lower_eager<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
             // node variable of a `LitBind` atom is bound by the enclosing pattern's
             // `ExtractChild`, one step before the `ExtractLitVal` that fills the
             // value slot the guard reads.
-            // TODO(abs-surface-syntax): schedule an `RAtom::AbsGuard` once its variable is bound, as a step that tests the class's abstract value; until abs-saturation-engine lands the value is top and the step always fails, see egraph/doc/future/abstract-syntax-task.md §5
+            if let RAtom::AbsGuard { node, test } = &atoms[ai] {
+                if pv_is_bound(node, bound) {
+                    steps.push(Step::CheckAbsGuard {
+                        node: *node,
+                        test: test.clone(),
+                    });
+                    used[ai] = true;
+                    progress = true;
+                }
+                continue;
+            }
             if let RAtom::Pred { guard, deps } = &atoms[ai] {
                 if deps.iter().all(|d| used[*d]) {
                     steps.push(Step::CheckPred {
@@ -1397,6 +1416,12 @@ pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
             for &ev in elems {
                 pv_mark_bound(&ev, bound);
             }
+        }
+        RAtom::AbsGuard { node, test } => {
+            steps.push(Step::CheckAbsGuard {
+                node: *node,
+                test: test.clone(),
+            });
         }
     }
 }

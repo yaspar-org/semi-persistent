@@ -817,6 +817,50 @@ fn parse_mult_expr(input: &mut &str) -> ModalResult<MultExpr> {
 }
 
 // ── Actions ──
+/// Parse a single non-whitespace, non-delimiter token (identifiers, signed/hex integers,
+/// symbolic operators like `+`, `<`, `<=`, or `+inf`/`-inf`).
+fn raw_token<'a>(input: &mut &'a str) -> ModalResult<&'a str> {
+    ws_inner(input);
+    let end = input
+        .find(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | ';'))
+        .unwrap_or(input.len());
+    if end == 0 {
+        let mut e = ContextError::new();
+        e.push(StrContext::Expected(StrContextValue::Description("token")));
+        return Err(ErrMode::Backtrack(e));
+    }
+    let tok = &input[..end];
+    *input = &input[end..];
+    Ok(tok)
+}
+
+/// Parse either an atom (`int`, `bool`) or a parenthesized form (`(bitvec 8)`).
+fn raw_sexp(input: &mut &str) -> ModalResult<String> {
+    ws_inner(input);
+    if input.starts_with('(') {
+        let start = *input;
+        let mut depth = 0usize;
+        for (idx, ch) in start.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let s = &start[..=idx];
+                        *input = &start[idx + 1..];
+                        return Ok(s.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut e = ContextError::new();
+        e.push(StrContext::Expected(StrContextValue::Description("')'")));
+        Err(ErrMode::Cut(e))
+    } else {
+        Ok(raw_token(input)?.to_string())
+    }
+}
 
 fn parse_abs_value(input: &mut &str) -> ModalResult<crate::abs_syntax::AbsValueLit> {
     cut_char(input, '(')?;
@@ -825,9 +869,9 @@ fn parse_abs_value(input: &mut &str) -> ModalResult<crate::abs_syntax::AbsValueL
     let res = match head {
         "interval" => {
             ws_inner(input);
-            let lo = ident(input)?.to_string();
+            let lo = raw_token(input)?.to_string();
             ws_inner(input);
-            let hi = ident(input)?.to_string();
+            let hi = raw_token(input)?.to_string();
             crate::abs_syntax::AbsValueLit::Interval { lo, hi }
         }
         "bits" => {
@@ -836,20 +880,20 @@ fn parse_abs_value(input: &mut &str) -> ModalResult<crate::abs_syntax::AbsValueL
                 *input = &input[":val".len()..];
             }
             ws_inner(input);
-            let val = ident(input)?.to_string();
+            let val = raw_token(input)?.to_string();
             ws_inner(input);
             if input.starts_with(":mask") {
                 *input = &input[":mask".len()..];
             }
             ws_inner(input);
-            let mask = ident(input)?.to_string();
+            let mask = raw_token(input)?.to_string();
             crate::abs_syntax::AbsValueLit::Bits { val, mask }
         }
         "congruence" => {
             ws_inner(input);
-            let r = ident(input)?.to_string();
+            let r = raw_token(input)?.to_string();
             ws_inner(input);
-            let m = ident(input)?.to_string();
+            let m = raw_token(input)?.to_string();
             crate::abs_syntax::AbsValueLit::Congruence { r, m }
         }
         "nonzero" => crate::abs_syntax::AbsValueLit::NonZero,
@@ -1421,7 +1465,7 @@ fn parse_command(
                 if input.starts_with(":interp") {
                     *input = &input[":interp".len()..];
                     ws(input)?;
-                    interp = Some(ident(input)?.to_string());
+                    interp = Some(raw_sexp(input)?);
                 } else if input.starts_with(":domains") {
                     *input = &input[":domains".len()..];
                     ws(input)?;
@@ -1957,7 +2001,6 @@ fn parse_command(
                 cycle_mode,
             })
         }
-        // TODO(abs-surface-syntax): add a top-level `"refine"` arm, `(refine TERM VALUE)` to `Command::Refine`; without it the fallback below reads `refine` as an operator, see egraph/doc/future/abstract-syntax-task.md §2
         "refine" => {
             let term = parse_term_inner(input, base)?;
             ws(input)?;
@@ -2010,7 +2053,7 @@ fn parse_decl_tags(
         if input.starts_with(":interp") {
             *input = &input[":interp".len()..];
             ws_inner(input);
-            interp = Some(ident(input)?.to_string());
+            interp = Some(raw_token(input)?.to_string());
             continue;
         }
         if input.starts_with(":range") {
@@ -2018,9 +2061,9 @@ fn parse_decl_tags(
             ws_inner(input);
             cut_char(input, '(')?;
             ws_inner(input);
-            let lo = ident(input)?.to_string();
+            let lo = raw_token(input)?.to_string();
             ws_inner(input);
-            let hi = ident(input)?.to_string();
+            let hi = raw_token(input)?.to_string();
             ws_inner(input);
             cut_char(input, ')')?;
             range = Some((lo, hi));

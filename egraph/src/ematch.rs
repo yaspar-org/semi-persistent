@@ -2078,6 +2078,9 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 Err(e) => results.record_guard_fault(e),
             }
         }
+        Step::CheckAbsGuard { .. } => {
+            // Interim semantics: all abstract values are top, so abstract guards never hold.
+        }
     }
 }
 
@@ -3340,6 +3343,7 @@ where
                     Enter::Failed
                 }
             },
+            Step::CheckAbsGuard { .. } => Enter::Failed,
         }
     }
 

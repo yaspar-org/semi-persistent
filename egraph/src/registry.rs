@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Sort and operator registries.
 
+use crate::abs_syntax::{Carrier, DomainMask};
 use crate::containers::AppendOnlyVec;
 use crate::containers::DenseId;
 use crate::containers::IndexLike;
@@ -10,6 +11,12 @@ use crate::containers::SpUniqueMap;
 use crate::containers::error::ContainerError;
 use crate::containers::group::Member;
 use crate::id::{ENodeKind, id_at};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SortAbsInfo {
+    pub carrier: Option<Carrier>,
+    pub domains: DomainMask,
+}
 
 /// Flattening direction for variadic sequence operators.
 ///
@@ -118,7 +125,6 @@ pub enum OpKind<S: DenseId> {
 /// `Default` is the undeclared case: a plain `(function …)` — not a constructor, cost 1,
 /// extractable. Cost 1 is what the extractor charged for every node before per-op costs
 /// existed, so a program that declares no `:cost` extracts exactly as it did before.
-// TODO(abs-surface-syntax): keep `OpMeta` `Copy`; store each op's resolved `:interp` operator and `:range` in a side table keyed by op id, which push/pop must not leak, see egraph/doc/future/abstract-syntax-task.md §4
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpMeta {
     /// Declared with `(constructor …)`, or a `(datatype …)` variant. A constructor is a term
@@ -140,6 +146,14 @@ impl Default for OpMeta {
             unextractable: false,
         }
     }
+}
+
+/// Resolved abstract-domain metadata for a declared operator (`:interp` and `:range`).
+/// Stored in a side table on [`OpRegistry`] so [`OpMeta`] stays `Copy`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpAbsInfo {
+    pub interp: Option<String>,
+    pub range: Option<(num_bigint::BigInt, num_bigint::BigInt)>,
 }
 
 /// Metadata for a registered operator.
@@ -176,10 +190,10 @@ impl<S: DenseId> OpInfo<S> {
 
 /// Append-only sort registry backed by `SpMap`.
 #[derive(Debug)]
-// TODO(abs-surface-syntax): record per declared sort its carrier (`int`, `bool`, `bitvec N`, or none) and its enabled-domain bit mask, with a lookup `abs_info(sort)`, see egraph/doc/future/abstract-syntax-task.md §4
 pub struct SortRegistry<S: DenseId, const TRACK: bool> {
     /// Positions in this log ARE sort ids, so the log's index word is the id's.
     map: SpUniqueMap<String, (), S::Index, TRACK>,
+    abs: Vec<SortAbsInfo>,
     builtin_count: usize,
     concrete_count: usize,
     _phantom: core::marker::PhantomData<S>,
@@ -195,10 +209,23 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
     pub fn new() -> Self {
         Self {
             map: SpUniqueMap::new(),
+            abs: Vec::new(),
             builtin_count: 0,
             concrete_count: 0,
             _phantom: core::marker::PhantomData,
         }
+    }
+
+    pub fn set_abs_info(&mut self, id: S, info: SortAbsInfo) {
+        let idx = id.to_usize();
+        if idx >= self.abs.len() {
+            self.abs.resize(idx + 1, SortAbsInfo::default());
+        }
+        self.abs[idx] = info;
+    }
+
+    pub fn abs_info(&self, id: S) -> SortAbsInfo {
+        self.abs.get(id.to_usize()).copied().unwrap_or_default()
     }
 
     pub fn register_builtins(&mut self, sort_names: &[&str]) {
@@ -264,14 +291,17 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
 
     pub fn reset_frame(&mut self, depth: usize) {
         Member::reset_frame(&mut self.map, depth);
+        self.abs.truncate(self.len());
     }
 
     pub fn restore_frame(&mut self, depth: usize) {
         Member::restore_frame(&mut self.map, depth);
+        self.abs.truncate(self.len());
     }
 
     pub fn pop_frame(&mut self) {
         Member::pop_frame(&mut self.map);
+        self.abs.truncate(self.len());
     }
 
     pub fn frame_depth(&self) -> usize {
@@ -328,6 +358,8 @@ pub struct OpRegistry<O: DenseId, S: DenseId, const TRACK: bool> {
     /// this table rather than a scan of the op map, because the node-creation path calls it
     /// once per fresh node.
     completion: AppendOnlyVec<CompletionSlot, O::Index, TRACK>,
+    /// Per-op abstract-domain metadata (`:interp` and `:range`), indexed by op id.
+    abs: Vec<Option<OpAbsInfo>>,
     builtin_count: usize,
     concrete_sort_count: usize,
     _phantom: core::marker::PhantomData<O>,
@@ -344,10 +376,23 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
         Self {
             map: SpUniqueMap::new(),
             completion: AppendOnlyVec::new(),
+            abs: Vec::new(),
             builtin_count: 0,
             concrete_sort_count: 0,
             _phantom: core::marker::PhantomData,
         }
+    }
+
+    pub fn set_abs_info(&mut self, id: O, info: OpAbsInfo) {
+        let idx = id.to_usize();
+        if self.abs.len() <= idx {
+            self.abs.resize(idx + 1, None);
+        }
+        self.abs[idx] = Some(info);
+    }
+
+    pub fn abs_info(&self, id: O) -> Option<&OpAbsInfo> {
+        self.abs.get(id.to_usize()).and_then(|entry| entry.as_ref())
     }
 
     /// Register builtin ops from a LitModel. Must be called before any user ops.
@@ -717,6 +762,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     pub fn reset_frame(&mut self, depth: usize) {
         Member::reset_frame(&mut self.map, depth);
         Member::reset_frame(&mut self.completion, depth);
+        self.abs.truncate(self.map.log_len().as_usize());
         debug_assert_eq!(
             self.completion.len().as_usize(),
             self.map.log_len().as_usize(),
@@ -727,6 +773,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     pub fn restore_frame(&mut self, depth: usize) {
         Member::restore_frame(&mut self.map, depth);
         Member::restore_frame(&mut self.completion, depth);
+        self.abs.truncate(self.map.log_len().as_usize());
         debug_assert_eq!(
             self.completion.len().as_usize(),
             self.map.log_len().as_usize(),
@@ -737,6 +784,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     pub fn pop_frame(&mut self) {
         Member::pop_frame(&mut self.map);
         Member::pop_frame(&mut self.completion);
+        self.abs.truncate(self.map.log_len().as_usize());
         debug_assert_eq!(
             self.completion.len().as_usize(),
             self.map.log_len().as_usize(),
@@ -1239,5 +1287,66 @@ mod tests {
         ops.register("F", &[int_sort], int_sort);
         assert_eq!(ops.completion_ops(), Vec::<OpId>::new());
         assert_eq!(ops.completion_op_count(), 0);
+    }
+
+    #[test]
+    fn abs_info_does_not_leak_across_push_pop() {
+        type TrackedSR = SortRegistry<SortId, true>;
+        type TrackedOR = OpRegistry<OpId, SortId, true>;
+
+        let mut sorts = TrackedSR::new();
+        let int_sort = sorts.intern("Int");
+        let mut ops = TrackedOR::new();
+        let base_op = ops.register("Base", &[int_sort], int_sort);
+        ops.set_abs_info(
+            base_op,
+            OpAbsInfo {
+                interp: Some("add".to_string()),
+                range: None,
+            },
+        );
+
+        let s_depth = sorts.frame_depth();
+        let o_depth = ops.frame_depth();
+        sorts.push_frame(ShrinkPolicy::Never);
+        ops.push_frame(ShrinkPolicy::Never);
+
+        let tmp_sort = sorts.intern("Tmp");
+        let mut mask = DomainMask::default();
+        mask.enable(crate::abs_syntax::Domain::Interval);
+        sorts.set_abs_info(
+            tmp_sort,
+            SortAbsInfo {
+                carrier: Some(Carrier::Int),
+                domains: mask,
+            },
+        );
+
+        let tmp_op = ops.register("TmpOp", &[int_sort], int_sort);
+        ops.set_abs_info(
+            tmp_op,
+            OpAbsInfo {
+                interp: Some("neg".to_string()),
+                range: Some((num_bigint::BigInt::from(0), num_bigint::BigInt::from(10))),
+            },
+        );
+        assert!(ops.abs_info(tmp_op).is_some());
+
+        sorts.reset_frame(s_depth);
+        ops.reset_frame(o_depth);
+
+        assert_eq!(
+            ops.abs_info(base_op).unwrap().interp.as_deref(),
+            Some("add")
+        );
+        assert!(ops.abs_info(tmp_op).is_none());
+
+        let reused_sort = sorts.intern("Other");
+        assert_eq!(reused_sort, tmp_sort);
+        assert_eq!(sorts.abs_info(reused_sort), SortAbsInfo::default());
+
+        let reused_op = ops.register("OtherOp", &[int_sort], int_sort);
+        assert_eq!(reused_op, tmp_op);
+        assert!(ops.abs_info(reused_op).is_none());
     }
 }

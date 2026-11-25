@@ -129,7 +129,10 @@ pub enum PatVar {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RAtom<O, S, L> {
-    // TODO(abs-surface-syntax): add `AbsGuard { node: PatVar, test: AbsTest }`; every `match` on `RAtom` in schedule.rs, saturate.rs and ematch.rs then needs an arm, see egraph/doc/future/abstract-syntax-task.md §4
+    AbsGuard {
+        node: PatVar,
+        test: crate::abs_syntax::AbsTest,
+    },
     Plain {
         node: VarId,
         op: O,
@@ -1023,7 +1026,7 @@ fn check_nodes_bindable<O, S, L>(atoms: &[RAtom<O, S, L>], shape: &MatchShape) -
             // Binds nothing on its own; propagated below.
             RAtom::Eq(..) | RAtom::Pred { .. } => {}
             // Binds nothing.
-            RAtom::Neq(..) => {}
+            RAtom::Neq(..) | RAtom::AbsGuard { .. } => {}
         }
     }
     // `Eq` copies a binding in either direction, so closing under it can bind a variable
@@ -1281,7 +1284,41 @@ where
             )
         }
 
-        // TODO(abs-surface-syntax): add an `Atom::AbsGuard` arm: the variable is a global or bound by an earlier pattern, its sort enables the test's domain, and the bounds fit the carrier; lower to `RAtom::AbsGuard`, see egraph/doc/future/abstract-syntax-task.md §3
+        Atom::AbsGuard { var, test, span } => {
+            use crate::abs_syntax::{AbsTestLit, check_abs_test};
+
+            let guard_name = match test {
+                AbsTestLit::Within { .. } => "within",
+                AbsTestLit::NonZero { .. } => "nonzero",
+                AbsTestLit::KnownBits { .. } => "known-bits",
+            };
+
+            let (node, sort) = if let Some(v) = shape.find_var(var) {
+                let Some(s) = var_sorts[v.idx()] else {
+                    return Err(err(
+                        format!("{guard_name}: '{var}' is not bound by an earlier pattern"),
+                        *span,
+                    ));
+                };
+                (PatVar::Local(v), s)
+            } else if let Some((gid, gsort, _)) = globals.get(var.as_str()) {
+                (PatVar::Global(gid), gsort)
+            } else {
+                return Err(err(
+                    format!("{guard_name}: '{var}' is not bound by an earlier pattern"),
+                    *span,
+                ));
+            };
+
+            let info = sorts.abs_info(sort);
+            let checked = check_abs_test(test, sorts.name(sort), info.carrier, info.domains)
+                .map_err(|msg| err(msg, *span))?;
+
+            Ok(vec![RAtom::AbsGuard {
+                node,
+                test: checked,
+            }])
+        }
         Atom::Pred { expr, span } => {
             let rexpr = resolve_pred_expr(expr, None, ops, sorts, model, shape)?;
             let RPredExpr::App { op, .. } = &rexpr else {
@@ -2489,10 +2526,9 @@ impl<'a, S: DenseId> RhsResolveCtx<'a, S> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolvedAction<O, S, L> {
-    // TODO(abs-surface-syntax): add `Refine(RRhsTerm<O, S, L>, AbsValue)`, see egraph/doc/future/abstract-syntax-task.md §4
     Union(RRhsTerm<O, S, L>, RRhsTerm<O, S, L>),
     Insert(RRhsTerm<O, S, L>),
-    Refine(RRhsTerm<O, S, L>, crate::abs_syntax::AbsValueLit),
+    Refine(RRhsTerm<O, S, L>, crate::abs_syntax::AbsValue),
     Set {
         func: O,
         args: Vec<RRhsTerm<O, S, L>>,
@@ -2516,37 +2552,39 @@ where
 {
     debug_assert!(ctx.scopes_are_empty());
     use crate::ast::Action;
+    let get_sort = |t: &RRhsTerm<O, S, L>, ctx: &RhsResolveCtx<'_, S>| -> Option<S> {
+        match t {
+            RRhsTerm::Var(RhsNodeRef::Query(id)) => ctx.query_node_sorts[id.idx()],
+            RRhsTerm::Var(RhsNodeRef::Local(id)) => ctx.local_node_sorts[id.idx()],
+            RRhsTerm::Lit { sort, .. } => Some(*sort),
+            RRhsTerm::PrimApp { ret_sort, .. } => Some(*ret_sort),
+            RRhsTerm::LitVar { op, .. } | RRhsTerm::App { op, .. } => {
+                Some(ops.info(*op).return_sort)
+            }
+            _ => None,
+        }
+    };
     let resolved = match action {
         Action::Union(a, b) => {
             let ra = resolve_rhs(a, None, ops, sorts, model, ctx, globals)?;
             let rb = resolve_rhs(b, None, ops, sorts, model, ctx, globals)?;
-            
+
             // Extract sorts gracefully, returning None if unconstrained or unhandled
-            let get_sort = |t: &RRhsTerm<O, S, L>| -> Option<S> {
-                match t {
-                    RRhsTerm::Var(RhsNodeRef::Query(id)) => ctx.query_node_sorts[id.idx()],
-                    RRhsTerm::Var(RhsNodeRef::Local(id)) => ctx.local_node_sorts[id.idx()],
-                    RRhsTerm::Lit { sort, .. } => Some(*sort),
-                    RRhsTerm::PrimApp { ret_sort, .. } => Some(*ret_sort),
-                    RRhsTerm::LitVar { op, .. } | RRhsTerm::App { op, .. } => Some(ops.info(*op).return_sort),
-                    _ => None, 
-                }
-            };
 
             // Only enforce the check if both sides have a known, resolved sort
-            if let (Some(sort_a), Some(sort_b)) = (get_sort(&ra), get_sort(&rb)) {
-                if sort_a != sort_b {
-                    return Err(err(
-                        format!(
-                            "Type mismatch in union: cannot union sort '{}' with sort '{}'",
-                            sorts.name(sort_a),
-                            sorts.name(sort_b)
-                        ),
-                        Span::Dummy,
-                    ));
-                }
+            if let (Some(sort_a), Some(sort_b)) = (get_sort(&ra, ctx), get_sort(&rb, ctx))
+                && sort_a != sort_b
+            {
+                return Err(err(
+                    format!(
+                        "Type mismatch in union: cannot union sort '{}' with sort '{}'",
+                        sorts.name(sort_a),
+                        sorts.name(sort_b)
+                    ),
+                    Span::Dummy,
+                ));
             }
-            
+
             Ok(ResolvedAction::Union(ra, rb))
         }
         Action::Insert(t) => {
@@ -2555,8 +2593,21 @@ where
         }
         Action::Refine(term, value) => {
             let rt = resolve_rhs(term, None, ops, sorts, model, ctx, globals)?;
-            // TODO(abs-surface-syntax): check the value against the domains enabled on its sort
-            Ok(ResolvedAction::Refine(rt, value.clone()))
+            let sort = get_sort(&rt, ctx).ok_or_else(|| {
+                err(
+                    "refine: could not determine sort of term".to_string(),
+                    Span::Dummy,
+                )
+            })?;
+            let info = sorts.abs_info(sort);
+            let checked = crate::abs_syntax::check_abs_value(
+                value,
+                sorts.name(sort),
+                info.carrier,
+                info.domains,
+            )
+            .map_err(|msg| err(msg, Span::Dummy))?;
+            Ok(ResolvedAction::Refine(rt, checked))
         }
         Action::Set { func, .. } => {
             // Lattice `set` parses but has no semantics yet (`apply.rs` would reach a

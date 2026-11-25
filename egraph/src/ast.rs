@@ -567,7 +567,6 @@ pub enum CompletionOption {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
-    // TODO(abs-surface-syntax): carry the sort's `:interp` carrier and `:domains` list (absent, empty, or names), e.g. `Sort(SortDecl)`, and add `Refine { term: Term, value: AbsValueLit, span: Span }` to this enum, see egraph/doc/future/abstract-syntax-task.md §4
     Sort {
         name: String,
         interp: Option<String>,
@@ -673,7 +672,6 @@ pub enum Command {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
-    // TODO(abs-surface-syntax): add `Refine(RhsTerm, AbsValueLit)` for the rule action `(refine t VALUE)`, see egraph/doc/future/abstract-syntax-task.md §4
     Refine(RhsTerm, crate::abs_syntax::AbsValueLit),
     Union(RhsTerm, RhsTerm),
     Insert(RhsTerm),
