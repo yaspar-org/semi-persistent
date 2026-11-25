@@ -2528,17 +2528,25 @@ where
         // case and after an unchanged incremental round; their cost is input-dependent.
         let mut full = true; // round 0 is full (base case)
         loop {
-            self.rebuild_congruence();
-            if self.has_width_error() {
-                self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
-                return;
-            }
             // Values propagate here, before the goal poll, so a derived merge can
-            // be what joins the goal pair. A conflict stops the closure; the
-            // caller reads `take_abs_conflict`.
-            let _ = self.abs_drain();
-            if self.abs_has_conflict() {
-                return;
+            // be what joins the goal pair. A derived merge reopens congruence, so
+            // the two alternate until a drain merges nothing: the goal poll and the
+            // fixpoint test below then see a plain-congruence-closed graph. Each
+            // derived merge removes a class, which bounds the alternation. A
+            // conflict stops the closure; the caller reads `take_abs_conflict`.
+            loop {
+                self.rebuild_congruence();
+                if self.has_width_error() {
+                    self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
+                    return;
+                }
+                let derived = self.abs_drain();
+                if self.abs_has_conflict() {
+                    return;
+                }
+                if !derived {
+                    break;
+                }
             }
             // Goal-directed early stop (the lazy-check transaction): the pair
             // joined, so the question is answered — stop mid-closure. The

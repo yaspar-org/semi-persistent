@@ -745,4 +745,50 @@ mod tests {
         let lit_root = eg.find(lit);
         assert_eq!(class_root, lit_root);
     }
+
+    /// `c` at {3} and the literal `three` share no parent until the derived merge
+    /// joins them; then `f(c)` and `f(three)` are congruent. Returns the graph and
+    /// those two nodes, before any rebuild.
+    fn derived_merge_needs_congruence()
+    -> (EGraph31<NiraLitVal>, crate::id::ENodeId, crate::id::ENodeId) {
+        let (mut eg, _add, c) = eg_with_add();
+        let x = eg.add(c, &[]);
+        let sort = eg.node_sort(x);
+        let f = eg.register_op1("f", sort, sort);
+        let three = eg.register_op0("three", sort);
+        let lit = eg.add(three, &[]);
+        let fx = eg.add(f, &[x]);
+        let flit = eg.add(f, &[lit]);
+        eg.abs_bind_constant(3, lit);
+        eg.abs_seed(x, pack(3, 3));
+        (eg, fx, flit)
+    }
+
+    #[test]
+    fn completion_recloses_congruence_after_a_derived_merge() {
+        let (mut eg, fx, flit) = derived_merge_needs_congruence();
+        eg.set_cc(true);
+        eg.rebuild();
+        assert_eq!(
+            eg.find(fx),
+            eg.find(flit),
+            "rebuild returned before re-closing congruence"
+        );
+    }
+
+    #[test]
+    fn completion_goal_sees_congruence_from_a_derived_merge() {
+        let (mut eg, fx, flit) = derived_merge_needs_congruence();
+        eg.set_cc(true);
+        eg.set_cc_goal(Some((fx, flit)));
+        eg.rebuild();
+        assert!(
+            matches!(
+                eg.completion_outcome(),
+                Some(super::super::CompletionOutcome::GoalMet { .. })
+            ),
+            "outcome: {:?}",
+            eg.completion_outcome()
+        );
+    }
 }
