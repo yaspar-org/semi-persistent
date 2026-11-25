@@ -117,8 +117,9 @@ Reduction is only as precise as the record. With a bounds-only record `{u}` and 
   the same γ.
 - `[10, 11] × 4ℤ+1` is never reported as `Bot`.
 
-Today's `{u, c}` record and Congruence `Refine` implementation resolve these
-cases through grid normalization.
+The `{u, c}` record reduces these pairs by snapping the interval bounds to
+the congruence grid: `[3, 10]` snaps to `[3, 7]` on `4ℤ+3`, while
+`[10, 11] × 4ℤ+1` reduces to `Bot` because the interval contains no grid point.
 
 So the rule: **a domain is exact in the product only once its facts are a
 field of the record.** Until then, it can still sit in a `Product` and refine
@@ -341,6 +342,10 @@ the only bottom (no empty representation of their own), `Canonical`, and
 
 **Add a field to `Facts` (`src/facts.rs`).**
 
+Use the `Refine` implementation for `Congruence<W>` in
+`src/congruence_refine.rs` as the template for another domain represented by
+a field in `Facts<W>`.
+
 1. Add the field, its closed spec accessor, and its `wf` to `pre_wf` and its
    `gamma` to `gamma`.
 2. Extend `dup`, `top`, `leq`, `join`, `widen`, `meet` and `meet_exact`
@@ -401,17 +406,12 @@ test name in your PR.
 `src/congruence.rs` (new), `src/sbounds.rs` (new). Builds on #106, #112,
 #114, #118 (Congruence) and #109 (Strided).
 
-- *Implemented (A1–A3):* Congruence uses `Word` primitives and participates
-  in `Refine` through `Facts.c`. Grid rounding in `src/grid.rs` supports the
-  interval and congruence step in `normalize`, with canonicality proved.
 - *Later:* the signed-bounds field `s` and the unsigned and signed step;
   known bits against bounds; congruence against low bits.
 
 **BitVec transfers.** Files: `src/facts_ops.rs`, `src/tnum_w.rs` (new).
 Builds on #108 (interval transfers) and #120 (Wrapped).
 
-- *Implemented (A4):* unsigned add/sub/neg combine interval and Congruence
-  results through `Facts::from_parts`, with sound arithmetic proved.
 - *First:* `Compare<Unsigned<W>>` and `Compare<Signed<W>>` for `Facts<W>` on
   the `u` field, forward and backward, replacing the stubs; and bvand, bvor,
   bvxor, bvnot and the shifts from #108.

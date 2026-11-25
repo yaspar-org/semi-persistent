@@ -316,6 +316,8 @@ impl<W: Word> Domain for Facts<W> {
         match grid_step(&u, &c) {
             Some((u2, c2)) => Facts { u: u2, c: c2 },
             None => {
+                // Unreachable: `self.u.lo()` remains a member of both
+                // resulting fields, so their intersection is nonempty.
                 proof {
                     assert(in_fields(u, c, self.u.lo()));
                 }
@@ -378,7 +380,10 @@ impl<W: Word> Domain for Facts<W> {
     }
 
     /// Field-wise widening, then the grid step: a bound that jumps to the end
-    /// of the range rounds back onto the grid.
+    /// of the range rounds back onto the grid. The widening sequence terminates:
+    /// interval bounds widen toward the machine-word range endpoints, and the
+    /// Congruence component has finite height. Once its grid stabilizes, rounding
+    /// a widened bound back to the extreme grid point cannot cause further growth.
     fn widen(&self, o: &Self) -> (r: Self) {
         let u = self.u.widen(&o.u);
         let c = self.c.widen(&o.c);
@@ -395,6 +400,8 @@ impl<W: Word> Domain for Facts<W> {
         match grid_step(&u, &c) {
             Some((u2, c2)) => Facts { u: u2, c: c2 },
             None => {
+                // Unreachable: `self.u.lo()` remains a member of both
+                // resulting fields, so their intersection is nonempty.
                 proof {
                     assert(in_fields(u, c, self.u.lo()));
                 }

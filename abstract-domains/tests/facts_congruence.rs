@@ -132,6 +132,45 @@ fn grid_step_examples() {
     assert_eq!(repr(&s), ((9, 9), (0, 9)));
 }
 
+/// The finite-width ascending chain [5, 9], [5, 13], ..., [5, 253] on
+/// 4Z+1 models successive growing loop bounds. Each step widens the previous
+/// accumulated result with the next chain element; it does not restart widening.
+#[test]
+fn widening_then_grid_normalization_stabilizes() {
+    let on_grid = |hi| {
+        bot(Facts::from_parts(
+            Interval::new(5u8, hi).unwrap(),
+            Congruence::new(4, 1),
+        ))
+        .expect("nonempty grid")
+    };
+    let mut incoming = on_grid(9);
+    let mut state = incoming.dup();
+    let stable = ((5, 253), (4, 1));
+    for hi in (13..=253u8).step_by(4) {
+        let next = on_grid(hi);
+        assert!(incoming.leq(&next), "the input chain is ascending");
+        let previous = repr(&state);
+        // The interval alone widens to 255; Facts::widen applies grid_step
+        // internally, rounding back to 253, the last point of 4Z+1.
+        if hi == 13 {
+            assert_eq!(state.interval().widen(&next.interval()).bounds(), (5, 255));
+        }
+        state = state.widen(&next);
+        assert_eq!(repr(&state), stable);
+        assert_eq!(repr(&bot(state.normalize()).expect("nonempty")), stable);
+        if hi > 13 {
+            assert_eq!(repr(&state), previous, "widening must remain stable");
+        }
+        incoming = next;
+    }
+    // Repeat the final element to represent the constant tail of the chain.
+    for _ in 0..4 {
+        state = state.widen(&incoming);
+        assert_eq!(repr(&state), stable);
+    }
+}
+
 /// Records over every class with modulus up to 6 and a few bounds: meet and
 /// refine are exact, join and widen cover both operands, and `leq` is sound.
 #[test]

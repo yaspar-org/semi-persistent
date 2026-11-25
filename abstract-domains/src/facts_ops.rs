@@ -54,8 +54,12 @@ fn lift<W: Word>(u: Interval<W>) -> (r: Facts<W>)
     }
 }
 
-/// Combine independently sound fields. An empty intersection has no concrete
-/// result to preserve, so Top is a sound fallback for the bottomless return type.
+/// Combine independently sound fields. At the arithmetic call sites, the
+/// well-formed `Facts` operands are nonempty: for any members `x` and `y`,
+/// soundness puts the concrete result `op(x, y)` in both transfer results
+/// (`op(x)` for negation). Thus `from_parts` cannot return `Bot` there, and
+/// the Top fallback is unreachable. Arbitrary unrelated field inputs can have
+/// an empty intersection; the helper's contract still permits those inputs.
 fn lift_parts<W: Word>(u: Interval<W>, c: Congruence<W>) -> (r: Facts<W>)
     requires
         u.wf(),

@@ -420,9 +420,14 @@ step after the field-wise operation; `leq` is field-wise. `from_parts(u, c)`
 builds the reduced record of two facts. `contains_zero` now checks both
 fields, because its contract is exact. Unsigned add/sub/neg in `facts_ops.rs`
 now compute both `u` and `c`, combined by `lift_parts` through `from_parts`.
-The contracts prove sound arithmetic and well-formedness; an empty field
-intersection permits the helper's Top fallback. The existing mixed-wrap GCD
-fallback is unchanged, with no general arithmetic optimality claim.
+The contracts prove sound arithmetic and well-formedness. At these call sites,
+the well-formed `Facts` operands are nonempty, so members `x` and `y` exist.
+Soundness of both field transfers puts `op(x, y)` in both resulting fields
+(`op(x)` for negation). Their intersection is therefore nonempty:
+`from_parts` cannot return `Bot`, and the Top fallback is unreachable at
+these calls. This does not rule out empty intersections for arbitrary
+unrelated field inputs allowed by the helper's contract. The existing mixed-wrap
+GCD fallback is unchanged, with no general arithmetic optimality claim.
 Multiplication, division, and remainder retain their interval transfers.
 
 The tests check `from_parts` and `normalize` against concrete sets on u8
