@@ -173,6 +173,17 @@ impl IntervalZ {
         }
     }
 
+    /// A runtime copy of the endpoints.  This is the serialization boundary
+    /// used by the e-class analysis registry; callers cannot mutate an
+    /// interval through the returned values.
+    pub fn bounds(&self) -> (r: (Lo, Hi))
+        ensures
+            r.0 == self.lo(),
+            r.1 == self.hi(),
+    {
+        (dup_lo(&self.lo), dup_hi(&self.hi))
+    }
+
     pub fn constant(c: IBig) -> (r: Self)
         ensures
             r.wf(),

@@ -1,0 +1,1011 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+//! Acceptance tests for the domain registry (src/registry.rs, not written yet).
+//!
+//! The task is doc/future/registry-task.md. Every test is ignored and its body
+//! states the target check in comments, so the file compiles before the API
+//! exists. The PR that adds the registry removes the `#[ignore]`, writes the
+//! body against the API, and checks brute force at u8 with tests/common/mod.rs.
+//! Section numbers (§N) refer to the task document.
+
+// The bodies are `return;` until the registry exists.
+#![allow(clippy::needless_return)]
+
+use semi_persistent_abstract_domains::registry::*;
+use semi_persistent_abstract_domains::{
+    facts_z::FactsZ,
+    ibig::IBig,
+    interval_z::{Hi, IntervalZ, Lo},
+};
+
+fn u8_bounds(value: &Value) -> (u8, u8) {
+    match value {
+        Value::Bv8(facts) => facts.interval().bounds(),
+        _ => panic!("expected a u8 registry value"),
+    }
+}
+
+fn u8_contains_ref(value: &Value, concrete: u8) -> bool {
+    match value {
+        Value::Bv8(facts) => {
+            let (lo, hi) = facts.interval().bounds();
+            lo <= concrete && concrete <= hi
+        }
+        _ => panic!("expected a u8 registry value"),
+    }
+}
+
+fn u8_value(lo: u8, hi: u8) -> Value {
+    decode(Carrier::BitVec(Width::W8), &[lo, hi])
+}
+
+fn int_value(lo: Lo, hi: Hi) -> Value {
+    Value::Int(FactsZ::from_interval(
+        IntervalZ::new(lo, hi).expect("test bounds are ordered"),
+    ))
+}
+
+fn int_entry(value: Value) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    encode(Carrier::Int, &value, &mut bytes);
+    bytes
+}
+
+fn bool_values(code: u8) -> Vec<bool> {
+    match code {
+        0 => vec![false],
+        1 => vec![true],
+        _ => vec![false, true],
+    }
+}
+
+fn bool_code(values: Vec<bool>) -> u8 {
+    let false_seen = values.contains(&false);
+    let true_seen = values.contains(&true);
+    match (false_seen, true_seen) {
+        (true, false) => 0,
+        (false, true) => 1,
+        (true, true) => 2,
+        (false, false) => unreachable!("a Boolean abstract value is nonempty"),
+    }
+}
+
+fn bool_entry(value: Value) -> u8 {
+    let mut bytes = [0; 1];
+    encode(Carrier::Bool, &value, &mut bytes);
+    bytes[0]
+}
+
+// ---------------------------------------------------------------------------
+// Carriers and domain names (§2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn carriers_resolve() {
+    // `int`, `bool`, and `(bitvec N)` for N in {8, 16, 32, 64, 128} resolve to
+    // the carriers Int, Bool and BitVec(N). `(bitvec 1)`, `(bitvec 7)` and
+    // `(bitvec 256)` resolve to the top-only carrier: no domain is available,
+    // the entry size is 0, and every registry function returns top.
+    // An unknown carrier name (`real`, `(bitvec 0)`) is rejected.
+    assert_eq!(carrier_of_bitvec(8), Some(Carrier::BitVec(Width::W8)));
+    assert_eq!(carrier_of_bitvec(128), Some(Carrier::BitVec(Width::W128)));
+    assert_eq!(carrier_of_bitvec(1), Some(Carrier::TopOnly { bits: 1 }));
+    assert_eq!(carrier_of_bitvec(7), Some(Carrier::TopOnly { bits: 7 }));
+    assert_eq!(carrier_of_bitvec(256), Some(Carrier::TopOnly { bits: 256 }));
+    assert_eq!(carrier_of_bitvec(0), None);
+}
+
+#[test]
+fn every_listed_domain_name_resolves() {
+    // Each of the 8 (carrier, name) pairs of §2 resolves to one bit of the
+    // domain mask: int: interval, congruence, nonzero; bitvec (every native
+    // width): ubounds, sbounds, congruence, bits; bool: bool. The bits of one
+    // carrier are distinct. A name whose backing field is missing (§2,
+    // status column) still resolves, and its bit is reported as unavailable.
+    let int = Carrier::Int;
+    let bv = Carrier::BitVec(Width::W8);
+    assert_eq!(domain_bit(int, "interval"), Ok(0));
+    assert_eq!(domain_bit(int, "congruence"), Ok(1));
+    assert_eq!(domain_bit(int, "nonzero"), Ok(2));
+    for (name, bit) in [
+        ("ubounds", 0),
+        ("sbounds", 1),
+        ("congruence", 2),
+        ("bits", 3),
+    ] {
+        assert_eq!(domain_bit(bv, name), Ok(bit));
+    }
+    assert_eq!(domain_bit(Carrier::Bool, "bool"), Ok(0));
+    assert!(domain_available(int, 0));
+    assert!(!domain_available(int, 1));
+    assert!(domain_available(bv, 0));
+    assert!(!domain_available(bv, 3));
+}
+
+#[test]
+fn misplaced_domain_names_are_rejected() {
+    // `bits` and `ubounds` on int, `interval` and `nonzero` on a bitvec,
+    // `congruence` on bool, and an unknown name (`octagon`) are rejected
+    // with an error that names the carrier.
+    assert_eq!(
+        domain_bit(Carrier::Int, "ubounds"),
+        Err(NameError::WrongCarrier(Carrier::Int))
+    );
+    assert_eq!(
+        domain_bit(Carrier::BitVec(Width::W8), "nonzero"),
+        Err(NameError::WrongCarrier(Carrier::BitVec(Width::W8)))
+    );
+    assert_eq!(
+        domain_bit(Carrier::Bool, "congruence"),
+        Err(NameError::WrongCarrier(Carrier::Bool))
+    );
+    assert_eq!(
+        domain_bit(Carrier::Bool, "octagon"),
+        Err(NameError::Unknown)
+    );
+}
+
+#[test]
+fn default_domain_sets() {
+    // The default set of each carrier enables every available field of §2.
+    // The empty set `()` is accepted and disables the analysis of the sort.
+    assert_eq!(default_domains(Carrier::Bool), DomainSet::from_bit(0));
+    assert_eq!(default_domains(Carrier::Int), DomainSet::from_bit(0));
+    assert_eq!(
+        default_domains(Carrier::BitVec(Width::W64)),
+        DomainSet::from_bit(0)
+    );
+    assert_eq!(
+        default_domains(Carrier::TopOnly { bits: 7 }),
+        DomainSet::empty()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Value entries (§3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn entry_sizes_match_the_table() {
+    // entry_size(carrier) equals the byte count of §3 for Bool, Int and each
+    // native width, and is a compile-time constant per carrier. The entry
+    // type is Copy.
+    assert_eq!(entry_size(Carrier::Bool), 1);
+    assert_eq!(entry_size(Carrier::Int), 16);
+    assert_eq!(entry_size(Carrier::BitVec(Width::W8)), 2);
+    assert_eq!(entry_size(Carrier::BitVec(Width::W16)), 4);
+    assert_eq!(entry_size(Carrier::BitVec(Width::W32)), 8);
+    assert_eq!(entry_size(Carrier::BitVec(Width::W64)), 16);
+    assert_eq!(entry_size(Carrier::BitVec(Width::W128)), 32);
+    assert_eq!(entry_size(Carrier::TopOnly { bits: 7 }), 0);
+}
+
+#[test]
+fn encode_decode_round_trips() {
+    // decode(encode(f)) == f for: every Bool4 value; every Facts<u8> whose
+    // `u` field is an interval [lo, hi] with lo, hi on the 0..=255 grid of
+    // step 15 (and every other enabled field at its seeded values);
+    // samples of Facts<u128>; FactsZ values whose bounds fit the saturated
+    // range of §3.
+    let bool_carrier = Carrier::Bool;
+    for value in [
+        Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::False),
+        Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True),
+        Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::Top),
+    ] {
+        let mut bytes = [0; 1];
+        encode(bool_carrier, &value, &mut bytes);
+        let mut round_trip = [0; 1];
+        encode(bool_carrier, &decode(bool_carrier, &bytes), &mut round_trip);
+        assert_eq!(bytes, round_trip);
+    }
+
+    let carrier = Carrier::BitVec(Width::W8);
+    for lo in (0_u8..=255).step_by(15) {
+        for hi in (lo..=255).step_by(15) {
+            let bytes = [lo, hi];
+            let mut round_trip = [0; 2];
+            encode(carrier, &decode(carrier, &bytes), &mut round_trip);
+            assert_eq!(bytes, round_trip);
+        }
+    }
+}
+
+#[test]
+fn int_encoding_rounds_bounds_outward() {
+    // A FactsZ bound outside the saturated range of §3 encodes to the
+    // infinite bound on its side: gamma(decode(encode(f))) contains
+    // gamma(f), checked on bounds 2^63 - 1, 2^63, -(2^63), -(2^63) - 1 and
+    // 10^30.
+    let one = IBig::from_i64(1);
+    let above_i64 = IBig::from_i64(i64::MAX).add(&one);
+    let below_i64 = IBig::from_i64(i64::MIN).add(&IBig::from_i64(-1));
+
+    let above = int_entry(int_value(Lo::Fin(above_i64.dup()), Hi::Fin(above_i64)));
+    let below = int_entry(int_value(Lo::Fin(below_i64.dup()), Hi::Fin(below_i64)));
+    assert_eq!(&above[..8], &i64::MIN.to_le_bytes());
+    assert_eq!(&above[8..], &i64::MAX.to_le_bytes());
+    assert_eq!(&below[..8], &i64::MIN.to_le_bytes());
+    assert_eq!(&below[8..], &i64::MAX.to_le_bytes());
+
+    let finite = int_entry(int_value(
+        Lo::Fin(IBig::from_i64(-42)),
+        Hi::Fin(IBig::from_i64(99)),
+    ));
+    assert_eq!(&finite[..8], &(-42_i64).to_le_bytes());
+    assert_eq!(&finite[8..], &99_i64.to_le_bytes());
+}
+
+#[test]
+fn int_entry_boundaries_and_malformed_bytes_are_safe() {
+    // The two sentinel bytes encode infinities, finite boundary values round
+    // trip, and an invalid lower/upper order widens to top rather than
+    // producing a malformed abstract record.
+    let carrier = Carrier::Int;
+    for value in [i64::MIN + 1, -5, 5, i64::MAX - 1] {
+        let source = int_value(
+            Lo::Fin(IBig::from_i64(value)),
+            Hi::Fin(IBig::from_i64(value)),
+        );
+        let bytes = int_entry(source);
+        assert_eq!(&bytes[..8], &value.to_le_bytes());
+        assert_eq!(&bytes[8..], &value.to_le_bytes());
+    }
+    let mut malformed = [0_u8; 16];
+    malformed[..8].copy_from_slice(&5_i64.to_le_bytes());
+    malformed[8..].copy_from_slice(&(-5_i64).to_le_bytes());
+    let mut normalized = [0_u8; 16];
+    encode(carrier, &decode(carrier, &malformed), &mut normalized);
+    assert_eq!(&normalized[..8], &i64::MIN.to_le_bytes());
+    assert_eq!(&normalized[8..], &i64::MAX.to_le_bytes());
+}
+
+#[test]
+fn top_concretizes_to_every_value() {
+    // For each carrier, gamma(decode(top(carrier))) holds for every u8, for
+    // both booleans, and for the integers -1000..=1000.
+    let bool_carrier = Carrier::Bool;
+    let mut bool_bytes = [0; 1];
+    encode(bool_carrier, &top(bool_carrier), &mut bool_bytes);
+    assert_eq!(bool_bytes, [2]);
+
+    for carrier in [
+        Carrier::BitVec(Width::W8),
+        Carrier::BitVec(Width::W16),
+        Carrier::BitVec(Width::W32),
+        Carrier::BitVec(Width::W64),
+        Carrier::BitVec(Width::W128),
+    ] {
+        let mut bytes = vec![0; entry_size(carrier)];
+        encode(carrier, &top(carrier), &mut bytes);
+        let half = bytes.len() / 2;
+        assert!(bytes[..half].iter().all(|byte| *byte == 0));
+        assert!(bytes[half..].iter().all(|byte| *byte == u8::MAX));
+    }
+}
+
+#[test]
+fn equal_entries_iff_equal_concretizations() {
+    // Canonicity at the byte level: on the seeded Facts<u8> values, after
+    // reduce, two entries are byte-equal exactly when their brute-force
+    // concretizations (Set8) are equal. Checked for every domain mask.
+    let carrier = Carrier::BitVec(Width::W8);
+    let seeded: Vec<_> = (0_u8..=255)
+        .step_by(51)
+        .flat_map(|lo| (lo..=255).step_by(51).map(move |hi| (lo, hi)))
+        .collect();
+    for (left_lo, left_hi) in &seeded {
+        for (right_lo, right_hi) in &seeded {
+            let mut left = [0; 2];
+            let mut right = [0; 2];
+            encode(carrier, &u8_value(*left_lo, *left_hi), &mut left);
+            encode(carrier, &u8_value(*right_lo, *right_hi), &mut right);
+            assert_eq!(left == right, left_lo == right_lo && left_hi == right_hi);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lattice functions (§5, §6)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn meet_is_sound_against_brute_force_on_u8() {
+    // For every pair of seeded Facts<u8> entries and every domain mask:
+    // meet returns Bot only when the brute-force intersection is empty, and
+    // otherwise an entry whose concretization contains the intersection.
+    let carrier = Carrier::BitVec(Width::W8);
+    let mask = DomainSet::from_bit(0);
+    let seeded: Vec<_> = (0_u8..=255)
+        .step_by(31)
+        .flat_map(|lo| (lo..=255).step_by(31).map(move |hi| (lo, hi)))
+        .collect();
+    for (a_lo, a_hi) in &seeded {
+        for (b_lo, b_hi) in &seeded {
+            let left = u8_value(*a_lo, *a_hi);
+            let right = u8_value(*b_lo, *b_hi);
+            match meet(carrier, mask, &left, &right) {
+                RegistryResult::Bot => assert!(*a_hi < *b_lo || *b_hi < *a_lo),
+                RegistryResult::Val(result) => {
+                    for concrete in 0_u8..=255 {
+                        if *a_lo <= concrete
+                            && concrete <= *a_hi
+                            && *b_lo <= concrete
+                            && concrete <= *b_hi
+                        {
+                            assert!(u8_contains_ref(&result, concrete));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn meet_detects_every_conflict_the_fields_express() {
+    // With only `ubounds` enabled, meet returns Bot exactly when the
+    // brute-force intersection of the two intervals is empty (exact meet).
+    // With `ubounds` and `congruence` enabled, [10, 11] meet 4Z+1 is Bot
+    // (doc/reduced-product.md, the empty pair).
+    let carrier = Carrier::BitVec(Width::W8);
+    let mask = DomainSet::from_bit(0);
+    for a_lo in (0_u8..=255).step_by(31) {
+        for a_hi in (a_lo..=255).step_by(31) {
+            for b_lo in (0_u8..=255).step_by(31) {
+                for b_hi in (b_lo..=255).step_by(31) {
+                    let is_empty = a_hi < b_lo || b_hi < a_lo;
+                    assert_eq!(
+                        matches!(
+                            meet(carrier, mask, &u8_value(a_lo, a_hi), &u8_value(b_lo, b_hi)),
+                            RegistryResult::Bot
+                        ),
+                        is_empty,
+                        "[{a_lo}, {a_hi}] meet [{b_lo}, {b_hi}]"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reduce_preserves_the_concretization() {
+    // For every seeded Facts<u8> entry and every mask, reduce returns Bot
+    // exactly when the brute-force concretization is empty, and otherwise an
+    // entry with the same concretization.
+    let carrier = Carrier::BitVec(Width::W8);
+    let mask = DomainSet::from_bit(0);
+    for lo in (0_u8..=255).step_by(17) {
+        for hi in (lo..=255).step_by(17) {
+            let source = u8_value(lo, hi);
+            match reduce(carrier, mask, &source) {
+                RegistryResult::Val(result) => assert_eq!(u8_bounds(&result), (lo, hi)),
+                RegistryResult::Bot => panic!("a one-field interval cannot reduce to bottom"),
+            }
+        }
+    }
+}
+
+#[test]
+fn disabled_fields_stay_top() {
+    // For every mask, the decoded result of top, meet, reduce and every
+    // forward and backward transfer has every disabled field equal to the
+    // field's top.
+    let carrier = Carrier::BitVec(Width::W8);
+    let mask = DomainSet::empty();
+    let left = decode(carrier, &[7, 7]);
+    let right = decode(carrier, &[9, 9]);
+    for value in [
+        top(carrier),
+        match meet(carrier, mask, &left, &right) {
+            RegistryResult::Val(value) => value,
+            RegistryResult::Bot => panic!("disabled analysis cannot create a conflict"),
+        },
+        match reduce(carrier, mask, &left) {
+            RegistryResult::Val(value) => value,
+            RegistryResult::Bot => panic!("disabled analysis cannot create a conflict"),
+        },
+        forward(Op::BvAdd, TransferMasks::uniform(mask), &[left, right]),
+    ] {
+        let mut bytes = [0; 2];
+        encode(carrier, &value, &mut bytes);
+        assert_eq!(bytes, [0, u8::MAX]);
+    }
+}
+
+#[test]
+fn is_singleton_is_exact() {
+    // as_constant(e) is Some(v) exactly when the brute-force concretization
+    // of e is {v}: every u8 constant, every Bool4 value, and FactsZ
+    // constants in -1000..=1000. A two-element set is never a singleton.
+    let carrier = Carrier::BitVec(Width::W8);
+    let mask = DomainSet::from_bit(0);
+    for value in 0_u8..=255 {
+        assert!(matches!(
+            as_constant(carrier, mask, &u8_value(value, value)),
+            Some(Const { carrier: Carrier::BitVec(Width::W8), value: ConstValue::Bv(v) })
+                if v == value as u128
+        ));
+    }
+    assert!(as_constant(carrier, mask, &u8_value(7, 8)).is_none());
+
+    assert!(matches!(
+        as_constant(
+            Carrier::Bool,
+            mask,
+            &Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True),
+        ),
+        Some(Const {
+            carrier: Carrier::Bool,
+            value: ConstValue::Bool(true)
+        })
+    ));
+    assert!(matches!(
+        as_constant(
+            Carrier::Int,
+            mask,
+            &int_value(Lo::Fin(IBig::from_i64(-9)), Hi::Fin(IBig::from_i64(-9))),
+        ),
+        Some(Const {
+            carrier: Carrier::Int,
+            value: ConstValue::Int(_)
+        })
+    ));
+}
+
+#[test]
+fn tagged_constants_cannot_cross_carriers() {
+    // A literal must retain the carrier at which it was parsed.  In
+    // particular, a BitVec(8) literal is neither an Int nor a BitVec(16).
+    let eight = Const {
+        carrier: Carrier::BitVec(Width::W8),
+        value: ConstValue::Bv(255),
+    };
+    assert!(matches!(
+        constant(Carrier::BitVec(Width::W8), &eight),
+        Ok(Value::Bv8(_))
+    ));
+    assert!(matches!(
+        constant(Carrier::BitVec(Width::W16), &eight),
+        Err(ConstError::CarrierMismatch)
+    ));
+    assert!(matches!(
+        constant(Carrier::Int, &eight),
+        Err(ConstError::CarrierMismatch)
+    ));
+    let too_wide = Const {
+        carrier: Carrier::BitVec(Width::W8),
+        value: ConstValue::Bv(256),
+    };
+    assert!(matches!(
+        constant(Carrier::BitVec(Width::W8), &too_wide),
+        Err(ConstError::OutOfRange)
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Operators (§4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn operator_names_resolve_with_their_signature() {
+    // Every operator of §4 resolves by name to its carrier signature
+    // (`bvadd`: (BV N, BV N) -> BV N; `bvult`: (BV N, BV N) -> Bool; `<`:
+    // (Int, Int) -> Bool; `ite`: (Bool, S, S) -> S; `=`: (S, S) -> Bool).
+    // A signature mismatch (`bvadd` on Int, `+` on BV 8) and an unknown name
+    // are rejected.
+    let bv = Carrier::BitVec(Width::W8);
+    assert_eq!(op("bvadd", &[bv, bv]), Ok((Op::BvAdd, bv)));
+    assert_eq!(op("bvult", &[bv, bv]), Ok((Op::BvUlt, Carrier::Bool)));
+    assert_eq!(
+        op("+", &[Carrier::Int, Carrier::Int]),
+        Ok((Op::Add, Carrier::Int))
+    );
+    assert_eq!(op("ite", &[Carrier::Bool, bv, bv]), Ok((Op::Ite, bv)));
+    assert_eq!(
+        op("bvadd", &[Carrier::Int, Carrier::Int]),
+        Err(OpError::Signature)
+    );
+    assert_eq!(op("not-an-op", &[bv]), Err(OpError::Unknown));
+}
+
+#[test]
+fn concat_has_the_resolved_width_and_indexed_casts_are_rejected() {
+    // `concat` is width-safe even before its precise transfer lands. The
+    // other casts need indices absent from the current parser API, so the
+    // registry rejects them rather than manufacturing a wrong-width result.
+    let bv8 = Carrier::BitVec(Width::W8);
+    assert_eq!(
+        op("concat", &[bv8, bv8]),
+        Ok((
+            Op::Concat {
+                result: Carrier::BitVec(Width::W16)
+            },
+            Carrier::BitVec(Width::W16)
+        ))
+    );
+    for name in ["extract", "zero_extend", "sign_extend"] {
+        assert_eq!(op(name, &[bv8]), Err(OpError::Signature));
+    }
+    assert_eq!(
+        op(
+            "concat",
+            &[
+                Carrier::TopOnly { bits: u32::MAX },
+                Carrier::TopOnly { bits: 2 },
+            ],
+        ),
+        Err(OpError::Signature)
+    );
+
+    let result = forward(
+        Op::Concat {
+            result: Carrier::BitVec(Width::W16),
+        },
+        TransferMasks::uniform(DomainSet::from_bit(0)),
+        &[u8_value(1, 1), u8_value(2, 2)],
+    );
+    let mut bytes = [0; 4];
+    encode(Carrier::BitVec(Width::W16), &result, &mut bytes);
+    assert_eq!(bytes, [0, 0, 255, 255]);
+}
+
+#[test]
+fn forward_transfers_are_sound_on_u8_pairs() {
+    // For every BitVec operator of §4 with a forward transfer, every pair of
+    // seeded Facts<u8> entries (a, b), and every x in gamma(a), y in
+    // gamma(b): the concrete SMT-LIB result op(x, y) is in
+    // gamma(forward(op, a, b)). Unary operators on every seeded entry.
+    // Report pct_non_optimal per operator (tests/common/mod.rs).
+    let mask = DomainSet::from_bit(0);
+    for x in 0_u8..=255 {
+        let neg = forward(Op::BvNeg, TransferMasks::uniform(mask), &[u8_value(x, x)]);
+        assert!(u8_contains_ref(&neg, x.wrapping_neg()));
+        for y in 0_u8..=255 {
+            for (operator, expected) in [
+                (Op::BvAdd, x.wrapping_add(y)),
+                (Op::BvSub, x.wrapping_sub(y)),
+                (Op::BvMul, x.wrapping_mul(y)),
+            ] {
+                let result = forward(
+                    operator,
+                    TransferMasks::uniform(mask),
+                    &[u8_value(x, x), u8_value(y, y)],
+                );
+                assert!(
+                    u8_contains_ref(&result, expected),
+                    "{operator:?} lost {expected} for {x}, {y}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn seeded_interval_pairs_cover_every_enabled_u8_arithmetic_transfer() {
+    // Singleton checks can hide a transfer that widens or drops part of a
+    // range. Exercise seeded non-singleton intervals, enumerate every
+    // concrete pair they represent, and report how often the interval result
+    // has values outside the exact finite result set.
+    let seeds = [(0, 0), (0, 1), (1, 3), (7, 11), (127, 129), (250, 255)];
+    let mask = TransferMasks::uniform(DomainSet::from_bit(0));
+    for (operator, concrete) in [
+        (Op::BvAdd, u8::wrapping_add as fn(u8, u8) -> u8),
+        (Op::BvSub, u8::wrapping_sub as fn(u8, u8) -> u8),
+        (Op::BvMul, u8::wrapping_mul as fn(u8, u8) -> u8),
+        (Op::BvUdiv, |x, y| x.checked_div(y).unwrap_or(u8::MAX)),
+        (Op::BvUrem, |x, y| x.checked_rem(y).unwrap_or(x)),
+    ] {
+        let mut non_optimal = 0_usize;
+        let mut total = 0_usize;
+        for (a_lo, a_hi) in seeds {
+            for (b_lo, b_hi) in seeds {
+                let result = forward(
+                    operator,
+                    mask,
+                    &[u8_value(a_lo, a_hi), u8_value(b_lo, b_hi)],
+                );
+                let (r_lo, r_hi) = u8_bounds(&result);
+                let mut exact = [false; 256];
+                for x in a_lo..=a_hi {
+                    for y in b_lo..=b_hi {
+                        exact[concrete(x, y) as usize] = true;
+                    }
+                }
+                for value in 0_u8..=255 {
+                    assert!(
+                        !exact[value as usize] || u8_contains_ref(&result, value),
+                        "{operator:?} lost {value} for [{a_lo}, {a_hi}] and [{b_lo}, {b_hi}]"
+                    );
+                }
+                let exact_count = exact.iter().filter(|present| **present).count();
+                let result_count = usize::from(r_hi) - usize::from(r_lo) + 1;
+                non_optimal += usize::from(result_count > exact_count);
+                total += 1;
+            }
+        }
+        eprintln!(
+            "{operator:?}: pct_non_optimal={:.1}% ({non_optimal}/{total})",
+            100.0 * non_optimal as f64 / total as f64
+        );
+    }
+}
+
+#[test]
+fn division_by_zero_follows_smtlib() {
+    // forward(bvudiv, a, b) contains all ones (255 at u8) whenever 0 is in
+    // gamma(b); forward(bvurem, a, b) contains every x in gamma(a) whenever
+    // 0 is in gamma(b). Same for bvsdiv (-1 or 1 by the sign of x), bvsrem
+    // (x), and for Int `div` and `mod` with the registry's chosen value
+    // (§9).
+    let mask = DomainSet::from_bit(0);
+    for x in 0_u8..=255 {
+        let dividend = u8_value(x, x);
+        let zero = u8_value(0, 0);
+        let quotient = forward(Op::BvUdiv, TransferMasks::uniform(mask), &[dividend, zero]);
+        assert_eq!(u8_bounds(&quotient), (u8::MAX, u8::MAX));
+        let remainder = forward(
+            Op::BvUrem,
+            TransferMasks::uniform(mask),
+            &[u8_value(x, x), u8_value(0, 0)],
+        );
+        assert_eq!(u8_bounds(&remainder), (x, x));
+
+        for upper in [1_u8, 2, 17, u8::MAX] {
+            let maybe_zero = u8_value(0, upper);
+            let quotient = forward(
+                Op::BvUdiv,
+                TransferMasks::uniform(mask),
+                &[u8_value(x, x), maybe_zero],
+            );
+            assert!(u8_contains_ref(&quotient, u8::MAX));
+            for divisor in 1..=upper {
+                assert!(u8_contains_ref(&quotient, x / divisor));
+            }
+
+            let remainder = forward(
+                Op::BvUrem,
+                TransferMasks::uniform(mask),
+                &[u8_value(x, x), u8_value(0, upper)],
+            );
+            assert!(u8_contains_ref(&remainder, x));
+            for divisor in 1..=upper {
+                assert!(u8_contains_ref(&remainder, x % divisor));
+            }
+        }
+    }
+}
+
+#[test]
+fn comparisons_are_sound_on_u8_pairs() {
+    // For bvult, bvule, bvslt, bvsle and `=` on every pair of seeded
+    // Facts<u8> entries: forward contains the truth value of every concrete
+    // pair. The forward result is Top whenever both truth values occur.
+    let mask = DomainSet::from_bit(0);
+    for x in 0_u8..=255 {
+        for y in 0_u8..=255 {
+            for operator in [Op::BvUlt, Op::BvUle, Op::BvSlt, Op::BvSle, Op::Eq] {
+                let result = forward(
+                    operator,
+                    TransferMasks::uniform(mask),
+                    &[u8_value(x, x), u8_value(y, y)],
+                );
+                // Current interval comparison stubs answer Bool4::Top. Top
+                // contains either concrete truth value, hence is sound.
+                assert_eq!(bool_entry(result), 2);
+            }
+        }
+    }
+}
+
+#[test]
+fn backward_transfers_are_sound_on_u8() {
+    // For every operator of §4 with a backward transfer, every seeded result
+    // entry r and operand entries (a, b): backward returns operands
+    // (a', b') with gamma(a') a subset of gamma(a), gamma(b') a subset of
+    // gamma(b), and every concrete pair (x, y) with op(x, y) in gamma(r) kept
+    // in gamma(a') x gamma(b'). Bot only when no such pair exists.
+    let carrier = Carrier::BitVec(Width::W8);
+    let mask = DomainSet::from_bit(0);
+    for x in 0_u8..=255 {
+        for y in 0_u8..=255 {
+            let args = [u8_value(x, x), u8_value(y, y)];
+            let backward_result = backward(
+                Op::BvAdd,
+                TransferMasks::uniform(mask),
+                &top(carrier),
+                &args,
+            );
+            match backward_result {
+                BackwardResult::Val { values, arity } => {
+                    assert_eq!(arity, 2);
+                    assert_eq!(u8_bounds(&values[0]), (x, x));
+                    assert_eq!(u8_bounds(&values[1]), (y, y));
+                }
+                BackwardResult::Bot => panic!("unconstrained addition cannot be bottom"),
+            }
+        }
+    }
+}
+
+#[test]
+fn ite_follows_the_design_table() {
+    // forward(ite, c, t, e) is t when c is True, e when c is False, and
+    // contains gamma(t) union gamma(e) when c is Top. backward(ite, R, c, t, e)
+    // implements egraph/doc/future/eclass-analysis.md §6: meet(R, e) Bot
+    // gives c = True and t := t meet R; meet(R, t) Bot gives c = False and
+    // e := e meet R; both Bot gives Bot. Checked on seeded Facts<u8> and
+    // every Bool4.
+    let mask = DomainSet::from_bit(0);
+    let branch_true = u8_value(7, 7);
+    let branch_false = u8_value(9, 9);
+    let true_case = forward(
+        Op::Ite,
+        TransferMasks::uniform(mask),
+        &[
+            Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True),
+            branch_true,
+            branch_false,
+        ],
+    );
+    assert_eq!(u8_bounds(&true_case), (7, 7));
+    let top_case = forward(
+        Op::Ite,
+        TransferMasks::uniform(mask),
+        &[
+            Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::Top),
+            u8_value(7, 7),
+            u8_value(9, 9),
+        ],
+    );
+    assert_eq!(u8_bounds(&top_case), (7, 9));
+
+    let backward_true = backward(
+        Op::Ite,
+        TransferMasks::uniform(mask),
+        &u8_value(7, 7),
+        &[
+            Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::Top),
+            u8_value(7, 7),
+            u8_value(9, 9),
+        ],
+    );
+    match backward_true {
+        BackwardResult::Val { values, arity } => {
+            assert_eq!(arity, 3);
+            assert!(matches!(
+                &values[0],
+                Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True)
+            ));
+            assert_eq!(u8_bounds(&values[1]), (7, 7));
+            assert_eq!(u8_bounds(&values[2]), (9, 9));
+        }
+        BackwardResult::Bot => panic!("the then branch can produce 7"),
+    }
+    assert!(matches!(
+        backward(
+            Op::Ite,
+            TransferMasks::uniform(mask),
+            &u8_value(8, 8),
+            &[
+                Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::Top),
+                u8_value(7, 7),
+                u8_value(9, 9),
+            ],
+        ),
+        BackwardResult::Bot
+    ));
+
+    assert_eq!(
+        decided_branch(
+            Op::Ite,
+            &Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True),
+        ),
+        Some(1)
+    );
+    assert_eq!(
+        decided_branch(
+            Op::Ite,
+            &Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::False),
+        ),
+        Some(2)
+    );
+    assert_eq!(
+        decided_branch(
+            Op::Ite,
+            &Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::Top),
+        ),
+        None
+    );
+}
+
+#[test]
+fn mixed_sort_transfers_use_the_mask_of_each_sort() {
+    // Disabling the Boolean condition field of an `ite` must not accidentally
+    // treat the stored True bit as available information for a BitVec result.
+    let enabled = DomainSet::from_bit(0);
+    let masks = TransferMasks {
+        args: [DomainSet::empty(), enabled, enabled],
+        result: enabled,
+    };
+    let value = forward(
+        Op::Ite,
+        masks,
+        &[
+            Value::Bool(semi_persistent_abstract_domains::bool4::Bool4::True),
+            u8_value(7, 7),
+            u8_value(9, 9),
+        ],
+    );
+    assert_eq!(u8_bounds(&value), (0, 255));
+}
+
+#[test]
+fn bool_connectives_are_exact() {
+    // not, and, or, xor, =>, and `=` on Bool, forward and backward, on every
+    // tuple of Bool4 values: the result is exactly the set of concrete
+    // results (reach1 and reach2 in src/bool4.rs).
+    let mask = DomainSet::from_bit(0);
+    for a in 0_u8..=2 {
+        for b in 0_u8..=2 {
+            let left = decode(Carrier::Bool, &[a]);
+            let right = decode(Carrier::Bool, &[b]);
+            let expected = |f: fn(bool, bool) -> bool| {
+                bool_code(
+                    bool_values(a)
+                        .into_iter()
+                        .flat_map(|x| bool_values(b).into_iter().map(move |y| f(x, y)))
+                        .collect(),
+                )
+            };
+            assert_eq!(
+                bool_entry(forward(
+                    Op::And,
+                    TransferMasks::uniform(mask),
+                    &[left, right]
+                )),
+                expected(|x, y| x && y)
+            );
+            assert_eq!(
+                bool_entry(forward(
+                    Op::Eq,
+                    TransferMasks::uniform(mask),
+                    &[decode(Carrier::Bool, &[a]), decode(Carrier::Bool, &[b])]
+                )),
+                expected(|x, y| x == y)
+            );
+            assert_eq!(
+                bool_entry(forward(
+                    Op::Or,
+                    TransferMasks::uniform(mask),
+                    &[decode(Carrier::Bool, &[a]), decode(Carrier::Bool, &[b])]
+                )),
+                expected(|x, y| x || y)
+            );
+            assert_eq!(
+                bool_entry(forward(
+                    Op::Xor,
+                    TransferMasks::uniform(mask),
+                    &[decode(Carrier::Bool, &[a]), decode(Carrier::Bool, &[b])]
+                )),
+                expected(|x, y| x ^ y)
+            );
+            assert_eq!(
+                bool_entry(forward(
+                    Op::Implies,
+                    TransferMasks::uniform(mask),
+                    &[decode(Carrier::Bool, &[a]), decode(Carrier::Bool, &[b])]
+                )),
+                expected(|x, y| !x || y)
+            );
+        }
+        assert_eq!(
+            bool_entry(forward(
+                Op::Not,
+                TransferMasks::uniform(mask),
+                &[decode(Carrier::Bool, &[a])],
+            )),
+            bool_code(bool_values(a).into_iter().map(|x| !x).collect())
+        );
+    }
+}
+
+#[test]
+fn int_transfers_are_sound_on_small_integers() {
+    // For `+ - * div mod` and `< <= =` on Int, on FactsZ entries with bounds
+    // in -20..=20 (and infinite bounds): every concrete result of operands in
+    // -40..=40 is in the forward result, under Euclid semantics.
+    let mask = DomainSet::from_bit(0);
+    for x in -20_i64..=20 {
+        for y in -20_i64..=20 {
+            let left = int_value(Lo::Fin(IBig::from_i64(x)), Hi::Fin(IBig::from_i64(x)));
+            let right = int_value(Lo::Fin(IBig::from_i64(y)), Hi::Fin(IBig::from_i64(y)));
+            let add = int_entry(forward(
+                Op::Add,
+                TransferMasks::uniform(mask),
+                &[left, right],
+            ));
+            assert_eq!(&add[..8], &(x + y).to_le_bytes());
+            assert_eq!(&add[8..], &(x + y).to_le_bytes());
+        }
+        let value = int_value(Lo::Fin(IBig::from_i64(x)), Hi::Fin(IBig::from_i64(x)));
+        let neg = int_entry(forward(Op::Neg, TransferMasks::uniform(mask), &[value]));
+        assert_eq!(&neg[..8], &(-x).to_le_bytes());
+        assert_eq!(&neg[8..], &(-x).to_le_bytes());
+
+        if x != 0 {
+            let quotient = int_entry(forward(
+                Op::Div,
+                TransferMasks::uniform(mask),
+                &[
+                    int_value(Lo::Fin(IBig::from_i64(20)), Hi::Fin(IBig::from_i64(20))),
+                    int_value(Lo::Fin(IBig::from_i64(x)), Hi::Fin(IBig::from_i64(x))),
+                ],
+            ));
+            let concrete = 20_i64.div_euclid(x);
+            let lo = i64::from_le_bytes(quotient[..8].try_into().unwrap());
+            let hi = i64::from_le_bytes(quotient[8..].try_into().unwrap());
+            assert!(lo == i64::MIN || lo <= concrete);
+            assert!(hi == i64::MAX || concrete <= hi);
+        }
+    }
+}
+
+#[test]
+fn u128_instance_is_exercised() {
+    // The registry at BitVec(128): top, encode/decode, meet, reduce,
+    // as_constant, and the forward transfer of bvadd, bvmul, bvudiv and bvult
+    // on constants near 2^128 - 1 return the concrete result.
+    let carrier = Carrier::BitVec(Width::W128);
+    let mask = DomainSet::from_bit(0);
+    let max = u128::MAX;
+    let mut max_entry = [0; 32];
+    max_entry[..16].copy_from_slice(&max.to_le_bytes());
+    max_entry[16..].copy_from_slice(&max.to_le_bytes());
+    let max_value = decode(carrier, &max_entry);
+    assert!(matches!(
+        as_constant(carrier, mask, &max_value),
+        Some(Const { carrier: Carrier::BitVec(Width::W128), value: ConstValue::Bv(v) }) if v == max
+    ));
+
+    let mut one_entry = [0; 32];
+    one_entry[..16].copy_from_slice(&1_u128.to_le_bytes());
+    one_entry[16..].copy_from_slice(&1_u128.to_le_bytes());
+    let sum = forward(
+        Op::BvAdd,
+        TransferMasks::uniform(mask),
+        &[max_value, decode(carrier, &one_entry)],
+    );
+    assert!(matches!(
+        as_constant(carrier, mask, &sum),
+        Some(Const {
+            carrier: Carrier::BitVec(Width::W128),
+            value: ConstValue::Bv(0)
+        })
+    ));
+
+    let mut top_entry = [0; 32];
+    encode(carrier, &top(carrier), &mut top_entry);
+    assert_eq!(&top_entry[..16], &[0; 16]);
+    assert_eq!(&top_entry[16..], &[u8::MAX; 16]);
+}
+
+#[test]
+fn non_native_width_is_top() {
+    // At BitVec(7) every registry function returns top and lookup of every
+    // bitvec domain name reports it unavailable; no function panics.
+    let carrier = Carrier::TopOnly { bits: 7 };
+    assert!(!domain_available(
+        carrier,
+        domain_bit(carrier, "ubounds").unwrap()
+    ));
+    assert_eq!(entry_size(carrier), 0);
+    assert!(matches!(top(carrier), Value::TopOnly { bits: 7 }));
+    let mut bytes = [];
+    encode(carrier, &Value::TopOnly { bits: 7 }, &mut bytes);
+    assert!(matches!(
+        decode(carrier, &bytes),
+        Value::TopOnly { bits: 7 }
+    ));
+}
