@@ -16,6 +16,9 @@ use crate::registry::{AxiomRegistry, OpKind, OpRegistry, RuleRegistry, SortRegis
 use crate::typed_routing::NodeRef;
 use crate::union_find::{Justification, ProofBuf};
 
+#[path = "abs_sched.rs"]
+pub(crate) mod abs_sched;
+
 /// How a completion op's monomial counts are bounded during normalization (design "three
 /// independent axes"): unbounded ℕ (MSet plain AC), clamped to {0,1} by dedup (Set idempotent =
 /// ACI), or reduced mod `order` (nilpotent, e.g. XOR at order 2 — stored MSet, the clamp is the
@@ -39,6 +42,9 @@ pub struct EGraphToken {
     /// describes exactly the state being snapshotted; `restore` puts it back so a caller
     /// can never observe an outcome from a discarded scope.
     completion_outcome: Option<CompletionOutcome>,
+    /// Whether an abstract conflict was already recorded at mark time. `restore`
+    /// puts the flag back; the message itself stays on the engine's scope stack.
+    abs_conflict: bool,
 }
 
 /// Live-node threshold under which mark/restore stay sequential (see
@@ -183,6 +189,9 @@ pub struct EGraph<
     /// Semi-naive touched log: node ids created or recanonicalized since the
     /// last `clear_touched`. Round-local scratch (cleared on `restore`);
     /// drives the per-round delta index. Not part of persistent state.
+    /// A strict abstract-value change appends the class's members and parents
+    /// too, under the same `track_merge_members` gate, so a guard that only
+    /// saw the value shrink still re-fires next round.
     touched: Vec<Cfg::G>,
     /// When set, every class merge also records the absorbed side's member
     /// nodes in `touched` (see `merge_in_classes`). Only semi-naive saturation
@@ -321,6 +330,9 @@ pub struct EGraph<
     /// scratch, not semi-persistent state: `restore` clears it, so a rolled-back graph is
     /// always rescanned.
     repair_state: Option<(usize, usize)>,
+    /// Abstract-value queues, budget, conflict, and the stand-in value table.
+    /// Idle until an [`abs_sched::AbsDomain`] is installed.
+    abs: abs_sched::AbsSched,
 }
 
 /// Default node-growth budget for one completion-enabled `rebuild`, or for one lazy
@@ -496,6 +508,7 @@ where
             completion_outcome: None,
             completion_node_budget: DEFAULT_COMPLETION_NODE_BUDGET,
             repair_state: None,
+            abs: abs_sched::AbsSched::new(),
         }
     }
 
@@ -503,6 +516,13 @@ where
     /// rebuild. Callers can use this to distinguish convergence from a growth-budget abort.
     pub fn completion_outcome(&self) -> Option<CompletionOutcome> {
         self.completion_outcome
+    }
+
+    /// An empty abstract meet met by the last rebuild or merge, if any, cleared
+    /// by the call. The message contains `abstract conflict`. The graph is left
+    /// as it was when the meet failed.
+    pub fn take_abs_conflict(&mut self) -> Option<String> {
+        self.abs.take_conflict()
     }
 
     /// A multiplicity past the configured width met by the last `rebuild`, if any,
@@ -1391,7 +1411,9 @@ where
 
     pub fn add_lit(&mut self, op: Cfg::O, lit: Cfg::V) -> Cfg::G {
         let result = self.nodes.add_lit(op, lit, 0);
-        self.register_if_fresh(result, op)
+        let id = self.register_if_fresh(result, op);
+        self.abs_on_lit(id, lit);
+        id
     }
 
     /// Build a *ground* checked term (a literal or a constructor applied to ground args) into a
@@ -1927,12 +1949,23 @@ where
         } else {
             None
         };
+        let pre_abs = if self.abs.has_domain() {
+            (self.abs_value_of_root(ra), self.abs_value_of_root(rb))
+        } else {
+            (None, None)
+        };
         let m = match (prefer_a, just) {
             (None, None) => self.classes.merge(a, b),
             (None, Some(j)) => self.classes.merge_justified(a, b, j),
             (Some(pa), None) => self.classes.merge_directed_with(a, b, pa),
             (Some(pa), Some(j)) => self.classes.merge_justified_directed_with(a, b, pa, j),
         }?;
+        let absorbed_value = if m.absorbed == ra {
+            pre_abs.0
+        } else {
+            pre_abs.1
+        };
+        self.abs_on_merge(m.survivor, absorbed_value);
         if let Some((r0, v0, v1)) = pre {
             let absorbed = match v1 {
                 None => v0,
@@ -2439,9 +2472,15 @@ where
             // count, and the fixpoint is bounded by the number of classes.
             loop {
                 self.rebuild_congruence();
-                // A node that could not be recanonicalized stops the rebuild: the caller
-                // reports `take_width_error` and the run ends.
-                if self.has_width_error() || !self.canon_repair_round() {
+                if self.has_width_error() {
+                    break;
+                }
+                let abs_merged = self.abs_drain();
+                // An empty meet stops the closure before canonization repair.
+                if self.abs_has_conflict() {
+                    break;
+                }
+                if !(self.canon_repair_round() || abs_merged) {
                     break;
                 }
             }
@@ -2489,10 +2528,25 @@ where
         // case and after an unchanged incremental round; their cost is input-dependent.
         let mut full = true; // round 0 is full (base case)
         loop {
-            self.rebuild_congruence();
-            if self.has_width_error() {
-                self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
-                return;
+            // Values propagate here, before the goal poll, so a derived merge can
+            // be what joins the goal pair. A derived merge reopens congruence, so
+            // the two alternate until a drain merges nothing: the goal poll and the
+            // fixpoint test below then see a plain-congruence-closed graph. Each
+            // derived merge removes a class, which bounds the alternation. A
+            // conflict stops the closure; the caller reads `take_abs_conflict`.
+            loop {
+                self.rebuild_congruence();
+                if self.has_width_error() {
+                    self.completion_outcome = Some(CompletionOutcome::AbortedOverflow);
+                    return;
+                }
+                let derived = self.abs_drain();
+                if self.abs_has_conflict() {
+                    return;
+                }
+                if !derived {
+                    break;
+                }
             }
             // Goal-directed early stop (the lazy-check transaction): the pair
             // joined, so the question is answered — stop mid-closure. The
@@ -2957,6 +3011,8 @@ where
             let surv_list = self.classes.use_list_id(surv_repr);
             self.classes.splice_uses(surv_list, absorbed_uses);
             self.refresh_key_lowered();
+            // Forward work was queued as the class, not its parents: the use list
+            // contains the absorbed parents only now, and `abs_drain` reads it.
 
             // If this merge made the merged class an op's identity (unit) class, the
             // unit-drop law now applies to EVERY parent holding this class as a summand —
@@ -4373,6 +4429,7 @@ where
     /// state; the rebuild and the tiny map marks run strictly outside it.
     pub fn mark_with(&mut self, shrink: ShrinkPolicy, par: bool) -> EGraphToken {
         self.rebuild();
+        let abs_conflict = self.abs.on_mark();
         assert!(
             self.history.depth() < u32::MAX,
             "mark: frame depth is bounded by the saturation driver"
@@ -4396,6 +4453,7 @@ where
         EGraphToken {
             group,
             completion_outcome: self.completion_outcome,
+            abs_conflict,
         }
     }
 
@@ -4433,6 +4491,7 @@ where
         // restored state (mark() rebuilds first), so a post-restore reader never sees an
         // outcome computed for the discarded scope.
         self.completion_outcome = token.completion_outcome;
+        self.abs.on_restore(token.abs_conflict);
         self.worklist.clear();
         self.key_lowered.clear();
         self.collisions.clear();
@@ -4477,6 +4536,7 @@ where
             restore_prof_record(0, t);
         }
         self.completion_outcome = token.completion_outcome;
+        self.abs.on_restore_and_pop(token.abs_conflict);
         self.worklist.clear();
         self.key_lowered.clear();
         self.collisions.clear();
@@ -4504,6 +4564,7 @@ where
         };
         let ok = self.history.pop_member(&mut members);
         assert!(ok, "pop_scope: the members are in step with the history");
+        self.abs.on_pop();
         self.worklist.clear();
         self.key_lowered.clear();
         self.collisions.clear();
@@ -4677,6 +4738,7 @@ where
         if result.is_fresh() {
             let id = result.id();
             let repr = self.classes.add_singleton(id);
+            self.abs_on_make(id);
             // Seed the per-class min-monomial pool. A completion node (MSet or Set) is its
             // class's only monomial for its own op, so seed that op's column to itself. A
             // non-completion node instead makes its class `atomic`: the class has a member

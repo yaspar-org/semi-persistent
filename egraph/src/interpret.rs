@@ -47,6 +47,9 @@ pub enum InterpError {
     /// A count past the configured multiplicity width, met while building or rebuilding:
     /// reported as `multiplicity overflow: …` with the width and its maximum.
     MultOverflow(String),
+    /// An empty abstract meet: the program's equalities and seeds have no model
+    /// (abstract-engine-task.md §5). Reported as `abstract conflict: …`.
+    AbsConflict(String),
 }
 
 impl From<crate::resolve::ResolveError> for InterpError {
@@ -77,6 +80,8 @@ impl std::fmt::Display for InterpError {
             }
             InterpError::TermError(m) => write!(f, "term: {m}"),
             InterpError::MultOverflow(m) => write!(f, "{m}"),
+            InterpError::AbsConflict(m) if m.contains("abstract conflict") => write!(f, "{m}"),
+            InterpError::AbsConflict(m) => write!(f, "abstract conflict: {m}"),
         }
     }
 }
@@ -420,6 +425,10 @@ where
     /// incremental or full transient-index repair.
     fn lazy_txn_open(&mut self) {
         if self.lazy_txn.is_none() {
+            // The mark rebuilds, so values are propagated before the transaction opens. Closing
+            // it restores the conflict flag, clears the abs queues, and undoes every class value
+            // and `constants` entry written inside it (the engine's undo log, until the values
+            // move into the class-layer pool, #158).
             self.lazy_txn = Some(self.eg.mark(self.shrink_policy));
             self.eg.set_cc(true);
         }
@@ -478,8 +487,15 @@ where
         b: Cfg::G,
     ) -> Result<(bool, bool), InterpError> {
         self.eg.set_cc_goal(Some((a, b)));
+        // Completion merges inside the transaction meet values like any merge. A conflict found
+        // here is entailed by the program: the search stops, and `run_checked` reports it before
+        // the transaction closes, since `restore` would clear the flag (abstract-engine-task.md §6).
         self.eg.rebuild();
         let mut equal = self.eg.find(a) == self.eg.find(b);
+        if self.eg.abs_has_conflict() {
+            self.eg.set_cc_goal(None);
+            return Ok((equal, false));
+        }
         let aborted = |eg: &EGraph<Cfg, L, TRACK, PROOFS>| {
             eg.completion_outcome()
                 .is_some_and(crate::egraph::CompletionOutcome::is_budget_stop)
@@ -836,7 +852,17 @@ where
             ) {
                 self.lazy_txn_close();
             }
+            // A top-level command outside a run is one budget epoch (abstract-engine-task.md §3).
+            self.eg.abs_begin_epoch();
             let r = self.exec_checked(cmd);
+            // An abstract conflict met by this command wins over the error it caused (a run
+            // stops on it with a placeholder fault). It is taken before the lazy-check
+            // transaction closes: `restore` resets the flag to its value at the mark, which
+            // would discard a conflict the program entails (abstract-engine-task.md §5, §6).
+            if let Some(c) = self.eg.take_abs_conflict() {
+                self.lazy_txn_close();
+                return Err(InterpError::AbsConflict(c));
+            }
             if r.is_err() {
                 self.lazy_txn_close();
             }
@@ -929,6 +955,9 @@ where
                 }
                 self.eg.rebuild();
             }
+            // TODO(abs-saturation-engine): a `(refine t v)` command (a `CCommand` variant from
+            // #1) builds `t`, meets `v` into its class through the seed path, then rebuilds as
+            // `Union` does, see egraph/doc/future/abstract-engine-task.md §2
             CCommand::CheckQuery(cq) => self.exec_check_query(cq)?,
             CCommand::SetOption(opt) => self.set_completion_option(*opt),
             CCommand::CheckEq(a, b, complete) => {
@@ -979,6 +1008,9 @@ where
                     self.eg.set_cc_goal(None);
                     return Err(InterpError::CheckFailed("terms are equal".into()));
                 }
+                // TODO(abs-saturation-engine): after the milestone: an empty meet between the two
+                // classes proves the disequality without the lazy search, see
+                // egraph/doc/future/abstract-engine-task.md §5
                 // Lazy mode searches beyond plain congruence before accepting `!=`:
                 // distinct classes may still join through completion. Reaching the
                 // implemented operational fixpoint without a join is the command's
@@ -1282,6 +1314,8 @@ where
                 } else {
                     self.shrink_policy
                 };
+                // No engine work at push: `mark` rebuilds and drains the abs queues, and saves
+                // the conflict flag with the snapshot (abstract-engine-task.md §6).
                 self.marks.push(Mark {
                     token: self.eg.mark(policy),
                     rules_len: self.rules.len(),
@@ -1398,6 +1432,9 @@ where
                 // fused, so it costs one pop core per column (design doc 08 §1;
                 // the verified `restore` alone keeps the scope open).
                 self.eg.restore_and_pop(mark.token);
+                // `restore_and_pop` restores the conflict flag to its value at the push,
+                // clears the abs queues, and undoes every class value and `constants` entry
+                // written inside the scope (the engine's undo log, until #158's pool).
                 self.rules.truncate(mark.rules_len);
                 self.globals.truncate(mark.globals_len);
             }
@@ -1579,3 +1616,7 @@ impl RunStats {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "interpret_abs_tests.rs"]
+mod abs_tests;

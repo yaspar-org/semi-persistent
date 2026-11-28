@@ -113,6 +113,18 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     Cfg::Policy: crate::config::StorePolicy<Cfg, T>,
 {
+    // An abstract conflict met by the last rebuild stops the run as a width error does
+    // (abstract-engine-task.md §5). The flag stays set: the interpreter reports it through
+    // `take_abs_conflict` as `InterpError::AbsConflict`, ahead of this error.
+    if eg.abs_has_conflict() {
+        return Err(crate::lit_model::EvalError {
+            span: crate::ast::Span::Dummy,
+            op: "an abstract conflict",
+            args: Vec::new(),
+            site: crate::lit_model::EvalSite::Rhs,
+            rule: None,
+        });
+    }
     match eg.take_width_error() {
         None => Ok(()),
         Some(e) => Err(crate::lit_model::EvalError {
@@ -387,6 +399,9 @@ where
     // Outside the round loop: the pool's whole purpose is to survive rounds.
     let mut pool = MatchPool::new();
     for i in 0..spec.limit {
+        // A run iteration is one budget epoch: each class may change its value a bounded
+        // number of times in it (abstract-engine-task.md §3).
+        eg.abs_begin_epoch();
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
             eg.rebuild();
@@ -979,6 +994,9 @@ where
     // The spelling epoch when the previous round's delta was cut (see `respelled` below).
     let mut epoch_at_cut = eg.spelling_epoch();
     for i in 0..limit {
+        // A run iteration is one budget epoch: each class may change its value a bounded
+        // number of times in it (abstract-engine-task.md §3).
+        eg.abs_begin_epoch();
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
             eg.rebuild();
@@ -998,6 +1016,8 @@ where
         };
         // delta = everything touched since the previous round's index build
         // (fresh nodes from the last round's apply + this round's recanon).
+        // Value-only changes made by the rebuild above are already in `eg.touched()`: the
+        // drain pushes a changed class's members and parents (abstract-engine-task.md §4).
         let delta = if i == 0 {
             None
         } else {

@@ -1,0 +1,11 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; MESSAGE: abstract conflict
+;; A seed goes through the meet path of a merge (abstract-engine-task.md §2), so
+;; two disjoint seeds on one term are the same conflict as a disjoint union.
+(sort Int :interp int :domains (interval))
+(function X () Int)
+(let x (X))
+(refine x (interval 0 4))
+(refine x (interval 5 9))

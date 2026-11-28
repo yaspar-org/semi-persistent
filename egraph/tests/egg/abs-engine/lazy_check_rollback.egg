@@ -1,0 +1,26 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; Values in a lazy-AC check transaction (abstract-engine-task.md §6). Only the
+;; check derives (Add z z) = (Add 6 (Neg y) 6 (Neg y)), inside its transaction;
+;; the meet there gives [5, 9]. The transaction restores the graph, so after it
+;; the class of (Add z z) is back at [0, 9] and the guarded rule does not fire.
+(set-option :check-completion on)
+(sort Int :interp int :domains (interval))
+(sort Obs)
+(function Add (Int) Int :assoc-comm)
+(function Neg (Int) Int)
+(function Z () Int)
+(function Y () Int)
+(function In (Int) Obs)
+(function Yes () Obs)
+(let z (Z))
+(let y (Y))
+(union z (Add 6 (Neg y)))
+(let zz (Add z z))
+(refine zz (interval 0 9))
+(refine (Add 6 (Neg y) 6 (Neg y)) (interval 5 20))
+(check-eq zz (Add 6 (Neg y) 6 (Neg y)))
+(rule ((= r (Add ..rest)) (within r 5 9)) ((union (In r) (Yes))))
+(run 2)
+(check-neq (In zz) (Yes))

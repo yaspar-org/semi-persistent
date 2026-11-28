@@ -1,0 +1,23 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; Values roll back with the classes (abstract-engine-task.md §6). Inside the
+;; scope x is refined to [0, 9] and y = (add x 1) observes [1, 10]. After pop, x
+;; is back at [0, 99], y at [1, 100], and the guarded rule no longer fires.
+(sort Int :interp int :domains (interval))
+(sort Obs)
+(function add (Int Int) Int :interp +)
+(function X () Int)
+(function In (Int) Obs)
+(function Yes () Obs)
+(let x (X))
+(refine x (interval 0 99))
+(let y (add x 1))
+(rule ((= r (add a b)) (within r 1 10)) ((union (In r) (Yes))))
+(push)
+(refine x (interval 0 9))
+(run 4)
+(check-eq (In y) (Yes))
+(pop)
+(run 4)
+(check-neq (In y) (Yes))

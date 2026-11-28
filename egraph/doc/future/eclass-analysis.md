@@ -256,9 +256,51 @@ The reduction inside a value (§2 of `reduced-product.md`) has its own small
 budget and the property that it never changes the concretization, so its
 budget also affects precision only.
 
-**Open: budget scope.** One budget per class per iteration, one global
-budget per rebuild, or both. This interacts with semi-naive scheduling and
-needs measurement on the benchmark set before a decision.
+**Termination.** The analysis has no widening, and some carriers have
+infinite descending chains: an `Int` interval can shrink one unit at a time
+forever, as in `x = x + 1`. Termination therefore comes from the budget, not
+from the height of the lattice. The engine (#147) implements the budget as
+follows.
+
+- *Epoch.* Each iteration of a `run`, in both drivers, starts a budget epoch,
+  and so does each top-level command outside a run. `restore` and `pop` clear
+  the counters with the queues.
+- *Strict changes only.* A write is accepted only if the reduced meet differs
+  from the stored value. Meets only narrow, so every accepted write is a strict
+  descent. A write that changes nothing schedules nothing.
+- *Budget.* Each class may accept `B = 64` strict changes per epoch. A write
+  past the budget is dropped. The class keeps its last value, which is sound
+  because it is wider than the one dropped.
+- *Bounded work.* Only an accepted change schedules work: the parents of the
+  class go on the forward queue and its members on the backward queue. A
+  forward item writes its own class, a backward item its children. The drain
+  adds no nodes and merges no classes, so during one drain the number of
+  classes `C` is fixed. A drain therefore accepts at most `B · C` changes and
+  processes at most `B · Σ (|members| + |uses|)` queue items over all
+  classes, beyond the items queued before it started, and it ends.
+- *Derived merges.* After a drain, the merges derived from singleton values
+  are applied as one batch, and congruence is re-closed before the next drain
+  (with completion on, before the goal poll and the fixpoint test). Each
+  derived merge removes a class, so this alternation runs at most `C` times.
+- *Conflicts.* An empty meet sets the conflict flag, clears the queues and
+  stops the drain.
+
+So every `rebuild` ends. The analysis adds no rounds to a `run`: across
+epochs a value may keep descending, `B` changes per class per iteration, and
+the run's iteration limit bounds the total as it bounds rule application.
+`x_plus_one_budget.egg` shows both bounds: the `union` that puts `x` and
+`(add x 1)` in one class spends the budget of its command's epoch, and each
+iteration of the following `run` narrows the class by at most `B` more steps.
+The engine never claims that a run
+reached a fixpoint of the analysis. It claims only that every stored value
+is sound, which holds at any stopping point because each value is a meet of
+sound facts. `reduce` has its own fuel (4 per write), which costs precision
+only.
+
+**Open: budget scope.** The engine implements one budget per class per
+epoch. Whether to add a global budget per rebuild, or to replace the
+per-class one with it, interacts with semi-naive scheduling and needs
+measurement on the benchmark set before a decision.
 
 ## 8. Merges derived from abstract values
 

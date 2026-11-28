@@ -1,0 +1,20 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; A decided ite (eclass-analysis.md §8, case 3). x is in [0, 4], so the forward
+;; transfer of < decides (lt x 10) as true; the condition merges with true, and
+;; congruence then merges (ite c t e) with t.
+(sort Int :interp int :domains (interval))
+(sort Bool :interp bool :domains (bool))
+(function lt (Int Int) Bool :interp <)
+(function ite (Bool Int Int) Int :interp ite)
+(function X () Int)
+(function T () Int)
+(function E () Int)
+(let x (X))
+(refine x (interval 0 4))
+(let c (lt x 10))
+(let r (ite c (T) (E)))
+(run 1)
+(check-eq c true)
+(check-eq r (T))

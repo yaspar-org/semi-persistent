@@ -1,0 +1,14 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: error
+;; MESSAGE: abstract conflict
+;; A merge whose meet is empty (abstract-engine-task.md §5). a is in [0, 4] and b
+;; in [10, 20]; asserting a = b leaves no model, and the union reports it.
+(sort Int :interp int :domains (interval))
+(function A () Int)
+(function B () Int)
+(let a (A))
+(let b (B))
+(refine a (interval 0 4))
+(refine b (interval 10 20))
+(union a b)

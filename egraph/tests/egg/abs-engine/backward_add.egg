@@ -1,0 +1,18 @@
+;; Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+;; SPDX-License-Identifier: Apache-2.0
+;; EXPECT: ok
+;; Parent refinement through an invertible operator (abstract-engine-task.md §2).
+;; y = (add x 1) is seeded with [1, 5]; the backward transfer of + refines the
+;; child x to [0, 4], although x itself was never seeded.
+(sort Int :interp int :domains (interval))
+(sort Obs)
+(function add (Int Int) Int :interp +)
+(function X () Int)
+(function In (Int) Obs)
+(function Yes () Obs)
+(let x (X))
+(let y (add x 1))
+(refine y (interval 1 5))
+(rule ((= r (X)) (within r 0 4)) ((union (In r) (Yes))))
+(run 4)
+(check-eq (In x) (Yes))
