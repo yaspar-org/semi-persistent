@@ -155,3 +155,34 @@ fn a_conflict_inside_the_lazy_check_is_reported_before_the_transaction_closes() 
     let b = interp.global_class("b").expect("b");
     assert_ne!(interp.eg.find(a), interp.eg.find(b));
 }
+
+/// A value narrowed inside `(push)` ... `(pop)` is back to its outer value after
+/// the pop, and so is the class it was narrowed in.
+#[test]
+fn pop_rolls_back_a_value_narrowed_inside_the_scope() {
+    let mut interp = Interp::new(BignumModel);
+    let mut globals = Globals::new();
+    exec(
+        &mut interp,
+        &mut globals,
+        "(sort S) (function A () S) (function B () S) (let a (A)) (let b (B))",
+    )
+    .expect("declarations");
+    let sort = interp.eg.intern_sort("S").to_usize();
+    interp.eg.set_abs_domain(Box::new(Interval { sort }));
+    let a = interp.global_class("a").expect("a");
+    let b = interp.global_class("b").expect("b");
+    interp.eg.abs_seed(a, interval(0, 9));
+    interp.eg.abs_seed(b, interval(5, 20));
+    exec(
+        &mut interp,
+        &mut globals,
+        "(push) (union a b) (check-eq a b)",
+    )
+    .expect("push");
+    assert_eq!(interp.eg.abs_value(a), Some(interval(5, 9)));
+    exec(&mut interp, &mut globals, "(pop)").expect("pop");
+    assert_ne!(interp.eg.find(a), interp.eg.find(b));
+    assert_eq!(interp.eg.abs_value(a), Some(interval(0, 9)));
+    assert_eq!(interp.eg.abs_value(b), Some(interval(5, 20)));
+}

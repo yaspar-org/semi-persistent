@@ -7,8 +7,9 @@
 //! [`AbsSched::begin_epoch`] and [`EGraph::take_abs_conflict`].
 //!
 //! Class values belong in the class-layer pool (#146). Until that pool
-//! exists they sit in [`AbsSched::values`], keyed by class-key index, and
-//! `restore` does not roll them back. Transfers belong to the domain
+//! exists they sit in [`AbsSched::values`], keyed by class-key index, and an
+//! undo log in this file rolls them back on `restore` and `pop`, together with
+//! the literal table [`AbsSched::constants`]. Transfers belong to the domain
 //! registry (#148): nothing is analysed until an [`AbsDomain`] is installed,
 //! so a program without one pushes nothing on the queues.
 
@@ -70,11 +71,21 @@ pub(crate) struct AbsSched {
     backward: VecDeque<usize>,
     /// `(class node, partner node)` applied as ordinary merges after the drain.
     derived: Vec<(usize, usize)>,
-    /// Constant payload → literal node id, for singleton derived merges.
-    constants: HashMap<i64, usize>,
+    /// `(sort, constant payload)` → literal node id, for singleton derived merges.
+    constants: HashMap<(usize, i64), usize>,
     conflict: Option<String>,
-    /// Mark-time conflict, one entry per open scope. `pop` restores the top.
-    saved: Vec<Option<String>>,
+    /// Mark-time state, one entry per open scope: the conflict and the undo-log
+    /// length. `restore` and `pop` return to the top entry.
+    saved: Vec<(Option<String>, usize)>,
+    /// Previous entries of `values` and `constants`, written only while a scope
+    /// is open. Stands in for the class-layer pool's own rollback (#146).
+    undo: Vec<AbsUndo>,
+}
+
+/// One overwritten table entry. `None` means the key was absent.
+enum AbsUndo {
+    Value(usize, Option<u64>),
+    Constant((usize, i64), Option<usize>),
 }
 
 impl AbsSched {
@@ -113,9 +124,9 @@ impl AbsSched {
         self.conflict.take()
     }
 
-    /// Queues, the derived-merge batch, and the budget counters. Values and the
-    /// conflict flag stay: values roll back with the class pool, and the
-    /// conflict is restored from the mark token.
+    /// Queues, the derived-merge batch, and the budget counters. Values, constants
+    /// and the conflict flag are not cleared here: `undo_to` rolls the tables back,
+    /// and the conflict is restored from the mark token.
     pub(crate) fn clear_transient(&mut self) {
         self.merges.clear();
         self.forward.clear();
@@ -126,31 +137,74 @@ impl AbsSched {
 
     pub(crate) fn on_mark(&mut self) -> bool {
         let flagged = self.conflict.is_some();
-        self.saved.push(self.conflict.clone());
+        self.saved.push((self.conflict.clone(), self.undo.len()));
         flagged
     }
 
     pub(crate) fn on_restore(&mut self, flagged: bool) {
+        let (saved, len) = self.saved.last().cloned().unwrap_or((None, 0));
         self.conflict = if flagged {
-            self.saved
-                .last()
-                .cloned()
-                .flatten()
-                .or_else(|| Some(ABS_CONFLICT.to_string()))
+            saved.or_else(|| Some(ABS_CONFLICT.to_string()))
         } else {
             None
         };
+        self.undo_to(len);
         self.clear_transient();
     }
 
     pub(crate) fn on_pop(&mut self) {
-        self.conflict = self.saved.pop().flatten();
+        let (saved, len) = self.saved.pop().unwrap_or((None, 0));
+        self.conflict = saved;
+        self.undo_to(len);
         self.clear_transient();
     }
 
     pub(crate) fn on_restore_and_pop(&mut self, flagged: bool) {
         self.on_restore(flagged);
         self.saved.pop();
+    }
+
+    /// Undo table writes back to log length `len`, newest first.
+    fn undo_to(&mut self, len: usize) {
+        while self.undo.len() > len {
+            match self.undo.pop().unwrap() {
+                AbsUndo::Value(key, old) => match old {
+                    Some(v) => {
+                        self.values.insert(key, v);
+                    }
+                    None => {
+                        self.values.remove(&key);
+                    }
+                },
+                AbsUndo::Constant(key, old) => match old {
+                    Some(node) => {
+                        self.constants.insert(key, node);
+                    }
+                    None => {
+                        self.constants.remove(&key);
+                    }
+                },
+            }
+        }
+    }
+
+    /// Write a class value (`None` is top), logging the old entry inside a scope.
+    fn set_value(&mut self, key: usize, value: Option<u64>) {
+        let old = match value {
+            Some(v) => self.values.insert(key, v),
+            None => self.values.remove(&key),
+        };
+        if !self.saved.is_empty() && old != value {
+            self.undo.push(AbsUndo::Value(key, old));
+        }
+    }
+
+    /// Bind a literal node to `(sort, constant)`, logging the old entry inside a scope.
+    fn set_constant(&mut self, key: (usize, i64), node: usize) {
+        let old = self.constants.insert(key, node);
+        if !self.saved.is_empty() && old != Some(node) {
+            self.undo.push(AbsUndo::Constant(key, old));
+        }
     }
 
     fn note_conflict(&mut self) {
@@ -204,7 +258,8 @@ where
     }
 
     pub(crate) fn abs_bind_constant(&mut self, k: i64, node: Cfg::G) {
-        self.abs.constants.insert(k, node.to_usize());
+        let sort = self.abs_sort_of(node);
+        self.abs.set_constant((sort, k), node.to_usize());
     }
 
     fn abs_class_key(&self, node: Cfg::G) -> Option<usize> {
@@ -255,7 +310,7 @@ where
         };
         let constant = self.abs.domain.as_ref().unwrap().as_constant(value);
         if let Some(k) = constant {
-            self.abs.constants.insert(k, id.to_usize());
+            self.abs.set_constant((sort, k), id.to_usize());
         }
         self.abs_meet_node(id, value);
     }
@@ -264,11 +319,22 @@ where
     /// the union; the survivor's table entry is still its own pre-merge value,
     /// so meeting the absorbed one is the whole meet. #146's `absorbed_abs`
     /// replaces the pre-merge read, not this write.
+    ///
+    /// The merged class is queued even when its value does not change: the
+    /// absorbed side's parents and members now read the survivor's value, which
+    /// may be narrower than the one they last saw. `absorbed_value` is `None`
+    /// both without a domain and for an absorbed class at top.
     pub(crate) fn abs_on_merge(&mut self, survivor: Cfg::G, absorbed_value: Option<u64>) {
-        let Some(absorbed_value) = absorbed_value else {
+        if !self.abs.has_domain() {
             return;
+        }
+        let queued = match absorbed_value {
+            Some(value) => self.abs_meet_node(survivor, value),
+            None => false,
         };
-        self.abs_meet_node(survivor, absorbed_value);
+        if !queued && self.abs.conflict.is_none() && self.abs_analysed(survivor) {
+            self.abs.merges.push_back(survivor.to_usize());
+        }
     }
 
     pub(crate) fn abs_value_of_root(&self, node: Cfg::G) -> Option<u64> {
@@ -279,15 +345,16 @@ where
         self.abs.values.get(&key).copied()
     }
 
-    fn abs_meet_node(&mut self, node: Cfg::G, incoming: u64) {
+    /// Returns whether the class was queued, that is, whether its value changed.
+    fn abs_meet_node(&mut self, node: Cfg::G, incoming: u64) -> bool {
         if self.abs.conflict.is_some() {
-            return;
+            return false;
         }
         if !self.abs_analysed(node) {
-            return;
+            return false;
         }
         let Some(key) = self.abs_class_key(node) else {
-            return;
+            return false;
         };
         let sort = self.abs_sort_of(node);
         let top = self.abs.domain.as_ref().unwrap().top(sort);
@@ -295,7 +362,7 @@ where
         let met = self.abs.domain.as_ref().unwrap().meet(old, incoming);
         let Some(met) = met else {
             self.abs.note_conflict();
-            return;
+            return false;
         };
         let reduced = self
             .abs
@@ -305,10 +372,10 @@ where
             .reduce(met, ABS_REDUCE_FUEL);
         let Some(reduced) = reduced else {
             self.abs.note_conflict();
-            return;
+            return false;
         };
         if reduced == old {
-            return;
+            return false;
         }
         let over_budget = {
             let seen = self.abs.changes.entry(key).or_insert(0);
@@ -320,16 +387,13 @@ where
             }
         };
         if over_budget {
-            return;
+            return false;
         }
-        if reduced == top {
-            self.abs.values.remove(&key);
-        } else {
-            self.abs.values.insert(key, reduced);
-        }
+        self.abs.set_value(key, (reduced != top).then_some(reduced));
         self.abs.merges.push_back(node.to_usize());
         self.abs_touch(node);
         self.abs_note_singleton(node, reduced);
+        true
     }
 
     /// Members and parents of a changed class, under the same gate as merge
@@ -355,7 +419,8 @@ where
         let Some(k) = self.abs.domain.as_ref().unwrap().as_constant(value) else {
             return;
         };
-        let Some(&partner) = self.abs.constants.get(&k) else {
+        let sort = self.abs_sort_of(node);
+        let Some(&partner) = self.abs.constants.get(&(sort, k)) else {
             return;
         };
         let partner_node = Cfg::G::from_usize(partner);
@@ -543,11 +608,13 @@ mod tests {
     struct Interval {
         sort: usize,
         add: usize,
+        /// A second analysed sort, for tests that need two.
+        also: Option<usize>,
     }
 
     impl AbsDomain for Interval {
         fn analysed_sort(&self, sort: usize) -> bool {
-            sort == self.sort
+            sort == self.sort || Some(sort) == self.also
         }
         fn top(&self, _sort: usize) -> u64 {
             TOP
@@ -612,6 +679,7 @@ mod tests {
         eg.set_abs_domain(Box::new(Interval {
             sort: int.to_usize(),
             add: add.to_usize(),
+            also: None,
         }));
         let c = eg.register_op0("c", int);
         (eg, add, c)
@@ -790,5 +858,185 @@ mod tests {
             "outcome: {:?}",
             eg.completion_outcome()
         );
+    }
+
+    /// `x` at [0,9] with parent `add(x, two)`, `y` at [0,4] with parent
+    /// `add(two, y)`, `two` at {2}. Both sides have a parent, so whichever class
+    /// survives, the other side's parent sees a narrower argument after the merge.
+    /// The parents differ in argument order so that congruence does not join them.
+    fn two_sides_with_parents() -> (EGraph31<NiraLitVal>, [crate::id::ENodeId; 4]) {
+        let (mut eg, add, c) = eg_with_add();
+        let x = eg.add(c, &[]);
+        let sort = eg.node_sort(x);
+        let d = eg.register_op0("d", sort);
+        let y = eg.add(d, &[]);
+        let two_op = eg.register_op0("two", sort);
+        let two = eg.add(two_op, &[]);
+        let sx = eg.add(add, &[x, two]);
+        let sy = eg.add(add, &[two, y]);
+        eg.abs_seed(x, pack(0, 9));
+        eg.abs_seed(y, pack(0, 4));
+        eg.abs_seed(two, pack(2, 2));
+        eg.rebuild();
+        assert_eq!(eg.abs_value(sx), Some(pack(2, 11)));
+        assert_eq!(eg.abs_value(sy), Some(pack(2, 6)));
+        (eg, [x, y, sx, sy])
+    }
+
+    /// Remi's item 4: when the survivor's value does not change, the absorbed
+    /// side's parents must still be revisited.
+    #[test]
+    fn merge_revisits_the_absorbed_parents_in_either_order() {
+        for swap in [false, true] {
+            let (mut eg, [x, y, sx, sy]) = two_sides_with_parents();
+            if swap {
+                eg.merge(y, x);
+            } else {
+                eg.merge(x, y);
+            }
+            eg.rebuild();
+            assert_eq!(eg.abs_value(x), Some(pack(0, 4)), "swap = {swap}");
+            assert_eq!(eg.abs_value(sx), Some(pack(2, 6)), "swap = {swap}");
+            assert_eq!(eg.abs_value(sy), Some(pack(2, 6)), "swap = {swap}");
+        }
+    }
+
+    /// The absorbed side at top contributes nothing to the meet, but its parents
+    /// still read the survivor's value after the merge.
+    #[test]
+    fn merge_with_a_top_class_revisits_its_parents() {
+        for swap in [false, true] {
+            let (mut eg, add, c) = eg_with_add();
+            let x = eg.add(c, &[]);
+            let sort = eg.node_sort(x);
+            let d = eg.register_op0("d", sort);
+            let y = eg.add(d, &[]);
+            let two_op = eg.register_op0("two", sort);
+            let two = eg.add(two_op, &[]);
+            let sx = eg.add(add, &[x, two]);
+            let sy = eg.add(add, &[two, y]);
+            eg.abs_seed(y, pack(0, 4));
+            eg.abs_seed(two, pack(2, 2));
+            eg.rebuild();
+            assert_eq!(eg.abs_value(sx), None);
+            if swap {
+                eg.merge(y, x);
+            } else {
+                eg.merge(x, y);
+            }
+            eg.rebuild();
+            assert_eq!(eg.abs_value(sx), Some(pack(2, 6)), "swap = {swap}");
+            assert_eq!(eg.abs_value(sy), Some(pack(2, 6)), "swap = {swap}");
+        }
+    }
+
+    /// Remi's item 2: values written after a mark are undone by restore.
+    #[test]
+    fn restore_rolls_values_back() {
+        let (mut eg, _add, c) = eg_with_add();
+        let x = eg.add(c, &[]);
+        eg.abs_seed(x, pack(0, 10));
+        let token = eg.mark(crate::containers::ShrinkPolicy::Never);
+        eg.abs_seed(x, pack(0, 3));
+        assert_eq!(eg.abs_value(x), Some(pack(0, 3)));
+        eg.restore(token);
+        assert_eq!(eg.abs_value(x), Some(pack(0, 10)));
+    }
+
+    /// A class made after the mark is gone after restore; a class made later may
+    /// reuse its key and must start at top, not at the discarded value.
+    #[test]
+    fn restore_does_not_leak_a_value_to_a_reused_class_key() {
+        let (mut eg, _add, c) = eg_with_add();
+        let x = eg.add(c, &[]);
+        let sort = eg.node_sort(x);
+        let z_op = eg.register_op0("z", sort);
+        let w_op = eg.register_op0("w", sort);
+        let token = eg.mark(crate::containers::ShrinkPolicy::Never);
+        let z = eg.add(z_op, &[]);
+        eg.abs_seed(z, pack(0, 1));
+        eg.restore(token);
+        let w = eg.add(w_op, &[]);
+        eg.rebuild();
+        assert_eq!(eg.abs_value(w), None);
+    }
+
+    /// Nested scopes: each restore or pop undoes only its own scope's writes.
+    #[test]
+    fn nested_scopes_roll_values_back_one_level_at_a_time() {
+        let (mut eg, _add, c) = eg_with_add();
+        let x = eg.add(c, &[]);
+        eg.abs_seed(x, pack(0, 10));
+        let outer = eg.mark(crate::containers::ShrinkPolicy::Never);
+        eg.abs_seed(x, pack(0, 8));
+        let inner = eg.mark(crate::containers::ShrinkPolicy::Never);
+        eg.abs_seed(x, pack(0, 5));
+        eg.restore_and_pop(inner);
+        assert_eq!(eg.abs_value(x), Some(pack(0, 8)));
+        eg.abs_seed(x, pack(0, 6));
+        eg.restore(outer);
+        assert_eq!(eg.abs_value(x), Some(pack(0, 10)));
+        eg.abs_seed(x, pack(0, 7));
+        eg.pop_scope();
+        assert_eq!(eg.abs_value(x), Some(pack(0, 10)));
+    }
+
+    /// Remi's item 3: a singleton of one sort does not merge with a literal of another.
+    #[test]
+    fn a_constant_of_another_sort_is_not_a_partner() {
+        let mut eg = EGraph31::<NiraLitVal>::new();
+        let int = eg.intern_sort("Int");
+        let real = eg.intern_sort("Real");
+        let add = eg.register_op2("add", int, int, int);
+        eg.set_abs_domain(Box::new(Interval {
+            sort: int.to_usize(),
+            add: add.to_usize(),
+            also: Some(real.to_usize()),
+        }));
+        let three_real = eg.register_op0("three_r", real);
+        let lit = eg.add(three_real, &[]);
+        eg.abs_bind_constant(3, lit);
+        let c = eg.register_op0("c", int);
+        let x = eg.add(c, &[]);
+        eg.abs_seed(x, pack(3, 3));
+        eg.rebuild();
+        assert_ne!(eg.find(x), eg.find(lit));
+    }
+
+    /// A constant bound after a mark is forgotten by restore: its literal node is gone.
+    #[test]
+    fn restore_forgets_a_constant_bound_after_the_mark() {
+        let (mut eg, _add, c) = eg_with_add();
+        let x = eg.add(c, &[]);
+        let sort = eg.node_sort(x);
+        let three = eg.register_op0("three", sort);
+        let token = eg.mark(crate::containers::ShrinkPolicy::Never);
+        let lit = eg.add(three, &[]);
+        eg.abs_bind_constant(3, lit);
+        eg.restore(token);
+        let before = eg.len();
+        eg.abs_seed(x, pack(3, 3));
+        eg.rebuild();
+        assert_eq!(eg.len(), before);
+        assert_eq!(eg.find(x), x);
+    }
+
+    /// A constant bound before the mark survives restore and still derives its merge.
+    #[test]
+    fn restore_keeps_a_constant_bound_before_the_mark() {
+        let (mut eg, _add, c) = eg_with_add();
+        let x = eg.add(c, &[]);
+        let sort = eg.node_sort(x);
+        let three = eg.register_op0("three", sort);
+        let lit = eg.add(three, &[]);
+        eg.abs_bind_constant(3, lit);
+        let token = eg.mark(crate::containers::ShrinkPolicy::Never);
+        eg.abs_bind_constant(3, x);
+        eg.restore(token);
+        let y_op = eg.register_op0("y", sort);
+        let y = eg.add(y_op, &[]);
+        eg.abs_seed(y, pack(3, 3));
+        eg.rebuild();
+        assert_eq!(eg.find(y), eg.find(lit));
     }
 }
